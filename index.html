@@ -11,9 +11,9 @@
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 
 <!-- Firebase SDK via CDN -->
-<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/firebase@10.12.0/firebase-app-compat.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/firebase@10.12.0/firebase-auth-compat.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/firebase@10.12.0/firebase-firestore-compat.min.js"></script>
 <style>
 :root{
   --bg:#0d1117; --bg-elev:#161b22; --bg-card:#1a2028; --bg-card-hover:#1f2630;
@@ -601,15 +601,33 @@ input:checked + .slider::before{transform:translateX(16px);background:var(--bg)}
         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
         Cấu hình
       </div>
+      <div class="nav-item" id="navAccounts" data-page="accounts" style="display:none">
+        <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"/></svg>
+        Quản lý tài khoản
+      </div>
     </div>
 
-    <div class="sidebar-footer">
-      <div class="user-mini">
-        <div class="avatar">HM</div>
-        <div>
-          <div class="user-mini-name">Hà Minh</div>
-          <div class="user-mini-role">HR Director</div>
+    <div class="sidebar-footer" style="position:relative">
+      <div id="userMenuPopup" style="display:none;position:absolute;bottom:72px;left:0;right:0;background:var(--bg-elev);border:1px solid var(--border);border-radius:10px;overflow:hidden;z-index:999;box-shadow:0 4px 24px rgba(0,0,0,.35)">
+        <div style="padding:8px 12px 6px;font-size:11px;color:var(--ink-muted);letter-spacing:.08em;text-transform:uppercase;border-bottom:1px solid var(--border)">Tài khoản</div>
+        <div onclick="doChangePassword()" style="padding:10px 14px;display:flex;align-items:center;gap:10px;cursor:pointer;font-size:13px;color:var(--ink)" onmouseover="this.style.background='var(--bg-card-hover)'" onmouseout="this.style.background=''">
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" style="width:15px;height:15px;flex-shrink:0"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"/></svg>
+          Đổi mật khẩu
         </div>
+        <div style="height:1px;background:var(--border)"></div>
+        <div onclick="doLogout()" style="padding:10px 14px;display:flex;align-items:center;gap:10px;cursor:pointer;font-size:13px;color:var(--danger)" onmouseover="this.style.background='var(--bg-card-hover)'" onmouseout="this.style.background=''">
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" style="width:15px;height:15px;flex-shrink:0"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/></svg>
+          Đăng xuất
+        </div>
+        <div style="padding:8px 12px;font-size:10.5px;color:var(--ink-muted);border-top:1px solid var(--border);text-align:center">© Bùi Tuấn · buituan19694@gmail.com</div>
+      </div>
+      <div class="user-mini" onclick="toggleUserMenu()" style="cursor:pointer" title="Tùy chọn tài khoản">
+        <div class="avatar" id="sidebarUserAvatar">HM</div>
+        <div style="flex:1;min-width:0">
+          <div class="user-mini-name" id="sidebarUserName">Hà Minh</div>
+          <div class="user-mini-role" id="sidebarUserRole">HR Director</div>
+        </div>
+        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" style="width:13px;height:13px;opacity:.4;flex-shrink:0"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l4-4 4 4m0 6l-4 4-4-4"/></svg>
       </div>
     </div>
   </aside>
@@ -1743,6 +1761,7 @@ function render(){
     warnings: renderWarnings,
     tasks: renderTasks,
     settings: renderSettings,
+    accounts: renderAccounts,
   };
   (renderers[currentPage] || renderDashboard)(main);
   setTimeout(function(){ initDateInputs(main); }, 20);
@@ -14572,6 +14591,213 @@ function saveRfConfig(){
 
 
 /* =========================================================
+   ACCOUNTS — Quản lý tài khoản (Admin only)
+   ========================================================= */
+const ADMIN_EMAIL = 'buituan19694@gmail.com';
+
+const MODULE_LIST = [
+  {key:'employees',  label:'Nhân viên'},
+  {key:'contracts',  label:'Hợp đồng'},
+  {key:'leaves',     label:'Nghỉ phép'},
+  {key:'recruitment',label:'Tuyển dụng'},
+  {key:'training',   label:'Đào tạo'},
+  {key:'performance',label:'Đánh giá KPI'},
+  {key:'awards',     label:'Khen thưởng'},
+  {key:'warnings',   label:'Kỷ luật / Cảnh cáo'},
+  {key:'settings',   label:'Cấu hình'},
+];
+const PERM_LEVELS = ['none','view','edit','full'];
+const PERM_LABELS = {none:'🚫 Không xem', view:'👁 Chỉ xem', edit:'✏️ Xem & Sửa', full:'⭐ Toàn quyền'};
+
+function renderAccounts(main){
+  if(!window.isAdmin()){ main.innerHTML='<div class="topbar"><div class="topbar-left"><h1 class="page-title">Không có quyền</h1></div></div>'; return; }
+  main.innerHTML = `
+    <div class="topbar">
+      <div class="topbar-left">
+        <div class="crumb">Hệ thống · <span>Quản lý tài khoản</span></div>
+        <h1 class="page-title">Quản lý <em>tài khoản</em></h1>
+        <div class="page-sub">Tạo tài khoản và cấp quyền truy cập cho từng người</div>
+      </div>
+      <div class="topbar-right">
+        <button class="btn btn-primary" onclick="openAccountModal()">
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" width="14" height="14"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+          Tạo tài khoản mới
+        </button>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-head"><div>
+        <div class="card-title">Danh sách <em>tài khoản</em></div>
+        <div class="card-sub">Chỉ Admin có thể xem và quản lý danh sách này</div>
+      </div></div>
+      <div id="accountsList" style="min-height:80px">
+        <div style="text-align:center;padding:40px;color:var(--ink-muted)">Đang tải...</div>
+      </div>
+    </div>
+    <div style="margin-top:24px;padding:14px 18px;background:var(--bg-card);border-radius:10px;border:1px solid var(--border);font-size:12px;color:var(--ink-muted);line-height:1.8">
+      <strong style="color:var(--ink-dim)">© Bản quyền phần mềm</strong><br>
+      Phát triển bởi <strong style="color:var(--accent)">Bùi Tuấn</strong> · Email: <a href="mailto:buituan19694@gmail.com" style="color:var(--accent)">buituan19694@gmail.com</a><br>
+      Dành riêng cho Legacy Yên Tử – MGallery by Sofitel
+    </div>
+  `;
+  loadAccountsList();
+}
+
+async function loadAccountsList(){
+  const el = document.getElementById('accountsList');
+  if(!el) return;
+  try{
+    const snap = await fbDb.collection('users').get();
+    if(snap.empty){ el.innerHTML='<div style="text-align:center;padding:40px;color:var(--ink-muted)">Chưa có tài khoản nào</div>'; return; }
+    const rows = snap.docs.map(d=>{
+      const u = d.data();
+      const isMe = u.email === ADMIN_EMAIL;
+      const roleLabel = u.email === ADMIN_EMAIL ? '<span style="background:rgba(212,165,116,.2);color:var(--accent);padding:2px 8px;border-radius:4px;font-size:11px;font-weight:700">ADMIN</span>'
+        : `<span style="background:var(--bg-elev);color:var(--ink-dim);padding:2px 8px;border-radius:4px;font-size:11px">${u.role||'viewer'}</span>`;
+      const statusDot = u.active===false ? '<span style="color:var(--danger)">● Khoá</span>' : '<span style="color:var(--success)">● Hoạt động</span>';
+      return `<tr>
+        <td style="padding:12px 14px;font-weight:600">${escapeHtml(u.displayName||'—')}</td>
+        <td style="padding:12px 14px;color:var(--ink-muted);font-size:12px">${escapeHtml(u.email||'')}</td>
+        <td style="padding:12px 14px">${roleLabel}</td>
+        <td style="padding:12px 14px;font-size:12px">${statusDot}</td>
+        <td style="padding:12px 14px;text-align:right">
+          ${isMe ? '' : `<button class="btn btn-icon" onclick="openAccountModal('${d.id}')" title="Sửa quyền" style="margin-right:4px">✏️</button>
+          <button class="btn btn-icon btn-danger" onclick="toggleAccountActive('${d.id}','${u.active===false?'unlock':'lock'}')" title="${u.active===false?'Mở khoá':'Khoá'}">
+            ${u.active===false?'🔓':'🔒'}
+          </button>`}
+        </td>
+      </tr>`;
+    }).join('');
+    el.innerHTML = `<table style="width:100%;border-collapse:collapse">
+      <thead><tr style="border-bottom:1px solid var(--border);font-size:11px;color:var(--ink-muted);text-transform:uppercase;letter-spacing:.08em">
+        <th style="padding:8px 14px;text-align:left;font-weight:600">Họ tên</th>
+        <th style="padding:8px 14px;text-align:left;font-weight:600">Email</th>
+        <th style="padding:8px 14px;text-align:left;font-weight:600">Role</th>
+        <th style="padding:8px 14px;text-align:left;font-weight:600">Trạng thái</th>
+        <th style="padding:8px 14px;text-align:right;font-weight:600">Thao tác</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+  } catch(e){ el.innerHTML=`<div style="color:var(--danger);padding:20px">Lỗi tải danh sách: ${e.message}</div>`; }
+}
+
+window.openAccountModal = async function(uid=null){
+  let userData = null;
+  if(uid){
+    const doc = await fbDb.collection('users').doc(uid).get();
+    userData = doc.exists ? doc.data() : null;
+  }
+  const perms = userData?.permissions || {};
+  const moduleRows = MODULE_LIST.map(m=>{
+    const cur = perms[m.key] || 'none';
+    const opts = PERM_LEVELS.map(lv=>`<option value="${lv}" ${cur===lv?'selected':''}>${PERM_LABELS[lv]}</option>`).join('');
+    const salaryRow = m.key==='employees' ? `
+      <tr id="salaryRow" style="display:${cur==='none'?'none':''}">
+        <td style="padding:6px 14px;padding-left:28px;color:var(--ink-muted);font-size:12px">└ Xem thông tin <strong>Lương</strong></td>
+        <td style="padding:6px 14px">
+          <select id="perm_salary" style="padding:5px 8px;background:var(--bg-elev);border:1px solid var(--border);border-radius:6px;color:var(--ink);font-size:12px">
+            <option value="hide" ${(perms.salary||'hide')==='hide'?'selected':''}>🙈 Ẩn lương</option>
+            <option value="show" ${(perms.salary||'hide')==='show'?'selected':''}>👁 Xem được lương</option>
+          </select>
+        </td>
+      </tr>` : '';
+    return `<tr style="border-bottom:1px solid var(--border)">
+      <td style="padding:8px 14px;font-weight:500;font-size:13px">${m.label}</td>
+      <td style="padding:8px 14px">
+        <select id="perm_${m.key}" onchange="onPermChange('${m.key}',this.value)" style="padding:6px 10px;background:var(--bg-elev);border:1px solid var(--border);border-radius:6px;color:var(--ink);font-size:12.5px;width:100%">
+          ${opts}
+        </select>
+      </td>
+    </tr>${salaryRow}`;
+  }).join('');
+
+  showModal(`<div>
+    <div style="margin-bottom:20px">
+      <div style="font-family:'Fraunces',serif;font-size:20px;font-weight:500;margin-bottom:4px">${uid ? 'Sửa quyền tài khoản' : 'Tạo tài khoản mới'}</div>
+      <div style="font-size:12.5px;color:var(--ink-muted)">${uid ? 'Cập nhật thông tin và phân quyền' : 'Nhập thông tin và cấp quyền truy cập'}</div>
+    </div>
+    ${!uid ? `<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px">
+      <div class="field"><label>Họ tên hiển thị</label><input id="acc_name" placeholder="Nguyễn Văn A"></div>
+      <div class="field"><label>Email</label><input id="acc_email" type="email" placeholder="email@domain.com"></div>
+      <div class="field"><label>Mật khẩu</label><input id="acc_pass" type="password" placeholder="Tối thiểu 6 ký tự"></div>
+      <div class="field"><label>Role</label>
+        <select id="acc_role" style="padding:8px 12px;background:var(--bg-elev);border:1px solid var(--border);border-radius:8px;color:var(--ink)">
+          <option value="viewer">Viewer — Chỉ xem</option>
+          <option value="manager">Manager — Theo quyền</option>
+          <option value="hr">HR Full — Toàn bộ HR</option>
+        </select>
+      </div>
+    </div>` : `<div style="background:var(--bg-elev);padding:10px 14px;border-radius:8px;margin-bottom:16px;font-size:13px">
+      <strong>${escapeHtml(userData?.displayName||'')}</strong> · <span style="color:var(--ink-muted)">${escapeHtml(userData?.email||'')}</span>
+    </div>`}
+    <div style="font-size:11px;color:var(--ink-muted);letter-spacing:.1em;text-transform:uppercase;margin-bottom:8px;font-weight:600">Phân quyền theo module</div>
+    <table style="width:100%;border-collapse:collapse;border:1px solid var(--border);border-radius:8px;overflow:hidden">
+      ${moduleRows}
+    </table>
+    <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:20px">
+      <button class="btn" onclick="closeModal()">Huỷ</button>
+      <button class="btn btn-primary" onclick="saveAccount('${uid||''}')">💾 Lưu</button>
+    </div>
+  </div>`, {wide:true});
+};
+
+window.onPermChange = function(module, val){
+  if(module === 'employees'){
+    const row = document.getElementById('salaryRow');
+    if(row) row.style.display = val==='none' ? 'none' : '';
+  }
+};
+
+window.saveAccount = async function(uid){
+  const perms = {};
+  MODULE_LIST.forEach(m=>{ perms[m.key] = document.getElementById('perm_'+m.key)?.value || 'none'; });
+  const salaryEl = document.getElementById('perm_salary');
+  if(salaryEl) perms.salary = salaryEl.value;
+
+  if(!uid){
+    // Tạo mới
+    const name  = document.getElementById('acc_name')?.value.trim();
+    const email = document.getElementById('acc_email')?.value.trim();
+    const pass  = document.getElementById('acc_pass')?.value;
+    const role  = document.getElementById('acc_role')?.value;
+    if(!name||!email||!pass){ alert('Vui lòng điền đầy đủ thông tin'); return; }
+    if(pass.length < 6){ alert('Mật khẩu tối thiểu 6 ký tự'); return; }
+    try{
+      // Tạo user trong Firebase Auth (cần Admin SDK - dùng callable function hoặc tạo thủ công)
+      // Ở đây ta tạo Firestore record trước, email/pass tạo thủ công qua Firebase Console
+      // Hoặc dùng secondary app để không log out admin
+      const secondApp = firebase.initializeApp(firebase.app().options, 'secondary_'+Date.now());
+      const secondAuth = secondApp.auth();
+      const cred = await secondAuth.createUserWithEmailAndPassword(email, pass);
+      await cred.user.updateProfile({displayName: name});
+      await fbDb.collection('users').doc(cred.user.uid).set({
+        displayName: name, email, role, permissions: perms, active: true,
+        createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+        createdBy: window.currentUser.uid
+      });
+      await secondAuth.signOut();
+      secondApp.delete();
+      alert('✅ Tạo tài khoản thành công!');
+      closeModal();
+      navigate('accounts');
+    } catch(e){ alert('❌ Lỗi: '+(e.code==='auth/email-already-in-use'?'Email này đã tồn tại':e.message)); }
+  } else {
+    // Cập nhật quyền
+    await fbDb.collection('users').doc(uid).update({ permissions: perms });
+    alert('✅ Đã cập nhật quyền!');
+    closeModal();
+    navigate('accounts');
+  }
+};
+
+window.toggleAccountActive = async function(uid, action){
+  const msg = action==='lock' ? 'Khoá tài khoản này?' : 'Mở khoá tài khoản này?';
+  if(!confirm(msg)) return;
+  await fbDb.collection('users').doc(uid).update({ active: action!=='lock' });
+  navigate('accounts');
+};
+
+/* =========================================================
    SETTINGS
    ========================================================= */
 function renderSettings(main){
@@ -15779,6 +16005,7 @@ render();
 
 <!-- Firebase init + Auth logic -->
 <script>
+window.addEventListener('load', function() {
 // ── Firebase config ──
 const firebaseConfig = {
   apiKey: "AIzaSyCYEa7B39FEpLWeFLjRGEmi2vvgteoqaUM",
@@ -15815,9 +16042,25 @@ fbAuth.onAuthStateChanged(async user => {
         const nameEl = document.getElementById('sidebarUserName');
         if(nameEl) nameEl.textContent = doc.data().displayName || user.email;
         const roleEl = document.getElementById('sidebarUserRole');
-        if(roleEl) roleEl.textContent = doc.data().role === 'admin' ? 'Admin' :
+        const isAdminUser = user.email === ADMIN_EMAIL || doc.data().role === 'admin';
+        if(roleEl) roleEl.textContent = isAdminUser ? 'Admin' :
                                          doc.data().role === 'hr' ? 'HR Full' :
                                          doc.data().role === 'manager' ? 'Manager' : 'Viewer';
+        // Avatar chữ cái đầu
+        const avatarEl = document.getElementById('sidebarUserAvatar');
+        if(avatarEl){ const nm = doc.data().displayName || user.email || ''; avatarEl.textContent = nm.slice(0,2).toUpperCase(); }
+        // Hiện nav Quản lý tài khoản nếu là admin
+        const navAcc = document.getElementById('navAccounts');
+        if(navAcc) navAcc.style.display = isAdminUser ? '' : 'none';
+        // Ẩn nav items theo quyền
+        const perms = doc.data().permissions || {};
+        document.querySelectorAll('.nav-item[data-page]').forEach(item=>{
+          const pg = item.dataset.page;
+          if(pg==='dashboard'||pg==='settings'||pg==='accounts') return;
+          if(isAdminUser) return;
+          const lvl = perms[pg] || 'none';
+          item.style.display = lvl === 'none' ? 'none' : '';
+        });
         render();
       } else {
         // User exists in Auth but not in Firestore → not approved yet
@@ -15867,6 +16110,27 @@ function showAuthError(msg){
   if(el) el.textContent = msg;
 }
 
+// ── User menu toggle ──
+window.toggleUserMenu = function(){
+  const m = document.getElementById('userMenuPopup');
+  if(m) m.style.display = m.style.display === 'none' ? 'block' : 'none';
+};
+document.addEventListener('click', function(e){
+  const popup = document.getElementById('userMenuPopup');
+  if(popup && !popup.contains(e.target) && !e.target.closest('.sidebar-footer')){
+    popup.style.display = 'none';
+  }
+});
+// ── Change Password ──
+window.doChangePassword = function(){
+  const newPass = prompt('Nhập mật khẩu mới (tối thiểu 6 ký tự):');
+  if(!newPass || newPass.length < 6){ alert('Mật khẩu phải có ít nhất 6 ký tự.'); return; }
+  if(!window.currentUser){ return; }
+  window.currentUser.updatePassword(newPass)
+    .then(() => { alert('✅ Đổi mật khẩu thành công!'); document.getElementById('userMenuPopup').style.display='none'; })
+    .catch(e => { alert('❌ Lỗi: '+(e.code==='auth/requires-recent-login'?'Phiên đăng nhập quá cũ, vui lòng đăng xuất và đăng nhập lại.':e.message)); });
+};
+
 // ── Logout ──
 window.doLogout = function(){
   if(confirm('Đăng xuất khỏi hệ thống?')){
@@ -15879,18 +16143,27 @@ window.doLogout = function(){
 window.canDo = function(module, action='view'){
   const ud = window.currentUserData;
   if(!ud) return false;
+  // Admin cố định theo email
+  if(window.currentUser?.email === ADMIN_EMAIL) return true;
   if(ud.role === 'admin') return true;
-  // Check module permission
   const perms = ud.permissions || {};
-  const mp = perms[module];
-  if(!mp) return false;
+  const mp = perms[module] || 'none';
+  if(mp === 'none') return false;
   if(action === 'view') return mp === 'view' || mp === 'edit' || mp === 'full';
   if(action === 'edit') return mp === 'edit' || mp === 'full';
   if(action === 'full') return mp === 'full';
   return false;
 };
 
-window.isAdmin = () => window.currentUserData?.role === 'admin';
+// Kiểm tra có được xem lương không
+window.canSeeSalary = function(){
+  if(window.currentUser?.email === ADMIN_EMAIL) return true;
+  if(window.currentUserData?.role === 'admin') return true;
+  const perms = window.currentUserData?.permissions || {};
+  return (perms.salary || 'hide') === 'show';
+};
+
+window.isAdmin = () => window.currentUser?.email === ADMIN_EMAIL || window.currentUserData?.role === 'admin';
 
 // ── Audit log ──
 window.logAudit = function(action, module, target, detail){
@@ -15908,6 +16181,7 @@ window.logAudit = function(action, module, target, detail){
     });
   } catch(e){ console.warn('Audit log error:', e); }
 };
+}); // end window.load
 </script>
 </body>
 </html>
