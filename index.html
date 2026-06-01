@@ -14645,10 +14645,12 @@ function renderAccounts(main){
 }
 
 async function loadAccountsList(){
+  // Đảm bảo fbDb available
+  if(!window.fbDb){ document.getElementById('accountsList').innerHTML='<div style="color:var(--danger);padding:20px">Đang kết nối Firebase...</div>'; setTimeout(loadAccountsList,1000); return; }
   const el = document.getElementById('accountsList');
   if(!el) return;
   try{
-    const snap = await fbDb.collection('users').get();
+    const snap = await window.fbDb.collection('users').get();
     if(snap.empty){ el.innerHTML='<div style="text-align:center;padding:40px;color:var(--ink-muted)">Chưa có tài khoản nào</div>'; return; }
     const rows = snap.docs.map(d=>{
       const u = d.data();
@@ -14685,7 +14687,7 @@ async function loadAccountsList(){
 window.openAccountModal = async function(uid=null){
   let userData = null;
   if(uid){
-    const doc = await fbDb.collection('users').doc(uid).get();
+    const doc = await window.fbDb.collection('users').doc(uid).get();
     userData = doc.exists ? doc.data() : null;
   }
   const perms = userData?.permissions || {};
@@ -14712,7 +14714,7 @@ window.openAccountModal = async function(uid=null){
     </tr>${salaryRow}`;
   }).join('');
 
-  showModal(`<div>
+  openModal(`<div>
     <div style="margin-bottom:20px">
       <div style="font-family:'Fraunces',serif;font-size:20px;font-weight:500;margin-bottom:4px">${uid ? 'Sửa quyền tài khoản' : 'Tạo tài khoản mới'}</div>
       <div style="font-size:12.5px;color:var(--ink-muted)">${uid ? 'Cập nhật thông tin và phân quyền' : 'Nhập thông tin và cấp quyền truy cập'}</div>
@@ -14739,7 +14741,7 @@ window.openAccountModal = async function(uid=null){
       <button class="btn" onclick="closeModal()">Huỷ</button>
       <button class="btn btn-primary" onclick="saveAccount('${uid||''}')">💾 Lưu</button>
     </div>
-  </div>`, {wide:true});
+  </div>`, true);
 };
 
 window.onPermChange = function(module, val){
@@ -14767,13 +14769,13 @@ window.saveAccount = async function(uid){
       // Tạo user trong Firebase Auth (cần Admin SDK - dùng callable function hoặc tạo thủ công)
       // Ở đây ta tạo Firestore record trước, email/pass tạo thủ công qua Firebase Console
       // Hoặc dùng secondary app để không log out admin
-      const secondApp = firebase.initializeApp(firebase.app().options, 'secondary_'+Date.now());
+      const secondApp = window.firebase.initializeApp(window.firebase.app().options, 'secondary_'+Date.now());
       const secondAuth = secondApp.auth();
       const cred = await secondAuth.createUserWithEmailAndPassword(email, pass);
       await cred.user.updateProfile({displayName: name});
-      await fbDb.collection('users').doc(cred.user.uid).set({
+      await window.fbDb.collection('users').doc(cred.user.uid).set({
         displayName: name, email, role, permissions: perms, active: true,
-        createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+        createdAt: window.firebase.firestore.FieldValue.serverTimestamp(),
         createdBy: window.currentUser.uid
       });
       await secondAuth.signOut();
@@ -14784,7 +14786,7 @@ window.saveAccount = async function(uid){
     } catch(e){ alert('❌ Lỗi: '+(e.code==='auth/email-already-in-use'?'Email này đã tồn tại':e.message)); }
   } else {
     // Cập nhật quyền
-    await fbDb.collection('users').doc(uid).update({ permissions: perms });
+    await window.fbDb.collection('users').doc(uid).update({ permissions: perms });
     alert('✅ Đã cập nhật quyền!');
     closeModal();
     navigate('accounts');
@@ -14794,7 +14796,7 @@ window.saveAccount = async function(uid){
 window.toggleAccountActive = async function(uid, action){
   const msg = action==='lock' ? 'Khoá tài khoản này?' : 'Mở khoá tài khoản này?';
   if(!confirm(msg)) return;
-  await fbDb.collection('users').doc(uid).update({ active: action!=='lock' });
+  await window.fbDb.collection('users').doc(uid).update({ active: action!=='lock' });
   navigate('accounts');
 };
 
@@ -16021,6 +16023,10 @@ const firebaseConfig = {
 firebase.initializeApp(firebaseConfig);
 const fbAuth = firebase.auth();
 const fbDb   = firebase.firestore();
+// Gán lên window để các hàm ngoài scope có thể dùng
+window.fbAuth = fbAuth;
+window.fbDb   = fbDb;
+window.firebase = firebase;
 
 // ── Current user state ──
 window.currentUser = null;
