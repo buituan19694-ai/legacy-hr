@@ -14593,7 +14593,8 @@ function saveRfConfig(){
 /* =========================================================
    ACCOUNTS — Quản lý tài khoản (Admin only)
    ========================================================= */
-const ADMIN_EMAIL = 'buituan19694@gmail.com';
+window.ADMIN_EMAIL = 'buituan19694@gmail.com';
+const ADMIN_EMAIL = window.ADMIN_EMAIL;
 
 const MODULE_LIST = [
   {key:'employees',  label:'Nhân viên'},
@@ -16006,6 +16007,7 @@ render();
 <!-- Firebase init + Auth logic -->
 <script>
 window.addEventListener('load', function() {
+const ADMIN_EMAIL = window.ADMIN_EMAIL || 'buituan19694@gmail.com';
 // ── Firebase config ──
 const firebaseConfig = {
   apiKey: "AIzaSyCYEa7B39FEpLWeFLjRGEmi2vvgteoqaUM",
