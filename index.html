@@ -622,10 +622,10 @@ input:checked + .slider::before{transform:translateX(16px);background:var(--bg)}
         <div style="padding:8px 12px;font-size:10.5px;color:var(--ink-muted);border-top:1px solid var(--border);text-align:center">Bản quyền · Bùi Tuấn · buituan19694@gmail.com</div>
       </div>
       <div class="user-mini" onclick="toggleUserMenu()" style="cursor:pointer" title="Tùy chọn tài khoản">
-        <div class="avatar" id="sidebarUserAvatar">HM</div>
+        <div class="avatar" id="sidebarUserAvatar">—</div>
         <div style="flex:1;min-width:0">
-          <div class="user-mini-name" id="sidebarUserName">Hà Minh</div>
-          <div class="user-mini-role" id="sidebarUserRole">HR Director</div>
+          <div class="user-mini-name" id="sidebarUserName">—</div>
+          <div class="user-mini-role" id="sidebarUserRole">—</div>
         </div>
         <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" style="width:13px;height:13px;opacity:.4;flex-shrink:0"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l4-4 4 4m0 6l-4 4-4-4"/></svg>
       </div>
@@ -2262,7 +2262,7 @@ function renderDashboard(main){
     <div class="topbar">
       <div class="topbar-left">
         <div class="crumb">Workspace · <span>Tổng quan</span></div>
-        <h1 class="page-title">${greeting}, <em>Hà Minh</em></h1>
+        <h1 class="page-title">${greeting}, <em>${escapeHtml((window.currentUserData?.displayName||window.currentUser?.email||'').split(' ').slice(-1)[0])}</em></h1>
         <div class="page-sub">${todayStr} — bức tranh nhân sự Legacy Yên Tử</div>
       </div>
       <div class="topbar-actions">
