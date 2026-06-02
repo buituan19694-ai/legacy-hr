@@ -5477,8 +5477,10 @@ function exportEmployeesXLSX(){
 
   const rows = DB.employees.map(e=>{
     const cd = DB.customData[e.id] || {};
+    // Prefix string-type cells with apostrophe trick via SheetJS 't':'s' type
+    // For phone — ensure it's exported as text
     const std = [
-      e.code, e.name, e.email||'', e.phone||'',
+      e.code, e.name, e.email||'', {v: e.phone||'', t:'s'},
       e.dob||'', e.gender==='male'?'Nam':e.gender==='female'?'Nữ':'Khác',
       deptName(e.deptId), e.role||'', e.level||'', e.joined||'',
       STATUS_LABEL[e.status]||'', e.kpi||0,
@@ -5488,6 +5490,8 @@ function exportEmployeesXLSX(){
       .map(cf => {
         const val = cd[cf.key] || '';
         if(SALARY_KEYS.includes(cf.key) && val) return parseInt(val)||0;
+        // String-type fields (cccd, phone, bank account): force text
+        if(cf.type==='text'||cf.type==='phone'||!cf.type) return {v: String(val), t:'s'};
         return val;
       });
     return [...std, ...custom];
@@ -5685,11 +5689,11 @@ function handleImportFile(file){
   const reader = new FileReader();
   reader.onload = (e) => {
     try {
-      const wb = XLSX.read(e.target.result, {type:'binary', cellDates:true});
+      const wb = XLSX.read(e.target.result, {type:'binary', cellDates:true, cellText:true});
       // Dùng sheet đầu tiên (hoặc sheet "Mẫu nhập liệu" nếu có)
       const sheetName = wb.SheetNames.find(n=>n.includes('nhập')||n.includes('Nhập')) || wb.SheetNames[0];
       const ws = wb.Sheets[sheetName];
-      const data = XLSX.utils.sheet_to_json(ws, {header:1, defval:''});
+      const data = XLSX.utils.sheet_to_json(ws, {header:1, defval:'', raw:false});
 
       if(data.length < 2){ toast('File không có dữ liệu','error'); return; }
 
@@ -5713,7 +5717,15 @@ function handleImportFile(file){
         if(i < 0) return '';
         const v = row[i];
         if(v instanceof Date) return v.toISOString().slice(0,10);
-        return String(v||'').trim();
+        // Always stringify — preserves leading zeros (phone, CCCD, bank account)
+        return String(v==null?'':v).trim();
+      };
+
+      // For fields that must stay as string (phone, CCCD, bank): strip any decimal Excel may add
+      const getStr = (row, label) => {
+        const v = get(row, label);
+        // If Excel rendered as "912345678.0" strip the .0
+        return v.replace(/\.0+$/, '');
       };
 
       const parsed = dataRows.map((row, ri) => {
@@ -5742,17 +5754,17 @@ function handleImportFile(file){
         const deptRaw = get(row,'Phòng ban');
         const deptObj = DB.departments.find(d=>d.name.toLowerCase()===deptRaw.toLowerCase());
 
-        // Custom fields
+        // Custom fields — use getStr for string-type fields to preserve leading zeros
         const customData = {};
         DB.customFields.forEach(cf => {
-          const val = get(row, cf.label);
+          const val = cf.type === 'number' ? get(row, cf.label) : getStr(row, cf.label);
           if(val !== '') customData[cf.key] = val;
         });
 
         const existing = DB.employees.find(e=>e.code===code);
         return {
           ri: ri+2, code, name, email, role,
-          phone: get(row,'SĐT'),
+          phone: getStr(row,'SĐT'),
           dob: get(row,'Ngày sinh'),
           gender, joined, status,
           level: get(row,'Cấp bậc'),
