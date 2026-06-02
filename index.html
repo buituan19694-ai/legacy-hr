@@ -5465,7 +5465,6 @@ function exportEmployeesXLSX(){
   XLSX.writeFile(wb, 'LegacyYenTu_NhanVien_'+today+'.xlsx');
   toast('Đã xuất '+DB.employees.length+' nhân viên'+(canSalary?' + sheet phân tích lương':''));
 }
-}
 
 function openImportEmployeesModal(){
   openModal(`
