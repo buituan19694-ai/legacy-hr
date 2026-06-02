@@ -3356,7 +3356,7 @@ function exportJSON(){
 /* =========================================================
    EMPLOYEES — Full CRUD
    ========================================================= */
-let empFilter = {search:'', dept:'', status:'', level:'', flags:{}, joinedFrom:'', joinedTo:'', joinedMonth:0, joinedYear:0, dobMonth:0, dobYear:0};
+let empFilter = {search:'', dept:'', status:'', level:'', flags:{}, joinedFrom:'', joinedTo:'', joinedMonth:0, joinedYear:0, dobMonth:0, dobYear:0, colGender:'', colJoinedYear:'', colRole:'', colCode:'', colContact:''};
 let empPage = 1;
 let empPerPage = 'all'; // 'all' | 10 | 25 | 50 | 100
 
@@ -4435,31 +4435,7 @@ function renderEmployees(main){
         </select>
       </div>
 
-      <!-- Hàng 3: Lọc theo ngày -->
-      <div class="filters" style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border)">
-        <span style="font-size:11px;color:var(--ink-muted);font-weight:600;white-space:nowrap">📅 Ngày vào làm:</span>
-        <input type="date" class="filter-select" style="width:148px" title="Từ ngày" value="${empFilter.joinedFrom}" onchange="setEmpFilter('joinedFrom',this.value)" placeholder="Từ ngày">
-        <span style="font-size:11px;color:var(--ink-muted)">→</span>
-        <input type="date" class="filter-select" style="width:148px" title="Đến ngày" value="${empFilter.joinedTo}" onchange="setEmpFilter('joinedTo',this.value)" placeholder="Đến ngày">
-        <select class="filter-select" style="width:110px" onchange="setEmpFilter('joinedMonth',parseInt(this.value))" title="Tháng vào làm">
-          <option value="0" ${!empFilter.joinedMonth?'selected':''}>Mọi tháng</option>
-          ${['T1','T2','T3','T4','T5','T6','T7','T8','T9','T10','T11','T12'].map((m,i)=>`<option value="${i+1}" ${empFilter.joinedMonth===i+1?'selected':''}>${m}</option>`).join('')}
-        </select>
-        <select class="filter-select" style="width:90px" onchange="setEmpFilter('joinedYear',parseInt(this.value))" title="Năm vào làm">
-          <option value="0" ${!empFilter.joinedYear?'selected':''}>Mọi năm</option>
-          ${(()=>{const yr=new Date().getFullYear();return [...Array(15)].map((_,i)=>yr-i).map(y=>`<option value="${y}" ${empFilter.joinedYear===y?'selected':''}>${y}</option>`).join('');})()}
-        </select>
-        <span style="font-size:11px;color:var(--ink-muted);font-weight:600;white-space:nowrap;margin-left:8px">🎂 Ngày sinh:</span>
-        <select class="filter-select" style="width:110px" onchange="setEmpFilter('dobMonth',parseInt(this.value))" title="Tháng sinh">
-          <option value="0" ${!empFilter.dobMonth?'selected':''}>Mọi tháng</option>
-          ${['T1','T2','T3','T4','T5','T6','T7','T8','T9','T10','T11','T12'].map((m,i)=>`<option value="${i+1}" ${empFilter.dobMonth===i+1?'selected':''}>${m}</option>`).join('')}
-        </select>
-        <select class="filter-select" style="width:90px" onchange="setEmpFilter('dobYear',parseInt(this.value))" title="Năm sinh">
-          <option value="0" ${!empFilter.dobYear?'selected':''}>Mọi năm</option>
-          ${(()=>{const yr=new Date().getFullYear();return [...Array(60)].map((_,i)=>yr-18-i).map(y=>`<option value="${y}" ${empFilter.dobYear===y?'selected':''}>${y}</option>`).join('');})()}
-        </select>
-        ${(empFilter.joinedFrom||empFilter.joinedTo||empFilter.joinedMonth||empFilter.joinedYear||empFilter.dobMonth||empFilter.dobYear)?`<button class="btn" style="font-size:11px;padding:5px 10px" onclick="clearEmpDateFilter()">✕ Xoá lọc ngày</button>`:''}
-      </div>
+
 
       ${filtered.length === 0 ? `
         <div class="empty-state">
@@ -4514,11 +4490,55 @@ function renderEmployees(main){
         return `
         <div style="overflow-x:auto">
         <table class="tbl">
-          <thead><tr>
+          <thead>
+          <tr>
             <th>Nhân viên</th><th>Mã NV</th><th>Phòng ban</th><th>Cấp bậc</th><th>Liên hệ</th><th>Vào làm</th><th>Performance</th>
             ${customCols.map(cf=>`<th>${escapeHtml(cf.label)}</th>`).join('')}
             <th>Trạng thái</th><th></th>
-          </tr></thead>
+          </tr>
+          <tr style="background:var(--bg-elev)">
+            <td style="padding:4px 8px">
+              <input id="empColSearch" placeholder="Tìm tên..." style="width:100%;padding:3px 6px;font-size:11px;background:var(--bg-card);border:1px solid var(--border);border-radius:4px;color:var(--ink)" value="${empFilter.search}" oninput="debounceEmpSearch(this.value)">
+            </td>
+            <td style="padding:4px 8px">
+              <input id="empColCode" placeholder="Mã NV..." style="width:80px;padding:3px 6px;font-size:11px;background:var(--bg-card);border:1px solid var(--border);border-radius:4px;color:var(--ink)" value="${empFilter.colCode||''}" oninput="setEmpFilter('colCode',this.value)">
+            </td>
+            <td style="padding:4px 8px">
+              <select style="width:100%;padding:3px 6px;font-size:11px;background:var(--bg-card);border:1px solid var(--border);border-radius:4px;color:var(--ink)" onchange="setEmpFilter('dept',this.value)">
+                <option value="">Tất cả</option>
+                ${DB.departments.map(d=>`<option value="${d.id}" ${empFilter.dept===d.id?'selected':''}>${escapeHtml(d.name)}</option>`).join('')}
+              </select>
+            </td>
+            <td style="padding:4px 8px">
+              <select style="width:70px;padding:3px 6px;font-size:11px;background:var(--bg-card);border:1px solid var(--border);border-radius:4px;color:var(--ink)" onchange="setEmpFilter('level',this.value)">
+                <option value="">Tất cả</option>
+                ${[1,2,3,4,5,6,7,8,9].map(l=>`<option value="${l}" ${empFilter.level===l?'selected':''}>${l}</option>`).join('')}
+              </select>
+            </td>
+            <td style="padding:4px 8px">
+              <input id="empColContact" placeholder="Email/SĐT..." style="width:100%;padding:3px 6px;font-size:11px;background:var(--bg-card);border:1px solid var(--border);border-radius:4px;color:var(--ink)" value="${empFilter.colContact||''}" oninput="setEmpFilter('colContact',this.value)">
+            </td>
+            <td style="padding:4px 8px">
+              <select style="width:80px;padding:3px 6px;font-size:11px;background:var(--bg-card);border:1px solid var(--border);border-radius:4px;color:var(--ink)" onchange="setEmpFilter('colJoinedYear',this.value)">
+                <option value="">Tất cả</option>
+                ${(()=>{const yr=new Date().getFullYear();return [...Array(15)].map((_,i)=>yr-i).map(y=>`<option value="${y}" ${empFilter.colJoinedYear==y?'selected':''}>${y}</option>`).join('');})()}
+              </select>
+            </td>
+            <td style="padding:4px 8px"></td>
+            ${customCols.map(()=>'<td></td>').join('')}
+            <td style="padding:4px 8px">
+              <select style="width:100%;padding:3px 6px;font-size:11px;background:var(--bg-card);border:1px solid var(--border);border-radius:4px;color:var(--ink)" onchange="setEmpFilter('status',this.value)">
+                <option value="">Tất cả</option>
+                <option value="active" ${empFilter.status==='active'?'selected':''}>Đang làm</option>
+                <option value="exit" ${empFilter.status==='exit'?'selected':''}>Đã nghỉ</option>
+                <option value="probation" ${empFilter.status==='probation'?'selected':''}>Thử việc</option>
+              </select>
+            </td>
+            <td style="padding:4px 8px;text-align:center">
+              ${(empFilter.search||empFilter.dept||empFilter.level||empFilter.colCode||empFilter.colContact||empFilter.colJoinedYear||empFilter.status)?`<button onclick="empFilter.search='';empFilter.dept='';empFilter.level='';empFilter.colCode='';empFilter.colContact='';empFilter.colJoinedYear='';empFilter.status='';empPage=1;render()" style="border:none;background:var(--danger);color:#fff;border-radius:4px;padding:2px 7px;font-size:10px;cursor:pointer;font-weight:600">✕</button>`:''}
+            </td>
+          </tr>
+          </thead>
           <tbody>${tableRows}</tbody>
         </table>
         </div>
@@ -4575,6 +4595,13 @@ function applyEmpFilter(){
     else r=r.filter(e=>getEffectiveStatus(e)===empFilter.status);
   }
   if(empFilter.level) r = r.filter(e=>e.level===empFilter.level);
+
+  // Lọc theo cột
+  if(empFilter.colCode)       r = r.filter(e=>(e.code||'').toLowerCase().includes(empFilter.colCode.toLowerCase()));
+  if(empFilter.colContact)    r = r.filter(e=>(e.email||'').toLowerCase().includes(empFilter.colContact.toLowerCase())||(e.phone||'').includes(empFilter.colContact));
+  if(empFilter.colGender)     r = r.filter(e=>e.gender===empFilter.colGender);
+  if(empFilter.colJoinedYear) r = r.filter(e=>e.joined&&new Date(e.joined).getFullYear()===parseInt(empFilter.colJoinedYear));
+  if(empFilter.colRole)       r = r.filter(e=>(e.role||'')===empFilter.colRole);
 
   // Lọc ngày vào làm
   if(empFilter.joinedFrom) r = r.filter(e=>e.joined && e.joined >= empFilter.joinedFrom);
@@ -4851,12 +4878,38 @@ function saveFilterPrefs(){
   render();
 }
 
-function setEmpFilter(key, val){ empFilter[key]=val; empPage=1; render(); }
+function setEmpFilter(key, val){
+  empFilter[key]=val;
+  empPage=1;
+  // Preserve focus for text input fields
+  const active = document.activeElement;
+  const activeId = active?.id;
+  const selStart = active?.selectionStart;
+  const selEnd   = active?.selectionEnd;
+  render();
+  if(activeId){
+    const el = document.getElementById(activeId);
+    if(el && el.tagName==='INPUT'){ el.focus(); try{ el.setSelectionRange(selStart, selEnd); }catch(e){} }
+  }
+}
 let _empSearchTimer = null;
 function debounceEmpSearch(val){
-  empFilter.search = val; // update state immediately so it's not lost on re-render
+  empFilter.search = val;
   clearTimeout(_empSearchTimer);
-  _empSearchTimer = setTimeout(()=>{ empPage=1; render(); }, 250);
+  _empSearchTimer = setTimeout(()=>{
+    empPage=1;
+    // Remember which element had focus and its cursor position
+    const active = document.activeElement;
+    const activeId = active?.id;
+    const selStart = active?.selectionStart;
+    const selEnd   = active?.selectionEnd;
+    render();
+    // Restore focus and cursor after render
+    if(activeId){
+      const el = document.getElementById(activeId);
+      if(el){ el.focus(); try{ el.setSelectionRange(selStart, selEnd); }catch(e){} }
+    }
+  }, 300);
 }
 function clearEmpDateFilter(){ empFilter.joinedFrom=''; empFilter.joinedTo=''; empFilter.joinedMonth=0; empFilter.joinedYear=0; empFilter.dobMonth=0; empFilter.dobYear=0; empPage=1; render(); }
 function setEmpPage(p){ if(p<1) return; empPage=p; render(); }
@@ -4864,7 +4917,15 @@ function setEmpPerPage(val){ empPerPage = val === 'all' ? 'all' : parseInt(val);
 
 function editEmployee(id, prefill = null){
   const isNew = !id;
-  const e = isNew ? {id:uid(), code:'EMP-'+String(Math.floor(Math.random()*9000)+1000), name:'', email:'', phone:'', dob:'', gender:'male', deptId:DB.departments[0]?.id||'', role:'', level:'', joined:new Date().toISOString().slice(0,10), status:'active', kpi:0, photo:''} : {...empById(id)};
+  const nextEmpCode = (()=>{
+    const nums = (DB.employees||[])
+      .map(e=>(e.code||'').match(/^MG(\d+)$/i))
+      .filter(Boolean)
+      .map(m=>parseInt(m[1]));
+    const max = nums.length ? Math.max(...nums) : 0;
+    return 'MG' + String(max+1).padStart(5,'0');
+  })();
+  const e = isNew ? {id:uid(), code:nextEmpCode, name:'', email:'', phone:'', dob:'', gender:'male', deptId:DB.departments[0]?.id||'', role:'', level:'', joined:new Date().toISOString().slice(0,10), status:'active', kpi:0, photo:''} : {...empById(id)};
   if(!e) return;
   // Apply prefill data when creating from candidate
   if(isNew && prefill){
@@ -5128,6 +5189,10 @@ function saveEmployee(id, isNew){
   const email = $('#f_email').value.trim();
   const role = $('#f_role').value.trim();
   if(!name || !code || !email || !role){ toast('Vui lòng nhập đủ thông tin bắt buộc', 'error'); return; }
+
+  // Kiểm tra trùng mã NV
+  const dupEmp = DB.employees.find(e => e.code.trim().toLowerCase() === code.toLowerCase() && e.id !== id);
+  if(dupEmp){ toast(`⚠️ Mã "${code}" đã tồn tại — ${dupEmp.name}`, 'error'); return; }
 
   // Thu thập custom fields
   const customValues = {};
@@ -17021,8 +17086,16 @@ function viewTrainee(id){
 
 function editTrainee(id){
   const isNew = !id;
+  const nextTraineeCode = (()=>{
+    const nums = (DB.trainees||[])
+      .map(t=>(t.code||'').match(/^MG-Trainee(\d+)$/i))
+      .filter(Boolean)
+      .map(m=>parseInt(m[1]));
+    const max = nums.length ? Math.max(...nums) : 0;
+    return 'MG-Trainee' + (max+1);
+  })();
   const t = isNew
-    ? {id:'',name:'',code:'',dob:'',phone:'',school:'',deptId:'',startDate:'',endDate:'',qty:1,cccd:'',bank:'',bankName:'',notes:''}
+    ? {id:'',name:'',code:nextTraineeCode,dob:'',phone:'',school:'',deptId:'',startDate:'',endDate:'',qty:1,cccd:'',bank:'',bankName:'',notes:''}
     : (DB.trainees||[]).find(x=>x.id===id)||{};
 
   openModal(`
@@ -17075,6 +17148,13 @@ function saveTrainee(id, isNew){
   if(!name){toast('Nhập họ tên','error');return;}
   if(!school){toast('Nhập tên trường','error');return;}
   if(!startDate){toast('Chọn ngày bắt đầu','error');return;}
+
+  // Kiểm tra trùng mã thực tập sinh
+  const trCode = $('#tr_code').value.trim();
+  if(trCode){
+    const dupTr = (DB.trainees||[]).find(t => (t.code||'').trim().toLowerCase() === trCode.toLowerCase() && t.id !== id);
+    if(dupTr){ toast(`⚠️ Mã "${trCode}" đã tồn tại — ${dupTr.name}`, 'error'); return; }
+  }
   const data = {
     id: isNew?uid():id,
     name, school, deptId, startDate,
