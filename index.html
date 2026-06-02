@@ -3334,8 +3334,11 @@ function renderEmployeeProfile(main){
     if(cf.type === 'email') return `<a href="mailto:${escapeHtml(val)}" style="color:var(--accent);text-decoration:none">${escapeHtml(val)}</a>`;
     if(cf.type === 'tel') return `<a href="tel:${escapeHtml(val)}" style="color:var(--accent);text-decoration:none;font-family:'JetBrains Mono',monospace">${escapeHtml(val)}</a>`;
     if(cf.type === 'number'){
-      if(MONEY_KEYS.includes(cf.key) && parseInt(val) > 0)
-        return `<span style="font-family:'JetBrains Mono',monospace;color:var(--success);font-weight:600">${fmtMoney(parseInt(val))} đ</span>`;
+      if(MONEY_KEYS.includes(cf.key)){
+        if(!window.canSeeSalary()) return '<span style="color:var(--ink-muted)">🔒 Ẩn</span>';
+        if(parseInt(val) > 0)
+          return `<span style="font-family:'JetBrains Mono',monospace;color:var(--success);font-weight:600">${fmtMoney(parseInt(val))} đ</span>`;
+      }
       return `<span style="font-family:'JetBrains Mono',monospace">${escapeHtml(val)}</span>`;
     }
     return escapeHtml(val);
@@ -3459,7 +3462,7 @@ function renderEmployeeProfile(main){
           const bonus = bonusEntry ? parseInt(bonusEntry.val)||0 : 0;
           const total = base + bonus;
 
-          const salaryBlock = (groupName === 'Tuyển dụng' && hasSalary) ? `
+          const salaryBlock = (groupName === 'Tuyển dụng' && hasSalary && window.canSeeSalary()) ? `
             <div class="profile-field" style="grid-column:1/-1;border-bottom:none;padding-bottom:0">
               <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;padding:12px;background:rgba(212,165,116,.06);border:1px solid rgba(212,165,116,.2);border-radius:8px;width:100%">
                 <div style="text-align:center">
@@ -3638,7 +3641,7 @@ function renderEmployeeProfile(main){
     </div>
 
     <!-- Lịch sử thăng chức -->
-    <div class="card" style="margin-top:16px">
+    <div class="card" style="margin-top:16px;${(()=>{ const p=window.currentUserData?.permissions||{}; return (!window.isAdmin()&&(p.promotions||'hide')==='hide')?'display:none':''; })()}">
       <div class="card-head">
         <div>
           <div class="card-title">🚀 Lịch sử <em>thăng chức</em></div>
@@ -14601,6 +14604,8 @@ const MODULE_LIST = [
   {key:'contracts',  label:'Hợp đồng'},
   {key:'leaves',     label:'Nghỉ phép'},
   {key:'recruitment',label:'Tuyển dụng'},
+  {key:'casual',     label:'Lao động Casual'},
+  {key:'trainee',    label:'Thực tập sinh'},
   {key:'training',   label:'Đào tạo'},
   {key:'performance',label:'Đánh giá KPI'},
   {key:'awards',     label:'Khen thưởng'},
@@ -14703,6 +14708,15 @@ window.openAccountModal = async function(uid=null){
             <option value="show" ${(perms.salary||'hide')==='show'?'selected':''}>👁 Xem được lương</option>
           </select>
         </td>
+      </tr>
+      <tr id="promotionRow" style="display:${cur==='none'?'none':''}">
+        <td style="padding:6px 14px;padding-left:28px;color:var(--ink-muted);font-size:12px">└ Xem <strong>Lịch sử thăng chức</strong></td>
+        <td style="padding:6px 14px">
+          <select id="perm_promotions" style="padding:5px 8px;background:var(--bg-elev);border:1px solid var(--border);border-radius:6px;color:var(--ink);font-size:12px">
+            <option value="hide" ${(perms.promotions||'hide')==='hide'?'selected':''}>🙈 Ẩn thăng chức</option>
+            <option value="show" ${(perms.promotions||'hide')==='show'?'selected':''}>👁 Xem được</option>
+          </select>
+        </td>
       </tr>` : '';
     return `<tr style="border-bottom:1px solid var(--border)">
       <td style="padding:8px 14px;font-weight:500;font-size:13px">${m.label}</td>
@@ -14748,12 +14762,15 @@ window.onPermChange = function(module, val){
   if(module === 'employees'){
     const row = document.getElementById('salaryRow');
     if(row) row.style.display = val==='none' ? 'none' : '';
+    const prow = document.getElementById('promotionRow');
+    if(prow) prow.style.display = val==='none' ? 'none' : '';
   }
 };
 
 window.saveAccount = async function(uid){
   const perms = {};
   MODULE_LIST.forEach(m=>{ perms[m.key] = document.getElementById('perm_'+m.key)?.value || 'none'; });
+  perms.promotions = document.getElementById('perm_promotions')?.value || 'hide';
   const salaryEl = document.getElementById('perm_salary');
   if(salaryEl) perms.salary = salaryEl.value;
 
