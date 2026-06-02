@@ -1198,18 +1198,92 @@ function loadData(){
   }
   return fresh;
 }
-function saveData(){
+// ── Mapping: DB field → Firestore document ──
+const FS_DOC_MAP = {
+  employees:  ['employees','departments','customData'],
+  hr:         ['leaves','contracts','leaveSheet','leaveOpening'],
+  recruitment:['candidates','jobs'],
+  workforce:  ['casuals','trainees','traineeSchedules'],
+  performance:['kpiReviews','promotions','rewardRecords','disciplineRecords'],
+  config:     ['customFields','rewardTypes','perfReviewTypes','company',
+               'dashboardConfig','brandConfig','blacklistConfig','blacklistReasons',
+               'disciplineSeverityConfig','requiredFieldsConfig','manualBlacklist',
+               'contractTemplates','quickFilterPrefs','recReportConfig','perfReportConfig',
+               '_rewardTypesV2','_levelReset2026'],
+};
+
+// Xác định document nào chứa key này
+function _fsDocFor(key){
+  for(const [doc, keys] of Object.entries(FS_DOC_MAP)){
+    if(keys.includes(key)) return doc;
+  }
+  return 'config'; // fallback
+}
+
+// saveData: lưu localStorage + push đúng Firestore document bị thay đổi
+function saveData(changedKeys=null){
   try{
     localStorage.setItem(STORE_KEY, JSON.stringify(DB));
+    // Ảnh lưu riêng
+    const photoMap = {};
+    (DB.employees||[]).forEach(e=>{ if(e.photo) photoMap[e.id]=e.photo; });
+    try{ localStorage.setItem(STORE_KEY+'_photos', JSON.stringify(photoMap)); }catch(e2){}
+
+    if(window.fbDb && window.currentUser){
+      // Xác định document(s) cần push
+      const docsToSave = new Set();
+      if(!changedKeys){
+        // Không rõ key nào → push tất cả
+        Object.keys(FS_DOC_MAP).forEach(d=>docsToSave.add(d));
+      } else {
+        (Array.isArray(changedKeys)?changedKeys:[changedKeys])
+          .forEach(k=>docsToSave.add(_fsDocFor(k)));
+      }
+
+      const meta = { _syncBy: window.currentUser.uid, _syncAt: Date.now() };
+      docsToSave.forEach(docId=>{
+        const keys = FS_DOC_MAP[docId];
+        const payload = { ...meta };
+        keys.forEach(k=>{
+          let val = DB[k];
+          if(val === undefined) return;
+          // Employees: bỏ ảnh (quá lớn cho Firestore)
+          if(k === 'employees'){
+            val = val.map(e=>{ const {photo,...r}=e; return r; });
+          }
+          payload[k] = val;
+        });
+        window.fbDb.collection('hrdata').doc(docId).set(payload, {merge:true})
+          .catch(err=>{ if(err.code!=='permission-denied') console.warn('FS sync warn:',docId,err.message); });
+      });
+    }
     return true;
   }catch(e){
     if(e.name === 'QuotaExceededError' || /quota/i.test(e.message)){
-      toast('Bộ nhớ trình duyệt đầy. Hãy giảm số ảnh hoặc xoá bớt dữ liệu cũ', 'error');
+      try{
+        const dbNoPhoto = JSON.parse(JSON.stringify(DB));
+        dbNoPhoto.employees = (dbNoPhoto.employees||[]).map(e=>{ const {photo,...r}=e; return r; });
+        localStorage.setItem(STORE_KEY, JSON.stringify(dbNoPhoto));
+        toast('⚠️ Dung lượng gần đầy — ảnh được lưu riêng. Vẫn hoạt động bình thường.','warning');
+        return true;
+      }catch(e3){
+        toast('🚨 Bộ nhớ trình duyệt đầy hoàn toàn. Hãy xoá bớt dữ liệu hoặc ảnh cũ.','error');
+      }
     }else{
-      toast('Không thể lưu dữ liệu: '+e.message, 'error');
+      toast('Không thể lưu dữ liệu: '+e.message,'error');
     }
     return false;
   }
+}
+
+// Load ảnh từ localStorage riêng và merge vào DB.employees
+function loadPhotosFromStorage(){
+  try{
+    const raw = localStorage.getItem(STORE_KEY+'_photos');
+    if(!raw) return;
+    const photoMap = JSON.parse(raw);
+    (DB.employees||[]).forEach(e=>{ if(photoMap[e.id] && !e.photo) e.photo = photoMap[e.id]; });
+  }catch(e){}
 }
 function resetData(){ if(confirm('Khôi phục dữ liệu mẫu? Mọi thay đổi sẽ bị xoá.')){ localStorage.removeItem(STORE_KEY); location.reload(); } }
 
@@ -1309,6 +1383,23 @@ const DEFAULT_REWARD_TYPES = [
 ];
 
 let DB = loadData();
+loadPhotosFromStorage();
+// Proxy để tự động track key nào bị thay đổi → saveData sẽ chỉ push đúng Firestore doc
+window._dirtyKeys = new Set();
+DB = new Proxy(DB, {
+  set(target, key, value){
+    target[key] = value;
+    if(typeof key === 'string' && !key.startsWith('_')) window._dirtyKeys.add(key);
+    return true;
+  }
+});
+// Override saveData để tự dùng dirtyKeys
+const _saveDataOrig = saveData;
+window.saveData = function(changedKeys=null){
+  const keys = changedKeys || (window._dirtyKeys.size > 0 ? [...window._dirtyKeys] : null);
+  window._dirtyKeys.clear();
+  return _saveDataOrig(keys);
+};
 
 function getPerfReviewTypes(){
   if(!DB.perfReviewTypes || !Array.isArray(DB.perfReviewTypes) || DB.perfReviewTypes.length===0)
@@ -4701,6 +4792,8 @@ function editEmployee(id, prefill = null){
 
   // Section "Thông tin chuẩn" mặc định mở, các nhóm khác đóng
   const renderSalaryBlock = ()=>{
+    // Ẩn hoàn toàn nếu không có quyền xem lương
+    if(!window.canSeeSalary()) return '';
     const base  = parseInt(customData.baseSalary)||0;
     const bonus = parseInt(customData.bonusSalary)||0;
     const total = base + bonus;
@@ -5216,9 +5309,14 @@ function deleteCustomField(id, fromEdit=false){
    ========================================================= */
 function exportEmployeesXLSX(){
   if(typeof XLSX === 'undefined'){ toast('SheetJS chưa tải, thử lại sau','error'); return; }
+  const canSalary = window.canSeeSalary();
+  const SALARY_KEYS = ['baseSalary','bonusSalary'];
 
   const stdHeaders = ['Mã NV','Họ tên','Email','SĐT','Ngày sinh','Giới tính','Phòng ban','Chức vụ','Cấp bậc','Vào làm','Trạng thái','Điểm Performance'];
-  const customHeaders = DB.customFields.map(cf => cf.label);
+  // Loại cột lương ra khỏi sheet chính nếu không có quyền
+  const customHeaders = DB.customFields
+    .filter(cf => canSalary || !SALARY_KEYS.includes(cf.key))
+    .map(cf => cf.label);
   const allHeaders = [...stdHeaders, ...customHeaders];
 
   const rows = DB.employees.map(e=>{
@@ -5229,12 +5327,13 @@ function exportEmployeesXLSX(){
       deptName(e.deptId), e.role||'', e.level||'', e.joined||'',
       STATUS_LABEL[e.status]||'', e.kpi||0,
     ];
-    const custom = DB.customFields.map(cf => {
-      const val = cd[cf.key] || '';
-      // Format money fields
-      if(['baseSalary','bonusSalary'].includes(cf.key) && val) return parseInt(val)||0;
-      return val;
-    });
+    const custom = DB.customFields
+      .filter(cf => canSalary || !SALARY_KEYS.includes(cf.key))
+      .map(cf => {
+        const val = cd[cf.key] || '';
+        if(SALARY_KEYS.includes(cf.key) && val) return parseInt(val)||0;
+        return val;
+      });
     return [...std, ...custom];
   });
 
@@ -5264,12 +5363,99 @@ function exportEmployeesXLSX(){
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Nhân viên');
 
-  // Add a template sheet for import guidance
+  // ── Sheet Phân tích Lương (chỉ khi có quyền) ──
+  if(canSalary){
+    const activeEmps = DB.employees.filter(e => getEffectiveStatus(e) !== 'exit');
+    const salHeaders = [
+      'Mã NV','Họ tên','Phòng ban','Chức vụ','Cấp bậc','Trạng thái',
+      'Lương cơ bản','Bổ sung KQCV','Tổng lương','Ghi chú'
+    ];
+    // Rows nhân viên
+    const salRows = activeEmps.map(e=>{
+      const cd = DB.customData[e.id]||{};
+      const base = parseInt(cd.baseSalary)||0;
+      const bonus = parseInt(cd.bonusSalary)||0;
+      return [
+        e.code, e.name, deptName(e.deptId), e.role||'', e.level||'',
+        STATUS_LABEL[getEffectiveStatus(e)]||'',
+        base, bonus, base+bonus,
+        cd.salaryNote||''
+      ];
+    });
+    // Sort theo tổng lương giảm dần
+    salRows.sort((a,b)=>(b[8]||0)-(a[8]||0));
+
+    // Tổng hợp theo phòng ban
+    const deptSummary = {};
+    activeEmps.forEach(e=>{
+      const cd = DB.customData[e.id]||{};
+      const dept = deptName(e.deptId);
+      if(!deptSummary[dept]) deptSummary[dept]={count:0, base:0, bonus:0, total:0};
+      deptSummary[dept].count++;
+      deptSummary[dept].base  += parseInt(cd.baseSalary)||0;
+      deptSummary[dept].bonus += parseInt(cd.bonusSalary)||0;
+      deptSummary[dept].total += (parseInt(cd.baseSalary)||0)+(parseInt(cd.bonusSalary)||0);
+    });
+    const totalBase  = salRows.reduce((s,r)=>s+(r[6]||0),0);
+    const totalBonus = salRows.reduce((s,r)=>s+(r[7]||0),0);
+    const totalAll   = salRows.reduce((s,r)=>s+(r[8]||0),0);
+    const avgSalary  = salRows.length ? Math.round(totalAll/salRows.length) : 0;
+    const maxSalary  = salRows.length ? Math.max(...salRows.map(r=>r[8]||0)) : 0;
+    const minSalary  = salRows.filter(r=>r[8]>0).length ? Math.min(...salRows.filter(r=>r[8]>0).map(r=>r[8])) : 0;
+
+    // Dải lương
+    const ranges = [
+      {label:'Dưới 8tr',   min:0,        max:8000000},
+      {label:'8–12tr',     min:8000000,  max:12000000},
+      {label:'12–20tr',    min:12000000, max:20000000},
+      {label:'20–35tr',    min:20000000, max:35000000},
+      {label:'Trên 35tr',  min:35000000, max:Infinity},
+    ].map(r=>({
+      ...r,
+      count: salRows.filter(s=>(s[8]||0)>=r.min && (s[8]||0)<r.max).length
+    }));
+
+    const salData = [
+      salHeaders,
+      ...salRows,
+      [], // spacer
+      ['─── TỔNG HỢP ───'],
+      ['Tổng nhân viên có lương', salRows.filter(r=>r[8]>0).length],
+      ['Quỹ lương cơ bản / tháng', '', '', '', '', '', totalBase],
+      ['Tổng bổ sung KQCV / tháng', '', '', '', '', '', '', totalBonus],
+      ['Tổng quỹ lương / tháng', '', '', '', '', '', '', '', totalAll],
+      ['Lương trung bình', '', '', '', '', '', '', '', avgSalary],
+      ['Lương cao nhất', '', '', '', '', '', '', '', maxSalary],
+      ['Lương thấp nhất (có lương)', '', '', '', '', '', '', '', minSalary],
+      [],
+      ['─── PHÂN TÍCH THEO PHÒNG BAN ───'],
+      ['Phòng ban','Số NV','Quỹ lương CB','Tổng bổ sung','Tổng quỹ lương','Lương TB/người'],
+      ...Object.entries(deptSummary).sort((a,b)=>b[1].total-a[1].total).map(([dept,s])=>[
+        dept, s.count, s.base, s.bonus, s.total, s.count?Math.round(s.total/s.count):0
+      ]),
+      [],
+      ['─── PHÂN PHỐI DẢI LƯƠNG ───'],
+      ['Dải lương','Số nhân viên','Tỷ lệ %'],
+      ...ranges.map(r=>[r.label, r.count, salRows.length?+(r.count/salRows.length*100).toFixed(1):0]),
+    ];
+
+    const salWs = XLSX.utils.aoa_to_sheet(salData);
+    salWs['!cols'] = salHeaders.map((_,i)=>({wch:i===1?24:i===2?20:i===3?22:i===9?30:14}));
+    // Header style cho sheet lương
+    for(let C=0; C<salHeaders.length; C++){
+      const addr = XLSX.utils.encode_cell({r:0,c:C});
+      if(!salWs[addr]) continue;
+      salWs[addr].s = {font:{bold:true,color:{rgb:'FFFFFF'}},fill:{fgColor:{rgb:'2D1B0A'}},alignment:{horizontal:'center'}};
+    }
+    salWs['!freeze'] = {xSplit:0, ySplit:1};
+    XLSX.utils.book_append_sheet(wb, salWs, '💰 Phân tích Lương');
+  }
+
+  // Template sheet
   const tplHeaders = ['Mã NV*','Họ tên*','Email*','SĐT','Ngày sinh (YYYY-MM-DD)','Giới tính (Nam/Nữ)','Phòng ban','Chức vụ*','Cấp bậc','Ngày vào làm* (YYYY-MM-DD)','Trạng thái (active/probation/exit)'];
   const cfHeaders = DB.customFields.map(cf=>cf.label+(cf.required?'*':''));
   const tplWs = XLSX.utils.aoa_to_sheet([
     [...tplHeaders,...cfHeaders],
-    // 1 sample row
     ['MG00001','NGUYỄN VĂN A','nva@example.com','0901234567','1990-01-15','Nam',DB.departments[0]?.name||'','Nhân viên','',new Date().toISOString().slice(0,10),'active',...DB.customFields.map(()=>'')]
   ]);
   tplWs['!cols'] = [...tplHeaders,...cfHeaders].map(()=>({wch:20}));
@@ -5277,7 +5463,8 @@ function exportEmployeesXLSX(){
 
   const today = new Date().toISOString().slice(0,10).replace(/-/g,'');
   XLSX.writeFile(wb, 'LegacyYenTu_NhanVien_'+today+'.xlsx');
-  toast('Đã xuất '+DB.employees.length+' nhân viên ra Excel');
+  toast('Đã xuất '+DB.employees.length+' nhân viên'+(canSalary?' + sheet phân tích lương':''));
+}
 }
 
 function openImportEmployeesModal(){
@@ -9791,6 +9978,10 @@ function renderRecruitmentReports(main){
 }
 
 function renderRecruitment(main){
+  if(!window.canDo('recruitment')){
+    main.innerHTML='<div class="topbar"><div class="topbar-left"><h1 class="page-title">🔒 Không có quyền</h1><div class="page-sub">Bạn không được cấp quyền truy cập module Tuyển dụng</div></div></div>';
+    return;
+  }
   // Dispatch sang view báo cáo nếu đang ở chế độ reports
   if(!window._recView) window._recView = 'operations';
   if(window._recView === 'reports') return renderRecruitmentReports(main);
@@ -14643,7 +14834,7 @@ function renderAccounts(main){
     <div style="margin-top:24px;padding:14px 18px;background:var(--bg-card);border-radius:10px;border:1px solid var(--border);font-size:12px;color:var(--ink-muted);line-height:1.8">
       <strong style="color:var(--ink-dim)">© Bản quyền phần mềm</strong><br>
       Phát triển bởi <strong style="color:var(--accent)">Bùi Tuấn</strong> · Email: <a href="mailto:buituan19694@gmail.com" style="color:var(--accent)">buituan19694@gmail.com</a><br>
-      Dành riêng cho Legacy Yên Tử – MGallery by Sofitel
+      Dành riêng cho Legacy Yên Tử – MGallery
     </div>
   `;
   loadAccountsList();
@@ -14937,6 +15128,10 @@ try {
    CASUAL LABOR TRACKING
    ========================================================= */
 function renderCasual(main){
+  if(!window.canDo('casual')){
+    main.innerHTML='<div class="topbar"><div class="topbar-left"><h1 class="page-title">🔒 Không có quyền</h1><div class="page-sub">Bạn không được cấp quyền truy cập module Lao động Casual</div></div></div>';
+    return;
+  }
   const today = new Date();
   if(!DB.casuals) DB.casuals = [];
 
@@ -15234,6 +15429,10 @@ function exportCasualXLSX(){
    TRAINEE / THỰC TẬP SINH
    ========================================================= */
 function renderTrainee(main){
+  if(!window.canDo('trainee')){
+    main.innerHTML='<div class="topbar"><div class="topbar-left"><h1 class="page-title">🔒 Không có quyền</h1><div class="page-sub">Bạn không được cấp quyền truy cập module Thực tập sinh</div></div></div>';
+    return;
+  }
   if(!DB.trainees) DB.trainees = [];
   if(!window._traineeView) window._traineeView = 'list';
 
@@ -16069,12 +16268,40 @@ fbAuth.onAuthStateChanged(async user => {
         });
         doc = await fbDb.collection('users').doc(user.uid).get();
       }
+      // Nếu là admin email nhưng role chưa đúng → tự cập nhật
+      if(doc.exists && user.email === ADMIN_EMAIL && doc.data().role !== 'admin'){
+        await fbDb.collection('users').doc(user.uid).update({ role: 'admin', active: true });
+        doc = await fbDb.collection('users').doc(user.uid).get();
+      }
 
       if(doc.exists && doc.data().active !== false){
         window.currentUser = user;
         window.currentUserData = doc.data();
         // Log login
         logAudit('LOGIN', 'auth', '', '');
+        // ── Load HR data từ tất cả 6 Firestore documents (song song) ──
+        try{
+          const localPhotos = {};
+          (DB.employees||[]).forEach(e=>{ if(e.photo) localPhotos[e.id]=e.photo; });
+          try{ const pm=JSON.parse(localStorage.getItem(STORE_KEY+'_photos')||'{}'); Object.assign(localPhotos,pm); }catch(e2){}
+          const docIds = Object.keys(FS_DOC_MAP);
+          const snaps = await Promise.all(docIds.map(id=>window.fbDb.collection('hrdata').doc(id).get()));
+          let hasCloud = false;
+          snaps.forEach((snap,i)=>{
+            if(!snap.exists) return;
+            hasCloud = true;
+            const data = snap.data();
+            FS_DOC_MAP[docIds[i]].forEach(key=>{ if(data[key] !== undefined) DB[key] = data[key]; });
+          });
+          if(hasCloud){
+            if(DB.employees) DB.employees.forEach(e=>{ if(localPhotos[e.id]) e.photo=localPhotos[e.id]; });
+            if(!DB.customFields) DB.customFields=[];
+            if(!DB.customData) DB.customData={};
+            if(!DB.casuals) DB.casuals=[];
+            if(!DB.trainees) DB.trainees=[];
+            if(!DB.promotions) DB.promotions=[];
+          }
+        }catch(cloudErr){ console.warn('Cloud load warn:',cloudErr.message); }
         // Hide auth screen, show app
         document.getElementById('authScreen').style.display = 'none';
         document.getElementById('app').style.display = '';
@@ -16092,16 +16319,90 @@ fbAuth.onAuthStateChanged(async user => {
         // Hiện nav Quản lý tài khoản nếu là admin
         const navAcc = document.getElementById('navAccounts');
         if(navAcc) navAcc.style.display = isAdminUser ? '' : 'none';
-        // Ẩn nav items theo quyền
+        // Ẩn nav items theo quyền — reset trước, rồi mới ẩn
         const perms = doc.data().permissions || {};
         document.querySelectorAll('.nav-item[data-page]').forEach(item=>{
-          const pg = item.dataset.page;
-          if(pg==='dashboard'||pg==='settings'||pg==='accounts') return;
-          if(isAdminUser) return;
-          const lvl = perms[pg] || 'none';
-          item.style.display = lvl === 'none' ? 'none' : '';
+          item.style.display = ''; // reset hết trước
         });
+        if(!isAdminUser && user.email !== ADMIN_EMAIL){
+          document.querySelectorAll('.nav-item[data-page]').forEach(item=>{
+            const pg = item.dataset.page;
+            if(pg==='dashboard'||pg==='settings'||pg==='accounts') return;
+            const lvl = perms[pg] || 'none';
+            item.style.display = lvl === 'none' ? 'none' : '';
+          });
+        }
         render();
+
+        // ── 6 Realtime listeners theo từng Firestore document ──
+        // Mỗi listener chỉ merge đúng fields của nó và chỉ re-render module liên quan
+        if(window._hrListeners) window._hrListeners.forEach(u=>u());
+        window._hrListeners = [];
+
+        // Map docId → pages cần re-render khi doc đó thay đổi
+        const DOC_PAGES = {
+          employees:   ['employees','employee-profile','departments','department-detail','dashboard','tasks'],
+          hr:          ['leaves','contracts','dashboard'],
+          recruitment: ['recruitment','job-detail','dashboard'],
+          workforce:   ['casual','trainee','dashboard'],
+          performance: ['performance','awards','warnings','employee-profile','dashboard'],
+          config:      ['settings'],
+        };
+        // Pages nào đang hiện thì re-render (không reload toàn bộ)
+        const RENDER_MAP = {
+          employees: renderEmployees, 'employee-profile': renderEmployeeProfile,
+          departments: renderDepartments, 'department-detail': renderDepartmentDetail,
+          dashboard: renderDashboard, tasks: renderTasks,
+          leaves: renderLeaves, contracts: renderContracts,
+          recruitment: renderRecruitment, 'job-detail': renderJobDetail,
+          casual: renderCasual, trainee: renderTrainee,
+          performance: renderPerformance, awards: renderAwards,
+          warnings: renderWarnings, settings: renderSettings,
+        };
+
+        let _debounces = {};
+        Object.keys(FS_DOC_MAP).forEach(docId=>{
+          const unsub = window.fbDb.collection('hrdata').doc(docId)
+            .onSnapshot(snap=>{
+              if(!snap.exists || !window.currentUser) return;
+              const cloudData = snap.data();
+              // Bỏ qua nếu chính mình vừa lưu (3 giây)
+              if(cloudData._syncBy === window.currentUser.uid && (Date.now()-(cloudData._syncAt||0)) < 3000) return;
+
+              // Merge đúng fields của document này vào DB
+              const localPhotos = {};
+              (DB.employees||[]).forEach(e=>{ if(e.photo) localPhotos[e.id]=e.photo; });
+              try{ const pm=JSON.parse(localStorage.getItem(STORE_KEY+'_photos')||'{}'); Object.assign(localPhotos,pm); }catch(pe){}
+
+              FS_DOC_MAP[docId].forEach(key=>{
+                if(cloudData[key] !== undefined) DB[key] = cloudData[key];
+              });
+              // Ghép ảnh lại
+              if(DB.employees) DB.employees.forEach(e=>{ if(localPhotos[e.id]) e.photo=localPhotos[e.id]; });
+              try{ localStorage.setItem(STORE_KEY, JSON.stringify(DB)); }catch(e){}
+
+              // Debounce 300ms per doc
+              clearTimeout(_debounces[docId]);
+              _debounces[docId] = setTimeout(()=>{
+                const affectedPages = DOC_PAGES[docId] || [];
+                const modalOpen = document.getElementById('modal')?.classList.contains('open');
+                const focused = document.activeElement && ['INPUT','TEXTAREA','SELECT'].includes(document.activeElement.tagName);
+
+                if(modalOpen || focused){
+                  // User đang làm việc → badge không xâm phạm
+                  _showSyncBadge();
+                } else if(affectedPages.includes(currentPage)){
+                  // Re-render đúng page hiện tại
+                  const fn = RENDER_MAP[currentPage];
+                  const main = document.getElementById('mainContent');
+                  if(fn && main) fn(main);
+                  updateBadges();
+                }
+                // Nếu currentPage không bị ảnh hưởng → không làm gì cả
+              }, 300);
+            }, err=>{ console.warn('FS listener error ['+docId+']:',err.message); });
+          window._hrListeners.push(unsub);
+        });
       } else if(doc.exists && doc.data().active === false){
         fbAuth.signOut();
         showAuthError('Tài khoản đã bị khoá. Liên hệ quản trị viên.');
@@ -16223,6 +16524,17 @@ window.logAudit = function(action, module, target, detail){
       timestamp: firebase.firestore.FieldValue.serverTimestamp(),
     });
   } catch(e){ console.warn('Audit log error:', e); }
+};
+// ── Realtime sync helpers ──
+window._showSyncBadge = function(){
+  if(document.getElementById('_syncBadge')) return; // đã có rồi
+  const badge = document.createElement('div');
+  badge.id = '_syncBadge';
+  badge.style.cssText = 'position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--bg-card);border:1px solid var(--accent);color:var(--ink);padding:10px 18px;border-radius:10px;font-size:13px;z-index:9999;display:flex;align-items:center;gap:10px;box-shadow:0 4px 20px rgba(0,0,0,.4);cursor:pointer;user-select:none';
+  badge.innerHTML = `<span style="color:var(--accent);font-size:16px">🔄</span><span>Có dữ liệu mới từ đồng nghiệp — <strong style="color:var(--accent)">Nhấn để cập nhật</strong></span><span id="_syncBadgeX" style="opacity:.5;padding:0 6px;font-size:16px;cursor:pointer">✕</span>`;
+  document.getElementById('_syncBadgeX')?.addEventListener('click', e=>{ e.stopPropagation(); badge.remove(); });
+  badge.addEventListener('click', ()=>{ badge.remove(); render(); });
+  document.body.appendChild(badge);
 };
 }); // end window.load
 </script>
