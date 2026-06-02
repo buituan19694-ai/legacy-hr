@@ -1141,6 +1141,7 @@ function loadData(){
       if(!data.leaveSheet) data.leaveSheet = {};
       if(!data.casuals) data.casuals = [];
       if(!data.trainees) data.trainees = [];
+      if(!data.svcData) data.svcData = {};
       if(!data.traineeSchedules) data.traineeSchedules = [];
       // Migration v2: xoá 7 hình thức generic cũ ('Tuyên dương', 'Bằng khen', 'Giấy khen', 'Thưởng tiền',
       // 'Tăng lương', 'Thăng chức', 'Vinh danh khác') nếu user chưa customize danh sách.
@@ -3357,6 +3358,8 @@ function exportJSON(){
    EMPLOYEES — Full CRUD
    ========================================================= */
 let empFilter = {search:'', dept:'', status:'', level:'', flags:{}, joinedFrom:'', joinedTo:'', joinedMonth:0, joinedYear:0, dobMonth:0, dobYear:0, colGender:'', colJoinedYear:'', colRole:'', colCode:'', colContact:''};
+// Extra columns visibility for employee list
+if(!window._empCols) window._empCols = {dob:false, gender:false, phone2:false, email:false, cccd:false, joined:false};
 let empPage = 1;
 let empPerPage = 'all'; // 'all' | 10 | 25 | 50 | 100
 
@@ -4367,6 +4370,20 @@ function renderEmployees(main){
       </div>
     </div>
 
+    <!-- Col picker bar -->
+    <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:10px">
+      <span style="font-size:11px;color:var(--ink-muted);font-weight:600">Hiển thị thêm:</span>
+      ${[
+        {k:'dob',    label:'Ngày sinh'},
+        {k:'gender', label:'Giới tính'},
+        {k:'email',  label:'Email'},
+        {k:'phone2', label:'SĐT'},
+        {k:'cccd',   label:'CCCD'},
+        {k:'joined', label:'Ngày vào làm'},
+        ...(DB.customFields||[]).filter(cf=>!['baseSalary','bonusSalary'].includes(cf.key)).map(cf=>({k:'cf_'+cf.key, label:cf.label, isCf:true}))
+      ].map(c=>`<button onclick="if(window._empCols['${c.k}']===undefined)window._empCols['${c.k}']=false;window._empCols['${c.k}']=!window._empCols['${c.k}'];render()" style="border:1px solid ${EC[c.k]?'var(--accent)':'var(--border)'};padding:3px 10px;border-radius:5px;font-size:11.5px;cursor:pointer;font-weight:500;background:${EC[c.k]?'var(--accent)':'var(--bg-elev)'};color:${EC[c.k]?'var(--bg)':'var(--ink-muted)'}">${EC[c.k]?'✓ ':''}${c.label}</button>`).join('')}
+    </div>
+
     <div class="card">
       <!-- Hàng 1: Trạng thái chính (single-select) -->
       <div class="status-chips">
@@ -4473,6 +4490,17 @@ function renderEmployees(main){
             <td style="color:var(--ink-dim)">${fmtDate(e.joined)}</td>
             <td style="font-family:'JetBrains Mono',monospace;font-weight:600;color:${e.kpi>=90?'var(--success)':e.kpi>=75?'var(--accent)':e.kpi>0?'var(--warning)':'var(--ink-muted)'}">${e.kpi>0?e.kpi.toFixed(1):'—'}</td>
             ${extraCells}
+            ${EC.dob?`<td style="font-size:12px;color:var(--ink-dim)">${fmtDate(e.dob)||'—'}</td>`:''}
+            ${EC.gender?`<td style="font-size:12px">${e.gender==='male'?'Nam':e.gender==='female'?'Nữ':'—'}</td>`:''}
+            ${EC.email?`<td style="font-size:12px;color:var(--ink-dim);max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(e.email)||'—'}</td>`:''}
+            ${EC.phone2?`<td style="font-size:12px;font-family:'JetBrains Mono',monospace;color:var(--ink-dim)">${escapeHtml(e.phone)||'—'}</td>`:''}
+            ${EC.cccd?`<td style="font-size:12px;font-family:'JetBrains Mono',monospace;color:var(--ink-dim)">${escapeHtml(cd.cccd||'—')}</td>`:''}
+            ${EC.joined?`<td style="font-size:12px;color:var(--ink-dim)">${fmtDate(e.joined)||'—'}</td>`:''}
+            ${(DB.customFields||[]).filter(cf=>!['baseSalary','bonusSalary'].includes(cf.key)&&EC['cf_'+cf.key]).map(cf=>{
+              const raw = cd[cf.key]||'';
+              const v = cf.type==='date'&&raw?fmtDate(raw):escapeHtml(raw);
+              return `<td style="font-size:12px;color:var(--ink-dim);max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHtml(raw)}">${v||'—'}</td>`;
+            }).join('')}
             <td><span class="badge ${getEffectiveStatus(e)}">${STATUS_LABEL[getEffectiveStatus(e)]}</span></td>
             <td onclick="event.stopPropagation()"><div class="row-actions">
               <button class="btn btn-icon" onclick="viewEmployee('${e.id}')" title="Xem hồ sơ">${ICONS.eye}</button>
@@ -4494,6 +4522,13 @@ function renderEmployees(main){
           <tr>
             <th>Nhân viên</th><th>Mã NV</th><th>Phòng ban</th><th>Cấp bậc</th><th>Liên hệ</th><th>Vào làm</th><th>Performance</th>
             ${customCols.map(cf=>`<th>${escapeHtml(cf.label)}</th>`).join('')}
+            ${EC.dob?'<th>Ngày sinh</th>':''}
+            ${EC.gender?'<th>Giới tính</th>':''}
+            ${EC.email?'<th>Email</th>':''}
+            ${EC.phone2?'<th>SĐT</th>':''}
+            ${EC.cccd?'<th>CCCD</th>':''}
+            ${EC.joined?'<th>Vào làm</th>':''}
+            ${(DB.customFields||[]).filter(cf=>!['baseSalary','bonusSalary'].includes(cf.key)&&EC['cf_'+cf.key]).map(cf=>`<th>${escapeHtml(cf.label)}</th>`).join('')}
             <th>Trạng thái</th><th></th>
           </tr>
           <tr style="background:var(--bg-elev)">
@@ -4537,6 +4572,13 @@ function renderEmployees(main){
             <td style="padding:4px 8px;text-align:center">
               ${(empFilter.search||empFilter.dept||empFilter.level||empFilter.colCode||empFilter.colContact||empFilter.colJoinedYear||empFilter.status)?`<button onclick="empFilter.search='';empFilter.dept='';empFilter.level='';empFilter.colCode='';empFilter.colContact='';empFilter.colJoinedYear='';empFilter.status='';empPage=1;render()" style="border:none;background:var(--danger);color:#fff;border-radius:4px;padding:2px 7px;font-size:10px;cursor:pointer;font-weight:600">✕</button>`:''}
             </td>
+            ${EC.dob?'<td></td>':''}
+            ${EC.gender?'<td></td>':''}
+            ${EC.email?'<td></td>':''}
+            ${EC.phone2?'<td></td>':''}
+            ${EC.cccd?'<td></td>':''}
+            ${EC.joined?'<td></td>':''}
+            ${(DB.customFields||[]).filter(cf=>!['baseSalary','bonusSalary'].includes(cf.key)&&EC['cf_'+cf.key]).map(()=>'<td></td>').join('')}
           </tr>
           </thead>
           <tbody>${tableRows}</tbody>
@@ -15210,7 +15252,7 @@ window.openAccountModal = async function(uid=null){
     return `<tr style="border-bottom:1px solid var(--border)">
       <td style="padding:8px 14px;font-weight:500;font-size:13px">${m.label}</td>
       <td style="padding:8px 14px">
-        <select id="perm_${m.key}" onchange="onPermChange('${m.key}',this.value)" style="padding:6px 10px;background:var(--bg-elev);border:1px solid var(--border);border-radius:6px;color:var(--ink);font-size:12.5px;width:100%">
+        <select id="perm_${m.key==='salary'?'salary_module':m.key}" onchange="onPermChange('${m.key}',this.value)" style="padding:6px 10px;background:var(--bg-elev);border:1px solid var(--border);border-radius:6px;color:var(--ink);font-size:12.5px;width:100%">
           ${opts}
         </select>
       </td>
@@ -15262,7 +15304,10 @@ window.onPermChange = function(module, val){
 
 window.saveAccount = async function(uid){
   const perms = {};
-  MODULE_LIST.forEach(m=>{ perms[m.key] = document.getElementById('perm_'+m.key)?.value || 'none'; });
+  MODULE_LIST.forEach(m=>{
+    const elId = m.key === 'salary' ? 'perm_salary_module' : 'perm_'+m.key;
+    perms[m.key] = document.getElementById(elId)?.value || 'none';
+  });
   perms.promotions = document.getElementById('perm_promotions')?.value || 'hide';
   const salaryEl = document.getElementById('perm_salary');
   if(salaryEl) perms.salary = salaryEl.value;
@@ -15850,7 +15895,283 @@ function renderSalaryAnalysis(main){
       </table>
       </div>
     </div>
+
+    \${renderSvcInline(F.year, curYear, curMonth)}
+
     `}
+  `;
+}
+
+
+function renderSvcInline(svcYr, curYear, curMonth){
+  if(!DB.svcData) DB.svcData = {};
+  if(!DB.svcData[svcYr]) DB.svcData[svcYr] = Array(12).fill(0);
+  const svcD = DB.svcData[svcYr];
+  const MNs = ['T1','T2','T3','T4','T5','T6','T7','T8','T9','T10','T11','T12'];
+  const svcTotal = svcD.reduce((s,v)=>s+(v||0),0);
+  const svcFilled = svcD.filter(v=>v>0).length;
+  const svcAvg12 = Math.round(svcTotal/12);
+  const svcAvgFilled = svcFilled ? Math.round(svcTotal/svcFilled) : 0;
+  const svcMax = Math.max(...svcD.map(v=>v||0));
+  const svcMaxIdx = svcD.indexOf(svcMax);
+  const fmtN = n => Math.round(n||0).toLocaleString('vi-VN');
+
+  window.saveSvcCell = function(yr,m,val){
+    if(!DB.svcData) DB.svcData={};
+    if(!DB.svcData[yr]) DB.svcData[yr]=Array(12).fill(0);
+    DB.svcData[yr][m] = parseFloat(String(val).replace(/[^0-9.]/g,''))||0;
+    saveData();
+    // Update chart without full re-render
+    const el = document.getElementById('chartSvcInline_'+yr);
+    if(el && el._chart){ el._chart.data.datasets[0].data[m]=DB.svcData[yr][m]; el._chart.update(); }
+  };
+
+  const cid = 'chartSvcInline_'+svcYr;
+  setTimeout(()=>{
+    const el = document.getElementById(cid);
+    if(!el || el._ci) return; el._ci = true;
+    const ch = new Chart(el,{type:'bar',data:{labels:MNs,datasets:[{
+      label:'SVC '+svcYr, data:svcD.map(v=>v||0),
+      backgroundColor:MNs.map((_,i)=>i===svcMaxIdx?'rgba(212,165,116,.95)':'rgba(212,165,116,.5)'),
+      borderColor:'rgba(212,165,116,.8)',borderWidth:1.5,borderRadius:5
+    }]},options:{responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{display:false},tooltip:{callbacks:{label:ctx=>fmtN(ctx.raw)+' đ'}}},
+      scales:{x:{grid:{display:false}},y:{beginAtZero:true,
+        grid:{color:'rgba(255,255,255,.04)'},
+        ticks:{callback:v=>v>=1e9?(v/1e9).toFixed(1)+'B':v>=1e6?(v/1e6).toFixed(0)+'M':fmtN(v)}}}}});
+    el._chart = ch;
+  },50);
+
+  const rows2 = [];
+  for(let i=0;i<12;i+=2){
+    const mkCell = j => {
+      const v=svcD[j]||0;
+      const isCur=svcYr===curYear&&j+1===curMonth;
+      return `<div style="display:flex;align-items:center;gap:5px">
+        <span style="font-size:11px;font-weight:${isCur?700:400};color:${isCur?'var(--accent)':'var(--ink-muted)'};width:22px;flex-shrink:0">${MNs[j]}</span>
+        <input type="text" value="${v?fmtN(v):''}" placeholder="0"
+          style="flex:1;padding:5px 7px;font-family:'JetBrains Mono',monospace;font-size:11.5px;text-align:right;background:var(--bg-elev);border:1px solid ${v?'var(--accent)':'var(--border)'};border-radius:5px;color:${v?'var(--accent)':'var(--ink-muted)'};font-weight:${v?600:400}"
+          onchange="saveSvcCell(${svcYr},${j},this.value);this.style.borderColor='var(--accent)';this.style.color='var(--accent)';this.style.fontWeight='600'"
+          onfocus="this.select()">
+      </div>`;
+    };
+    rows2.push(`<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">${mkCell(i)}${i+1<12?mkCell(i+1):''}</div>`);
+  }
+
+  return `
+  <div class="card" style="margin-bottom:16px">
+    <div class="card-head">
+      <div>
+        <div class="card-title">🎰 Service Charge (SVC) — ${svcYr}</div>
+        <div class="card-sub">${svcFilled}/12 tháng đã có dữ liệu · Click ô để nhập</div>
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;padding:0 16px 14px">
+      <div style="background:var(--bg-elev);border-radius:8px;padding:12px 14px">
+        <div style="font-size:10px;color:var(--ink-muted);text-transform:uppercase;letter-spacing:.07em;margin-bottom:4px">Tổng SVC năm</div>
+        <div style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:15px;color:var(--accent)">${fmtN(svcTotal)} đ</div>
+      </div>
+      <div style="background:var(--bg-elev);border-radius:8px;padding:12px 14px">
+        <div style="font-size:10px;color:var(--ink-muted);text-transform:uppercase;letter-spacing:.07em;margin-bottom:4px">TB / 12 tháng</div>
+        <div style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:15px;color:var(--info)">${fmtN(svcAvg12)} đ</div>
+      </div>
+      <div style="background:var(--bg-elev);border-radius:8px;padding:12px 14px">
+        <div style="font-size:10px;color:var(--ink-muted);text-transform:uppercase;letter-spacing:.07em;margin-bottom:4px">TB tháng có SVC</div>
+        <div style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:15px;color:var(--success)">${fmtN(svcAvgFilled)} đ</div>
+        <div style="font-size:10px;color:var(--ink-muted);margin-top:2px">${svcFilled} tháng</div>
+      </div>
+      <div style="background:var(--bg-elev);border-radius:8px;padding:12px 14px">
+        <div style="font-size:10px;color:var(--ink-muted);text-transform:uppercase;letter-spacing:.07em;margin-bottom:4px">Tháng cao nhất</div>
+        <div style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:15px;color:var(--purple)">${fmtN(svcMax)} đ</div>
+        <div style="font-size:10px;color:var(--ink-muted);margin-top:2px">${MNs[svcMaxIdx]}</div>
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:3fr 2fr;gap:14px;padding:0 16px 16px">
+      <div>
+        <div style="font-size:10.5px;color:var(--ink-muted);font-weight:600;text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Biểu đồ SVC</div>
+        <div style="height:190px"><canvas id="${cid}"></canvas></div>
+      </div>
+      <div>
+        <div style="font-size:10.5px;color:var(--ink-muted);font-weight:600;text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Nhập số liệu</div>
+        <div style="display:flex;flex-direction:column;gap:5px">${rows2.join('')}</div>
+      </div>
+    </div>
+  </div>`;
+}
+
+function renderSvcTab(){
+  const today = new Date();
+  const curYear = today.getFullYear(), curMonth = today.getMonth()+1;
+  const F = window._salF;
+  const yr = F.svcYear || curYear;
+  const cyr = F.svcCmpYear || curYear-1;
+  const showCmp = !!F.svcShowCmp;
+
+  if(!DB.svcData) DB.svcData = {};
+  if(!DB.svcData[yr]) DB.svcData[yr] = Array(12).fill(0);
+  if(showCmp && !DB.svcData[cyr]) DB.svcData[cyr] = Array(12).fill(0);
+
+  const data  = DB.svcData[yr];
+  const cdata = showCmp ? DB.svcData[cyr] : null;
+  const MN = ['T1','T2','T3','T4','T5','T6','T7','T8','T9','T10','T11','T12'];
+
+  const total = data.reduce((s,v)=>s+(v||0), 0);
+  const filled = data.filter(v=>v>0).length;
+  const avg12 = Math.round(total / 12);
+  const avgFilled = filled ? Math.round(total / filled) : 0;
+
+  const cTotal = cdata ? cdata.reduce((s,v)=>s+(v||0),0) : 0;
+  const cFilled = cdata ? cdata.filter(v=>v>0).length : 0;
+  const cAvg12 = cdata ? Math.round(cTotal/12) : 0;
+
+  const fmtN = n => Math.round(n||0).toLocaleString('vi-VN');
+  const pct = (a,b) => {
+    if(!b) return '';
+    const p = Math.round((a-b)/b*100);
+    const c = p>=0?'var(--success)':'var(--danger)';
+    const bg = p>=0?'rgba(126,198,153,.12)':'rgba(229,115,115,.12)';
+    return `<span style="font-size:10.5px;padding:1px 6px;border-radius:4px;font-weight:700;background:${bg};color:${c}">${p>=0?'+':''}${p}%</span>`;
+  };
+
+  const years = [...new Set([curYear, curYear-1, ...(Object.keys(DB.svcData||{}).map(Number))])].sort((a,b)=>b-a);
+
+  // Save SVC cell
+  window.saveSvcCell = function(yr, m, val){
+    if(!DB.svcData) DB.svcData = {};
+    if(!DB.svcData[yr]) DB.svcData[yr] = Array(12).fill(0);
+    DB.svcData[yr][m] = parseFloat(val.replace(/[^0-9.]/g,''))||0;
+    saveData();
+  };
+
+  const chartId = 'chartSvc_'+yr+(showCmp?'_'+cyr:'');
+
+  setTimeout(()=>{
+    const el = document.getElementById(chartId);
+    if(!el || el._chartInited) return;
+    el._chartInited = true;
+    const ds = [{
+      label: `SVC ${yr}`,
+      data: data.map(v=>v||0),
+      backgroundColor: 'rgba(212,165,116,.75)',
+      borderColor: 'var(--accent)',
+      borderWidth: 2,
+      borderRadius: 4,
+      yAxisID: 'y',
+    }];
+    if(showCmp && cdata) ds.push({
+      label: `SVC ${cyr}`,
+      data: cdata.map(v=>v||0),
+      backgroundColor: 'rgba(126,182,232,.35)',
+      borderColor: 'var(--info)',
+      borderWidth: 1.5,
+      borderRadius: 4,
+      yAxisID: 'y',
+    });
+    new Chart(el, {
+      type:'bar',
+      data:{labels:MN, datasets:ds},
+      options:{
+        responsive:true, maintainAspectRatio:false,
+        plugins:{legend:{position:'top',labels:{usePointStyle:true}},
+          tooltip:{callbacks:{label:ctx=>`${ctx.dataset.label}: ${fmtN(ctx.raw)} đ`}}},
+        scales:{
+          x:{grid:{display:false}},
+          y:{beginAtZero:true, grid:{color:'rgba(255,255,255,.04)'},
+            ticks:{callback:v=>v>=1e9?(v/1e9).toFixed(1)+'B':v>=1e6?(v/1e6).toFixed(0)+'M':fmtN(v)}}
+        }
+      }
+    });
+  }, 50);
+
+  return `
+    <!-- SVC Filter -->
+    <div class="card" style="padding:12px 16px;margin-bottom:14px">
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <span style="font-size:12px;font-weight:600;color:var(--ink-muted)">Năm:</span>
+        <select class="filter-select" onchange="window._salF.svcYear=parseInt(this.value);render()">
+          ${years.map(y=>`<option value="${y}" ${yr===y?'selected':''}>${y}</option>`).join('')}
+        </select>
+        <button onclick="window._salF.svcShowCmp=!window._salF.svcShowCmp;render()" class="btn ${showCmp?'btn-primary':''}" style="font-size:12px">${showCmp?'✓':''} So sánh cùng kỳ</button>
+        ${showCmp?`<span style="color:var(--ink-muted);font-size:12px">vs</span>
+        <select class="filter-select" onchange="window._salF.svcCmpYear=parseInt(this.value);render()">
+          ${years.map(y=>`<option value="${y}" ${cyr===y?'selected':''}>${y}</option>`).join('')}
+        </select>`:''}
+      </div>
+    </div>
+
+    <!-- KPI Cards -->
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px">
+      <div class="card" style="padding:16px 20px">
+        <div style="font-size:11px;color:var(--ink-muted);text-transform:uppercase;letter-spacing:.07em;margin-bottom:6px">Tổng SVC ${yr}</div>
+        <div style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:18px;color:var(--accent)">${fmtN(total)} đ</div>
+        ${showCmp?`<div style="font-size:11px;color:var(--ink-muted);margin-top:4px;display:flex;align-items:center;gap:6px">ĐK ${cyr}: ${fmtN(cTotal)} đ ${pct(total,cTotal)}</div>`:''}
+      </div>
+      <div class="card" style="padding:16px 20px">
+        <div style="font-size:11px;color:var(--ink-muted);text-transform:uppercase;letter-spacing:.07em;margin-bottom:6px">TB / 12 tháng</div>
+        <div style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:18px;color:var(--info)">${fmtN(avg12)} đ</div>
+        ${showCmp?`<div style="font-size:11px;color:var(--ink-muted);margin-top:4px;display:flex;align-items:center;gap:6px">ĐK: ${fmtN(cAvg12)} đ ${pct(avg12,cAvg12)}</div>`:''}
+      </div>
+      <div class="card" style="padding:16px 20px">
+        <div style="font-size:11px;color:var(--ink-muted);text-transform:uppercase;letter-spacing:.07em;margin-bottom:6px">TB tháng có SVC</div>
+        <div style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:18px;color:var(--success)">${fmtN(avgFilled)} đ</div>
+        <div style="font-size:11px;color:var(--ink-muted);margin-top:4px">${filled} / 12 tháng đã nhập</div>
+      </div>
+      <div class="card" style="padding:16px 20px">
+        <div style="font-size:11px;color:var(--ink-muted);text-transform:uppercase;letter-spacing:.07em;margin-bottom:6px">Tháng cao nhất</div>
+        <div style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:18px;color:var(--purple)">${fmtN(Math.max(...data.map(v=>v||0)))} đ</div>
+        <div style="font-size:11px;color:var(--ink-muted);margin-top:4px">${MN[data.indexOf(Math.max(...data.map(v=>v||0)))]}</div>
+      </div>
+    </div>
+
+    <!-- Chart + Table -->
+    <div style="display:grid;grid-template-columns:3fr 2fr;gap:14px;margin-bottom:16px">
+      <div class="card">
+        <div class="card-head"><div>
+          <div class="card-title">📊 SVC theo tháng — ${yr}${showCmp?' vs '+cyr:''}</div>
+          <div class="card-sub">Nhấp vào ô để chỉnh sửa số liệu trực tiếp</div>
+        </div></div>
+        <div class="chart-wrap" style="height:220px"><canvas id="${chartId}"></canvas></div>
+      </div>
+
+      <!-- Input table -->
+      <div class="card">
+        <div class="card-head"><div>
+          <div class="card-title">✏️ Nhập SVC — ${yr}</div>
+          <div class="card-sub">Click vào ô số để chỉnh sửa</div>
+        </div></div>
+        <div style="overflow-y:auto;max-height:280px">
+        <table class="tbl" style="font-size:12px">
+          <thead><tr>
+            <th style="text-align:left;padding:6px 10px">Tháng</th>
+            <th style="text-align:right;padding:6px 10px">SVC (VNĐ)</th>
+            ${showCmp?`<th style="text-align:right;padding:6px 10px;color:var(--ink-muted)">${cyr}</th>`:''}
+          </tr></thead>
+          <tbody>
+            ${MN.map((mn,i)=>{
+              const v = data[i]||0;
+              const cv = cdata?.[i]||0;
+              const isCur = yr===curYear && i+1===curMonth;
+              return `<tr style="${isCur?'background:rgba(212,165,116,.06)':''}">
+                <td style="padding:5px 10px;font-weight:${isCur?'700':'400'}">${mn}${isCur?' <span style="font-size:9px;color:var(--accent)">● nay</span>':''}</td>
+                <td style="text-align:right;padding:3px 6px">
+                  <input type="text" value="${v?fmtN(v):''}" placeholder="0"
+                    style="width:100%;text-align:right;padding:4px 8px;font-family:'JetBrains Mono',monospace;font-size:12px;background:var(--bg-elev);border:1px solid var(--border);border-radius:4px;color:${v?'var(--accent)':'var(--ink-muted)'};font-weight:${v?'600':'400'}"
+                    onchange="saveSvcCell(${yr},${i},this.value);this.style.color='var(--accent)';this.style.fontWeight='600';render()"
+                    onfocus="this.select()">
+                </td>
+                ${showCmp?`<td style="text-align:right;font-family:'JetBrains Mono',monospace;padding:5px 8px;color:var(--ink-muted)">${cv?fmtN(cv):'—'}</td>`:''}
+              </tr>`;
+            }).join('')}
+            <tr style="border-top:2px solid var(--border);font-weight:700">
+              <td style="padding:6px 10px">Tổng</td>
+              <td style="text-align:right;font-family:'JetBrains Mono',monospace;padding:6px 10px;color:var(--accent)">${fmtN(total)}</td>
+              ${showCmp?`<td style="text-align:right;font-family:'JetBrains Mono',monospace;padding:6px 10px;color:var(--ink-muted)">${fmtN(cTotal)}</td>`:''}
+            </tr>
+          </tbody>
+        </table>
+        </div>
+      </div>
+    </div>
   `;
 }
 
