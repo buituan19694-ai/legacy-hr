@@ -778,8 +778,8 @@ const I18N = {
     // Tabs
     tab_summary: '📊 Tổng quan',
     tab_daily: '📅 Lương ngày',
-    tab_tracking: t('tab_tracking'),
-    tab_reports: t('tab_reports'),
+    tab_tracking: '📋 Theo dõi nghỉ phép',
+    tab_reports: '📊 Báo cáo & Phân tích',
     tab_list: '📋 Danh sách',
     tab_gantt: '📅 Lịch & Gantt Chart',
     tab_analysis: '📊 Phân tích',
@@ -790,7 +790,7 @@ const I18N = {
     filter_working: 'Đang làm',
     filter_left: 'Đã nghỉ việc',
     // Col picker
-    col_show_more: t('col_show_more'),
+    col_show_more: 'Hiển thị thêm:',
     col_dob: 'Ngày sinh',
     col_gender: 'Giới tính',
     col_email: 'Email',
@@ -921,9 +921,10 @@ const I18N = {
     no_permission: 'No permission',
   }
 };
-
 let _lang = 'vi';
 function t(key){ return (I18N[_lang]||I18N.vi)[key] || (I18N.vi)[key] || key; }
+
+
 
 function _langKey(){
   const email = window.currentUser?.email || 'default';
