@@ -36,6 +36,13 @@ body.light-mode{
 body.light-mode{background:radial-gradient(ellipse 80% 50% at 50% -20%,rgba(212,165,116,.12),transparent 70%),radial-gradient(ellipse 60% 40% at 100% 100%,rgba(126,182,232,.06),transparent 70%),var(--bg);}
 body.light-mode .tbl tbody tr:hover{background:rgba(0,0,0,.025);}
 body.light-mode input,body.light-mode select,body.light-mode textarea{background:var(--bg-card);color:var(--ink);}
+body.light-mode .tbl thead tr{background:var(--bg-elev);}
+body.light-mode .tbl tfoot tr{background:var(--bg-elev);}
+body.light-mode [style*="background:#1a2028"]{background:var(--bg-card) !important;}
+body.light-mode [style*="background:#161b22"]{background:var(--bg-elev) !important;}
+body.light-mode [style*="background:#0d1117"]{background:var(--bg) !important;}
+body.light-mode [style*="color:#e6edf3"]{color:var(--ink) !important;}
+body.light-mode [style*="color:#8b949e"]{color:var(--ink-dim) !important;}
 input.date-vn{font-family:'JetBrains Mono',monospace;letter-spacing:.03em}
 
 /* ── AUTH SCREEN ── */
@@ -6928,7 +6935,7 @@ function renderGcTemplateTab(){
         </div>
         <!-- Textarea -->
         <textarea id="gc_template_edit"
-          style="flex:1;width:100%;font-family:'JetBrains Mono',monospace;font-size:11.5px;line-height:1.6;padding:12px;background:#0d1117;color:#c9d1d9;border:1px solid var(--border);border-radius:6px;resize:none;tab-size:2;overflow-y:auto"
+          style="flex:1;width:100%;font-family:'JetBrains Mono',monospace;font-size:11.5px;line-height:1.6;padding:12px;background:var(--bg);color:var(--ink);border:1px solid var(--border);border-radius:6px;resize:none;tab-size:2;overflow-y:auto"
           spellcheck="false"
           oninput="gcLivePreview()"
           onkeydown="gcKeyDown(event)"
@@ -8450,8 +8457,8 @@ window.toggleLeaveGroup = function(did){
       <div class="leave-table-wrap" style="overflow-x:auto;-webkit-overflow-scrolling:touch">
         <table style="border-collapse:collapse;min-width:100%;font-size:11px;font-family:'JetBrains Mono',monospace">
           <thead>
-            <tr style="background:#1a2028">
-              <th ${thStyle} rowspan="3" style="min-width:160px;text-align:left;padding:6px 10px;position:sticky;left:0;background:#1a2028;z-index:2;border-right:2px solid var(--border-strong)">Nhân viên</th>
+            <tr style="background:var(--bg-card)">
+              <th ${thStyle} rowspan="3" style="min-width:160px;text-align:left;padding:6px 10px;position:sticky;left:0;background:var(--bg-card);z-index:2;border-right:2px solid var(--border-strong)">Nhân viên</th>
               <th ${thStyle} rowspan="3" style="background:rgba(255,200,0,.12);color:#FFCC00;border:1px solid rgba(255,200,0,.3);min-width:50px">Tồn<br>năm trước</th>
               <th ${thStyle} colspan="12" style="background:rgba(126,198,153,.12);color:var(--success);border:1px solid rgba(126,198,153,.3)">📥 Số ngày phép ĐƯỢC HƯỞNG từng tháng / AL Entitlement ${bal.year}</th>
               <th ${thStyle} rowspan="3" style="background:rgba(126,182,232,.15);color:var(--info);border:2px solid rgba(126,182,232,.3);min-width:52px">Tồn<br>hiện tại<br><span style="font-size:9px;opacity:.7">tự động</span></th>
@@ -8537,8 +8544,8 @@ window.toggleLeaveGroup = function(did){
             }).join('')}
           </tbody>
           <tfoot>
-            <tr style="background:#1a2028;border-top:2px solid var(--border-strong);font-weight:700">
-              <td style="padding:6px 10px;position:sticky;left:0;background:#1a2028;z-index:1;border-right:2px solid var(--border-strong)">TỔNG · ${scopeEmps.length} NV</td>
+            <tr style="background:var(--bg-card);border-top:2px solid var(--border-strong);font-weight:700">
+              <td style="padding:6px 10px;position:sticky;left:0;background:var(--bg-card);z-index:1;border-right:2px solid var(--border-strong)">TỔNG · ${scopeEmps.length} NV</td>
               <td style="text-align:center;color:#FFCC00">${fnum(empMonthData.reduce((s,x)=>s+(x.al.carry||0),0))}</td>
               ${Array.from({length:12},(_,i)=>`<td style="text-align:center;color:var(--success)">${fnum(empMonthData.reduce((s,x)=>s+x.al.months[i].entitle,0))}</td>`).join('')}
               <td style="text-align:center;color:var(--info)">—</td>
@@ -8776,8 +8783,8 @@ function renderLeaves(main){
       <table style="border-collapse:collapse;min-width:100%;font-size:11px;font-family:'JetBrains Mono',monospace">
         <thead>
           <!-- Row 1: group headers -->
-          <tr style="background:#1a2028">
-            <th ${thStyle} rowspan="3" style="min-width:160px;text-align:left;padding:6px 10px;position:sticky;left:0;background:#1a2028;z-index:2;border-right:2px solid var(--border-strong)">Nhân viên</th>
+          <tr style="background:var(--bg-card)">
+            <th ${thStyle} rowspan="3" style="min-width:160px;text-align:left;padding:6px 10px;position:sticky;left:0;background:var(--bg-card);z-index:2;border-right:2px solid var(--border-strong)">Nhân viên</th>
             <th ${thStyle} rowspan="3" style="background:rgba(255,200,0,.12);color:#FFCC00;border:1px solid rgba(255,200,0,.3)">Tồn<br>năm trước</th>
             <th ${thStyle} colspan="12" style="background:rgba(126,198,153,.12);color:var(--success);border:1px solid rgba(126,198,153,.3)">Số ngày phép ĐƯỢC HƯỞNG từng tháng / AL Entitlement per month ${bal.year}</th>
             <th ${thStyle} rowspan="3" style="background:rgba(126,182,232,.12);color:var(--info);border:1px solid rgba(126,182,232,.3)">Tồn<br>hiện tại</th>
@@ -8861,8 +8868,8 @@ function renderLeaves(main){
           }).join('')}
         </tbody>
         <tfoot>
-          <tr style="background:#1a2028;border-top:2px solid var(--border-strong);font-weight:700">
-            <td style="padding:6px 10px;position:sticky;left:0;background:#1a2028;z-index:1;border-right:2px solid var(--border-strong)">TỔNG · ${scopeEmps.length} NV</td>
+          <tr style="background:var(--bg-card);border-top:2px solid var(--border-strong);font-weight:700">
+            <td style="padding:6px 10px;position:sticky;left:0;background:var(--bg-card);z-index:1;border-right:2px solid var(--border-strong)">TỔNG · ${scopeEmps.length} NV</td>
             <td style="text-align:center;color:#FFCC00">${fnum(empMonthData.reduce((s,x)=>s+(x.carry||0),0))}</td>
             ${Array.from({length:12},(_,i)=>`<td style="text-align:center;color:var(--success)">${fnum(empMonthData.reduce((s,x)=>s+x.months[i].entitle,0))}</td>`).join('')}
             <td style="text-align:center;color:var(--info)">${fnum(empMonthData.reduce((s,x)=>s+x.pending,0))}</td>
@@ -17387,6 +17394,8 @@ fbAuth.onAuthStateChanged(async user => {
       if(doc.exists && doc.data().active !== false){
         window.currentUser = user;
         window.currentUserData = doc.data();
+        // Apply per-user theme
+        loadUserTheme();
         // Log login
         logAudit('LOGIN', 'auth', '', '');
         // ── Load HR data từ tất cả 6 Firestore documents (song song) ──
@@ -17663,6 +17672,10 @@ window._showSyncBadge = function(){
 }); // end window.load
 
 // ── THEME TOGGLE ──
+function _themeKey(){
+  const email = window.currentUser?.email || 'default';
+  return 'legacy_theme_' + email;
+}
 function applyTheme(mode){
   if(mode==='light'){
     document.body.classList.add('light-mode');
@@ -17681,17 +17694,17 @@ function applyTheme(mode){
 function toggleTheme(){
   const isLight = document.body.classList.contains('light-mode');
   const next = isLight ? 'dark' : 'light';
-  localStorage.setItem('legacy_theme', next);
+  localStorage.setItem(_themeKey(), next);
   applyTheme(next);
-  // close menu
   const p=document.getElementById('userMenuPopup');
   if(p) p.style.display='none';
 }
-// Apply saved theme on load
-(function(){
-  const saved = localStorage.getItem('legacy_theme') || 'dark';
+function loadUserTheme(){
+  const saved = localStorage.getItem(_themeKey()) || 'dark';
   applyTheme(saved);
-})();
+}
+// Apply dark by default on initial load (before login)
+applyTheme('dark');
 
 </script>
 </body>
