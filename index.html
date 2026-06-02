@@ -5619,6 +5619,26 @@ function exportEmployeesXLSX(){
     ['MG00001','NGUYỄN VĂN A','nva@example.com','0901234567','1990-01-15','Nam',DB.departments[0]?.name||'','Nhân viên','',new Date().toISOString().slice(0,10),'active',...DB.customFields.map(()=>'')]
   ]);
   tplWs['!cols'] = [...tplHeaders,...cfHeaders].map(()=>({wch:20}));
+  // Force text format on SĐT column (col 3) and any CCCD/bank/phone custom fields
+  // so Excel doesn't strip leading zeros when user types in
+  const textColIndices = [3]; // SĐT
+  DB.customFields.forEach((cf,i)=>{
+    if(['cccd','phone','bank','bankAccount','stk','mst','bhxh'].some(k=>cf.key.toLowerCase().includes(k))) {
+      textColIndices.push(tplHeaders.length + i);
+    }
+  });
+  // Apply @-format (text) to entire columns in template sheet
+  if(!tplWs['!cols']) tplWs['!cols'] = [];
+  textColIndices.forEach(c=>{
+    if(!tplWs['!cols'][c]) tplWs['!cols'][c] = {};
+    tplWs['!cols'][c].wch = 20;
+    // Set cell format to text for rows 1-200
+    for(let r=0; r<=200; r++){
+      const addr = XLSX.utils.encode_cell({r,c});
+      if(!tplWs[addr]) tplWs[addr] = {t:'s', v:'', w:''};
+      tplWs[addr].z = '@'; // @ = text format in Excel
+    }
+  });
   XLSX.utils.book_append_sheet(wb, tplWs, 'Mẫu nhập liệu');
 
   const today = new Date().toISOString().slice(0,10).replace(/-/g,'');
@@ -5689,11 +5709,39 @@ function handleImportFile(file){
   const reader = new FileReader();
   reader.onload = (e) => {
     try {
-      const wb = XLSX.read(e.target.result, {type:'binary', cellDates:true, cellText:true});
+      const wb = XLSX.read(e.target.result, {type:'binary', cellDates:true, cellText:true, cellNF:true});
       // Dùng sheet đầu tiên (hoặc sheet "Mẫu nhập liệu" nếu có)
       const sheetName = wb.SheetNames.find(n=>n.includes('nhập')||n.includes('Nhập')) || wb.SheetNames[0];
       const ws = wb.Sheets[sheetName];
-      const data = XLSX.utils.sheet_to_json(ws, {header:1, defval:'', raw:false});
+
+      // Build data manually to preserve leading zeros:
+      // Use cell.w (formatted text) first, fallback to cell.v (raw value)
+      // This keeps "0912345678" instead of letting SheetJS convert to number 912345678
+      const range = XLSX.utils.decode_range(ws['!ref']||'A1');
+      const data = [];
+      for(let R=range.s.r; R<=range.e.r; R++){
+        const row = [];
+        for(let C=range.s.c; C<=range.e.c; C++){
+          const addr = XLSX.utils.encode_cell({r:R,c:C});
+          const cell = ws[addr];
+          if(!cell){ row.push(''); continue; }
+          if(cell.t==='d') { row.push(cell.v instanceof Date ? cell.v.toISOString().slice(0,10) : String(cell.w||'')); continue; }
+          // For number cells: prefer .w (formatted) which may preserve leading zeros if cell was text-formatted
+          // If .w looks like a plain integer and .v has more digits, the cell was numeric - use .w
+          // For text cells (t='s'): always use .v directly
+          if(cell.t==='s') { row.push(String(cell.v||'').trim()); continue; }
+          if(cell.t==='n') {
+            // Check if formatted text (.w) differs from raw number (means custom format applied)
+            const wStr = (cell.w||'').replace(/,/g,'').trim();
+            const vStr = String(cell.v||'').trim();
+            // If .w starts with 0 or has more chars (e.g. formatted as text), use .w
+            row.push(wStr.startsWith('0') || wStr.length > vStr.length ? wStr : vStr);
+            continue;
+          }
+          row.push(String(cell.w||cell.v||'').trim());
+        }
+        data.push(row);
+      }
 
       if(data.length < 2){ toast('File không có dữ liệu','error'); return; }
 
