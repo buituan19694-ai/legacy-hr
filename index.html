@@ -24,6 +24,18 @@
   --gradient-amber:linear-gradient(135deg,#d4a574 0%,#8b6a4a 100%);
   --shadow-card:0 1px 2px rgba(0,0,0,.4),0 12px 32px rgba(0,0,0,.25);
 }
+body.light-mode{
+  --bg:#f5f0eb; --bg-elev:#ede8e1; --bg-card:#ffffff; --bg-card-hover:#f9f5f0;
+  --border:#ddd5c8; --border-strong:#c8b9a8;
+  --ink:#1a1410; --ink-dim:#5c4f42; --ink-muted:#8a7968;
+  --accent:#b8843a; --accent-bright:#d4a574; --accent-dim:#8b6a4a;
+  --success:#2d7d4f; --warning:#b87a1a; --danger:#c0392b; --info:#2471a3; --purple:#7d4a9e; --teal:#1a8a78;
+  --gradient-amber:linear-gradient(135deg,#d4a574 0%,#8b6a4a 100%);
+  --shadow-card:0 1px 3px rgba(0,0,0,.08),0 8px 24px rgba(0,0,0,.08);
+}
+body.light-mode{background:radial-gradient(ellipse 80% 50% at 50% -20%,rgba(212,165,116,.12),transparent 70%),radial-gradient(ellipse 60% 40% at 100% 100%,rgba(126,182,232,.06),transparent 70%),var(--bg);}
+body.light-mode .tbl tbody tr:hover{background:rgba(0,0,0,.025);}
+body.light-mode input,body.light-mode select,body.light-mode textarea{background:var(--bg-card);color:var(--ink);}
 input.date-vn{font-family:'JetBrains Mono',monospace;letter-spacing:.03em}
 
 /* ── AUTH SCREEN ── */
@@ -618,6 +630,11 @@ input:checked + .slider::before{transform:translateX(16px);background:var(--bg)}
     <div class="sidebar-footer" style="position:relative">
       <div id="userMenuPopup" style="display:none;position:absolute;bottom:72px;left:0;right:0;background:var(--bg-elev);border:1px solid var(--border);border-radius:10px;overflow:hidden;z-index:999;box-shadow:0 4px 24px rgba(0,0,0,.35)">
         <div style="padding:8px 12px 6px;font-size:11px;color:var(--ink-muted);letter-spacing:.08em;text-transform:uppercase;border-bottom:1px solid var(--border)">Tài khoản</div>
+        <div onclick="toggleTheme()" id="themeMenuItem" style="padding:10px 14px;display:flex;align-items:center;gap:10px;cursor:pointer;font-size:13px;color:var(--ink)" onmouseover="this.style.background='var(--bg-card-hover)'" onmouseout="this.style.background=''">
+          <span id="themeMenuIcon" style="font-size:15px">☀️</span>
+          <span id="themeMenuLabel">Chế độ sáng</span>
+        </div>
+        <div style="height:1px;background:var(--border)"></div>
         <div onclick="doChangePassword()" style="padding:10px 14px;display:flex;align-items:center;gap:10px;cursor:pointer;font-size:13px;color:var(--ink)" onmouseover="this.style.background='var(--bg-card-hover)'" onmouseout="this.style.background=''">
           <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" style="width:15px;height:15px;flex-shrink:0"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"/></svg>
           Đổi mật khẩu
@@ -1070,6 +1087,20 @@ const DEFAULT_DATA = {
   // Lưu giá trị custom fields theo từng nhân viên: { empId: { fieldKey: value } }
   customData: {},
 };
+
+// Lý do blacklist thường gặp - user có thể edit
+const DEFAULT_BLACKLIST_REASONS = [
+  'Trộm cắp tài sản công ty',
+  'Đánh nhau tại nơi làm việc',
+  'Quấy rối / xúc phạm khách hàng',
+  'Vi phạm bảo mật thông tin',
+  'Sử dụng chất kích thích',
+  'Gian lận chấm công / báo cáo',
+  'Tự ý nghỉ việc không bàn giao',
+  'Lan truyền thông tin sai về công ty',
+  'Quan hệ không phù hợp với khách',
+  'Tham ô / nhận hối lộ',
+];
 
 function loadData(){
   try{
@@ -1929,19 +1960,7 @@ const DEFAULT_BRAND_CONFIG = {
   tag: 'P&C DEPARTMENT', // tag dưới
 };
 
-// Lý do blacklist thường gặp - user có thể edit
-const DEFAULT_BLACKLIST_REASONS = [
-  'Trộm cắp tài sản công ty',
-  'Đánh nhau tại nơi làm việc',
-  'Quấy rối / xúc phạm khách hàng',
-  'Vi phạm bảo mật thông tin',
-  'Sử dụng chất kích thích',
-  'Gian lận chấm công / báo cáo',
-  'Tự ý nghỉ việc không bàn giao',
-  'Lan truyền thông tin sai về công ty',
-  'Quan hệ không phù hợp với khách',
-  'Tham ô / nhận hối lộ',
-];
+// DEFAULT_BLACKLIST_REASONS moved above loadData
 
 function getBlacklistReasons(){
   if(!DB.blacklistReasons || !Array.isArray(DB.blacklistReasons)){
@@ -3330,7 +3349,7 @@ function exportJSON(){
 /* =========================================================
    EMPLOYEES — Full CRUD
    ========================================================= */
-let empFilter = {search:'', dept:'', status:'', level:'', flags:{}};
+let empFilter = {search:'', dept:'', status:'', level:'', flags:{}, joinedFrom:'', joinedTo:'', joinedMonth:0, joinedYear:0, dobMonth:0, dobYear:0};
 let empPage = 1;
 let empPerPage = 'all'; // 'all' | 10 | 25 | 50 | 100
 
@@ -4397,7 +4416,7 @@ function renderEmployees(main){
       <div class="filters">
         <div class="search-box" style="width:280px">
           ${ICONS.search}
-          <input type="text" placeholder="Tìm theo tên, mã NV, email..." value="${escapeHtml(empFilter.search)}" oninput="setEmpFilter('search', this.value)">
+          <input type="text" id="empSearchInput" placeholder="Tìm theo tên, mã NV, email..." value="${escapeHtml(empFilter.search)}" oninput="debounceEmpSearch(this.value)">
         </div>
         <select class="filter-select" onchange="setEmpFilter('dept', this.value)">
           <option value="">Tất cả phòng ban</option>
@@ -4407,6 +4426,32 @@ function renderEmployees(main){
           <option value="">Mọi cấp bậc</option>
           ${[1,2,3,4,5,6,7,8,9].map(lvl=>`<option value="${lvl}" ${empFilter.level===lvl?'selected':''}>${lvl}</option>`).join('')}
         </select>
+      </div>
+
+      <!-- Hàng 3: Lọc theo ngày -->
+      <div class="filters" style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border)">
+        <span style="font-size:11px;color:var(--ink-muted);font-weight:600;white-space:nowrap">📅 Ngày vào làm:</span>
+        <input type="date" class="filter-select" style="width:148px" title="Từ ngày" value="${empFilter.joinedFrom}" onchange="setEmpFilter('joinedFrom',this.value)" placeholder="Từ ngày">
+        <span style="font-size:11px;color:var(--ink-muted)">→</span>
+        <input type="date" class="filter-select" style="width:148px" title="Đến ngày" value="${empFilter.joinedTo}" onchange="setEmpFilter('joinedTo',this.value)" placeholder="Đến ngày">
+        <select class="filter-select" style="width:110px" onchange="setEmpFilter('joinedMonth',parseInt(this.value))" title="Tháng vào làm">
+          <option value="0" ${!empFilter.joinedMonth?'selected':''}>Mọi tháng</option>
+          ${['T1','T2','T3','T4','T5','T6','T7','T8','T9','T10','T11','T12'].map((m,i)=>`<option value="${i+1}" ${empFilter.joinedMonth===i+1?'selected':''}>${m}</option>`).join('')}
+        </select>
+        <select class="filter-select" style="width:90px" onchange="setEmpFilter('joinedYear',parseInt(this.value))" title="Năm vào làm">
+          <option value="0" ${!empFilter.joinedYear?'selected':''}>Mọi năm</option>
+          ${(()=>{const yr=new Date().getFullYear();return [...Array(15)].map((_,i)=>yr-i).map(y=>`<option value="${y}" ${empFilter.joinedYear===y?'selected':''}>${y}</option>`).join('');})()}
+        </select>
+        <span style="font-size:11px;color:var(--ink-muted);font-weight:600;white-space:nowrap;margin-left:8px">🎂 Ngày sinh:</span>
+        <select class="filter-select" style="width:110px" onchange="setEmpFilter('dobMonth',parseInt(this.value))" title="Tháng sinh">
+          <option value="0" ${!empFilter.dobMonth?'selected':''}>Mọi tháng</option>
+          ${['T1','T2','T3','T4','T5','T6','T7','T8','T9','T10','T11','T12'].map((m,i)=>`<option value="${i+1}" ${empFilter.dobMonth===i+1?'selected':''}>${m}</option>`).join('')}
+        </select>
+        <select class="filter-select" style="width:90px" onchange="setEmpFilter('dobYear',parseInt(this.value))" title="Năm sinh">
+          <option value="0" ${!empFilter.dobYear?'selected':''}>Mọi năm</option>
+          ${(()=>{const yr=new Date().getFullYear();return [...Array(60)].map((_,i)=>yr-18-i).map(y=>`<option value="${y}" ${empFilter.dobYear===y?'selected':''}>${y}</option>`).join('');})()}
+        </select>
+        ${(empFilter.joinedFrom||empFilter.joinedTo||empFilter.joinedMonth||empFilter.joinedYear||empFilter.dobMonth||empFilter.dobYear)?`<button class="btn" style="font-size:11px;padding:5px 10px" onclick="clearEmpDateFilter()">✕ Xoá lọc ngày</button>`:''}
       </div>
 
       ${filtered.length === 0 ? `
@@ -4523,6 +4568,15 @@ function applyEmpFilter(){
     else r=r.filter(e=>getEffectiveStatus(e)===empFilter.status);
   }
   if(empFilter.level) r = r.filter(e=>e.level===empFilter.level);
+
+  // Lọc ngày vào làm
+  if(empFilter.joinedFrom) r = r.filter(e=>e.joined && e.joined >= empFilter.joinedFrom);
+  if(empFilter.joinedTo)   r = r.filter(e=>e.joined && e.joined <= empFilter.joinedTo);
+  if(empFilter.joinedMonth) r = r.filter(e=>e.joined && new Date(e.joined).getMonth()+1===empFilter.joinedMonth);
+  if(empFilter.joinedYear)  r = r.filter(e=>e.joined && new Date(e.joined).getFullYear()===empFilter.joinedYear);
+  // Lọc ngày sinh
+  if(empFilter.dobMonth) r = r.filter(e=>e.dob && new Date(e.dob).getMonth()+1===empFilter.dobMonth);
+  if(empFilter.dobYear)  r = r.filter(e=>e.dob && new Date(e.dob).getFullYear()===empFilter.dobYear);
 
   // Áp dụng quick filters (multi-toggle, AND logic)
   const flags = empFilter.flags || {};
@@ -4791,6 +4845,13 @@ function saveFilterPrefs(){
 }
 
 function setEmpFilter(key, val){ empFilter[key]=val; empPage=1; render(); }
+let _empSearchTimer = null;
+function debounceEmpSearch(val){
+  empFilter.search = val; // update state immediately so it's not lost on re-render
+  clearTimeout(_empSearchTimer);
+  _empSearchTimer = setTimeout(()=>{ empPage=1; render(); }, 250);
+}
+function clearEmpDateFilter(){ empFilter.joinedFrom=''; empFilter.joinedTo=''; empFilter.joinedMonth=0; empFilter.joinedYear=0; empFilter.dobMonth=0; empFilter.dobYear=0; empPage=1; render(); }
 function setEmpPage(p){ if(p<1) return; empPage=p; render(); }
 function setEmpPerPage(val){ empPerPage = val === 'all' ? 'all' : parseInt(val); empPage = 1; render(); }
 
@@ -5565,11 +5626,13 @@ function handleImportFile(file){
 
       // Parse rows into employee objects
       const colIdx = (label) => {
-        const labels = [label, label.replace('*','').trim()];
-        for(const l of labels){
-          const i = headers.findIndex(h=>h.replace('*','').trim()===l.replace('*','').trim());
-          if(i>=0) return i;
-        }
+        const needle = label.replace('*','').trim().toLowerCase();
+        // Exact match first (strip * and trim)
+        let i = headers.findIndex(h=>h.replace('*','').trim().toLowerCase()===needle);
+        if(i>=0) return i;
+        // Partial match — header starts with needle (handles "Ngày vào làm* (YYYY-MM-DD)")
+        i = headers.findIndex(h=>h.replace('*','').trim().toLowerCase().startsWith(needle));
+        if(i>=0) return i;
         return -1;
       };
 
@@ -8650,12 +8713,15 @@ function renderLeaves(main){
   const getSheet = (empId) => {
     if(!DB.leaveSheet[empId]) DB.leaveSheet[empId] = {};
     if(!DB.leaveSheet[empId][bal.year]) DB.leaveSheet[empId][bal.year] = {
-      carry: 0,
-      entitle: Array(12).fill(0),
-      taken: Array(12).fill(0),
-      clearAL: 0,
+      carry: 0, entitle: Array(12).fill(0), taken: Array(12).fill(0), clearAL: 0,
     };
-    return DB.leaveSheet[empId][bal.year];
+    const sh = DB.leaveSheet[empId][bal.year];
+    // Guard: arrays may be lost after JSON round-trip from localStorage/Firebase
+    if(!Array.isArray(sh.entitle)) sh.entitle = Array(12).fill(0);
+    if(!Array.isArray(sh.taken))   sh.taken   = Array(12).fill(0);
+    while(sh.entitle.length < 12) sh.entitle.push(0);
+    while(sh.taken.length   < 12) sh.taken.push(0);
+    return sh;
   };
 
   // Save a single cell edit immediately
@@ -10408,7 +10474,10 @@ function renderJobDetail(main){
                 <td><span class="badge" style="background:${CANDIDATE_STATUS_COLOR[a.status]}22;color:${CANDIDATE_STATUS_COLOR[a.status]}">${CANDIDATE_STATUS_ICON[a.status]} ${CANDIDATE_STATUS[a.status]}</span></td>
                 <td><div class="row-actions">
                   ${a.status === 'hired' ? `<button class="btn btn-icon" onclick="convertCandidateToEmployee('${a.id}')" title="Tạo hồ sơ nhân viên" style="color:var(--accent)">📥</button>` : ''}
-                  ${a.status !== 'hired' && a.status !== 'rejected' ? `<button class="btn btn-icon" onclick="advanceCandidate('${a.id}')" title="Chuyển bước tiếp" style="color:var(--success)">→</button>` : ''}
+                  ${a.status === 'offer' ? `
+                    <button class="btn btn-icon" onclick="acceptOffer('${a.id}')" title="Ứng viên chấp nhận offer → Nhận việc" style="color:var(--success);font-size:15px;font-weight:700">✓</button>
+                    <button class="btn btn-icon btn-danger" onclick="rejectOffer('${a.id}')" title="Ứng viên từ chối offer" style="font-size:14px;font-weight:700">✗</button>
+                  ` : a.status !== 'hired' && a.status !== 'rejected' ? `<button class="btn btn-icon" onclick="advanceCandidate('${a.id}')" title="Chuyển bước tiếp" style="color:var(--success)">→</button>` : ''}
                   <button class="btn btn-icon" onclick="editCandidate('${a.id}', '${j.id}')" title="Sửa">${ICONS.edit}</button>
                   <button class="btn btn-icon btn-danger" onclick="deleteCandidate('${a.id}')" title="Xoá">${ICONS.trash}</button>
                 </div></td>
@@ -10585,7 +10654,10 @@ function viewCandidate(id){
     <div class="modal-actions">
       <button class="btn btn-danger left" onclick="deleteCandidate('${a.id}', true)">${ICONS.trash} Xoá</button>
       <button class="btn" onclick="closeModal()">Đóng</button>
-      ${a.status !== 'hired' && a.status !== 'rejected' ? `<button class="btn" onclick="closeModal();advanceCandidate('${a.id}')" style="color:var(--success);border-color:rgba(126,198,153,.3)">→ Chuyển bước tiếp</button>` : ''}
+      ${a.status === 'offer' ? `
+        <button class="btn" onclick="closeModal();acceptOffer('${a.id}')" style="color:var(--success);border-color:rgba(126,198,153,.3);font-weight:600">✓ Chấp nhận offer → Nhận việc</button>
+        <button class="btn btn-danger" onclick="closeModal();rejectOffer('${a.id}')" style="opacity:.85">✗ Từ chối offer</button>
+      ` : a.status !== 'hired' && a.status !== 'rejected' ? `<button class="btn" onclick="closeModal();advanceCandidate('${a.id}')" style="color:var(--success);border-color:rgba(126,198,153,.3)">→ Chuyển bước tiếp</button>` : ''}
       <button class="btn" onclick="closeModal();editCandidate('${a.id}', '${a.jobId}')">${ICONS.edit} Chỉnh sửa</button>
       ${a.status === 'hired' ? `<button class="btn btn-primary" onclick="convertCandidateToEmployee('${a.id}')" title="Tạo hồ sơ nhân viên với thông tin auto pre-fill">📥 Tạo hồ sơ NV</button>` : ''}
     </div>
@@ -10685,6 +10757,57 @@ function advanceCandidate(id){
       }
     }, 400);
   }
+}
+
+
+function acceptOffer(id){
+  const a = (DB.candidates||[]).find(x=>x.id===id);
+  if(!a) return;
+  if(!confirm('Xác nhận ứng viên ' + a.name + ' chấp nhận offer và chính thức NHẬN VIỆC?')) return;
+  a.status = 'hired';
+  a.hiredDate = new Date().toISOString().slice(0,10);
+  // +1 hired cho job
+  const j = DB.jobs ? DB.jobs.find(j=>j.id===a.jobId) : null;
+  if(j){
+    j.hired = (j.hired||0) + 1;
+    if(j.hired >= j.positions){
+      if(confirm('Đã tuyển đủ ' + j.positions + ' người cho "' + j.title + '". Đánh dấu vị trí "Đã đủ"?')){
+        j.status = 'filled';
+        j.closedDate = new Date().toISOString().slice(0,10);
+      }
+    }
+  }
+  saveData();
+  toast('✓ ' + a.name + ' đã chính thức nhận việc!', 'success');
+  render();
+  // Hỏi tạo hồ sơ NV + hợp đồng
+  setTimeout(()=>{
+    const existing = (DB.employees||[]).find(emp =>
+      (a.phone && emp.phone === a.phone) || (a.email && emp.email === a.email)
+    );
+    if(existing){
+      toast('Đã có hồ sơ nhân viên cho ' + a.name, 'warning');
+      return;
+    }
+    const choice = confirm(
+      a.name + ' đã nhận việc!\n\n' +
+      'Bấm OK → Tạo hồ sơ nhân viên + làm hợp đồng ngay\n' +
+      'Bấm Huỷ → Bỏ qua, làm sau'
+    );
+    if(choice) convertCandidateToEmployee(a.id);
+  }, 300);
+}
+
+function rejectOffer(id){
+  const a = (DB.candidates||[]).find(x=>x.id===id);
+  if(!a) return;
+  if(!confirm('Xác nhận ' + a.name + ' TỪ CHỐI offer?\nTrạng thái sẽ chuyển sang "Từ chối".')) return;
+  a.status = 'rejected';
+  a.rejectedDate = new Date().toISOString().slice(0,10);
+  a.rejectedReason = 'Từ chối offer';
+  saveData();
+  toast('✗ ' + a.name + ' đã từ chối offer', 'warning');
+  render();
 }
 
 function editCandidate(id, jobId){
@@ -15713,7 +15836,7 @@ function renderCasual(main){
   if(!DB.casuals) DB.casuals = [];
 
   // State
-  if(!window._casualFilter) window._casualFilter = {year: today.getFullYear(), month: 0, dept: ''};
+  if(!window._casualFilter) window._casualFilter = {year: today.getFullYear(), month: 0, dept: '', tab: 'list', cmpYear: today.getFullYear()-1, showCmp: false};
   const cf = window._casualFilter;
 
   // Filter records
@@ -15750,10 +15873,18 @@ function renderCasual(main){
       </div>
       <div class="topbar-actions">
         <button class="btn" onclick="exportCasualXLSX()">${ICONS.download} Xuất Excel</button>
+        <button class="btn" onclick="importCasualXLSX()">📥 Import Excel</button>
         <button class="btn btn-primary" onclick="editCasual()">${ICONS.plus} Thêm bản ghi</button>
       </div>
     </div>
 
+    <!-- Tab bar -->
+    <div style="display:flex;gap:4px;background:var(--bg-elev);border-radius:8px;padding:4px;margin-bottom:14px;width:fit-content">
+      ${[{id:'list',label:'📋 Danh sách'},{id:'analysis',label:'📊 Phân tích'}].map(t=>`
+        <button onclick="window._casualFilter.tab='${t.id}';render()" style="border:none;background:${cf.tab===t.id?'var(--accent)':'transparent'};color:${cf.tab===t.id?'var(--bg)':'var(--ink-muted)'};padding:6px 16px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:${cf.tab===t.id?'600':'400'}">${t.label}</button>`).join('')}
+    </div>
+
+    ${cf.tab==='analysis'?renderCasualAnalysis():`
     <!-- Filters -->
     <div class="card" style="padding:12px 16px;margin-bottom:14px">
       <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
@@ -15866,8 +15997,10 @@ function renderCasual(main){
           </table></div>`
       }
     </div>
+    `}
   `;
 
+  if(cf.tab!=='analysis'){
   // Chart
   setTimeout(()=>{
     const el = document.getElementById('chartCasualTrend');
@@ -15900,6 +16033,218 @@ function renderCasual(main){
       }
     });
   },0);
+  } // end if tab!==analysis
+}
+
+
+function renderCasualAnalysis(){
+  const today = new Date();
+  const cf = window._casualFilter;
+  const yr  = cf.year;
+  const cyr = cf.cmpYear || (yr-1);
+  const showCmp = !!cf.showCmp;
+  const years = [...new Set([today.getFullYear(), today.getFullYear()-1, ...(DB.casuals||[]).map(r=>r.year)])].sort((a,b)=>b-a);
+  const fmtN = n => Math.round(n||0).toLocaleString('vi-VN');
+  const fmtM = n => n>=1e9?(n/1e9).toFixed(2)+'B':n>=1e6?(n/1e6).toFixed(1)+'M':fmtN(n);
+
+  // Build monthly aggregates for a given year
+  function monthlyAgg(y){
+    const out = Array(12).fill(null).map(()=>({qty:0,hours:0,cost:0}));
+    (DB.casuals||[]).filter(r=>r.year===y).forEach(r=>{
+      const m=r.month-1;
+      out[m].qty   += r.qty||0;
+      out[m].hours += r.hours||0;
+      out[m].cost  += r.total||((r.qty||0)*(r.hours||0)*(r.rate||0));
+    });
+    return out;
+  }
+  // Build dept aggregates for a given year
+  function deptAgg(y){
+    const out={};
+    (DB.casuals||[]).filter(r=>r.year===y).forEach(r=>{
+      const d=r.deptId||'_';
+      if(!out[d]) out[d]={qty:0,hours:0,cost:0};
+      out[d].qty   += r.qty||0;
+      out[d].hours += r.hours||0;
+      out[d].cost  += r.total||((r.qty||0)*(r.hours||0)*(r.rate||0));
+    });
+    return out;
+  }
+  const curM  = monthlyAgg(yr);
+  const cmpM  = showCmp ? monthlyAgg(cyr) : null;
+  const curD  = deptAgg(yr);
+  const cmpD  = showCmp ? deptAgg(cyr) : null;
+  const MN=['T1','T2','T3','T4','T5','T6','T7','T8','T9','T10','T11','T12'];
+
+  // Totals
+  const tot  = curM.reduce((a,x)=>({qty:a.qty+x.qty,hours:a.hours+x.hours,cost:a.cost+x.cost}),{qty:0,hours:0,cost:0});
+  const cTot = cmpM ? cmpM.reduce((a,x)=>({qty:a.qty+x.qty,hours:a.hours+x.hours,cost:a.cost+x.cost}),{qty:0,hours:0,cost:0}) : null;
+
+  function pct(cur,cmp){ if(!cmp) return ''; const p=cmp?Math.round((cur-cmp)/cmp*100):null; if(p===null)return''; const c=p>0?'var(--danger)':'var(--success)';const bg=p>0?'rgba(239,68,68,.12)':'rgba(34,197,94,.12)'; return `<span style="font-size:10.5px;padding:1px 6px;border-radius:4px;font-weight:700;background:${bg};color:${c}">${p>0?'+':''}${p}%</span>`;}
+
+  // KPI cards
+  const kpiCards = [
+    {label:'Tổng chi phí',     cur:tot.cost,  cmp:cTot?.cost,  fmt:fmtN, unit:'VNĐ', color:'var(--accent)'},
+    {label:'Tổng lượt người',  cur:tot.qty,   cmp:cTot?.qty,   fmt:fmtN, unit:'người',color:'var(--info)'},
+    {label:'Tổng giờ làm',     cur:tot.hours, cmp:cTot?.hours, fmt:fmtN, unit:'giờ',  color:'var(--success)'},
+    {label:'Đơn giá TB/giờ',   cur:tot.hours?Math.round(tot.cost/tot.hours):0, cmp:cTot&&cTot.hours?Math.round(cTot.cost/cTot.hours):null, fmt:fmtN, unit:'VNĐ/giờ', color:'var(--purple)'},
+  ].map(k=>`
+    <div class="card" style="padding:16px 20px">
+      <div style="font-size:11px;color:var(--ink-muted);text-transform:uppercase;letter-spacing:.07em;margin-bottom:6px">${k.label}</div>
+      <div style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:18px;color:${k.color}">${k.fmt(k.cur)}</div>
+      <div style="font-size:11.5px;color:var(--ink-muted);margin-top:4px;display:flex;align-items:center;gap:6px">
+        <span>${k.unit}</span>
+        ${showCmp&&k.cmp!==undefined&&k.cmp!==null?pct(k.cur,k.cmp):''}
+      </div>
+      ${showCmp&&k.cmp!=null?`<div style="font-size:10.5px;color:var(--ink-muted);margin-top:2px">Cùng kỳ ${cyr}: ${k.fmt(k.cmp)} ${k.unit}</div>`:''}
+    </div>`).join('');
+
+  // Monthly table
+  const mnRows = curM.map((x,i)=>{
+    const cm = cmpM?.[i];
+    const isActive = yr===today.getFullYear() && i===today.getMonth();
+    return `<tr style="${isActive?'background:rgba(212,165,116,.06)':''}">
+      <td style="font-weight:${isActive?'700':'500'};white-space:nowrap">${MN[i]}${isActive?' <span style="font-size:10px;color:var(--accent)">• nay</span>':''}</td>
+      <td style="text-align:right;font-family:'JetBrains Mono',monospace">${x.qty||'—'}</td>
+      <td style="text-align:right;font-family:'JetBrains Mono',monospace">${x.hours||'—'}</td>
+      <td style="text-align:right;font-family:'JetBrains Mono',monospace;color:var(--accent);font-weight:600">${x.cost?fmtN(x.cost):'—'}</td>
+      ${showCmp?`
+      <td style="text-align:right;font-family:'JetBrains Mono',monospace;color:var(--ink-muted)">${cm?.cost?fmtN(cm.cost):'—'}</td>
+      <td style="text-align:right">${cm?.cost?pct(x.cost,cm.cost):'—'}</td>`:''}
+    </tr>`;
+  }).join('');
+
+  // Dept table
+  const allDepts = [...new Set([...Object.keys(curD), ...(cmpD?Object.keys(cmpD):[])])];
+  const deptRows = allDepts.map(did=>{
+    const c=curD[did]||{qty:0,hours:0,cost:0};
+    const cm=cmpD?.[did];
+    const share=tot.cost?Math.round(c.cost/tot.cost*100):0;
+    return {did, c, cm, share};
+  }).filter(x=>x.c.cost>0||x.cm?.cost>0).sort((a,b)=>b.c.cost-a.c.cost)
+  .map(({did,c,cm,share})=>`
+    <tr>
+      <td style="font-weight:600">${escapeHtml(deptName(did))}</td>
+      <td style="text-align:right;font-family:'JetBrains Mono',monospace">${c.qty||'—'}</td>
+      <td style="text-align:right;font-family:'JetBrains Mono',monospace">${c.hours||'—'}</td>
+      <td style="text-align:right;font-family:'JetBrains Mono',monospace;color:var(--accent);font-weight:600">${fmtN(c.cost)}</td>
+      <td style="text-align:right;font-size:11px;color:var(--ink-muted)">${share}%</td>
+      ${showCmp?`
+      <td style="text-align:right;font-family:'JetBrains Mono',monospace;color:var(--ink-muted)">${cm?.cost?fmtN(cm.cost):'—'}</td>
+      <td style="text-align:right">${cm?.cost?pct(c.cost,cm.cost):'—'}</td>`:''}
+    </tr>`).join('');
+
+  const uniqueId = 'cca_'+Date.now();
+
+  setTimeout(()=>{
+    // Monthly cost bar + line chart
+    const el1=document.getElementById('chartCasualAnal1');
+    const el2=document.getElementById('chartCasualAnal2');
+    if(!el1||!el2) return;
+    Chart.defaults.font.family="'Inter Tight',sans-serif";
+    Chart.defaults.color='#8b949e';
+    const ds1=[{label:`Chi phí ${yr}`,data:curM.map(x=>x.cost),backgroundColor:'rgba(212,165,116,.7)',borderRadius:4,yAxisID:'y',order:2},{label:`Lượt ${yr}`,type:'line',data:curM.map(x=>x.qty),borderColor:'#7eb6e8',backgroundColor:'rgba(126,182,232,.1)',borderWidth:2,pointRadius:3,yAxisID:'y1',order:1}];
+    if(showCmp&&cmpM){ds1.push({label:`Chi phí ${cyr}`,data:cmpM.map(x=>x.cost),backgroundColor:'rgba(126,198,153,.4)',borderRadius:4,yAxisID:'y',order:3});ds1.push({label:`Lượt ${cyr}`,type:'line',data:cmpM.map(x=>x.qty),borderColor:'rgba(126,182,232,.4)',borderWidth:1.5,borderDash:[4,3],pointRadius:2,yAxisID:'y1',order:4});}
+    new Chart(el1,{type:'bar',data:{labels:MN,datasets:ds1},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'top',labels:{usePointStyle:true,padding:10}},tooltip:{mode:'index',intersect:false}},scales:{x:{grid:{display:false}},y:{beginAtZero:true,grid:{color:'rgba(255,255,255,.04)'},ticks:{callback:v=>v>=1e6?(v/1e6).toFixed(1)+'M':v}},y1:{position:'right',beginAtZero:true,grid:{display:false}}}}});
+    // Dept cost donut
+    const dLabels=Object.keys(curD).map(d=>deptName(d));
+    const dData=Object.values(curD).map(x=>x.cost);
+    const colors=['#d4a574','#7ec699','#7eb6e8','#b794d4','#f6a35a','#e87e7e','#7accc8','#f0c75a','#a0c4ff','#ffd6a5'];
+    new Chart(el2,{type:'doughnut',data:{labels:dLabels,datasets:[{data:dData,backgroundColor:colors,borderWidth:0,hoverOffset:6}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'right',labels:{usePointStyle:true,padding:10}},tooltip:{callbacks:{label:ctx=>`${ctx.label}: ${fmtN(ctx.raw)} VNĐ (${tot.cost?Math.round(ctx.raw/tot.cost*100):0}%)`}}}}});
+  },0);
+
+  return `
+    <!-- Analysis filter bar -->
+    <div class="card" style="padding:12px 16px;margin-bottom:14px">
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <select class="filter-select" onchange="window._casualFilter.year=parseInt(this.value);render()">
+          ${years.map(y=>`<option value="${y}" ${yr===y?'selected':''}>${y}</option>`).join('')}
+        </select>
+        <button onclick="window._casualFilter.showCmp=!window._casualFilter.showCmp;render()" class="btn ${showCmp?'btn-primary':''}" style="font-size:12px">${showCmp?'✓':''} So sánh cùng kỳ</button>
+        ${showCmp?`<span style="color:var(--ink-muted);font-size:12px">vs</span>
+        <select class="filter-select" onchange="window._casualFilter.cmpYear=parseInt(this.value);render()">
+          ${years.map(y=>`<option value="${y}" ${cyr===y?'selected':''}>${y}</option>`).join('')}
+        </select>`:''}
+      </div>
+    </div>
+
+    <!-- KPI Cards -->
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px">
+      ${kpiCards}
+    </div>
+
+    <!-- Charts row -->
+    <div style="display:grid;grid-template-columns:2fr 1fr;gap:14px;margin-bottom:16px">
+      <div class="card">
+        <div class="card-head"><div>
+          <div class="card-title">📈 Chi phí & Lượt người theo tháng${showCmp?` — ${yr} vs ${cyr}`:` — ${yr}`}</div>
+          <div class="card-sub">So sánh chi phí (bar) và lượt người (line)</div>
+        </div></div>
+        <div class="chart-wrap" style="height:220px"><canvas id="chartCasualAnal1"></canvas></div>
+      </div>
+      <div class="card">
+        <div class="card-head"><div>
+          <div class="card-title">🍩 Tỷ trọng theo Phòng ban — ${yr}</div>
+          <div class="card-sub">% chi phí casual mỗi phòng ban</div>
+        </div></div>
+        <div class="chart-wrap" style="height:220px"><canvas id="chartCasualAnal2"></canvas></div>
+      </div>
+    </div>
+
+    <!-- Monthly breakdown table -->
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:16px">
+      <div class="card">
+        <div class="card-head"><div>
+          <div class="card-title">📅 Chi tiết từng tháng — ${yr}${showCmp?` vs ${cyr}`:''}</div>
+          <div class="card-sub">Số lượng người · Giờ · Chi phí</div>
+        </div></div>
+        <div style="overflow-x:auto"><table class="tbl" style="font-size:12px">
+          <thead><tr>
+            <th style="text-align:left;padding:7px 10px">Tháng</th>
+            <th style="text-align:right;padding:7px 8px">Lượt</th>
+            <th style="text-align:right;padding:7px 8px">Giờ</th>
+            <th style="text-align:right;padding:7px 8px">Chi phí (VNĐ)</th>
+            ${showCmp?`<th style="text-align:right;padding:7px 8px;color:var(--ink-muted)">ĐK (VNĐ)</th><th style="text-align:right;padding:7px 8px">YoY</th>`:''}
+          </tr></thead>
+          <tbody>${mnRows}</tbody>
+          <tfoot><tr style="border-top:2px solid var(--border);font-weight:700">
+            <td style="padding:7px 10px">Tổng</td>
+            <td style="text-align:right;padding:7px 8px;font-family:'JetBrains Mono',monospace">${tot.qty}</td>
+            <td style="text-align:right;padding:7px 8px;font-family:'JetBrains Mono',monospace">${tot.hours}</td>
+            <td style="text-align:right;padding:7px 8px;font-family:'JetBrains Mono',monospace;color:var(--accent);font-weight:700">${fmtN(tot.cost)}</td>
+            ${showCmp?`<td style="text-align:right;padding:7px 8px;font-family:'JetBrains Mono',monospace;color:var(--ink-muted)">${cTot?fmtN(cTot.cost):'—'}</td><td style="text-align:right;padding:7px 8px">${cTot?pct(tot.cost,cTot.cost):'—'}</td>`:''}
+          </tr></tfoot>
+        </table></div>
+      </div>
+
+      <!-- Dept breakdown table -->
+      <div class="card">
+        <div class="card-head"><div>
+          <div class="card-title">🏢 Chi tiết theo Phòng ban — ${yr}${showCmp?` vs ${cyr}`:''}</div>
+          <div class="card-sub">Lượt người · Giờ · Chi phí · % tỷ trọng</div>
+        </div></div>
+        <div style="overflow-x:auto"><table class="tbl" style="font-size:12px">
+          <thead><tr>
+            <th style="text-align:left;padding:7px 10px">Phòng ban</th>
+            <th style="text-align:right;padding:7px 8px">Lượt</th>
+            <th style="text-align:right;padding:7px 8px">Giờ</th>
+            <th style="text-align:right;padding:7px 8px">Chi phí</th>
+            <th style="text-align:right;padding:7px 8px">%</th>
+            ${showCmp?`<th style="text-align:right;padding:7px 8px;color:var(--ink-muted)">ĐK</th><th style="text-align:right;padding:7px 8px">YoY</th>`:''}
+          </tr></thead>
+          <tbody>${deptRows}</tbody>
+          <tfoot><tr style="border-top:2px solid var(--border);font-weight:700">
+            <td style="padding:7px 10px">Tổng</td>
+            <td style="text-align:right;padding:7px 8px;font-family:'JetBrains Mono',monospace">${tot.qty}</td>
+            <td style="text-align:right;padding:7px 8px;font-family:'JetBrains Mono',monospace">${tot.hours}</td>
+            <td style="text-align:right;padding:7px 8px;font-family:'JetBrains Mono',monospace;color:var(--accent)">${fmtN(tot.cost)}</td>
+            <td style="text-align:right;padding:7px 8px">100%</td>
+            ${showCmp?`<td style="text-align:right;padding:7px 8px;font-family:'JetBrains Mono',monospace;color:var(--ink-muted)">${cTot?fmtN(cTot.cost):'—'}</td><td style="text-align:right;padding:7px 8px">${cTot?pct(tot.cost,cTot.cost):'—'}</td>`:''}
+          </tr></tfoot>
+        </table></div>
+      </div>
+    </div>
+  `;
 }
 
 function editCasual(id){
@@ -16001,6 +16346,92 @@ function exportCasualXLSX(){
   toast('Đã xuất '+recs.length+' bản ghi');
 }
 
+function importCasualXLSX(){
+  if(typeof XLSX==='undefined'){toast('SheetJS chưa tải','error');return;}
+  const inp = document.createElement('input');
+  inp.type = 'file';
+  inp.accept = '.xlsx,.xls,.csv';
+  inp.onchange = async e => {
+    const file = e.target.files[0];
+    if(!file) return;
+    const ab = await file.arrayBuffer();
+    const wb = XLSX.read(ab, {type:'array'});
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json(ws, {defval:''});
+    if(!rows.length){toast('File không có dữ liệu','error');return;}
+
+    // Detect columns (flexible header matching)
+    const sample = rows[0];
+    const keys = Object.keys(sample);
+    const col = (names) => keys.find(k => names.some(n => k.toLowerCase().replace(/\s/g,'').includes(n))) || null;
+
+    const colYear   = col(['year','năm']);
+    const colMonth  = col(['month','tháng','thang']);
+    const colDept   = col(['phòngban','phongban','dept','department','bộphận','bophan']);
+    const colDesc   = col(['môtả','mota','desc','description','nộidung','noidung']);
+    const colQty    = col(['sốlượng','soluong','qty','quantity','người','nguoi','số người']);
+    const colHours  = col(['giờ','gio','hour','hours','sốgiờ','sogio']);
+    const colTotal  = col(['tổngtiền','tongtien','total','tiền','tien','amount','thànhtiền']);
+    const colRate   = col(['đơngiá','dongia','rate','unitprice']);
+    const colNotes  = col(['ghichú','ghichu','note','notes','remark']);
+
+    // Find dept by name
+    const findDept = (name) => {
+      if(!name) return '';
+      const n = name.toString().toLowerCase().trim();
+      const d = DB.departments.find(d =>
+        d.name.toLowerCase().trim() === n ||
+        d.name.toLowerCase().includes(n) ||
+        n.includes(d.name.toLowerCase())
+      );
+      return d ? d.id : '';
+    };
+
+    const today = new Date();
+    let added = 0, skipped = 0, errors = [];
+
+    rows.forEach((row, i) => {
+      try {
+        const year  = colYear  ? parseInt(row[colYear])||today.getFullYear()  : today.getFullYear();
+        const month = colMonth ? parseInt(row[colMonth])||today.getMonth()+1  : today.getMonth()+1;
+        const qty   = colQty   ? parseFloat(row[colQty])||0   : 0;
+        const hours = colHours ? parseFloat(row[colHours])||0 : 0;
+        const rate  = colRate  ? parseFloat(row[colRate])||0  : 0;
+        const total = colTotal ? parseFloat(row[colTotal])||0 : (qty*hours*rate);
+        const deptRaw = colDept ? row[colDept]||'' : '';
+        const deptId  = findDept(deptRaw);
+
+        // Skip empty rows
+        if(!qty && !hours && !total) { skipped++; return; }
+
+        const rec = {
+          id:    'casual_'+Date.now()+'_'+Math.random().toString(36).slice(2,7),
+          year, month,
+          deptId,
+          desc:  colDesc  ? (row[colDesc]||'').toString()  : '',
+          qty, hours, rate, total,
+          notes: colNotes ? (row[colNotes]||'').toString() : '',
+        };
+        if(!DB.casuals) DB.casuals = [];
+        DB.casuals.push(rec);
+        added++;
+      } catch(err) {
+        errors.push('Dòng '+(i+2)+': '+err.message);
+      }
+    });
+
+    saveData();
+    render();
+
+    let msg = 'Import thành công: ' + added + ' bản ghi';
+    if(skipped)  msg += ' · bỏ qua ' + skipped + ' dòng trống';
+    if(errors.length) msg += ' · ' + errors.length + ' lỗi';
+    toast(msg, errors.length ? 'warning' : 'success');
+    if(errors.length) console.warn('Import casual errors:', errors);
+  };
+  inp.click();
+}
+
 
 /* =========================================================
    TRAINEE / THỰC TẬP SINH
@@ -16012,6 +16443,9 @@ function renderTrainee(main){
   }
   if(!DB.trainees) DB.trainees = [];
   if(!window._traineeView) window._traineeView = 'list';
+  // Column visibility state
+  if(!window._traineeCols) window._traineeCols = {school:false, qty:false, gender:false, dob:false, cccd:false, cccdDate:false, cccdPlace:false, bank:false, notes:false};
+  const TC = window._traineeCols;
 
   if(window._traineeView === 'schedule') return renderTraineeSchedule(main);
 
@@ -16027,7 +16461,7 @@ function renderTrainee(main){
 
   const tabsHTML = `
     <div class="rec-tabs">
-      <button class="rec-tab ${window._traineeView==='list'?'active':''}" onclick="window._traineeView='list';render()">👨‍🎓 Danh sách thực tập sinh</button>
+      <button class="rec-tab ${window._traineeView==='list'?'active':''}" onclick="window._traineeView='list';render()">🎓 Danh sách thực tập sinh</button>
       <button class="rec-tab ${window._traineeView==='schedule'?'active':''}" onclick="window._traineeView='schedule';render()">📅 Lịch & Gantt Chart</button>
     </div>`;
 
@@ -16035,10 +16469,10 @@ function renderTrainee(main){
   const rows = DB.trainees.map(t => {
     const isActive = !t.endDate || t.endDate >= now;
     const daysLeft = t.endDate ? Math.ceil((new Date(t.endDate)-today)/864e5) : null;
-    return `<tr>
+    return `<tr style="cursor:pointer" onclick="viewTrainee('${t.id}')">
       <td>
         <div style="font-weight:600;font-size:13px">${escapeHtml(t.name||'')}</div>
-        <div style="font-size:11px;color:var(--ink-muted)">${escapeHtml(t.code||'')} · ${escapeHtml(t.school||'')}</div>
+        <div style="font-size:11px;color:var(--ink-muted)">${[t.code,t.school].filter(Boolean).join(' · ')}</div>
       </td>
       <td>${escapeHtml(deptName(t.deptId))}</td>
       <td style="font-size:12px">${fmtDate(t.startDate)||'—'}</td>
@@ -16048,10 +16482,19 @@ function renderTrainee(main){
         ${daysLeft!==null&&daysLeft>=0&&daysLeft<=14?`<span style="font-size:10px;color:var(--warning);margin-left:4px">⚠ còn ${daysLeft}d</span>`:''}
       </td>
       <td style="font-size:12px;color:var(--ink-muted)">${escapeHtml(t.phone||'')}</td>
+      ${TC.school   ?`<td style="font-size:12px">${escapeHtml(t.school||'—')}</td>`:''}
+      ${TC.qty     ?`<td style="text-align:center;font-family:'JetBrains Mono',monospace">${t.qty||1}</td>`:''}
+      ${TC.gender  ?`<td style="font-size:12px">${t.gender==='male'?'Nam':t.gender==='female'?'Nữ':'—'}</td>`:''}
+      ${TC.dob     ?`<td style="font-size:12px">${fmtDate(t.dob)||'—'}</td>`:''}
+      ${TC.cccd    ?`<td style="font-size:12px;font-family:'JetBrains Mono',monospace">${escapeHtml(t.cccd||'—')}</td>`:''}
+      ${TC.cccdDate?`<td style="font-size:12px">${fmtDate(t.cccdDate)||'—'}</td>`:''}
+      ${TC.cccdPlace?`<td style="font-size:12px;max-width:140px;white-space:normal">${escapeHtml(t.cccdPlace||'—')}</td>`:''}
+      ${TC.bank    ?`<td style="font-size:11.5px"><div>${escapeHtml(t.bankName||'')}</div><div style="font-family:'JetBrains Mono',monospace;color:var(--ink-muted)">${escapeHtml(t.bank||'—')}</div></td>`:''}
+      ${TC.notes   ?`<td style="font-size:11.5px;color:var(--ink-muted);max-width:160px;white-space:normal">${escapeHtml(t.notes||'—')}</td>`:''}
       <td>
         <div class="row-actions">
-          <button class="btn btn-icon" onclick="editTrainee('${t.id}')">${ICONS.edit}</button>
-          <button class="btn btn-icon btn-danger" onclick="deleteTrainee('${t.id}')">${ICONS.trash}</button>
+          <button class="btn btn-icon" onclick="event.stopPropagation();editTrainee('${t.id}')">${ICONS.edit}</button>
+          <button class="btn btn-icon btn-danger" onclick="event.stopPropagation();deleteTrainee('${t.id}')">${ICONS.trash}</button>
         </div>
       </td>
     </tr>`;
@@ -16086,17 +16529,41 @@ function renderTrainee(main){
     <div class="card">
       <div class="card-head">
         <div><div class="card-title">Danh sách <em>thực tập sinh</em></div></div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+          <span style="font-size:11px;color:var(--ink-muted);font-weight:600">Hiển thị thêm:</span>
+          ${[
+            {k:'school',    label:'Trường / Đơn vị'},
+            {k:'qty',       label:'Số lượng'},
+            {k:'gender',    label:'Giới tính'},
+            {k:'dob',       label:'Ngày sinh'},
+            {k:'cccd',      label:'CCCD'},
+            {k:'cccdDate',  label:'Ngày cấp'},
+            {k:'cccdPlace', label:'Nơi cấp'},
+            {k:'bank',      label:'Ngân hàng'},
+            {k:'notes',     label:'Ghi chú'},
+          ].map(c=>`<button onclick="window._traineeCols['${c.k}']=!window._traineeCols['${c.k}'];render()" style="border:none;padding:3px 10px;border-radius:5px;font-size:11.5px;cursor:pointer;font-weight:500;background:${TC[c.k]?'var(--accent)':'var(--bg-elev)'};color:${TC[c.k]?'var(--bg)':'var(--ink-muted)'};border:1px solid ${TC[c.k]?'var(--accent)':'var(--border)'}">${TC[c.k]?'✓ ':''}${c.label}</button>`).join('')}
+        </div>
       </div>
       ${DB.trainees.length===0
         ? `<div class="empty-state"><h3>🎓 Chưa có thực tập sinh</h3><button class="btn btn-primary" onclick="editTrainee()">${ICONS.plus} Thêm sinh viên</button></div>`
-        : `<table class="tbl">
+        : `<div style="overflow-x:auto"><table class="tbl">
             <thead><tr>
               <th>Họ tên · Mã số · Trường</th>
               <th>Bộ phận</th><th>Bắt đầu</th><th>Kết thúc</th>
-              <th>Trạng thái</th><th>SĐT</th><th></th>
+              <th>Trạng thái</th><th>SĐT</th>
+              ${TC.school   ?'<th>Trường / Đơn vị</th>':''}
+              ${TC.qty     ?'<th>SL</th>':''}
+              ${TC.gender  ?'<th>Giới tính</th>':''}
+              ${TC.dob     ?'<th>Ngày sinh</th>':''}
+              ${TC.cccd    ?'<th>CCCD</th>':''}
+              ${TC.cccdDate?'<th>Ngày cấp</th>':''}
+              ${TC.cccdPlace?'<th>Nơi cấp</th>':''}
+              ${TC.bank    ?'<th>Ngân hàng · TK</th>':''}
+              ${TC.notes   ?'<th>Ghi chú</th>':''}
+              <th></th>
             </tr></thead>
             <tbody>${rows}</tbody>
-          </table>`
+          </table></div>`
       }
     </div>`;
 }
@@ -16110,7 +16577,7 @@ function renderTraineeSchedule(main){
 
   const tabsHTML = `
     <div class="rec-tabs">
-      <button class="rec-tab" onclick="window._traineeView='list';render()">👨‍🎓 Danh sách thực tập sinh</button>
+      <button class="rec-tab" onclick="window._traineeView='list';render()">🎓 Danh sách thực tập sinh</button>
       <button class="rec-tab active">📅 Lịch & Gantt Chart</button>
     </div>`;
 
@@ -16491,6 +16958,60 @@ function deleteSchedule(id, fromModal=false){
   });
 }
 
+
+function viewTrainee(id){
+  const t = (DB.trainees||[]).find(x=>x.id===id);
+  if(!t) return;
+  const today = new Date();
+  const now   = today.toISOString().slice(0,10);
+  const isActive = !t.endDate || t.endDate >= now;
+  const daysLeft = t.endDate ? Math.ceil((new Date(t.endDate)-today)/864e5) : null;
+  const row = (label, val, full) => val ? `
+    <div style="display:grid;grid-template-columns:${full?'1fr':'140px 1fr'};gap:6px;padding:8px 0;border-bottom:1px solid var(--border)">
+      <div style="font-size:11px;color:var(--ink-muted);font-weight:600;text-transform:uppercase;letter-spacing:.06em;padding-top:2px">${label}</div>
+      <div style="font-size:13px;color:var(--ink)">${val}</div>
+    </div>` : '';
+  const badge = isActive
+    ? `<span class="badge active" style="font-size:12px;padding:4px 10px">● Đang thực tập</span>`
+    : `<span class="badge exit" style="font-size:12px;padding:4px 10px">● Đã kết thúc</span>`;
+  const daysTag = daysLeft!==null && daysLeft>=0 && daysLeft<=14
+    ? `<span style="font-size:11px;color:var(--warning);margin-left:8px">⚠ còn ${daysLeft} ngày</span>` : '';
+
+  openModal(`
+    <div class="modal-head" style="padding-bottom:0">
+      <div style="display:flex;align-items:center;gap:14px;margin-bottom:14px">
+        <div style="width:54px;height:54px;border-radius:50%;background:var(--accent);display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:700;color:var(--bg);flex-shrink:0">
+          ${(t.name||'?').trim().split(' ').pop()[0].toUpperCase()}
+        </div>
+        <div>
+          <div style="font-size:18px;font-weight:700">${escapeHtml(t.name||'')}</div>
+          <div style="font-size:12px;color:var(--ink-muted);margin-top:3px">${escapeHtml(t.code||'')}${t.code&&t.school?' · ':''}${escapeHtml(t.school||'')}</div>
+          <div style="margin-top:6px;display:flex;align-items:center">${badge}${daysTag}</div>
+        </div>
+      </div>
+    </div>
+    <div style="padding:0 4px">
+      ${row('Bộ phận', escapeHtml(deptName(t.deptId)))}
+      ${row('Số lượng', t.qty > 1 ? t.qty + ' người' : '')}
+      ${row('Ngày bắt đầu', fmtDate(t.startDate))}
+      ${row('Ngày kết thúc', fmtDate(t.endDate))}
+      ${row('Ngày sinh', fmtDate(t.dob))}
+      ${row('Giới tính', t.gender==='male'?'Nam':t.gender==='female'?'Nữ':'')}
+      ${row('Số điện thoại', t.phone ? `<a href="tel:${escapeHtml(t.phone)}" style="color:var(--accent)">${escapeHtml(t.phone)}</a>` : '')}
+      ${row('Số CCCD/CMND', escapeHtml(t.cccd||''))}
+      ${row('Ngày cấp CCCD', fmtDate(t.cccdDate))}
+      ${row('Nơi cấp CCCD', escapeHtml(t.cccdPlace||''))}
+      ${row('Số TK ngân hàng', t.bank ? `<span style="font-family:'JetBrains Mono',monospace">${escapeHtml(t.bank)}</span>` : '')}
+      ${row('Ngân hàng', escapeHtml(t.bankName||''))}
+      ${t.notes ? row('Ghi chú', `<span style="color:var(--ink-muted);font-style:italic">${escapeHtml(t.notes)}</span>`) : ''}
+    </div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeModal()">Đóng</button>
+      <button class="btn btn-primary" onclick="closeModal();editTrainee('${t.id}')">✏️ Chỉnh sửa</button>
+    </div>
+  `);
+}
+
 function editTrainee(id){
   const isNew = !id;
   const t = isNew
@@ -16506,6 +17027,13 @@ function editTrainee(id){
       <div class="field"><label>Họ và tên *</label><input id="tr_name" value="${escapeHtml(t.name||'')}"></div>
       <div class="field"><label>Mã số sinh viên</label><input id="tr_code" value="${escapeHtml(t.code||'')}"></div>
       <div class="field"><label>Ngày sinh</label><input lang="vi" type="date" id="tr_dob" value="${t.dob||''}"></div>
+      <div class="field"><label>Giới tính</label>
+        <select id="tr_gender">
+          <option value="" ${!t.gender?'selected':''}>— Chọn —</option>
+          <option value="male"   ${t.gender==='male'  ?'selected':''}>Nam</option>
+          <option value="female" ${t.gender==='female'?'selected':''}>Nữ</option>
+        </select>
+      </div>
       <div class="field"><label>Số điện thoại</label><input id="tr_phone" value="${escapeHtml(t.phone||'')}"></div>
       <div class="field full"><label>Tên trường / Đơn vị *</label><input id="tr_school" value="${escapeHtml(t.school||'')}" placeholder="VD: Đại học Hạ Long, Cao đẳng Nông nghiệp..."></div>
       <div class="field"><label>Bộ phận thực tập *</label>
@@ -16518,6 +17046,8 @@ function editTrainee(id){
       <div class="field"><label>Ngày bắt đầu *</label><input lang="vi" type="date" id="tr_start" value="${t.startDate||''}"></div>
       <div class="field"><label>Ngày kết thúc</label><input lang="vi" type="date" id="tr_end" value="${t.endDate||''}"></div>
       <div class="field"><label>Số CCCD/CMND</label><input id="tr_cccd" value="${escapeHtml(t.cccd||'')}"></div>
+      <div class="field"><label>Ngày cấp CCCD</label><input lang="vi" type="date" id="tr_cccdDate" value="${t.cccdDate||''}"></div>
+      <div class="field full"><label>Nơi cấp CCCD</label><input id="tr_cccdPlace" value="${escapeHtml(t.cccdPlace||'')}" placeholder="VD: Cục Cảnh sát QLHC về TTXH"></div>
       <div class="field"><label>Số tài khoản ngân hàng</label><input id="tr_bank" value="${escapeHtml(t.bank||'')}" placeholder="Số tài khoản"></div>
       <div class="field"><label>Ngân hàng</label><input id="tr_bankName" value="${escapeHtml(t.bankName||'')}" placeholder="VD: Vietcombank, BIDV..."></div>
       <div class="field full"><label>Ghi chú</label><input id="tr_notes" value="${escapeHtml(t.notes||'')}"></div>
@@ -16543,10 +17073,13 @@ function saveTrainee(id, isNew){
     name, school, deptId, startDate,
     code:     $('#tr_code').value.trim(),
     dob:      dispToIso($('#tr_dob')?.value||''),
+    gender:   $('#tr_gender').value,
     phone:    $('#tr_phone').value.trim(),
     endDate:  dispToIso($('#tr_end')?.value||''),
     qty:      parseInt($('#tr_qty').value)||1,
     cccd:     $('#tr_cccd').value.trim(),
+    cccdDate: dispToIso($('#tr_cccdDate')?.value||''),
+    cccdPlace:$('#tr_cccdPlace').value.trim(),
     bank:     $('#tr_bank').value.trim(),
     bankName: $('#tr_bankName').value.trim(),
     notes:    $('#tr_notes').value.trim(),
@@ -17128,6 +17661,38 @@ window._showSyncBadge = function(){
   document.body.appendChild(badge);
 };
 }); // end window.load
+
+// ── THEME TOGGLE ──
+function applyTheme(mode){
+  if(mode==='light'){
+    document.body.classList.add('light-mode');
+    const icon=document.getElementById('themeMenuIcon');
+    const lbl=document.getElementById('themeMenuLabel');
+    if(icon) icon.textContent='🌙';
+    if(lbl)  lbl.textContent='Chế độ tối';
+  } else {
+    document.body.classList.remove('light-mode');
+    const icon=document.getElementById('themeMenuIcon');
+    const lbl=document.getElementById('themeMenuLabel');
+    if(icon) icon.textContent='☀️';
+    if(lbl)  lbl.textContent='Chế độ sáng';
+  }
+}
+function toggleTheme(){
+  const isLight = document.body.classList.contains('light-mode');
+  const next = isLight ? 'dark' : 'light';
+  localStorage.setItem('legacy_theme', next);
+  applyTheme(next);
+  // close menu
+  const p=document.getElementById('userMenuPopup');
+  if(p) p.style.display='none';
+}
+// Apply saved theme on load
+(function(){
+  const saved = localStorage.getItem('legacy_theme') || 'dark';
+  applyTheme(saved);
+})();
+
 </script>
 </body>
 </html>
