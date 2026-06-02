@@ -554,7 +554,7 @@ input:checked + .slider::before{transform:translateX(16px);background:var(--bg)}
       </div>
       <div class="nav-item" data-page="salary" id="navSalary" style="display:none">
         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-        U0001F4B0 Phân tích Lương
+        Phân tích Lương
       </div>
       <div class="nav-item" data-page="casual">
         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
@@ -3381,8 +3381,14 @@ function renderEmployeeProfile(main){
   DB.customFields.forEach(cf=>{
     registeredKeys.add(cf.key);
     const val = cd[cf.key];
-    if(val == null || val === '') return;
     const g = cf.group || 'Khác';
+    // Nhóm Tuyển dụng: luôn thêm vào để hiện salary block dù rỗng
+    if(g === 'Tuyển dụng'){
+      if(!fieldsByGroup[g]) fieldsByGroup[g] = [];
+      fieldsByGroup[g].push({cf, val: val ?? ''});
+      return;
+    }
+    if(val == null || val === '') return;
     if(!fieldsByGroup[g]) fieldsByGroup[g] = [];
     fieldsByGroup[g].push({cf, val});
   });
@@ -3563,22 +3569,26 @@ function renderEmployeeProfile(main){
           const bonus = bonusEntry ? parseInt(bonusEntry.val)||0 : 0;
           const total = base + bonus;
 
-          const salaryBlock = (groupName === 'Tuyển dụng' && hasSalary && window.canSeeSalary()) ? `
+          const salaryBlock = (groupName === 'Tuyển dụng' && hasSalary) ? `
             <div class="profile-field" style="grid-column:1/-1;border-bottom:none;padding-bottom:0">
+              ${window.canSeeSalary() ? `
               <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;padding:12px;background:rgba(212,165,116,.06);border:1px solid rgba(212,165,116,.2);border-radius:8px;width:100%">
                 <div style="text-align:center">
                   <div style="font-size:11px;color:var(--ink-muted);letter-spacing:.1em;text-transform:uppercase;margin-bottom:4px">💰 Lương cơ bản</div>
-                  <div style="font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--ink);font-size:14px">${base?fmtMoney(base)+' đ':'—'}</div>
+                  <div style="font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--ink);font-size:14px">${base?fmtMoney(base)+' đ':'<span style="color:var(--ink-muted)">Chưa nhập</span>'}</div>
                 </div>
                 <div style="text-align:center;border-left:1px solid var(--border);border-right:1px solid var(--border)">
                   <div style="font-size:11px;color:var(--ink-muted);letter-spacing:.1em;text-transform:uppercase;margin-bottom:4px">🎯 Bổ sung KQCV</div>
-                  <div style="font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--info);font-size:14px">${bonus?fmtMoney(bonus)+' đ':'—'}</div>
+                  <div style="font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--info);font-size:14px">${bonus?fmtMoney(bonus)+' đ':'<span style="color:var(--ink-muted)">—</span>'}</div>
                 </div>
                 <div style="text-align:center">
                   <div style="font-size:11px;color:var(--ink-muted);letter-spacing:.1em;text-transform:uppercase;margin-bottom:4px">📊 Tổng lương</div>
-                  <div style="font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--accent);font-size:16px">${total?fmtMoney(total)+' đ':'—'}</div>
+                  <div style="font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--accent);font-size:16px">${total?fmtMoney(total)+' đ':'<span style="color:var(--ink-muted)">—</span>'}</div>
                 </div>
-              </div>
+              </div>` : `
+              <div style="padding:12px;background:var(--bg-elev);border-radius:8px;text-align:center;color:var(--ink-muted);font-size:13px">
+                🔒 Bạn không có quyền xem thông tin lương
+              </div>`}
             </div>` : '';
 
           const fieldRows = (groupName === 'Tuyển dụng')
@@ -3836,7 +3846,9 @@ function renderEmployeeProfile(main){
             <div class="card-sub">${candidateHistory.length} lần ứng tuyển · thông tin đi theo từ hồ sơ ứng viên</div>
           </div>
         </div>
-        ${candidateHistory.map(a => {
+        ${(()=>{
+          if(!window.canSeeRecruitmentInfo()) return '<div style="padding:20px;text-align:center;color:var(--ink-muted);font-size:13px">🔒 Bạn không có quyền xem thông tin tuyển dụng của nhân viên này</div>';
+          return candidateHistory.map(a => {
           const aJob = (DB.jobs||[]).find(j=>j.id===a.jobId);
           const aDept = aJob ? (DB.departments||[]).find(d=>d.id===aJob.deptId) : null;
           const sc = CANDIDATE_STATUS_COLOR[a.status] || 'var(--ink-muted)';
@@ -3899,7 +3911,8 @@ function renderEmployeeProfile(main){
             ` : ''}
           </div>
           `;
-        }).join('')}
+        }).join('');
+        })()}
       </div>
     ` : ''}
   `;
@@ -14455,6 +14468,10 @@ const REQUIRED_FIELDS = new Proxy([], {
 let tasksFilter = {dept:'', priority:'critical', search:''};
 
 function renderTasks(main){
+  if(!window.canDo('tasks')){
+    main.innerHTML='<div class="topbar"><div class="topbar-left"><h1 class="page-title">🔒 Không có quyền</h1><div class="page-sub">Bạn không được cấp quyền truy cập module Thông báo / Hồ sơ chưa đủ</div></div></div>';
+    return;
+  }
   // Tính cho mỗi NV active các trường còn thiếu
   const activeEmps = DB.employees.filter(e => e.status !== 'exit');
 
@@ -14815,6 +14832,8 @@ const MODULE_LIST = [
   {key:'performance',label:'Đánh giá KPI'},
   {key:'awards',     label:'Khen thưởng'},
   {key:'warnings',   label:'Kỷ luật / Cảnh cáo'},
+  {key:'salary',     label:'Phân tích Lương'},
+  {key:'tasks',      label:'Thông báo / Hồ sơ chưa đủ'},
   {key:'settings',   label:'Cấu hình'},
 ];
 const PERM_LEVELS = ['none','view','edit','full'];
@@ -15161,118 +15180,316 @@ try {
    PHÂN TÍCH LƯƠNG
    ========================================================= */
 function renderSalaryAnalysis(main){
+  if(!window.canDo('salary') && !window.isAdmin()){
+    main.innerHTML='<div class="topbar"><div class="topbar-left"><h1 class="page-title">🔒 Không có quyền</h1><div class="page-sub">Bạn không được cấp quyền truy cập module Phân tích Lương</div></div></div>';
+    return;
+  }
   if(!window.canSeeSalary()){
     main.innerHTML='<div class="topbar"><div class="topbar-left"><h1 class="page-title">🔒 Không có quyền</h1><div class="page-sub">Bạn không được cấp quyền xem thông tin lương</div></div></div>';
     return;
   }
 
-  const activeEmps = DB.employees.filter(e=>getEffectiveStatus(e)!=='exit');
-  const allEmps    = DB.employees;
+  const today = new Date();
+  const curYear  = today.getFullYear();
+  const curMonth = today.getMonth()+1;
 
-  // Build salary data
-  const salData = activeEmps.map(e=>{
-    const cd  = DB.customData[e.id]||{};
-    const base  = parseInt(cd.baseSalary)||0;
-    const bonus = parseInt(cd.bonusSalary)||0;
-    return { e, cd, base, bonus, total: base+bonus, dept: deptName(e.deptId) };
-  });
+  // ── State bộ lọc ──
+  if(!window._salF) window._salF = {
+    year: curYear, month: 0,          // 0 = cả năm
+    status: 'active',                  // 'all' | 'active' | 'exit'
+    cmpYear: curYear-1, cmpMonth: 0,  // so sánh cùng kỳ
+    showCmp: false,
+  };
+  const F = window._salF;
+  if(!window._salSort) window._salSort = {key:'total', dir:-1};
+  const ss = window._salSort;
 
-  // KPI tổng quan
-  const withSalary  = salData.filter(d=>d.total>0);
-  const totalFund   = salData.reduce((s,d)=>s+d.total,0);
-  const totalBase   = salData.reduce((s,d)=>s+d.base,0);
-  const totalBonus  = salData.reduce((s,d)=>s+d.bonus,0);
-  const avgSalary   = withSalary.length ? Math.round(totalFund/withSalary.length) : 0;
-  const maxEntry    = withSalary.length ? withSalary.reduce((a,b)=>b.total>a.total?b:a) : null;
-  const minEntry    = withSalary.length ? withSalary.reduce((a,b)=>b.total<a.total?b:a) : null;
-  const noSalary    = salData.filter(d=>d.total===0).length;
+  // ── Hàm lấy pool NV theo bộ lọc ──
+  function getPool(yr, m, st){
+    return DB.employees.filter(e=>{
+      // lọc trạng thái
+      const eff = getEffectiveStatus(e);
+      if(st==='active' && eff==='exit') return false;
+      if(st==='exit'   && eff!=='exit') return false;
+      // nếu lọc theo tháng cụ thể: NV phải đang làm trong tháng đó
+      if(m > 0){
+        if(!e.joined) return false;
+        const joined  = new Date(e.joined);
+        const endMonth = new Date(yr, m, 0); // cuối tháng
+        if(joined > endMonth) return false;
+      }
+      return true;
+    });
+  }
 
-  // Tổng hợp theo phòng ban
-  const byDept = {};
+  // ── Build salary data ──
+  function buildSalData(pool){
+    return pool.map(e=>{
+      const cd    = DB.customData[e.id]||{};
+      const base  = parseInt(cd.baseSalary)||0;
+      const bonus = parseInt(cd.bonusSalary)||0;
+      return { e, cd, base, bonus, total: base+bonus, dept: deptName(e.deptId) };
+    });
+  }
+
+  // ── Tổng hợp KPI từ salData ──
+  function calcKPI(salData){
+    const withSal   = salData.filter(d=>d.total>0);
+    const totalFund = salData.reduce((s,d)=>s+d.total,0);
+    const totalBase = salData.reduce((s,d)=>s+d.base,0);
+    const totalBonus= salData.reduce((s,d)=>s+d.bonus,0);
+    const avgSalary = withSal.length ? Math.round(totalFund/withSal.length) : 0;
+    return { withSal, totalFund, totalBase, totalBonus, avgSalary,
+             noSalary: salData.filter(d=>d.total===0).length,
+             headcount: salData.length };
+  }
+
+  // Pool & KPI hiện tại
+  const pool    = getPool(F.year, F.month, F.status);
+  const salData = buildSalData(pool);
+  const kpi     = calcKPI(salData);
+
+  // Pool & KPI so sánh cùng kỳ
+  let cmpData = null, cmpKPI = null;
+  if(F.showCmp){
+    const cmpPool = getPool(F.cmpYear, F.cmpMonth, F.status);
+    cmpData = buildSalData(cmpPool);
+    cmpKPI  = calcKPI(cmpData);
+  }
+
+  // Hàm pct thay đổi so cùng kỳ
+  function yoyPct(cur, prev){
+    if(!prev || !cur) return null;
+    return Math.round((cur-prev)/prev*100);
+  }
+  function yoyTag(cur, prev, invertColor=false){
+    const p = yoyPct(cur,prev);
+    if(p===null) return '';
+    const up = p>0, dn = p<0;
+    const color = invertColor ? (up?'var(--danger)':'var(--success)') : (up?'var(--success)':'var(--danger)');
+    const arrow = up?'↑':'↓';
+    return `<span style="font-size:11px;color:${color};margin-left:4px">${arrow}${Math.abs(p)}% YoY</span>`;
+  }
+
+  // ── Phân tích theo tháng ──
+  const MONTHS = ['T1','T2','T3','T4','T5','T6','T7','T8','T9','T10','T11','T12'];
+  function monthlyData(yr, st){
+    return MONTHS.map((mn,idx)=>{
+      const m   = idx+1;
+      const p   = getPool(yr, m, st);
+      const sd  = buildSalData(p);
+      const fund  = sd.reduce((s,d)=>s+d.total,0);
+      const base  = sd.reduce((s,d)=>s+d.base,0);
+      const bonus = sd.reduce((s,d)=>s+d.bonus,0);
+      const hc    = p.length;
+      const avgPer= hc ? Math.round(fund/hc) : 0;
+      return { m, mn, hc, fund, base, bonus, avgPer,
+               isFuture: yr>curYear||(yr===curYear&&m>curMonth) };
+    });
+  }
+
+  const mdCur = monthlyData(F.year, F.status);
+  const mdCmp = F.showCmp ? monthlyData(F.cmpYear, F.status) : null;
+
+  function momPct(arr, key){
+    return arr.map((d,i)=>{ if(!i||!arr[i-1][key]) return null; return Math.round((d[key]-arr[i-1][key])/arr[i-1][key]*100); });
+  }
+  const momFund = momPct(mdCur,'fund');
+
+  // ── Top 10 & dải lương ──
+  const top10 = [...salData].filter(d=>d.total>0).sort((a,b)=>b.total-a.total).slice(0,10);
+  const ranges=[
+    {label:'Chưa có lương', min:0,max:1,color:'var(--ink-muted)'},
+    {label:'Dưới 8 tr',  min:1,max:8e6,color:'var(--info)'},
+    {label:'8 – 12 tr',  min:8e6,max:12e6,color:'var(--success)'},
+    {label:'12 – 20 tr', min:12e6,max:20e6,color:'var(--accent)'},
+    {label:'20 – 35 tr', min:20e6,max:35e6,color:'var(--warning)'},
+    {label:'Trên 35 tr', min:35e6,max:Infinity,color:'var(--purple)'},
+  ].map(r=>({...r,count:salData.filter(d=>d.total>=r.min&&d.total<r.max).length}));
+
+  // ── Phòng ban ──
+  const byDept={};
   salData.forEach(d=>{
     if(!byDept[d.dept]) byDept[d.dept]={dept:d.dept,count:0,base:0,bonus:0,total:0,list:[]};
-    byDept[d.dept].count++;
-    byDept[d.dept].base+=d.base;
-    byDept[d.dept].bonus+=d.bonus;
-    byDept[d.dept].total+=d.total;
-    byDept[d.dept].list.push(d);
+    byDept[d.dept].count++; byDept[d.dept].base+=d.base;
+    byDept[d.dept].bonus+=d.bonus; byDept[d.dept].total+=d.total; byDept[d.dept].list.push(d);
   });
-  const deptRows = Object.values(byDept).sort((a,b)=>b.total-a.total);
+  const deptRows=Object.values(byDept).sort((a,b)=>b.total-a.total);
 
-  // Dải lương
-  const ranges=[
-    {label:'Chưa có lương', min:0,       max:1,        color:'var(--ink-muted)'},
-    {label:'Dưới 8 triệu',  min:1,       max:8e6,      color:'var(--info)'},
-    {label:'8 – 12 triệu',  min:8e6,     max:12e6,     color:'var(--success)'},
-    {label:'12 – 20 triệu', min:12e6,    max:20e6,     color:'var(--accent)'},
-    {label:'20 – 35 triệu', min:20e6,    max:35e6,     color:'var(--warning)'},
-    {label:'Trên 35 triệu', min:35e6,    max:Infinity, color:'var(--purple)'},
-  ].map(r=>({...r, count: salData.filter(d=>d.total>=r.min&&d.total<r.max).length}));
-
-  // Top 10 lương cao nhất
-  const top10 = [...salData].filter(d=>d.total>0).sort((a,b)=>b.total-a.total).slice(0,10);
-
-  // Sort state
-  if(!window._salSort) window._salSort = {key:'total',dir:-1};
-  const ss = window._salSort;
-  const sortedAll = [...salData].sort((a,b)=>{
-    const av = ss.key==='name'?a.e.name:ss.key==='dept'?a.dept:ss.key==='base'?a.base:ss.key==='bonus'?a.bonus:a.total;
-    const bv = ss.key==='name'?b.e.name:ss.key==='dept'?b.dept:ss.key==='base'?b.base:ss.key==='bonus'?b.bonus:b.total;
+  // ── Sort chi tiết NV ──
+  const sortedAll=[...salData].sort((a,b)=>{
+    const av=ss.key==='name'?a.e.name:ss.key==='dept'?a.dept:ss.key==='base'?a.base:ss.key==='bonus'?a.bonus:a.total;
+    const bv=ss.key==='name'?b.e.name:ss.key==='dept'?b.dept:ss.key==='base'?b.base:ss.key==='bonus'?b.bonus:b.total;
     return typeof av==='string'?av.localeCompare(bv)*ss.dir:(av-bv)*ss.dir;
   });
+  const thS=(k)=>`cursor:pointer;padding:8px 12px;text-align:${k==='name'||k==='dept'?'left':'right'};white-space:nowrap;user-select:none;${ss.key===k?'color:var(--accent)':''}`;
+  const arr=(k)=>ss.key===k?(ss.dir===1?'↑':'↓'):'';
 
-  const thStyle = (k)=>`cursor:pointer;padding:8px 12px;text-align:${k==='name'||k==='dept'?'left':'right'};white-space:nowrap;user-select:none;${ss.key===k?'color:var(--accent)':''}`;
-  const arrow = (k)=>ss.key===k?(ss.dir===1?'↑':'↓'):'';
+  // ── Nhãn bộ lọc hiện tại ──
+  const stLabel = F.status==='active'?'Đang làm':F.status==='exit'?'Nghỉ việc':'Tất cả';
+  const mLabel  = F.month>0?`Tháng ${F.month}/${F.year}`:`Năm ${F.year}`;
+  const fixedRatio = kpi.totalFund ? Math.round(kpi.totalBase/kpi.totalFund*100) : 0;
+
+  // ── Năm selector ──
+  const yearsSet=new Set([curYear,curYear-1,curYear-2]);
+  DB.employees.forEach(e=>{ if(e.joined) yearsSet.add(new Date(e.joined).getFullYear()); });
+  const yearsList=[...yearsSet].sort((a,b)=>b-a);
+  const yearOpts=yearsList.map(y=>`<option value="${y}" ${y===F.year?'selected':''}>${y}</option>`).join('');
+  const cmpYearOpts=yearsList.map(y=>`<option value="${y}" ${y===F.cmpYear?'selected':''}>${y}</option>`).join('');
+  const monthOpts=`<option value="0" ${F.month===0?'selected':''}>Cả năm</option>`+
+    MONTHS.map((mn,i)=>`<option value="${i+1}" ${F.month===i+1?'selected':''}>${mn}</option>`).join('');
+  const cmpMonthOpts=`<option value="0" ${F.cmpMonth===0?'selected':''}>Cả năm</option>`+
+    MONTHS.map((mn,i)=>`<option value="${i+1}" ${F.cmpMonth===i+1?'selected':''}>${mn}</option>`).join('');
 
   main.innerHTML=`
     <div class="topbar">
       <div class="topbar-left">
         <div class="crumb">Nhân sự · <span>Phân tích Lương</span></div>
-        <h1 class="page-title">Phân tích <em>Lương</em></h1>
-        <div class="page-sub">${activeEmps.length} nhân viên đang làm · ${withSalary.length} người có dữ liệu lương</div>
+        <h1 class="page-title">Phân tích <em>Lương</em> & Chi phí Nhân sự</h1>
+        <div class="page-sub">${pool.length} NV · ${kpi.withSal.length} có dữ liệu lương · ${mLabel} · ${stLabel}</div>
       </div>
       <div class="topbar-actions">
-        <button class="btn" onclick="exportEmployeesXLSX()">${ICONS.download} Xuất Excel (có sheet lương)</button>
+        <button class="btn" onclick="exportEmployeesXLSX()">📥 Xuất Excel</button>
       </div>
     </div>
 
-    <!-- KPI row -->
+    <!-- Bộ lọc -->
+    <div class="card" style="padding:12px 16px;margin-bottom:14px">
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <!-- Trạng thái NV -->
+        <div style="display:flex;gap:4px;background:var(--bg-elev);border-radius:8px;padding:4px">
+          ${['all','active','exit'].map(s=>`
+            <button onclick="window._salF.status='${s}';render()" style="border:none;background:${F.status===s?'var(--accent)':'transparent'};color:${F.status===s?'var(--bg)':'var(--ink-muted)'};padding:5px 12px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:${F.status===s?'600':'400'}">
+              ${s==='all'?'Tất cả':s==='active'?'Đang làm':'Nghỉ việc'}
+            </button>`).join('')}
+        </div>
+
+        <!-- Năm -->
+        <select class="filter-select" onchange="window._salF.year=parseInt(this.value);render()">${yearOpts}</select>
+
+        <!-- Tháng -->
+        <select class="filter-select" onchange="window._salF.month=parseInt(this.value);render()">${monthOpts}</select>
+
+        <!-- So sánh cùng kỳ toggle -->
+        <button onclick="window._salF.showCmp=!window._salF.showCmp;render()" class="btn ${F.showCmp?'btn-primary':''}" style="font-size:12px">
+          ${F.showCmp?'✓':''} So sánh cùng kỳ
+        </button>
+
+        ${F.showCmp?`
+        <span style="color:var(--ink-muted);font-size:12px">vs</span>
+        <select class="filter-select" onchange="window._salF.cmpYear=parseInt(this.value);render()">${cmpYearOpts}</select>
+        <select class="filter-select" onchange="window._salF.cmpMonth=parseInt(this.value);render()">${cmpMonthOpts}</select>`:''}
+
+        ${F.status!=='active'||F.month!==0?`<button class="btn" onclick="window._salF={year:${curYear},month:0,status:'active',cmpYear:${curYear-1},cmpMonth:0,showCmp:false};render()">✕ Bỏ lọc</button>`:''}
+      </div>
+    </div>
+
+    <!-- KPI cards -->
     <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px">
       ${[
-        {label:'Quỹ lương / tháng', value: fmtMoney(totalFund)+' đ', sub:'Tổng '+activeEmps.length+' NV đang làm', color:'var(--accent)'},
-        {label:'Lương cơ bản',      value: fmtMoney(totalBase)+' đ', sub:`${totalFund?Math.round(totalBase/totalFund*100):0}% tổng quỹ`, color:'var(--success)'},
-        {label:'Bổ sung KQCV',      value: fmtMoney(totalBonus)+' đ', sub:`${totalFund?Math.round(totalBonus/totalFund*100):0}% tổng quỹ`, color:'var(--info)'},
-        {label:'Lương bình quân',   value: avgSalary?fmtMoney(avgSalary)+' đ':'—', sub:withSalary.length+' NV có lương', color:'var(--purple)'},
+        {label:'Quỹ lương', value:fmtMoney(kpi.totalFund)+' đ', sub:kpi.headcount+' NV trong kỳ', color:'var(--accent)', cmpVal:cmpKPI?.totalFund, inv:true},
+        {label:'Lương cơ bản (Fixed)', value:fmtMoney(kpi.totalBase)+' đ', sub:fixedRatio+'% tổng quỹ', color:'var(--success)', cmpVal:cmpKPI?.totalBase, inv:true},
+        {label:'Bổ sung KQCV (Variable)', value:fmtMoney(kpi.totalBonus)+' đ', sub:(100-fixedRatio)+'% tổng quỹ', color:'var(--info)', cmpVal:cmpKPI?.totalBonus, inv:true},
+        {label:'Chi phí bình quân/NV', value:kpi.avgSalary?fmtMoney(kpi.avgSalary)+' đ':'—', sub:kpi.withSal.length+' NV có lương', color:'var(--purple)', cmpVal:cmpKPI?.avgSalary, inv:true},
       ].map(k=>`
         <div class="card" style="padding:16px 20px">
-          <div style="font-size:11px;color:var(--ink-muted);letter-spacing:.1em;text-transform:uppercase;margin-bottom:6px">${k.label}</div>
-          <div style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:18px;color:${k.color}">${k.value}</div>
-          <div style="font-size:11.5px;color:var(--ink-muted);margin-top:4px">${k.sub}</div>
+          <div style="font-size:11px;color:var(--ink-muted);letter-spacing:.08em;text-transform:uppercase;margin-bottom:6px">${k.label}</div>
+          <div style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:17px;color:${k.color}">${k.value}</div>
+          <div style="font-size:11.5px;color:var(--ink-muted);margin-top:4px;display:flex;align-items:center;gap:4px">
+            ${k.sub}
+            ${F.showCmp&&k.cmpVal!==undefined?yoyTag(k.cmpVal&&k.cmpVal!==k.value?kpi[k.label==='Chi phí bình quân/NV'?'avgSalary':k.label==='Quỹ lương'?'totalFund':k.label==='Lương cơ bản (Fixed)'?'totalBase':'totalBonus']:0, k.cmpVal, k.inv):''}
+          </div>
+          ${F.showCmp&&k.cmpVal!==undefined?`<div style="font-size:10.5px;color:var(--ink-muted);margin-top:2px">Cùng kỳ: ${fmtMoney(k.cmpVal)} đ</div>`:''}
         </div>`).join('')}
     </div>
 
+    <!-- Bảng P&L theo tháng (chỉ khi xem cả năm) -->
+    ${F.month===0?`
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-head">
+        <div>
+          <div class="card-title">📊 Quỹ lương theo tháng — ${F.year}${F.showCmp?` vs ${F.cmpYear}`:''}</div>
+          <div class="card-sub">P&L Payroll View · ${stLabel}${kpi.noSalary>0?` · ⚠️ ${kpi.noSalary} NV chưa có lương`:''}</div>
+        </div>
+      </div>
+      <div style="overflow-x:auto">
+      <table class="tbl" style="font-size:12px">
+        <thead><tr>
+          <th style="text-align:left;padding:8px 10px">Tháng</th>
+          <th style="text-align:right;padding:8px 10px">HC</th>
+          <th style="text-align:right;padding:8px 10px">Quỹ lương (tr.đ)</th>
+          <th style="text-align:right;padding:8px 10px">Δ MoM</th>
+          <th style="text-align:right;padding:8px 10px">Lương CB</th>
+          <th style="text-align:right;padding:8px 10px">Bổ sung</th>
+          <th style="text-align:right;padding:8px 10px">TB/NV</th>
+          ${F.showCmp?`<th style="text-align:right;padding:8px 10px;color:var(--ink-muted)">Cùng kỳ ${F.cmpYear}</th><th style="text-align:right;padding:8px 10px">YoY</th>`:''}
+        </tr></thead>
+        <tbody>
+          ${mdCur.map((d,i)=>{
+            const fM=Math.round(d.fund/1e6), bM=Math.round(d.base/1e6), bonM=Math.round(d.bonus/1e6);
+            const mom=momFund[i];
+            const cmpRow=mdCmp?mdCmp[i]:null;
+            const yoy=cmpRow?yoyPct(d.fund,cmpRow.fund):null;
+            const isNow=F.year===curYear&&d.m===curMonth;
+            return `<tr style="${d.isFuture?'opacity:.5':''}${isNow?';background:var(--bg-elev)':''}">
+              <td style="padding:7px 10px;font-weight:${isNow?'700':'500'};color:${isNow?'var(--accent)':'var(--ink)'}">
+                ${d.mn}${isNow?' ◀':d.isFuture?' (dự báo)':''}
+              </td>
+              <td style="text-align:right;font-family:'JetBrains Mono',monospace;padding:7px 10px">${d.hc}</td>
+              <td style="text-align:right;font-family:'JetBrains Mono',monospace;padding:7px 10px;font-weight:600;color:var(--accent)">${fM.toLocaleString('vi-VN')}</td>
+              <td style="text-align:right;padding:7px 10px;color:${mom===null?'var(--ink-muted)':mom>0?'var(--danger)':mom<0?'var(--success)':'var(--ink-muted)'}">
+                ${mom===null?'—':mom>0?'+'+mom+'%':mom+'%'}${mom!==null&&Math.abs(mom)>=5?' ⚠️':''}
+              </td>
+              <td style="text-align:right;font-family:'JetBrains Mono',monospace;padding:7px 10px;color:var(--success)">${bM.toLocaleString('vi-VN')}</td>
+              <td style="text-align:right;font-family:'JetBrains Mono',monospace;padding:7px 10px;color:var(--info)">${bonM.toLocaleString('vi-VN')}</td>
+              <td style="text-align:right;font-family:'JetBrains Mono',monospace;padding:7px 10px;font-size:11px;color:var(--ink-dim)">${d.avgPer?fmtMoney(d.avgPer):'—'}</td>
+              ${F.showCmp&&cmpRow?`
+              <td style="text-align:right;font-family:'JetBrains Mono',monospace;padding:7px 10px;color:var(--ink-muted)">${Math.round(cmpRow.fund/1e6).toLocaleString('vi-VN')}</td>
+              <td style="text-align:right;padding:7px 10px;color:${yoy===null?'var(--ink-muted)':yoy>0?'var(--danger)':yoy<0?'var(--success)':'var(--ink-muted)'}">
+                ${yoy===null?'—':yoy>0?'+'+yoy+'%':yoy+'%'}
+              </td>`:''}
+            </tr>`;
+          }).join('')}
+        </tbody>
+        <tfoot><tr style="border-top:2px solid var(--border);font-weight:700">
+          <td style="padding:8px 10px">Tổng / TB năm</td>
+          <td style="text-align:right;font-family:'JetBrains Mono',monospace">${Math.round(mdCur.reduce((s,d)=>s+d.hc,0)/12)} avg</td>
+          <td style="text-align:right;font-family:'JetBrains Mono',monospace;color:var(--accent)">${Math.round(mdCur.reduce((s,d)=>s+d.fund,0)/1e6).toLocaleString('vi-VN')}</td>
+          <td></td>
+          <td style="text-align:right;font-family:'JetBrains Mono',monospace;color:var(--success)">${Math.round(mdCur.reduce((s,d)=>s+d.base,0)/1e6).toLocaleString('vi-VN')}</td>
+          <td style="text-align:right;font-family:'JetBrains Mono',monospace;color:var(--info)">${Math.round(mdCur.reduce((s,d)=>s+d.bonus,0)/1e6).toLocaleString('vi-VN')}</td>
+          <td></td>
+          ${F.showCmp&&mdCmp?`<td style="text-align:right;font-family:'JetBrains Mono',monospace;color:var(--ink-muted)">${Math.round(mdCmp.reduce((s,d)=>s+d.fund,0)/1e6).toLocaleString('vi-VN')}</td><td></td>`:''}
+        </tr></tfoot>
+      </table>
+      </div>
+      <div style="padding:8px 14px;font-size:11px;color:var(--ink-muted)">
+        Δ MoM = % thay đổi so tháng trước · <span style="color:var(--danger)">Đỏ = tăng chi phí</span> · <span style="color:var(--success)">Xanh = giảm chi phí</span> · ⚠️ biến động &gt;5%${F.showCmp?' · YoY = so sánh cùng tháng năm trước':''}
+      </div>
+    </div>`:''}
+
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
 
-      <!-- Phân phối dải lương -->
+      <!-- Dải lương -->
       <div class="card">
         <div class="card-head"><div class="card-title">📊 Phân phối dải lương</div></div>
         <div style="padding:0 4px 8px">
           ${ranges.map(r=>{
-            const pct = activeEmps.length ? (r.count/activeEmps.length*100) : 0;
-            return `<div style="margin-bottom:12px">
-              <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px">
+            const pct=pool.length?(r.count/pool.length*100):0;
+            return `<div style="margin-bottom:11px">
+              <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px">
                 <span style="color:${r.color};font-weight:500">${r.label}</span>
                 <span style="color:var(--ink-dim)">${r.count} NV · ${pct.toFixed(1)}%</span>
               </div>
-              <div style="background:var(--bg-elev);border-radius:4px;height:8px;overflow:hidden">
-                <div style="width:${pct}%;height:100%;background:${r.color};border-radius:4px;transition:width .4s"></div>
+              <div style="background:var(--bg-elev);border-radius:4px;height:7px;overflow:hidden">
+                <div style="width:${pct}%;height:100%;background:${r.color};border-radius:4px"></div>
               </div>
             </div>`;
           }).join('')}
         </div>
       </div>
 
-      <!-- Top 10 lương cao nhất -->
+      <!-- Top 10 -->
       <div class="card">
         <div class="card-head"><div class="card-title">🏆 Top 10 lương cao nhất</div></div>
         ${top10.length===0?'<div class="empty-state" style="padding:20px"><p>Chưa có dữ liệu lương</p></div>':`
@@ -15280,8 +15497,8 @@ function renderSalaryAnalysis(main){
           <thead><tr><th>#</th><th>Nhân viên</th><th>Phòng ban</th><th style="text-align:right">Tổng lương</th></tr></thead>
           <tbody>
             ${top10.map((d,i)=>`<tr style="cursor:pointer" onclick="viewEmployee('${d.e.id}')">
-              <td style="color:var(--ink-muted);font-weight:700;width:30px">${i===0?'🥇':i===1?'🥈':i===2?'🥉':i+1}</td>
-              <td><div style="font-weight:600">${escapeHtml(d.e.name)}</div><div style="color:var(--ink-muted);font-size:11px">${escapeHtml(d.e.role)}</div></td>
+              <td style="color:var(--ink-muted);font-weight:700;width:28px">${i===0?'🥇':i===1?'🥈':i===2?'🥉':i+1}</td>
+              <td><div style="font-weight:600">${escapeHtml(d.e.name)}</div><div style="color:var(--ink-muted);font-size:10.5px">${escapeHtml(d.e.role)}</div></td>
               <td style="color:var(--ink-dim)">${escapeHtml(d.dept)}</td>
               <td style="text-align:right;font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--accent)">${fmtMoney(d.total)} đ</td>
             </tr>`).join('')}
@@ -15303,9 +15520,9 @@ function renderSalaryAnalysis(main){
         </tr></thead>
         <tbody>
           ${deptRows.map(d=>{
-            const avg = d.list.filter(x=>x.total>0).length ? Math.round(d.total/d.list.filter(x=>x.total>0).length) : 0;
-            const pct = totalFund ? (d.total/totalFund*100).toFixed(1) : 0;
-            const barW = totalFund ? Math.round(d.total/totalFund*100) : 0;
+            const avg=d.list.filter(x=>x.total>0).length?Math.round(d.total/d.list.filter(x=>x.total>0).length):0;
+            const pct=kpi.totalFund?(d.total/kpi.totalFund*100).toFixed(1):0;
+            const bW=kpi.totalFund?Math.round(d.total/kpi.totalFund*100):0;
             return `<tr>
               <td style="font-weight:600">${escapeHtml(d.dept)}</td>
               <td style="text-align:right;color:var(--ink-dim)">${d.count}</td>
@@ -15313,59 +15530,55 @@ function renderSalaryAnalysis(main){
               <td style="text-align:right;font-family:'JetBrains Mono',monospace;color:var(--info)">${d.bonus?fmtMoney(d.bonus):'—'}</td>
               <td style="text-align:right;font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--accent)">${d.total?fmtMoney(d.total):'—'}</td>
               <td style="text-align:right;font-family:'JetBrains Mono',monospace;color:var(--success)">${avg?fmtMoney(avg):'—'}</td>
-              <td style="text-align:right;min-width:100px">
-                <div style="display:flex;align-items:center;gap:6px;justify-content:flex-end">
-                  <div style="width:60px;background:var(--bg-elev);border-radius:3px;height:6px;overflow:hidden">
-                    <div style="width:${barW}%;height:100%;background:var(--accent);border-radius:3px"></div>
+              <td style="text-align:right;min-width:90px">
+                <div style="display:flex;align-items:center;gap:5px;justify-content:flex-end">
+                  <div style="width:55px;background:var(--bg-elev);border-radius:3px;height:5px;overflow:hidden">
+                    <div style="width:${bW}%;height:100%;background:var(--accent);border-radius:3px"></div>
                   </div>
-                  <span style="font-size:11.5px;color:var(--ink-dim);width:36px;text-align:right">${pct}%</span>
+                  <span style="font-size:11px;color:var(--ink-dim);width:34px;text-align:right">${pct}%</span>
                 </div>
               </td>
             </tr>`;
           }).join('')}
         </tbody>
         <tfoot><tr style="border-top:2px solid var(--border);font-weight:700">
-          <td>Tổng cộng</td>
-          <td style="text-align:right">${activeEmps.length}</td>
-          <td style="text-align:right;font-family:'JetBrains Mono',monospace;color:var(--success)">${fmtMoney(totalBase)}</td>
-          <td style="text-align:right;font-family:'JetBrains Mono',monospace;color:var(--info)">${fmtMoney(totalBonus)}</td>
-          <td style="text-align:right;font-family:'JetBrains Mono',monospace;color:var(--accent)">${fmtMoney(totalFund)}</td>
-          <td style="text-align:right;font-family:'JetBrains Mono',monospace;color:var(--success)">${fmtMoney(avgSalary)}</td>
+          <td>Tổng cộng</td><td style="text-align:right">${kpi.headcount}</td>
+          <td style="text-align:right;font-family:'JetBrains Mono',monospace;color:var(--success)">${fmtMoney(kpi.totalBase)}</td>
+          <td style="text-align:right;font-family:'JetBrains Mono',monospace;color:var(--info)">${fmtMoney(kpi.totalBonus)}</td>
+          <td style="text-align:right;font-family:'JetBrains Mono',monospace;color:var(--accent)">${fmtMoney(kpi.totalFund)}</td>
+          <td style="text-align:right;font-family:'JetBrains Mono',monospace;color:var(--success)">${fmtMoney(kpi.avgSalary)}</td>
           <td style="text-align:right">100%</td>
         </tr></tfoot>
       </table>
       </div>
     </div>
 
-    <!-- Bảng chi tiết toàn bộ NV -->
+    <!-- Chi tiết từng NV -->
     <div class="card">
       <div class="card-head">
         <div><div class="card-title">📋 Chi tiết lương từng nhân viên</div>
-          <div class="card-sub">${noSalary>0?`⚠️ ${noSalary} NV chưa có dữ liệu lương`:'Đầy đủ dữ liệu'}</div>
+          <div class="card-sub">${kpi.noSalary>0?`⚠️ ${kpi.noSalary} NV chưa có dữ liệu lương`:'Đầy đủ dữ liệu'} · ${stLabel}</div>
         </div>
       </div>
       <div style="overflow-x:auto">
       <table class="tbl">
         <thead><tr>
-          <th onclick="window._salSort={key:'name',dir:window._salSort.key==='name'?-window._salSort.dir:1};render()" style="${thStyle('name')}">Nhân viên ${arrow('name')}</th>
-          <th onclick="window._salSort={key:'dept',dir:window._salSort.key==='dept'?-window._salSort.dir:1};render()" style="${thStyle('dept')}">Phòng ban ${arrow('dept')}</th>
-          <th onclick="window._salSort={key:'base',dir:window._salSort.key==='base'?-window._salSort.dir:-1};render()" style="${thStyle('base')}">Lương CB ${arrow('base')}</th>
-          <th onclick="window._salSort={key:'bonus',dir:window._salSort.key==='bonus'?-window._salSort.dir:-1};render()" style="${thStyle('bonus')}">Bổ sung ${arrow('bonus')}</th>
-          <th onclick="window._salSort={key:'total',dir:window._salSort.key==='total'?-window._salSort.dir:-1};render()" style="${thStyle('total')}">Tổng lương ${arrow('total')}</th>
+          <th onclick="window._salSort={key:'name',dir:window._salSort.key==='name'?-window._salSort.dir:1};render()" style="${thS('name')}">Nhân viên ${arr('name')}</th>
+          <th onclick="window._salSort={key:'dept',dir:window._salSort.key==='dept'?-window._salSort.dir:1};render()" style="${thS('dept')}">Phòng ban ${arr('dept')}</th>
+          <th onclick="window._salSort={key:'base',dir:window._salSort.key==='base'?-window._salSort.dir:-1};render()" style="${thS('base')}">Lương CB ${arr('base')}</th>
+          <th onclick="window._salSort={key:'bonus',dir:window._salSort.key==='bonus'?-window._salSort.dir:-1};render()" style="${thS('bonus')}">Bổ sung ${arr('bonus')}</th>
+          <th onclick="window._salSort={key:'total',dir:window._salSort.key==='total'?-window._salSort.dir:-1};render()" style="${thS('total')}">Tổng lương ${arr('total')}</th>
           <th style="text-align:right;padding:8px 12px">% Quỹ</th>
         </tr></thead>
         <tbody>
           ${sortedAll.map(d=>`
             <tr style="cursor:pointer${d.total===0?';opacity:.5':''}" onclick="viewEmployee('${d.e.id}')">
-              <td><div class="cell-emp">
-                ${avatarHTML(d.e)}
-                <div><div class="cell-emp-name">${escapeHtml(d.e.name)}</div><div class="cell-emp-meta">${escapeHtml(d.e.role)}</div></div>
-              </div></td>
+              <td><div class="cell-emp">${avatarHTML(d.e)}<div><div class="cell-emp-name">${escapeHtml(d.e.name)}</div><div class="cell-emp-meta">${escapeHtml(d.e.role)}</div></div></div></td>
               <td style="color:var(--ink-dim)">${escapeHtml(d.dept)}</td>
               <td style="text-align:right;font-family:'JetBrains Mono',monospace">${d.base?fmtMoney(d.base)+' đ':'<span style="color:var(--ink-muted)">—</span>'}</td>
               <td style="text-align:right;font-family:'JetBrains Mono',monospace;color:var(--info)">${d.bonus?fmtMoney(d.bonus)+' đ':'<span style="color:var(--ink-muted)">—</span>'}</td>
               <td style="text-align:right;font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--accent)">${d.total?fmtMoney(d.total)+' đ':'<span style="color:var(--ink-muted)">Chưa có</span>'}</td>
-              <td style="text-align:right;font-size:11.5px;color:var(--ink-muted)">${totalFund&&d.total?(d.total/totalFund*100).toFixed(1)+'%':'—'}</td>
+              <td style="text-align:right;font-size:11.5px;color:var(--ink-muted)">${kpi.totalFund&&d.total?(d.total/kpi.totalFund*100).toFixed(1)+'%':'—'}</td>
             </tr>`).join('')}
         </tbody>
       </table>
@@ -15373,7 +15586,6 @@ function renderSalaryAnalysis(main){
     </div>
   `;
 }
-
 function renderCasual(main){
   if(!window.canDo('casual')){
     main.innerHTML='<div class="topbar"><div class="topbar-left"><h1 class="page-title">🔒 Không có quyền</h1><div class="page-sub">Bạn không được cấp quyền truy cập module Lao động Casual</div></div></div>';
