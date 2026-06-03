@@ -3246,44 +3246,56 @@ function renderDashboardCharts(){
   const months = [];
   for(let m=1; m<=12; m++) months.push(new Date(chartYear, m-1, 1));
 
+  const now = new Date();
+  const todayY = now.getFullYear();
+  const todayM = now.getMonth() + 1; // 1-12
+
+  // Tháng nào trong tương lai (chưa kết thúc) thì trả null
+  const isFuture = (m) => {
+    const y = m.getFullYear(), mo = m.getMonth()+1;
+    return y > todayY || (y === todayY && mo > todayM);
+  };
+
   // Headcount cuối mỗi tháng
+  // Helper: lấy exitDate thực tế từ customData
+  const getExitDate = (e) => {
+    const cd = DB.customData[e.id] || {};
+    if(cd.exitDate) return new Date(cd.exitDate);
+    return null;
+  };
+
+  // Headcount cuối mỗi tháng:
+  //   joined <= cuối tháng VÀ (chưa có exitDate hoặc exitDate > cuối tháng) VÀ status != exit nếu ko có exitDate
   const headcountData = months.map(m=>{
-    const end = new Date(m.getFullYear(), m.getMonth()+1, 0); // last day of month
+    if(isFuture(m)) return null;
+    const end = new Date(m.getFullYear(), m.getMonth()+1, 0, 23, 59, 59);
     return DB.employees.filter(e => {
       if(!e.joined) return false;
-      // Chưa vào làm tháng này
       if(new Date(e.joined) > end) return false;
-      // Kiểm tra nghỉ việc
-      const cd = DB.customData[e.id] || {};
-      if(cd.exitDate) {
-        // Có exitDate: nghỉ trước hoặc trong tháng này → không tính
-        if(new Date(cd.exitDate) <= end) return false;
-      } else if(e.status === 'exit') {
-        // Không có exitDate nhưng status=exit → dùng joined năm trước làm mốc
-        // Nếu không biết khi nào nghỉ, coi như đã nghỉ trước chartYear → không tính
-        // (conservative: chỉ bỏ nếu joined trước năm chart và không có exitDate)
-        // Thực tế: nếu status=exit mà không có exitDate → coi như nghỉ từ đầu năm chart
-        if(e.joined && new Date(e.joined).getFullYear() < chartYear) return false;
-        // Nếu join cùng năm chart mà status=exit → vẫn tính (chưa rõ khi nào nghỉ)
-      }
+      const exitD = getExitDate(e);
+      if(exitD && exitD <= end) return false;       // đã nghỉ trước/trong tháng này
+      if(!exitD && e.status === 'exit') return false; // nghỉ rồi nhưng chưa nhập ngày
       return true;
     }).length;
   });
-  // Tuyển mới mỗi tháng
+
+  // Tuyển mới mỗi tháng = NV có joined trong tháng
   const newHiresData = months.map(m=>{
+    if(isFuture(m)) return null;
     return DB.employees.filter(e => {
       if(!e.joined) return false;
       const d = new Date(e.joined);
       return d.getFullYear() === m.getFullYear() && d.getMonth() === m.getMonth();
     }).length;
   });
-  // Nghỉ việc mỗi tháng
+
+  // Nghỉ việc mỗi tháng = NV có exitDate trong tháng
   const exitsData = months.map(m=>{
+    if(isFuture(m)) return null;
     return DB.employees.filter(e => {
-      const cd = DB.customData[e.id] || {};
-      if(!cd.exitDate) return false;
-      const d = new Date(cd.exitDate);
-      return d.getFullYear() === m.getFullYear() && d.getMonth() === m.getMonth();
+      const exitD = getExitDate(e);
+      if(!exitD) return false;
+      return exitD.getFullYear() === m.getFullYear() && exitD.getMonth() === m.getMonth();
     }).length;
   });
   const labelsM = months.map(m=> 'T'+(m.getMonth()+1));
@@ -3303,7 +3315,8 @@ function renderDashboardCharts(){
           borderRadius:4,
           barThickness:18,
           yAxisID:'y',
-          order:2
+          order:2,
+          skipNull:true
         },
         {
           type:'line',
@@ -3317,6 +3330,7 @@ function renderDashboardCharts(){
           pointRadius:3,
           yAxisID:'y1',
           borderDash:[5,3],
+          spanGaps:false,
           order:1
         },
         {
@@ -3331,6 +3345,7 @@ function renderDashboardCharts(){
           pointRadius:3,
           yAxisID:'y1',
           borderDash:[5,3],
+          spanGaps:false,
           order:1
         }
       ]
@@ -3852,6 +3867,7 @@ function renderEmployeeProfile(main){
       <div class="profile-stat">
         <div class="profile-stat-label">Tuổi</div>
         <div class="profile-stat-value">${age||'—'}${age?' <span style=\"font-size:13px;color:var(--ink-muted);font-weight:400\">tuổi</span>':''}</div>
+        ${e.dob?`<div style="font-size:11px;color:var(--ink-muted);margin-top:4px">${fmtDate(e.dob)}</div>`:''}
       </div>
       <div class="profile-stat">
         <div class="profile-stat-label">Điểm Performance hiện tại</div>
@@ -4829,7 +4845,15 @@ function renderEmployees(main){
             <td style="color:var(--ink-dim)">${fmtDate(e.joined)}</td>
             <td style="font-family:'JetBrains Mono',monospace;font-weight:600;color:${e.kpi>=90?'var(--success)':e.kpi>=75?'var(--accent)':e.kpi>0?'var(--warning)':'var(--ink-muted)'}">${e.kpi>0?e.kpi.toFixed(1):'—'}</td>
             ${extraCells}
-            ${EC.dob?`<td style="font-size:12px;color:var(--ink-dim)">${fmtDate(e.dob)||'—'}</td>`:''}
+            ${EC.dob?`<td style="font-size:12px;color:var(--ink-dim)">${(()=>{
+              if(!e.dob) return '—';
+              const dobD = new Date(e.dob);
+              const today = new Date();
+              let age = today.getFullYear() - dobD.getFullYear();
+              if(today.getMonth() < dobD.getMonth() || (today.getMonth()===dobD.getMonth()&&today.getDate()<dobD.getDate())) age--;
+              return `<div>${fmtDate(e.dob)}</div><div style="color:var(--ink-muted);font-size:11px">${age} tuổi</div>`;
+            })()}</td>`:''}
+
             ${EC.gender?`<td style="font-size:12px">${e.gender==='male'?t('male'):e.gender==='female'?t('female'):'—'}</td>`:''}
             ${EC.email?`<td style="font-size:12px;color:var(--ink-dim);max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(e.email)||'—'}</td>`:''}
             ${EC.phone2?`<td style="font-size:12px;font-family:'JetBrains Mono',monospace;color:var(--ink-dim)">${escapeHtml(e.phone)||'—'}</td>`:''}
@@ -9135,6 +9159,10 @@ function leaveTabsHTML(active){
 }
 
 function renderLeaves(main){
+  if(!window.canDo('leaves')){
+    main.innerHTML='<div class="topbar"><div class="topbar-left"><h1 class="page-title">🔒 Không có quyền</h1><div class="page-sub">Bạn không được cấp quyền truy cập module Nghỉ phép</div></div></div>';
+    return;
+  }
   if(!window._leaveView) window._leaveView = 'tracking';
   if(window._leaveView === 'tracking') return renderLeaveReports(main);
   const today = new Date(); today.setHours(0,0,0,0);
@@ -11917,6 +11945,10 @@ const PROMOTION_TYPE = {
 };
 
 function renderTraining(main){
+  if(!window.canDo('training')){
+    main.innerHTML='<div class="topbar"><div class="topbar-left"><h1 class="page-title">🔒 Không có quyền</h1><div class="page-sub">Bạn không được cấp quyền truy cập module Đào tạo</div></div></div>';
+    return;
+  }
   const today = new Date();
 
   // === Period filter state ===
@@ -13031,6 +13063,10 @@ function renderPerformanceReports(main){
    PERFORMANCE / KPI — CRUD
    ========================================================= */
 function renderPerformance(main){
+  if(!window.canDo('performance')){
+    main.innerHTML='<div class="topbar"><div class="topbar-left"><h1 class="page-title">🔒 Không có quyền</h1><div class="page-sub">Bạn không được cấp quyền truy cập module Đánh giá KPI</div></div></div>';
+    return;
+  }
   if(!window._perfView) window._perfView = 'list';
   if(window._perfView === 'reports') return renderPerformanceReports(main);
   const scoredEmps = DB.employees.filter(e=>e.kpi>0);
@@ -13777,6 +13813,10 @@ function setAwardPeriod(p){ _awardPeriod = p; render(); }
 function setAwardsFilter(key, val){ awardsFilter[key] = val; render(); }
 
 function renderAwards(main){
+  if(!window.canDo('awards')){
+    main.innerHTML='<div class="topbar"><div class="topbar-left"><h1 class="page-title">🔒 Không có quyền</h1><div class="page-sub">Bạn không được cấp quyền truy cập module Khen thưởng</div></div></div>';
+    return;
+  }
   const today = new Date();
   const {from, to, prevFrom, prevTo, label: periodLabel} = getPeriodBounds(_awardPeriod);
 
@@ -14018,6 +14058,10 @@ let warnFilter = {search:'', severity:''};
 function setWarnPeriod(p){ _warnPeriod = p; render(); }
 
 function renderWarnings(main){
+  if(!window.canDo('warnings')){
+    main.innerHTML='<div class="topbar"><div class="topbar-left"><h1 class="page-title">🔒 Không có quyền</h1><div class="page-sub">Bạn không được cấp quyền truy cập module Kỷ luật / Cảnh cáo</div></div></div>';
+    return;
+  }
   const today = new Date();
   // Lấy config configurable
   const sevLevels = getSeverityLevels();
@@ -15838,6 +15882,10 @@ window.toggleAccountActive = async function(uid, action){
    SETTINGS
    ========================================================= */
 function renderSettings(main){
+  if(!window.canDo('settings')){
+    main.innerHTML='<div class="topbar"><div class="topbar-left"><h1 class="page-title">🔒 Không có quyền</h1><div class="page-sub">Bạn không được cấp quyền truy cập module Cấu hình</div></div></div>';
+    return;
+  }
   const c = DB.company;
   main.innerHTML = `
     <div class="topbar">
