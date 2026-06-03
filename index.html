@@ -2710,7 +2710,7 @@ function renderDashboard(main){
         <div class="card-head">
           <div>
             <div class="card-title">Biến động <em>nhân sự</em> 12 tháng</div>
-            <div class="card-sub">Headcount cuối tháng + tuyển mới + nghỉ việc · Năm ${p.year}</div>
+            <div class="card-sub">Đang làm cuối tháng + nhận việc + nghỉ việc · Năm ${p.year}</div>
           </div>
         </div>
         <div class="chart-wrap" style="height:280px"><canvas id="chartHeadcount"></canvas></div>
@@ -3009,7 +3009,7 @@ function dashEditorTab(tab, btn){
 const COMBO_KPI_OPTS=[
   // Nhân sự
   {k:'totalEmp',        label:(_lang==="en"?"Total headcount":"Tổng headcount"),          color:'#7eb6e8'},
-  {k:'newHires',        label:(_lang==="en"?"New hires":"Tuyển mới"),               color:'#7ec699'},
+  {k:'newHires',        label:(_lang==="en"?"New hires":"Nhận việc"),               color:'#7ec699'},
   {k:'exits',           label:(_lang==="en"?"Resigned":"Nghỉ việc"),               color:'#e57373'},
   {k:'birthMonth',      label:(_lang==="en"?"Birthdays this month":"Sinh nhật tháng"),         color:'#e8b974'},
   // Tuyển dụng
@@ -3264,22 +3264,27 @@ function renderDashboardCharts(){
     return null;
   };
 
-  // Headcount cuối mỗi tháng:
-  //   joined <= cuối tháng VÀ (chưa có exitDate hoặc exitDate > cuối tháng) VÀ status != exit nếu ko có exitDate
+  const todaySnap = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
+
+  // Đang làm T(n): snapshot ngày cuối tháng (hoặc hôm nay nếu là tháng hiện tại)
+  // = joined <= snapshot VÀ (exitDate chưa có HOẶC exitDate > snapshot)
   const headcountData = months.map(m=>{
     if(isFuture(m)) return null;
-    const end = new Date(m.getFullYear(), m.getMonth()+1, 0, 23, 59, 59);
+    const isCurrentMonth = m.getFullYear() === todayY && m.getMonth()+1 === todayM;
+    const snap = isCurrentMonth
+      ? todaySnap
+      : new Date(m.getFullYear(), m.getMonth()+1, 0, 23, 59, 59); // ngày cuối tháng
     return DB.employees.filter(e => {
       if(!e.joined) return false;
-      if(new Date(e.joined) > end) return false;
+      if(new Date(e.joined) > snap) return false;
       const exitD = getExitDate(e);
-      if(exitD && exitD <= end) return false;       // đã nghỉ trước/trong tháng này
-      if(!exitD && e.status === 'exit') return false; // nghỉ rồi nhưng chưa nhập ngày
+      if(exitD && exitD <= snap) return false;
+      if(!exitD && e.status === 'exit') return false;
       return true;
     }).length;
   });
 
-  // Tuyển mới mỗi tháng = NV có joined trong tháng
+  // Nhận việc T(n) = joined trong tháng n
   const newHiresData = months.map(m=>{
     if(isFuture(m)) return null;
     return DB.employees.filter(e => {
@@ -3289,7 +3294,7 @@ function renderDashboardCharts(){
     }).length;
   });
 
-  // Nghỉ việc mỗi tháng = NV có exitDate trong tháng
+  // Nghỉ việc T(n) = exitDate trong tháng n
   const exitsData = months.map(m=>{
     if(isFuture(m)) return null;
     return DB.employees.filter(e => {
@@ -3307,7 +3312,7 @@ function renderDashboardCharts(){
       datasets:[
         {
           type:'bar',
-          label:'Headcount',
+          label:(_lang==="en"?"Working":"Đang làm"),
           data:headcountData,
           backgroundColor:'rgba(212,165,116,.55)',
           borderColor:'#d4a574',
@@ -3320,7 +3325,7 @@ function renderDashboardCharts(){
         },
         {
           type:'line',
-          label:(_lang==="en"?"New hires":"Tuyển mới"),
+          label:(_lang==="en"?"New hires":"Nhận việc"),
           data:newHiresData,
           borderColor:'#7ec699',
           backgroundColor:'transparent',
