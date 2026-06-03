@@ -3289,13 +3289,50 @@ function renderDashboardCharts(){
   const labelsM = months.map(m=> 'T'+(m.getMonth()+1));
 
   new Chart($('#chartHeadcount'), {
-    type:'line',
+    type:'bar',
     data:{
       labels:labelsM,
       datasets:[
-        {label:'Headcount', data:headcountData, borderColor:'#d4a574', backgroundColor:'rgba(212,165,116,.1)', fill:true, tension:.4, borderWidth:2.5, pointBackgroundColor:'#d4a574', pointRadius:3, yAxisID:'y'},
-        {label:(_lang==="en"?"New hires":"Tuyển mới"), data:newHiresData, borderColor:'#7ec699', backgroundColor:'transparent', borderWidth:2, tension:.3, pointBackgroundColor:'#7ec699', pointRadius:3, yAxisID:'y1', borderDash:[5,3]},
-        {label:(_lang==="en"?"Resigned":"Nghỉ việc"), data:exitsData, borderColor:'#e57373', backgroundColor:'transparent', borderWidth:2, tension:.3, pointBackgroundColor:'#e57373', pointRadius:3, yAxisID:'y1', borderDash:[5,3]}
+        {
+          type:'bar',
+          label:'Headcount',
+          data:headcountData,
+          backgroundColor:'rgba(212,165,116,.55)',
+          borderColor:'#d4a574',
+          borderWidth:1.5,
+          borderRadius:4,
+          barThickness:18,
+          yAxisID:'y',
+          order:2
+        },
+        {
+          type:'line',
+          label:(_lang==="en"?"New hires":"Tuyển mới"),
+          data:newHiresData,
+          borderColor:'#7ec699',
+          backgroundColor:'transparent',
+          borderWidth:2,
+          tension:.3,
+          pointBackgroundColor:'#7ec699',
+          pointRadius:3,
+          yAxisID:'y1',
+          borderDash:[5,3],
+          order:1
+        },
+        {
+          type:'line',
+          label:(_lang==="en"?"Resigned":"Nghỉ việc"),
+          data:exitsData,
+          borderColor:'#e57373',
+          backgroundColor:'transparent',
+          borderWidth:2,
+          tension:.3,
+          pointBackgroundColor:'#e57373',
+          pointRadius:3,
+          yAxisID:'y1',
+          borderDash:[5,3],
+          order:1
+        }
       ]
     },
     options:{
@@ -4858,7 +4895,7 @@ function renderEmployees(main){
             <td style="padding:4px 8px">
               <select style="width:80px;padding:3px 6px;font-size:11px;background:var(--bg-card);border:1px solid var(--border);border-radius:4px;color:var(--ink)" onchange="setEmpFilter('colJoinedYear',this.value)">
                 <option value="">${t('filter_all')}</option>
-                ${(()=>{const yr=new Date().getFullYear();return [...Array(15)].map((_,i)=>yr-i).map(y=>`<option value="${y}" ${empFilter.colJoinedYear==y?'selected':''}>${y}</option>`).join('');})()}
+                ${(()=>{const yrs=[...new Set(DB.employees.filter(e=>e.joined).map(e=>new Date(e.joined).getFullYear()))].filter(y=>!isNaN(y)).sort((a,b)=>b-a);return yrs.map(y=>`<option value="${y}" ${empFilter.colJoinedYear==y?'selected':''}>${y}</option>`).join('');})()}
               </select>
             </td>
             <td style="padding:4px 8px"></td>
@@ -16138,17 +16175,17 @@ function renderSalaryAnalysis(main){
     <!-- KPI cards -->
     <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px">
       ${[
-        {label:(_lang==="en"?"Salary fund":"Quỹ lương"), value:fmtMoney(kpi.totalFund)+' đ', sub:kpi.headcount+' NV trong kỳ', color:'var(--accent)', cmpVal:cmpKPI?.totalFund, inv:true},
-        {label:'${_lang==="en"?"Base salary":"Lương cơ bản"} (Fixed)', value:fmtMoney(kpi.totalBase)+' đ', sub:fixedRatio+'% tổng quỹ', color:'var(--success)', cmpVal:cmpKPI?.totalBase, inv:true},
-        {label:'${_lang==="en"?"Perf. Bonus":"Bổ sung KQCV"} (Variable)', value:fmtMoney(kpi.totalBonus)+' đ', sub:(100-fixedRatio)+'% tổng quỹ', color:'var(--info)', cmpVal:cmpKPI?.totalBonus, inv:true},
-        {label:(_lang==="en"?"Avg cost/staff":"Chi phí bình quân/NV"), value:kpi.avgSalary?fmtMoney(kpi.avgSalary)+' đ':'—', sub:kpi.withSal.length+' NV có lương', color:'var(--purple)', cmpVal:cmpKPI?.avgSalary, inv:true},
+        {label:(_lang==="en"?"Salary fund":"Quỹ lương"), value:fmtMoney(kpi.totalFund)+' đ', sub:kpi.headcount+' NV trong kỳ', color:'var(--accent)', cmpVal:cmpKPI?.totalFund, inv:true, key:'totalFund'},
+        {label:(_lang==="en"?"Base salary":"Lương cơ bản")+' (Fixed)', value:fmtMoney(kpi.totalBase)+' đ', sub:fixedRatio+'% tổng quỹ', color:'var(--success)', cmpVal:cmpKPI?.totalBase, inv:true, key:'totalBase'},
+        {label:(_lang==="en"?"Perf. Bonus":"Bổ sung KQCV")+' (Variable)', value:fmtMoney(kpi.totalBonus)+' đ', sub:(100-fixedRatio)+'% tổng quỹ', color:'var(--info)', cmpVal:cmpKPI?.totalBonus, inv:true, key:'totalBonus'},
+        {label:(_lang==="en"?"Avg cost/staff":"Chi phí bình quân/NV"), value:kpi.avgSalary?fmtMoney(kpi.avgSalary)+' đ':'—', sub:kpi.withSal.length+' NV có lương', color:'var(--purple)', cmpVal:cmpKPI?.avgSalary, inv:true, key:'avgSalary'},
       ].map(k=>`
         <div class="card" style="padding:16px 20px">
           <div style="font-size:11px;color:var(--ink-muted);letter-spacing:.08em;text-transform:uppercase;margin-bottom:6px">${k.label}</div>
           <div style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:17px;color:${k.color}">${k.value}</div>
           <div style="font-size:11.5px;color:var(--ink-muted);margin-top:4px;display:flex;align-items:center;gap:4px">
             ${k.sub}
-            ${F.showCmp&&k.cmpVal!==undefined?yoyTag(k.cmpVal&&k.cmpVal!==k.value?kpi[k.label===(_lang==="en"?"Avg cost/staff":"Chi phí bình quân/NV")?'avgSalary':k.label===(_lang==="en"?"Salary fund":"Quỹ lương")?'totalFund':k.label==='${_lang==="en"?"Base salary":"Lương cơ bản"} (Fixed)'?'totalBase':'totalBonus']:0, k.cmpVal, k.inv):''}
+            ${F.showCmp&&k.cmpVal!==undefined?yoyTag(k.cmpVal&&k.cmpVal!==k.value?kpi[k.key]:0, k.cmpVal, k.inv):''}
           </div>
           ${F.showCmp&&k.cmpVal!==undefined?`<div style="font-size:10.5px;color:var(--ink-muted);margin-top:2px">Cùng kỳ: ${fmtMoney(k.cmpVal)} đ</div>`:''}
         </div>`).join('')}
@@ -18413,13 +18450,37 @@ fbAuth.onAuthStateChanged(async user => {
         };
 
         let _debounces = {};
+        let _lastSyncAt = {};  // track last seen _syncAt per doc to avoid false triggers
         Object.keys(FS_DOC_MAP).forEach(docId=>{
           const unsub = window.fbDb.collection('hrdata').doc(docId)
             .onSnapshot(snap=>{
               if(!snap.exists || !window.currentUser) return;
               const cloudData = snap.data();
-              // Bỏ qua nếu chính mình vừa lưu (3 giây)
-              if(cloudData._syncBy === window.currentUser.uid && (Date.now()-(cloudData._syncAt||0)) < 3000) return;
+              const cloudSyncAt = cloudData._syncAt||0;
+              const cloudSyncBy = cloudData._syncBy||'';
+
+              // Bỏ qua lần đầu tiên load (không phải update từ người khác)
+              if(!_lastSyncAt[docId]){
+                _lastSyncAt[docId] = cloudSyncAt;
+                // Vẫn merge data vào DB
+                const localPhotos = {};
+                (DB.employees||[]).forEach(e=>{ if(e.photo) localPhotos[e.id]=e.photo; });
+                try{ const pm=JSON.parse(localStorage.getItem(STORE_KEY+'_photos')||'{}'); Object.assign(localPhotos,pm); }catch(pe){}
+                FS_DOC_MAP[docId].forEach(key=>{ if(cloudData[key] !== undefined) DB[key] = cloudData[key]; });
+                if(DB.employees) DB.employees.forEach(e=>{ if(localPhotos[e.id]) e.photo=localPhotos[e.id]; });
+                try{ localStorage.setItem(STORE_KEY, JSON.stringify(DB)); }catch(e){}
+                return;
+              }
+
+              // Bỏ qua nếu chính mình vừa lưu (5 giây)
+              if(cloudSyncBy === window.currentUser.uid && (Date.now()-cloudSyncAt) < 5000){
+                _lastSyncAt[docId] = cloudSyncAt;
+                return;
+              }
+
+              // Bỏ qua nếu timestamp không đổi (không có update thực sự)
+              if(cloudSyncAt === _lastSyncAt[docId]) return;
+              _lastSyncAt[docId] = cloudSyncAt;
 
               // Merge đúng fields của document này vào DB
               const localPhotos = {};
@@ -18441,8 +18502,8 @@ fbAuth.onAuthStateChanged(async user => {
                 const focused = document.activeElement && ['INPUT','TEXTAREA','SELECT'].includes(document.activeElement.tagName);
 
                 if(modalOpen || focused){
-                  // User đang làm việc → badge không xâm phạm
-                  _showSyncBadge();
+                  // Realtime mode: re-render ngay khi không busy
+                  setTimeout(()=>{ const fn=RENDER_MAP[currentPage]; const main=document.getElementById('mainContent'); if(fn&&main) fn(main); updateBadges(); }, 500);
                 } else if(affectedPages.includes(currentPage)){
                   // Re-render đúng page hiện tại
                   const fn = RENDER_MAP[currentPage];
@@ -18586,16 +18647,6 @@ window.logAudit = function(action, module, target, detail){
   } catch(e){ console.warn('Audit log error:', e); }
 };
 // ── Realtime sync helpers ──
-window._showSyncBadge = function(){
-  if(document.getElementById('_syncBadge')) return; // đã có rồi
-  const badge = document.createElement('div');
-  badge.id = '_syncBadge';
-  badge.style.cssText = 'position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--bg-card);border:1px solid var(--accent);color:var(--ink);padding:10px 18px;border-radius:10px;font-size:13px;z-index:9999;display:flex;align-items:center;gap:10px;box-shadow:0 4px 20px rgba(0,0,0,.4);cursor:pointer;user-select:none';
-  badge.innerHTML = `<span style="color:var(--accent);font-size:16px">🔄</span><span>Có dữ liệu mới từ đồng nghiệp — <strong style="color:var(--accent)">Nhấn để cập nhật</strong></span><span id="_syncBadgeX" style="opacity:.5;padding:0 6px;font-size:16px;cursor:pointer">✕</span>`;
-  document.getElementById('_syncBadgeX')?.addEventListener('click', e=>{ e.stopPropagation(); badge.remove(); });
-  badge.addEventListener('click', ()=>{ badge.remove(); render(); });
-  document.body.appendChild(badge);
-};
 }); // end window.load
 
 // ── THEME TOGGLE ──
