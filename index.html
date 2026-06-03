@@ -8390,6 +8390,10 @@ let birthdayFilter = {
 };
 
 function renderBirthdays(main){
+  if(!window.canDo('birthdays')){
+    main.innerHTML='<div class="topbar"><div class="topbar-left"><h1 class="page-title">🔒 Không có quyền</h1><div class="page-sub">Bạn không được cấp quyền truy cập module Sinh nhật</div></div></div>';
+    return;
+  }
   const today = new Date();
   const todayMonth = today.getMonth() + 1;
   const todayDay = today.getDate();
@@ -15630,6 +15634,7 @@ const ADMIN_EMAIL = window.ADMIN_EMAIL;
 const MODULE_LIST = [
   {key:'employees',  label:(_lang==="en"?"Employee":"Nhân viên")},
   {key:'contracts',  label:(_lang==="en"?"Contract":"Hợp đồng")},
+  {key:'birthdays',  label:(_lang==="en"?"Birthdays":"Sinh nhật")},
   {key:'leaves',     label:(_lang==="en"?"Leave":"Nghỉ phép")},
   {key:'recruitment',label:(_lang==="en"?"Recruitment":"Tuyển dụng")},
   {key:'casual',     label:'Lao động Casual'},
