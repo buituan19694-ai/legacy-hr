@@ -1533,7 +1533,7 @@ function loadData(){
 }
 // ── Mapping: DB field → Firestore document ──
 const FS_DOC_MAP = {
-  employees:  ['employees','departments','customData'],
+  employees:  ['departments'],
   hr:         ['leaves','contracts','leaveSheet','leaveOpening'],
   recruitment:['candidates','jobs'],
   workforce:  ['casuals','trainees','traineeSchedules','svcData','courses'],
@@ -1544,6 +1544,9 @@ const FS_DOC_MAP = {
                'contractTemplates','quickFilterPrefs','recReportConfig','perfReportConfig',
                '_rewardTypesV2','_levelReset2026','_removedProbationStatus','_normalizedDates2026'],
 };
+// emp_profiles: collection riêng, mỗi NV là 1 doc
+// → không bị giới hạn 1MB, scale tới 1000+ NV
+const EMP_COLLECTION = 'emp_profiles';
 
 // Xác định document nào chứa key này
 function _fsDocFor(key){
@@ -1551,6 +1554,62 @@ function _fsDocFor(key){
     if(keys.includes(key)) return doc;
   }
   return 'config'; // fallback
+}
+
+// ── Save 1 employee profile lên Firestore (collection-based) ──
+function saveEmpProfile(empId){
+  if(!window.fbDb || !window.currentUser) return;
+  const emp = (DB.employees||[]).find(e=>e.id===empId);
+  if(!emp) return;
+  const cd = DB.customData[empId] || {};
+  const {photo, ...empNoPhoto} = emp;
+  const doc = {...empNoPhoto, ...cd, _empId: empId,
+               _syncBy: window.currentUser.uid, _syncAt: Date.now()};
+  // Chỉ lưu photoUrl nếu là URL thật (Firebase Storage) — không lưu base64 vào Firestore
+  if(photo && photo.startsWith('http')) doc.photoUrl = photo;
+  window.fbDb.collection(EMP_COLLECTION).doc(empId).set(doc)
+    .then(()=>{ console.log('[EMP] saved:', empId, emp.name); })
+    .catch(err=>{ 
+      console.error('[EMP] FAILED:', empId, err.message);
+      toast('❌ Lỗi lưu hồ sơ '+emp.name+': '+err.message,'error');
+    });
+}
+
+// ── Load tất cả employee profiles từ Firestore ──
+async function loadEmpProfiles(localPhotos){
+  if(!window.fbDb) return false;
+  try{
+    const snap = await window.fbDb.collection(EMP_COLLECTION).get();
+    if(snap.empty) return false;
+    const employees = [];
+    const customData = {};
+    // Các key thuộc employee object (không phải customData)
+    const EMP_KEYS = new Set(['id','code','name','email','phone','phone2','dob','gender',
+      'deptId','role','roleVN','level','joined','status','kpi','manualRole','updatedAt',
+      '_empId','_syncBy','_syncAt']);
+    snap.forEach(doc=>{
+      const d = doc.data();
+      const empId = d._empId || doc.id;
+      // Tách employee fields và customData fields
+      const empObj = {id: empId};
+      const cdObj = {};
+      Object.entries(d).forEach(([k,v])=>{
+        if(k.startsWith('_')) return; // skip meta
+        if(EMP_KEYS.has(k)) empObj[k] = v;
+        else cdObj[k] = v;
+      });
+      // Ưu tiên: Storage URL > localPhotos base64
+      empObj.photo = d.photoUrl || localPhotos[empId] || '';
+      employees.push(empObj);
+      if(Object.keys(cdObj).length > 0) customData[empId] = cdObj;
+    });
+    DB.employees = employees;
+    DB.customData = customData;
+    return true;
+  }catch(e){
+    console.warn('[EMP] loadEmpProfiles error:', e.message);
+    return false;
+  }
 }
 
 // saveData: lưu localStorage + push Firestore — Firestore LUÔN chạy dù localStorage lỗi
@@ -1574,28 +1633,36 @@ function saveData(changedKeys=null){
 
   // ── Bước 2: Firestore — LUÔN chạy dù localStorage lỗi ──
   if(window.fbDb && window.currentUser){
-    const docsToSave = new Set();
-    if(!changedKeys){
-      Object.keys(FS_DOC_MAP).forEach(d=>docsToSave.add(d));
-    } else {
-      (Array.isArray(changedKeys)?changedKeys:[changedKeys])
-        .forEach(k=>docsToSave.add(_fsDocFor(k)));
-    }
     const meta = { _syncBy: window.currentUser.uid, _syncAt: Date.now() };
     window._lastSaveAt = meta._syncAt;
+
+    // Xác định docs cần push (không bao gồm employees/customData - đã tách vào collection)
+    const docsToSave = new Set();
+    const keys = changedKeys ? (Array.isArray(changedKeys)?changedKeys:[changedKeys]) : null;
+    if(!keys){
+      Object.keys(FS_DOC_MAP).forEach(d=>docsToSave.add(d));
+    } else {
+      keys.forEach(k=>{ const d=_fsDocFor(k); if(d) docsToSave.add(d); });
+    }
+
+    // Push các docs nhỏ (hr, config, recruitment, workforce, performance, employees/departments)
     docsToSave.forEach(docId=>{
-      const keys = FS_DOC_MAP[docId];
+      const docKeys = FS_DOC_MAP[docId];
       const payload = { ...meta };
-      keys.forEach(k=>{ const val=DB[k]; if(val!==undefined) payload[k]=val; });
-      console.log('[saveData] pushing doc:', docId, 'keys:', keys.filter(k=>payload[k]!==undefined));
+      docKeys.forEach(k=>{ const val=DB[k]; if(val!==undefined) payload[k]=val; });
       window.fbDb.collection('hrdata').doc(docId).set(payload,{merge:true})
-        .then(()=>{ console.log('[saveData] ✅ saved:', docId); })
         .catch(err=>{
-          console.error('[saveData] ❌ FAILED:', docId, err.code, err.message);
-          if(err.code==='permission-denied') toast('⚠️ Không có quyền lưu — kiểm tra Firestore Rules','error');
-          else toast('❌ Lỗi lưu "'+docId+'": '+err.code+' — '+err.message,'error');
+          console.error('[saveData] ❌', docId, err.code, err.message);
+          if(err.code==='permission-denied') toast('⚠️ Không có quyền lưu dữ liệu','error');
+          else toast('❌ Lỗi lưu: '+err.message,'error');
         });
     });
+
+    // Push employees + customData → emp_profiles collection (1 doc/NV)
+    const needEmpSave = !keys || keys.some(k=>['employees','customData'].includes(k));
+    if(needEmpSave){
+      (DB.employees||[]).forEach(e=>saveEmpProfile(e.id));
+    }
   }
   return true;
 }
@@ -5525,48 +5592,66 @@ function editEmployee(id, prefill = null){
     <div class="modal-actions">
       ${isNew?'':`<button class="btn btn-danger left" onclick="deleteEmployee('${e.id}', true)">${ICONS.trash} Xoá</button>`}
       <button class="btn" onclick="closeModal()">${t('btn_cancel')}</button>
-      <button class="btn btn-primary" onclick="saveEmployee('${e.id}', ${isNew})">${isNew?'Tạo hồ sơ':(_lang==="en"?"Save changes":"Lưu thay đổi")}</button>
-    </div>
-  `, true);
-}
-
-/* ===== Photo upload handlers ===== */
-function handlePhotoUpload(event){
+      <button class="btn btn-primary" onclick="saveEmployee('${e.id}', ${isNew})">${isNew?'Tạo hồ sơ':(_lang==="en"?"Save cfunction handlePhotoUpload(event){
   const file = event.target.files[0];
   if(!file) return;
   if(!file.type.startsWith('image/')){ toast('File phải là ảnh','error'); return; }
-  if(file.size > 5 * 1024 * 1024){ toast('Ảnh quá lớn, tối đa 5MB','error'); return; }
+  if(file.size > 10 * 1024 * 1024){ toast('Ảnh quá lớn, tối đa 10MB','error'); return; }
 
-  // Resize ảnh xuống 120x120, quality 0.6 để sync được lên Firestore
   const reader = new FileReader();
   reader.onload = ev => {
     const img = new Image();
     img.onload = () => {
-      const size = 120;
+      // Resize 200×200
+      const size = 200;
       const canvas = document.createElement('canvas');
       canvas.width = size; canvas.height = size;
       const ctx = canvas.getContext('2d');
-
-      // Crop vuông từ giữa
       const minDim = Math.min(img.width, img.height);
       const sx = (img.width - minDim) / 2;
       const sy = (img.height - minDim) / 2;
       ctx.drawImage(img, sx, sy, minDim, minDim, 0, 0, size, size);
 
-      const dataUrl = canvas.toDataURL('image/jpeg', 0.6);
+      // Preview ngay
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
       $('#f_photo').value = dataUrl;
       const preview = $('#photoPreview');
       preview.innerHTML = `<img src="${dataUrl}" alt="Avatar">`;
-      // Hiện nút xoá ảnh nếu chưa có
-      const actions = preview.parentElement.querySelector('.photo-actions > div:last-of-type');
-      if(actions && !actions.querySelector('.btn-danger')){
-        const btn = document.createElement('button');
-        btn.className = 'btn btn-danger';
-        btn.innerHTML = ICONS.trash + ' Xoá ảnh';
-        btn.onclick = removePhoto;
-        actions.appendChild(btn);
-      }
-      toast('Đã tải ảnh lên');
+
+      // Upload lên Cloudinary
+      canvas.toBlob(blob => {
+        if(!blob) return;
+        toast('⏳ Đang upload ảnh...', 'info');
+        const fd = new FormData();
+        fd.append('file', blob, 'avatar.jpg');
+        fd.append('upload_preset', CLOUDINARY_PRESET);
+        fd.append('folder', 'legacy_hr_avatars');
+        fetch(`https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD}/image/upload`, {
+          method: 'POST', body: fd
+        })
+        .then(r => r.json())
+        .then(data => {
+          if(data.secure_url){
+            $('#f_photo').value = data.secure_url;
+            preview.innerHTML = `<img src="${data.secure_url}" alt="Avatar">`;
+            toast('✅ Ảnh đã upload!', 'success');
+          } else {
+            console.warn('Cloudinary error:', data);
+            toast('⚠️ Upload ảnh thất bại, lưu tạm trên máy', 'warning');
+          }
+        })
+        .catch(err => {
+          console.warn('Upload err:', err);
+          toast('⚠️ Lưu ảnh tạm trong máy (chưa lên cloud)', 'warning');
+        });
+      }, 'image/jpeg', 0.85);
+    };
+    img.src = ev.target.result;
+  };
+  reader.readAsDataURL(file);
+}
+
+oast('Đã tải ảnh lên');
     };
     img.src = ev.target.result;
   };
@@ -5713,7 +5798,18 @@ function saveEmployee(id, isNew){
     DB.customData = {...DB.customData, [id]: customValues};
   }
 
-  saveData();
+  // Lưu localStorage
+  try{
+    const dbNoPhoto = JSON.parse(JSON.stringify(DB));
+    dbNoPhoto.employees = (dbNoPhoto.employees||[]).map(e=>{ const {photo,...r}=e; return r; });
+    localStorage.setItem(STORE_KEY, JSON.stringify(dbNoPhoto));
+  }catch(_){}
+  // Push NV lên Firestore
+  if(window.fbDb && window.currentUser){
+    window._lastSaveAt = Date.now();
+    saveEmpProfile(id);
+    if(isNew) saveData(['departments']);
+  }
   // Clear pendingRender trước (tránh flush với data cũ sau closeModal)
   if(window._pendingRender) delete window._pendingRender[currentPage];
   closeModal();
@@ -5730,7 +5826,12 @@ function deleteEmployee(id, fromModal=false){
     DB.leaves = DB.leaves.filter(l=>l.empId!==id);
     DB.kpiReviews = DB.kpiReviews.filter(k=>k.empId!==id);
     delete DB.customData[id];
-    saveData();
+    // Xóa doc khỏi emp_profiles collection
+    if(window.fbDb && window.currentUser){
+      window.fbDb.collection(EMP_COLLECTION).doc(id).delete()
+        .catch(err=>console.warn('[EMP] delete error:', err.message));
+    }
+    saveData(['contracts','leaves','kpiReviews']);
     toast('Đã xoá nhân viên');
     render();
   });
@@ -18464,10 +18565,13 @@ const firebaseConfig = {
 
 firebase.initializeApp(firebaseConfig);
 const fbAuth = firebase.auth();
-const fbDb   = firebase.firestore();
+const fbDb      = firebase.firestore();
+// Cloudinary config (thay Firebase Storage)
+const CLOUDINARY_CLOUD = 'dmsb6wbg6';
+const CLOUDINARY_PRESET = 'legacy_hr';
 // Gán lên window để các hàm ngoài scope có thể dùng
-window.fbAuth = fbAuth;
-window.fbDb   = fbDb;
+window.fbAuth   = fbAuth;
+window.fbDb     = fbDb;
 window.firebase = firebase;
 
 // ── Current user state ──
@@ -18517,22 +18621,27 @@ fbAuth.onAuthStateChanged(async user => {
         loadUserLang();
         // Log login
         logAudit('LOGIN', 'auth', '', '');
-        // ── Load HR data từ tất cả 6 Firestore documents (song song) ──
+        // ── Load HR data từ Firestore (song song) ──
         try{
           const localPhotos = {};
           (DB.employees||[]).forEach(e=>{ if(e.photo) localPhotos[e.id]=e.photo; });
           try{ const pm=JSON.parse(localStorage.getItem(STORE_KEY+'_photos')||'{}'); Object.assign(localPhotos,pm); }catch(e2){}
+          // Load song song: 6 docs nhỏ + collection emp_profiles
           const docIds = Object.keys(FS_DOC_MAP);
-          const snaps = await Promise.all(docIds.map(id=>window.fbDb.collection('hrdata').doc(id).get()));
-          let hasCloud = false;
+          const [snaps, empLoaded] = await Promise.all([
+            Promise.all(docIds.map(id=>window.fbDb.collection('hrdata').doc(id).get())),
+            loadEmpProfiles(localPhotos)
+          ]);
+          let hasCloud = empLoaded;
           snaps.forEach((snap,i)=>{
             if(!snap.exists) return;
             hasCloud = true;
             const data = snap.data();
             FS_DOC_MAP[docIds[i]].forEach(key=>{ if(data[key] !== undefined) DB[key] = data[key]; });
           });
+          // Ghép ảnh cho employees (nếu load từ collection)
+          if(empLoaded) DB.employees.forEach(e=>{ if(localPhotos[e.id]) e.photo=localPhotos[e.id]; });
           if(hasCloud){
-            if(DB.employees) DB.employees.forEach(e=>{ if(localPhotos[e.id]) e.photo=localPhotos[e.id]; });
             if(!DB.customFields) DB.customFields=[];
             if(!DB.customData) DB.customData={};
             if(!DB.casuals) DB.casuals=[];
@@ -18598,6 +18707,28 @@ fbAuth.onAuthStateChanged(async user => {
             item.style.display = lvl === 'none' ? 'none' : '';
           });
         }
+        // Migration: nếu emp_profiles trống → push toàn bộ NV lên collection lần đầu
+        if(!empLoaded && DB.employees && DB.employees.length > 0){
+          console.log('[MIGRATION] Pushing', DB.employees.length, 'employees to emp_profiles...');
+          toast('⏳ Đang chuyển dữ liệu sang cấu trúc mới... (~30 giây)','info');
+          // Tách thành batches 500 doc (giới hạn Firestore batch)
+          const batchSize = 500;
+          const emps = DB.employees;
+          for(let b=0; b<emps.length; b+=batchSize){
+            const batch = window.fbDb.batch();
+            emps.slice(b, b+batchSize).forEach(e=>{
+              const ref = window.fbDb.collection(EMP_COLLECTION).doc(e.id);
+              const cd = DB.customData[e.id] || {};
+              const {photo, ...empNoPhoto} = e;
+              batch.set(ref, {...empNoPhoto, ...cd, _empId: e.id,
+                _syncBy: window.currentUser.uid, _syncAt: Date.now()});
+            });
+            batch.commit()
+              .then(()=>{ console.log('[MIGRATION] batch done:', b, '-', b+batchSize); })
+              .catch(err=>{ console.error('[MIGRATION] batch error:', err); emps.slice(b,b+batchSize).forEach(e=>saveEmpProfile(e.id)); });
+          }
+          setTimeout(()=>toast('✅ Chuyển dữ liệu xong! Mọi thay đổi giờ sẽ được lưu.','success'), 5000);
+        }
         // Sync employees từ promotions SAU khi cloud load xong (không dùng localStorage cũ)
         try { syncAllEmployees(); } catch(e){ console.warn('Sync error', e); }
         render();
@@ -18610,6 +18741,7 @@ fbAuth.onAuthStateChanged(async user => {
         // Map docId → pages cần re-render khi doc đó thay đổi
         const DOC_PAGES = {
           employees:   ['employees','employee-profile','departments','department-detail','dashboard','tasks','salary','training'],
+          customdata:  ['employees','employee-profile','dashboard','salary','performance'],
           hr:          ['leaves','contracts','dashboard'],
           recruitment: ['recruitment','job-detail','dashboard'],
           workforce:   ['casual','trainee','training','dashboard'],
@@ -18723,6 +18855,71 @@ fbAuth.onAuthStateChanged(async user => {
             }, err=>{ console.warn('FS listener error ['+docId+']:',err.message); });
           window._hrListeners.push(unsub);
         });
+
+        // ── Realtime listener cho emp_profiles collection ──
+        // Mỗi NV là 1 doc → khi 1 NV thay đổi chỉ update NV đó
+        const empUnsub = window.fbDb.collection(EMP_COLLECTION)
+          .onSnapshot(snapshot=>{
+            if(!window.currentUser) return;
+            if(snapshot.metadata && snapshot.metadata.hasPendingWrites) return;
+            let changed = false;
+            snapshot.docChanges().forEach(change=>{
+              const d = change.doc.data();
+              const empId = d._empId || change.doc.id;
+              const cloudSyncBy = d._syncBy || '';
+              const cloudSyncAt = d._syncAt || 0;
+              // Skip nếu mình vừa save (5 giây)
+              const isSelf = cloudSyncBy === window.currentUser.uid;
+              const isRecent = (Date.now()-cloudSyncAt) < 5000;
+              if(isSelf && isRecent) return;
+              if(change.type === 'removed'){
+                DB.employees = DB.employees.filter(e=>e.id!==empId);
+                delete DB.customData[empId];
+              } else {
+                // Tách employee fields và customData fields
+                const EMP_KEYS = new Set(['id','code','name','email','phone','phone2','dob','gender',
+                  'deptId','role','roleVN','level','joined','status','kpi','manualRole','updatedAt']);
+                const empObj = {id: empId};
+                const cdObj = {};
+                Object.entries(d).forEach(([k,v])=>{
+                  if(k.startsWith('_')) return;
+                  if(EMP_KEYS.has(k)) empObj[k] = v;
+                  else cdObj[k] = v;
+                });
+                // Giữ ảnh local
+                const localPhotos = {};
+                try{ Object.assign(localPhotos, JSON.parse(localStorage.getItem(STORE_KEY+'_photos')||'{}')); }catch(_){}
+                empObj.photo = d.photoUrl || localPhotos[empId] || '';
+                const idx = DB.employees.findIndex(e=>e.id===empId);
+                if(idx>=0) DB.employees[idx] = empObj;
+                else DB.employees.push(empObj);
+                if(Object.keys(cdObj).length>0) DB.customData[empId] = cdObj;
+              }
+              changed = true;
+            });
+            if(!changed) return;
+            // Debounce render
+            clearTimeout(window._empDebounce);
+            window._empDebounce = setTimeout(()=>{
+              try{ syncAllEmployees(); }catch(_){}
+              const modalOpen = document.getElementById('modal')?.classList.contains('open');
+              if(modalOpen){
+                updateBadges();
+                if(!window._pendingRender) window._pendingRender={};
+                ['employees','employee-profile','dashboard','salary','performance'].forEach(p=>{window._pendingRender[p]=true;});
+              } else if(['employees','employee-profile','dashboard','salary','performance'].includes(currentPage)){
+                render();
+              }
+              updateBadges();
+              // Lưu localStorage
+              try{
+                const dbNoPhoto = JSON.parse(JSON.stringify(DB));
+                dbNoPhoto.employees = (dbNoPhoto.employees||[]).map(e=>{ const {photo,...r}=e; return r; });
+                localStorage.setItem(STORE_KEY, JSON.stringify(dbNoPhoto));
+              }catch(_){}
+            }, 500);
+          }, err=>{ console.warn('[EMP] listener error:', err.message); });
+        window._hrListeners.push(empUnsub);
       } else if(doc.exists && doc.data().active === false){
         fbAuth.signOut();
         showAuthError('Tài khoản đã bị khoá. Liên hệ quản trị viên.');
