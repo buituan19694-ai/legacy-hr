@@ -18697,27 +18697,52 @@ fbAuth.onAuthStateChanged(async user => {
             item.style.display = lvl === 'none' ? 'none' : '';
           });
         }
-        // Migration: nếu emp_profiles trống → push toàn bộ NV lên collection lần đầu
-        if(!empLoaded && DB.employees && DB.employees.length > 0){
-          console.log('[MIGRATION] Pushing', DB.employees.length, 'employees to emp_profiles...');
+        // Migration: nếu emp_profiles trống → load từ hrdata/employees doc cũ rồi migrate
+        if(!empLoaded){
+          console.log('[MIGRATION] emp_profiles empty, loading from old hrdata/employees...');
           toast('⏳ Đang chuyển dữ liệu sang cấu trúc mới... (~30 giây)','info');
-          // Tách thành batches 500 doc (giới hạn Firestore batch)
-          const batchSize = 500;
-          const emps = DB.employees;
-          for(let b=0; b<emps.length; b+=batchSize){
-            const batch = window.fbDb.batch();
-            emps.slice(b, b+batchSize).forEach(e=>{
-              const ref = window.fbDb.collection(EMP_COLLECTION).doc(e.id);
-              const cd = DB.customData[e.id] || {};
-              const {photo, ...empNoPhoto} = e;
-              batch.set(ref, {...empNoPhoto, ...cd, _empId: e.id,
-                _syncBy: window.currentUser.uid, _syncAt: Date.now()});
-            });
-            batch.commit()
-              .then(()=>{ console.log('[MIGRATION] batch done:', b, '-', b+batchSize); })
-              .catch(err=>{ console.error('[MIGRATION] batch error:', err); emps.slice(b,b+batchSize).forEach(e=>saveEmpProfile(e.id)); });
+          try {
+            // Load từ doc cũ hrdata/employees (vẫn còn data ở đây)
+            const oldDoc = await window.fbDb.collection('hrdata').doc('employees').get();
+            let migrateEmps = DB.employees || [];
+            let migrateCd = DB.customData || {};
+            if(oldDoc.exists){
+              const oldData = oldDoc.data();
+              if(oldData.employees && oldData.employees.length > 0){
+                migrateEmps = oldData.employees;
+                migrateCd = oldData.customData || {};
+                // Update DB với data từ doc cũ
+                DB.employees = migrateEmps;
+                DB.customData = migrateCd;
+                console.log('[MIGRATION] Loaded', migrateEmps.length, 'employees from old doc');
+              }
+            }
+            if(migrateEmps.length === 0){
+              console.log('[MIGRATION] No employees to migrate');
+            } else {
+              // Push lên emp_profiles collection theo batches
+              const batchSize = 400;
+              for(let b=0; b<migrateEmps.length; b+=batchSize){
+                const batch = window.fbDb.batch();
+                migrateEmps.slice(b, b+batchSize).forEach(e=>{
+                  const ref = window.fbDb.collection(EMP_COLLECTION).doc(e.id);
+                  const cd = migrateCd[e.id] || {};
+                  const {photo, ...empNoPhoto} = e;
+                  const photoUrl = (photo && photo.startsWith('http')) ? photo : '';
+                  const doc = {...empNoPhoto, ...cd, _empId: e.id,
+                    _syncBy: window.currentUser.uid, _syncAt: Date.now()};
+                  if(photoUrl) doc.photoUrl = photoUrl;
+                  batch.set(ref, doc);
+                });
+                await batch.commit();
+                console.log('[MIGRATION] batch done:', b, '-', Math.min(b+batchSize, migrateEmps.length));
+              }
+              toast('✅ Đã chuyển '+migrateEmps.length+' nhân viên sang cấu trúc mới!','success');
+            }
+          } catch(migErr){
+            console.error('[MIGRATION] error:', migErr);
+            toast('⚠️ Lỗi migration: '+migErr.message,'error');
           }
-          setTimeout(()=>toast('✅ Chuyển dữ liệu xong! Mọi thay đổi giờ sẽ được lưu.','success'), 5000);
         }
         // Sync employees từ promotions SAU khi cloud load xong (không dùng localStorage cũ)
         try { syncAllEmployees(); } catch(e){ console.warn('Sync error', e); }
