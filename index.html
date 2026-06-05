@@ -1588,7 +1588,11 @@ function saveData(changedKeys=null){
       const payload = { ...meta };
       keys.forEach(k=>{ const val=DB[k]; if(val!==undefined) payload[k]=val; });
       window.fbDb.collection('hrdata').doc(docId).set(payload,{merge:true})
-        .catch(err=>{ if(err.code!=='permission-denied') console.warn('FS sync warn:',docId,err.message); });
+        .catch(err=>{
+          console.warn('FS sync warn:',docId,err.code,err.message);
+          if(err.code==='permission-denied') toast('⚠️ Không có quyền lưu dữ liệu — liên hệ quản trị viên','error');
+          else if(err.code!=='unavailable') toast('❌ Lỗi lưu cloud: '+err.message,'error');
+        });
     });
   }
   return true;
@@ -5675,8 +5679,12 @@ function saveEmployee(id, isNew){
     photo: $('#f_photo')?.value || '',
   };
 
-  if(isNew) DB.employees.push(data);
-  else{ const i = DB.employees.findIndex(x=>x.id===id); if(i>=0) DB.employees[i] = data; }
+  if(isNew){
+    DB.employees = [...DB.employees, data]; // assign new array → Proxy tracks 'employees'
+  } else {
+    const _emps = DB.employees.map(x => x.id===id ? data : x);
+    DB.employees = _emps; // assign new array → Proxy tracks 'employees'
+  }
 
   // Sync: f_level → customData.levelNum (và ngược lại)
   const levelVal = $('#f_level')?.value.trim() || '';
@@ -5691,14 +5699,14 @@ function saveEmployee(id, isNew){
     const ei = DB.employees.findIndex(x=>x.id===id);
     if(ei>=0) DB.employees[ei].level = customValues.levelNum;
   }
-  DB.customData[id] = customValues;
+  DB.customData = {...DB.customData, [id]: customValues}; // assign new obj → Proxy tracks 'customData'
 
   // Sync e.role ↔ cd.position (nguồn duy nhất cho chức danh)
   const ei2 = DB.employees.findIndex(x=>x.id===id);
   if(ei2 >= 0){
     if(DB.employees[ei2].role)   customValues.position    = DB.employees[ei2].role;
     if(DB.employees[ei2].roleVN) customValues.jobLocation = DB.employees[ei2].roleVN;
-    DB.customData[id] = customValues;
+    DB.customData = {...DB.customData, [id]: customValues};
   }
 
   saveData();
