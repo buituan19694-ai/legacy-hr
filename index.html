@@ -18619,6 +18619,8 @@ fbAuth.onAuthStateChanged(async user => {
           const unsub = window.fbDb.collection('hrdata').doc(docId)
             .onSnapshot(snap=>{
               if(!snap.exists || !window.currentUser) return;
+              // Bỏ qua snapshot local (hasPendingWrites) — data đã có trong DB rồi
+              if(snap.metadata && snap.metadata.hasPendingWrites) return;
               const cloudData = snap.data();
               const cloudSyncAt = cloudData._syncAt||0;
               const cloudSyncBy = cloudData._syncBy||'';
@@ -18660,12 +18662,11 @@ fbAuth.onAuthStateChanged(async user => {
                 return;
               }
 
-              // Bỏ qua nếu chính mình vừa lưu (5 giây) VÀ không có người khác lưu sau
-              const myLastSave = window._lastSaveAt || 0;
+              // Bỏ qua nếu chính mình vừa lưu (5 giây)
+              // Server confirm có thể có _syncAt khác local → không cần check isSameAsMySave
               const isSelf = cloudSyncBy === window.currentUser.uid;
               const isRecent = (Date.now()-cloudSyncAt) < 5000;
-              const isSameAsMySave = Math.abs(cloudSyncAt - myLastSave) < 3000;
-              if(isSelf && isRecent && isSameAsMySave){
+              if(isSelf && isRecent){
                 _lastSyncAt[docId] = cloudSyncAt;
                 return;
               }
