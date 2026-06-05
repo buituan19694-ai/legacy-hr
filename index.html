@@ -13500,13 +13500,10 @@ function syncEmployeeFromPromotions(empId){
 
   if(promotions.length > 0){
     const latest = promotions[0];
-    // Nếu user đã sửa thủ công (manualRole=true) VÀ sau ngày promotion → không sync đè
-    const promoDate = new Date(latest.effectiveDate||latest.date||0).getTime();
-    const updatedAt = emp.updatedAt || 0;
-    if(emp.manualRole && updatedAt > promoDate) return; // manual edit mới hơn promotion → giữ nguyên
-    // Chỉ cập nhật e.role/level (dùng trong danh sách, export)
-    if(latest.newRole)   emp.role   = latest.newRole;
-    if(latest.newRoleVN) emp.roleVN = latest.newRoleVN;
+    // KHÔNG sync role/roleVN — đây là trường user nhập trực tiếp, chỉ thay đổi khi:
+    //   1. User sửa trong form hồ sơ nhân viên
+    //   2. Admin apply promotion (applyPromotionToEmployee)
+    // syncEmployeeFromPromotions chỉ sync level và deptId
     if(latest.newLevel)  emp.level  = latest.newLevel;
     if(latest.newDeptId) emp.deptId = latest.newDeptId;
   }
