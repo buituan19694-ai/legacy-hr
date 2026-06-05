@@ -1082,7 +1082,7 @@ if(typeof Chart !== 'undefined'){
   Chart.register(valueLabelPlugin);
 }
 
-const STATUS_LABEL = new Proxy({},{get(_,k){const m={active:t('status_active'),probation:t('status_probation'),leave:t('status_leave'),exit:t('status_exit')};return m[k]||k;}});
+const STATUS_LABEL = new Proxy({},{get(_,k){const m={active:t('status_active'),leave:t('status_leave'),exit:t('status_exit')};return m[k]||k;}});
 const LEAVE_TYPE = {annual:(_lang==="en"?"Annual leave":"Phép năm"), comp:(_lang==="en"?"Compensatory":"Phép bù"), sick:(_lang==="en"?"Sick leave":"Nghỉ ốm"), personal:(_lang==="en"?"Personal":"Việc riêng"), maternity:(_lang==="en"?"Maternity":"Thai sản"), unpaid:(_lang==="en"?"Unpaid":"Không lương")};
 const LEAVE_STATUS = {pending:'Chờ duyệt', approved:(_lang==="en"?"Approved":"Đã duyệt"), rejected:(_lang==="en"?"Rejected":"Từ chối")};
 const CONTRACT_TYPE = {indefinite:(_lang==="en"?"Indefinite":"Vô thời hạn"), term24:'Xác định 24 tháng', term12:'Xác định 12 tháng', probation:(_lang==="en"?"Probation":"Thử việc"), contractor:'Khoán việc'};
@@ -1402,6 +1402,7 @@ function loadData(){
       if(!data.leaveSheet) data.leaveSheet = {};
       if(!data.casuals) data.casuals = [];
       if(!data.trainees) data.trainees = [];
+      if(!data.courses) data.courses = [];
       if(!data.svcData) data.svcData = {};
       if(!data.traineeSchedules) data.traineeSchedules = [];
       // Migration v2: xoá 7 hình thức generic cũ ((_lang==="en"?"Commendation":"Tuyên dương"), 'Bằng khen', (_lang==="en"?"Certificate":"Giấy khen"), (_lang==="en"?"Cash bonus":"Thưởng tiền"),
@@ -1427,6 +1428,13 @@ function loadData(){
           }
         });
         data._levelReset2026 = true;
+      }
+      // Migration: convert status 'probation' → 'active' (đã gộp thử việc vào đang làm)
+      if(!data._removedProbationStatus){
+        data.employees.forEach(e => {
+          if(e.status === 'probation') e.status = 'active';
+        });
+        data._removedProbationStatus = true;
       }
       // Bổ sung trường mới nếu chưa có (cho user đã có dữ liệu)
       const existingKeys = new Set(data.customFields.map(cf=>cf.key));
@@ -1511,13 +1519,13 @@ const FS_DOC_MAP = {
   employees:  ['employees','departments','customData'],
   hr:         ['leaves','contracts','leaveSheet','leaveOpening'],
   recruitment:['candidates','jobs'],
-  workforce:  ['casuals','trainees','traineeSchedules','svcData'],
+  workforce:  ['casuals','trainees','traineeSchedules','svcData','courses'],
   performance:['kpiReviews','promotions','rewardRecords','disciplineRecords'],
   config:     ['customFields','rewardTypes','perfReviewTypes','company',
                'dashboardConfig','brandConfig','blacklistConfig','blacklistReasons',
                'disciplineSeverityConfig','requiredFieldsConfig','manualBlacklist',
                'contractTemplates','quickFilterPrefs','recReportConfig','perfReportConfig',
-               '_rewardTypesV2','_levelReset2026'],
+               '_rewardTypesV2','_levelReset2026','_removedProbationStatus'],
 };
 
 // Xác định document nào chứa key này
@@ -1549,6 +1557,7 @@ function saveData(changedKeys=null){
       }
 
       const meta = { _syncBy: window.currentUser.uid, _syncAt: Date.now() };
+      window._lastSaveAt = meta._syncAt; // track để listener biết đây là save của mình
       docsToSave.forEach(docId=>{
         const keys = FS_DOC_MAP[docId];
         const payload = { ...meta };
@@ -1863,7 +1872,17 @@ function openModal(html, wide=false){
   $('#modal').classList.add('open');
   setTimeout(function(){ initDateInputs(box); }, 10);
 }
-function closeModal(){ $('#modal').classList.remove('open'); }
+function closeModal(){
+  $('#modal').classList.remove('open');
+  // Flush pending renders từ realtime updates bị skip khi modal mở
+  if(window._pendingRender && window._pendingRender[currentPage]){
+    delete window._pendingRender[currentPage];
+    const fn = (window._renderMap||{})[currentPage];
+    const main = document.getElementById('mainContent');
+    if(fn && main) fn(main);
+    updateBadges();
+  }
+}
 $('#modal').addEventListener('click', e => { if(e.target.id==='modal') closeModal(); });
 
 /* =========================================================
@@ -2516,7 +2535,7 @@ function renderDashboard(main){
   const empPool = DB.employees.filter(e => {
     const st = getEffectiveStatus(e);
     if(p.status === 'exit') return st === 'exit';
-    if(p.status === 'active') return ['active','probation','leave'].includes(st);
+    if(p.status === 'active') return ['active','leave'].includes(st);
     // Mặc định (Tất cả): tất cả NV
     return true;
   });
@@ -2524,7 +2543,7 @@ function renderDashboard(main){
   let filteredPool = empPool; // status already filtered in empPool
 
   const totalEmp = filteredPool.length;
-  const activeEmp = filteredPool.filter(e => ['active','probation','leave'].includes(getEffectiveStatus(e))).length;
+  const activeEmp = filteredPool.filter(e => ['active','leave'].includes(getEffectiveStatus(e))).length;
   const probationEmp = 0; // merged into activeEmp
   const exitEmp = filteredPool.filter(e => getEffectiveStatus(e) === 'exit').length;
 
@@ -3430,7 +3449,7 @@ function renderDashboardCharts(){
   }
 
   // Status — luôn dùng toàn bộ allEmps để thấy tổng thể
-  const nActive = allEmps.filter(e=>['active','probation','leave'].includes(getEffectiveStatus(e))).length;
+  const nActive = allEmps.filter(e=>['active','leave'].includes(getEffectiveStatus(e))).length;
   const nExit   = allEmps.filter(e=>getEffectiveStatus(e)==='exit').length;
   new Chart($('#chartStatus'), {
     type:'doughnut',
@@ -4747,7 +4766,7 @@ function renderEmployees(main){
         ${(()=>{
           const counts = {
             '': DB.employees.length,
-            'active': DB.employees.filter(e=>['active','probation','leave'].includes(getEffectiveStatus(e))).length,
+            'active': DB.employees.filter(e=>['active','leave'].includes(getEffectiveStatus(e))).length,
             'exit': DB.employees.filter(e=>getEffectiveStatus(e)==='exit').length,
           };
           const chips = [
@@ -4931,7 +4950,7 @@ function renderEmployees(main){
                 <option value="">${t('filter_all')}</option>
                 <option value="active" ${empFilter.status==='active'?'selected':''}>Đang làm</option>
                 <option value="exit" ${empFilter.status==='exit'?'selected':''}>Đã nghỉ</option>
-                <option value="probation" ${empFilter.status==='probation'?'selected':''}>Thử việc</option>
+
               </select>
             </td>
             <td style="padding:4px 8px;text-align:center">
@@ -5471,15 +5490,15 @@ function editEmployee(id, prefill = null){
             ${DB.departments.map(d=>`<option value="${d.id}" ${e.deptId===d.id?'selected':''}>${d.name}</option>`).join('')}
           </select></div>
           <div class="field"><label>Ngày vào làm *</label><input lang="vi" id="f_joined" type="date" value="${e.joined}"></div>
+          <div class="field"><label>Chức vụ *</label><input id="f_role" value="${escapeHtml(e.role||'')}" placeholder="Vd: Chief Engineering, Front Office Manager..."></div>
+          <div class="field"><label>Chức vụ (tiếng Việt)</label><input id="f_roleVN" value="${escapeHtml(e.roleVN||'')}"></div>
           <input type="hidden" id="f_level" value="${escapeHtml(e.level||'')}">
           <div class="field"><label>Trạng thái</label><select id="f_status">
             <option value="active" ${e.status==='active'?'selected':''}>Đang làm</option>
             <option value="exit" ${e.status==='exit'?'selected':''}>Đã nghỉ việc</option>
           </select></div>
           <div class="field"><label>Điểm Performance</label><input id="f_kpi" type="number" step="0.1" min="0" max="100" value="${e.kpi||0}"></div>
-          <!-- hidden fields to preserve data when saving -->
-          <input type="hidden" id="f_role" value="${escapeHtml(e.role||'')}">
-          <input type="hidden" id="f_roleVN" value="${escapeHtml(e.roleVN||'')}">
+          <!-- end standard fields -->
         </div>
       </div>
     </div>
@@ -5643,11 +5662,12 @@ function saveEmployee(id, isNew){
   }
   DB.customData[id] = customValues;
 
-  // Sync cd.position → e.role (nguồn duy nhất cho chức danh)
+  // Sync e.role ↔ cd.position (nguồn duy nhất cho chức danh)
   const ei2 = DB.employees.findIndex(x=>x.id===id);
   if(ei2 >= 0){
-    if(customValues.position)    DB.employees[ei2].role   = customValues.position;
-    if(customValues.jobLocation) DB.employees[ei2].roleVN = customValues.jobLocation;
+    if(DB.employees[ei2].role)   customValues.position    = DB.employees[ei2].role;
+    if(DB.employees[ei2].roleVN) customValues.jobLocation = DB.employees[ei2].roleVN;
+    DB.customData[id] = customValues;
   }
 
   saveData();
@@ -13411,6 +13431,7 @@ function applyPromotionToEmployee(p){
   }
   if(p.newSalary > 0) DB.customData[emp.id].baseSalary  = p.newSalary;
   if(p.newBonus  > 0) DB.customData[emp.id].bonusSalary = p.newBonus;
+  if(p.newDeptId && p.newDeptId.trim()) emp.deptId = p.newDeptId.trim();
   return true;
 }
 
@@ -13435,6 +13456,7 @@ function syncEmployeeFromPromotions(empId){
     if(latest.newRole)   emp.role   = latest.newRole;
     if(latest.newRoleVN) emp.roleVN = latest.newRoleVN;
     if(latest.newLevel)  emp.level  = latest.newLevel;
+    if(latest.newDeptId) emp.deptId = latest.newDeptId;
   }
 }
 
@@ -13531,6 +13553,11 @@ function editPromotion(id, presetEmpId){
               <input id="pr_oldLevel" value="${p.oldLevel||initEmp?.level||''}" readonly
                 style="background:var(--bg-elev);color:var(--ink-dim);cursor:not-allowed;border-style:dashed">
             </div>
+            <div>
+              <div style="font-size:10.5px;color:var(--ink-muted);margin-bottom:3px">Bộ phận</div>
+              <input id="pr_oldDept" value="${deptName(p.oldDeptId||initEmp?.deptId||'')}" readonly
+                style="background:var(--bg-elev);color:var(--ink-dim);cursor:not-allowed;border-style:dashed">
+            </div>
           </div>
           <!-- SAU THĂNG CHỨC — editable -->
           <div style="display:flex;flex-direction:column;gap:6px">
@@ -13548,6 +13575,13 @@ function editPromotion(id, presetEmpId){
               <select id="pr_newLevel">
                 <option value="">— Không đổi —</option>
                 ${[1,2,3,4,5,6,7,8,9].map(lvl=>`<option value="${lvl}" ${(p.newLevel==lvl||String(p.newLevel)===String(lvl))?'selected':''}>${lvl}</option>`).join('')}
+              </select>
+            </div>
+            <div>
+              <div style="font-size:10.5px;color:var(--ink-muted);margin-bottom:3px">Bộ phận mới</div>
+              <select id="pr_newDeptId">
+                <option value="">— Không đổi —</option>
+                ${DB.departments.map(d=>`<option value="${d.id}" ${(p.newDeptId===d.id)?'selected':''}>${escapeHtml(d.name)}</option>`).join('')}
               </select>
             </div>
           </div>
@@ -13650,6 +13684,7 @@ function prAutoFillOld(){
   set('pr_oldRole',   cd.position    || emp.role   || '');
   set('pr_oldRoleVN', cd.jobLocation || emp.roleVN || '');
   set('pr_oldLevel',  cd.levelNum || emp.level || '');
+  set('pr_oldDept',   deptName(emp.deptId || ''));
   set('pr_oldSalary', (cd.baseSalary  || 0).toLocaleString('vi-VN'));
   set('pr_oldBonus',  (cd.bonusSalary || 0).toLocaleString('vi-VN'));
   prCalcDelta();
@@ -13708,6 +13743,8 @@ function savePromotion(id, isNew){
     newRoleVN: $('#pr_newRoleVN')?.value.trim() || '',
     oldLevel: $('#pr_oldLevel')?.value || '',
     newLevel: $('#pr_newLevel')?.value || '',
+    oldDeptId: empById($('#pr_emp').value)?.deptId || '',
+    newDeptId: $('#pr_newDeptId')?.value || '',
     oldSalary: parseInt(($('#pr_oldSalary')?.value||'').replace(/[^0-9]/g,'')) || 0,
     oldBonus:  parseInt(($('#pr_oldBonus')?.value||'').replace(/[^0-9]/g,''))  || 0,
     newSalary: parseInt($('#pr_newSalary').value) || 0,
@@ -18412,8 +18449,11 @@ fbAuth.onAuthStateChanged(async user => {
         // Realtime listener: tự động cập nhật quyền khi admin thay đổi
         if(window._userPermListener) window._userPermListener(); // unsubscribe cũ
         window._userPermListener = fbDb.collection('users').doc(user.uid).onSnapshot(snap=>{
-          if(snap.exists) window.currentUserData = snap.data();
-        });
+          if(!snap.exists){ fbAuth.signOut(); return; }
+          const ud = snap.data();
+          if(ud.active === false){ fbAuth.signOut(); showAuthError('Tài khoản đã bị khoá.'); return; }
+          window.currentUserData = ud;
+        }, err=>{ console.warn('perm listener err:', err.message); });
         // Apply per-user theme
         loadUserTheme();
         // Apply per-user language
@@ -18441,6 +18481,13 @@ fbAuth.onAuthStateChanged(async user => {
             if(!DB.casuals) DB.casuals=[];
             if(!DB.trainees) DB.trainees=[];
             if(!DB.promotions) DB.promotions=[];
+            if(!DB.courses) DB.courses=[];
+            // Migration: convert probation→active (cloud data cũng cần apply)
+            if(!DB._removedProbationStatus){
+              (DB.employees||[]).forEach(e=>{ if(e.status==='probation') e.status='active'; });
+              DB._removedProbationStatus = true;
+              saveData(['employees','_removedProbationStatus']);
+            }
           }
         }catch(cloudErr){ console.warn('Cloud load warn:',cloudErr.message); }
         // Hide auth screen, show app
@@ -18490,7 +18537,7 @@ fbAuth.onAuthStateChanged(async user => {
           employees:   ['employees','employee-profile','departments','department-detail','dashboard','tasks','salary','training'],
           hr:          ['leaves','contracts','dashboard'],
           recruitment: ['recruitment','job-detail','dashboard'],
-          workforce:   ['casual','trainee','dashboard'],
+          workforce:   ['casual','trainee','training','dashboard'],
           performance: ['performance','awards','warnings','employee-profile','dashboard','training'],
           config:      ['settings'],
         };
@@ -18507,6 +18554,7 @@ fbAuth.onAuthStateChanged(async user => {
           salary: renderSalaryAnalysis, training: renderTraining,
         };
 
+        window._renderMap = RENDER_MAP; // expose cho closeModal flush
         let _debounces = {};
         let _lastSyncAt = {};  // track last seen _syncAt per doc to avoid false triggers
         Object.keys(FS_DOC_MAP).forEach(docId=>{
@@ -18524,22 +18572,36 @@ fbAuth.onAuthStateChanged(async user => {
                 (DB.employees||[]).forEach(e=>{ if(e.photo) localPhotos[e.id]=e.photo; });
                 try{ const pm=JSON.parse(localStorage.getItem(STORE_KEY+'_photos')||'{}'); Object.assign(localPhotos,pm); }catch(pe){}
                 FS_DOC_MAP[docId].forEach(key=>{ if(cloudData[key] !== undefined) DB[key] = cloudData[key]; });
-                // Ghép ảnh: cloud photo ưu tiên, fallback local
+                // Ghép ảnh + convert probation→active (defensive)
                 if(DB.employees) DB.employees.forEach(e=>{
                   if(!e.photo && localPhotos[e.id]) e.photo = localPhotos[e.id];
+                  if(e.status==='probation') e.status='active';
                 });
-                try{ localStorage.setItem(STORE_KEY, JSON.stringify(DB)); }catch(e){}
+                // Lưu localStorage (tách ảnh để tránh QuotaExceeded)
+                try{
+                  const dbNoPhoto = JSON.parse(JSON.stringify(DB));
+                  if(dbNoPhoto.employees) dbNoPhoto.employees = dbNoPhoto.employees.map(e=>{ const {photo,...r}=e; return r; });
+                  localStorage.setItem(STORE_KEY, JSON.stringify(dbNoPhoto));
+                  const pm={};
+                  (DB.employees||[]).forEach(e=>{ if(e.photo) pm[e.id]=e.photo; });
+                  try{ localStorage.setItem(STORE_KEY+'_photos', JSON.stringify(pm)); }catch(_){};
+                }catch(e){}
               }
 
               // Lần đầu load → chỉ merge data, không re-render
-              if(!_lastSyncAt[docId]){
+              if(!Object.prototype.hasOwnProperty.call(_lastSyncAt, docId)){
                 _lastSyncAt[docId] = cloudSyncAt;
                 mergeCloudIntoDb();
+                if(window._dirtyKeys) window._dirtyKeys.clear(); // cloud merge không dirty
                 return;
               }
 
-              // Bỏ qua nếu chính mình vừa lưu (5 giây)
-              if(cloudSyncBy === window.currentUser.uid && (Date.now()-cloudSyncAt) < 5000){
+              // Bỏ qua nếu chính mình vừa lưu (5 giây) VÀ không có người khác lưu sau
+              const myLastSave = window._lastSaveAt || 0;
+              const isSelf = cloudSyncBy === window.currentUser.uid;
+              const isRecent = (Date.now()-cloudSyncAt) < 5000;
+              const isSameAsMySave = Math.abs(cloudSyncAt - myLastSave) < 2000;
+              if(isSelf && isRecent && isSameAsMySave){
                 _lastSyncAt[docId] = cloudSyncAt;
                 return;
               }
@@ -18549,8 +18611,10 @@ fbAuth.onAuthStateChanged(async user => {
               _lastSyncAt[docId] = cloudSyncAt;
 
               mergeCloudIntoDb();
+              // Clear dirty keys từ merge cloud để tránh push ngược lên FS
+              if(window._dirtyKeys) window._dirtyKeys.clear();
 
-              // Debounce 300ms per doc
+              // Debounce 500ms per doc (tránh re-render chồng chéo khi nhiều doc update cùng lúc)
               clearTimeout(_debounces[docId]);
               _debounces[docId] = setTimeout(()=>{
                 const affectedPages = DOC_PAGES[docId] || [];
@@ -18559,8 +18623,10 @@ fbAuth.onAuthStateChanged(async user => {
 
                 if(modalOpen || focused){
                   // Đang nhập liệu → KHÔNG render (tránh mất form)
-                  // Chỉ cập nhật badges
+                  // Đánh dấu cần render lại khi modal đóng
                   updateBadges();
+                  if(!window._pendingRender) window._pendingRender = {};
+                  affectedPages.forEach(p=>{ window._pendingRender[p]=true; });
                 } else if(affectedPages.includes(currentPage)){
                   const fn = RENDER_MAP[currentPage];
                   const main = document.getElementById('mainContent');
@@ -18569,7 +18635,7 @@ fbAuth.onAuthStateChanged(async user => {
                 } else {
                   updateBadges();
                 }
-              }, 300);
+              }, 500);
             }, err=>{ console.warn('FS listener error ['+docId+']:',err.message); });
           window._hrListeners.push(unsub);
         });
@@ -18585,6 +18651,9 @@ fbAuth.onAuthStateChanged(async user => {
       showAuthError('Lỗi kết nối: ' + e.message);
     }
   } else {
+    // Cleanup realtime listeners trước khi xoá user
+    if(window._hrListeners){ window._hrListeners.forEach(u=>u()); window._hrListeners = []; }
+    if(window._userPermListener){ window._userPermListener(); window._userPermListener = null; }
     window.currentUser = null;
     window.currentUserData = null;
     document.getElementById('authScreen').style.display = 'flex';
