@@ -3840,8 +3840,9 @@ function renderEmployeeProfile(main){
           <div class="profile-tag" style="background:${deptColor}22;color:${deptColor}">${escapeHtml(dept?.name||'—')}</div>
           <h2 class="profile-name">${escapeHtml(e.name)}</h2>
           <div class="profile-role">
-            ${escapeHtml(cd.position||e.role||'')}
-            ${(cd.jobLocation||e.roleVN)?`<span style="color:var(--ink-muted);font-size:13px"> / ${escapeHtml(cd.jobLocation||e.roleVN)}</span>`:''}
+            ${escapeHtml(e.role||'')}
+            ${(e.roleVN||cd.jobLocation)?`<span style="color:var(--ink-muted);font-size:13px"> / ${escapeHtml(e.roleVN||cd.jobLocation||'')}</span>`:''}
+
           </div>
           <div class="profile-quick">
             <div class="profile-quick-item"><span class="profile-quick-label">Mã NV</span><span class="profile-quick-value" style="font-family:'JetBrains Mono',monospace">${escapeHtml(e.code)}</span></div>
@@ -5642,6 +5643,13 @@ function saveEmployee(id, isNew){
   }
   DB.customData[id] = customValues;
 
+  // Sync cd.position → e.role (nguồn duy nhất cho chức danh)
+  const ei2 = DB.employees.findIndex(x=>x.id===id);
+  if(ei2 >= 0){
+    if(customValues.position)    DB.employees[ei2].role   = customValues.position;
+    if(customValues.jobLocation) DB.employees[ei2].roleVN = customValues.jobLocation;
+  }
+
   saveData();
   closeModal();
   toast(isNew?'Đã thêm nhân viên':(_lang==="en"?"Updated":"Đã cập nhật"));
@@ -6791,7 +6799,7 @@ function renderDepartmentDetail(main){
               ${members.map(e=>`<tr style="cursor:pointer" onclick="viewEmployee('${e.id}')">
                 <td><div class="cell-emp">
                   ${avatarHTML(e)}
-                  <div><div class="cell-emp-name">${escapeHtml(e.name)}</div><div class="cell-emp-meta">${escapeHtml((DB.customData[e.id]||{}).position||e.role||'—')}</div></div>
+                  <div><div class="cell-emp-name">${escapeHtml(e.name)}</div><div class="cell-emp-meta">${escapeHtml(e.role||'—')}</div></div>
                 </div></td>
                 <td class="cell-mono">${escapeHtml(e.code)}</td>
                 <td style="text-transform:capitalize">${e.level}</td>
@@ -13423,16 +13431,10 @@ function syncEmployeeFromPromotions(empId){
   if(promotions.length > 0){
     const latest = promotions[0];
     // Chỉ cập nhật e.role/level (dùng trong danh sách, export)
-    // KHÔNG ghi đè cd.position/jobLocation — để thông tin hồ sơ thủ công ưu tiên
+    // KHÔNG ghi vào customData — để tránh conflict với data nhập thủ công
     if(latest.newRole)   emp.role   = latest.newRole;
     if(latest.newRoleVN) emp.roleVN = latest.newRoleVN;
     if(latest.newLevel)  emp.level  = latest.newLevel;
-    if(!DB.customData[empId]) DB.customData[empId] = {};
-    // cd.position chỉ fill nếu chưa có (không đè data thủ công)
-    if(latest.newRole   && !DB.customData[empId].position)    DB.customData[empId].position    = latest.newRole;
-    if(latest.newRoleVN && !DB.customData[empId].jobLocation) DB.customData[empId].jobLocation = latest.newRoleVN;
-    if(latest.newSalary > 0 && !DB.customData[empId].baseSalary)  DB.customData[empId].baseSalary  = latest.newSalary;
-    if(latest.newBonus  > 0 && !DB.customData[empId].bonusSalary) DB.customData[empId].bonusSalary = latest.newBonus;
   }
 }
 
