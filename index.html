@@ -2485,6 +2485,7 @@ function saveBrandConfig(){
   DB.brandConfig = window._brandTemp;
   window._brandTemp = null;
   saveData();
+  if(window._pendingRender) delete window._pendingRender[currentPage];
   closeModal();
   renderBrand();
   toast('Đã lưu thương hiệu');
@@ -2494,6 +2495,7 @@ function restoreBrandDefault(){
   if(!confirm('Khôi phục về thương hiệu mặc định (Legacy / Yên Tử)?')) return;
   DB.brandConfig = JSON.parse(JSON.stringify(DEFAULT_BRAND_CONFIG));
   saveData();
+  if(window._pendingRender) delete window._pendingRender[currentPage];
   closeModal();
   renderBrand();
   toast((_lang==="en"?"Reset to default":"Đã khôi phục mặc định"));
@@ -3231,6 +3233,7 @@ function saveDashConfig(){
     combos: window._dashComboTemp || [],
   };
   saveData();
+  if(window._pendingRender) delete window._pendingRender[currentPage];
   closeModal();
   toast(`Đã lưu ${sorted.length} KPI lên dashboard`);
   render();
@@ -4612,6 +4615,7 @@ function saveRewardTypes(){
   }
   DB.rewardTypes = newTypes;
   saveData();
+  if(window._pendingRender) delete window._pendingRender[currentPage];
   closeModal();
   toast(`Đã lưu ${newTypes.length} hình thức khen thưởng`);
   render();
@@ -5305,6 +5309,7 @@ function saveFilterPrefs(){
   const sorted = ALL_QUICK_FILTERS.filter(c=>prefs.includes(c.k)).map(c=>c.k);
   DB.quickFilterPrefs = sorted;
   saveData();
+  if(window._pendingRender) delete window._pendingRender[currentPage];
   closeModal();
   toast(`Đã lưu ${sorted.length} filter`);
   render();
@@ -5638,8 +5643,8 @@ function saveEmployee(id, isNew){
   const dupEmp = DB.employees.find(e => e.code.trim().toLowerCase() === code.toLowerCase() && e.id !== id);
   if(dupEmp){ toast(`⚠️ Mã "${code}" đã tồn tại — ${dupEmp.name}`, 'error'); return; }
 
-  // Thu thập custom fields
-  const customValues = {};
+  // Thu thập custom fields — bắt đầu từ data cũ để không mất field không hiển thị trong form
+  const customValues = Object.assign({}, DB.customData[id] || {});
   for(const cf of DB.customFields){
     const el = document.getElementById('cf_'+cf.key);
     if(!el) continue;
@@ -5650,7 +5655,9 @@ function saveEmployee(id, isNew){
       val = iso || val;
     }
     if(cf.required && !val){ toast(`Vui lòng nhập "${cf.label}"`, 'error'); return; }
+    // Cập nhật field: nếu val rỗng thì xoá khỏi customValues (user đã xoá), nếu có thì ghi
     if(val !== '') customValues[cf.key] = val;
+    else delete customValues[cf.key];
   }
 
   const data = {
@@ -5695,6 +5702,8 @@ function saveEmployee(id, isNew){
   }
 
   saveData();
+  // Clear pendingRender trước (tránh flush với data cũ sau closeModal)
+  if(window._pendingRender) delete window._pendingRender[currentPage];
   closeModal();
   toast(isNew?'Đã thêm nhân viên':(_lang==="en"?"Updated":"Đã cập nhật"));
   render();
@@ -6432,6 +6441,7 @@ function confirmImportEmployees(){
 
   window._importRows = null;
   saveData();
+  if(window._pendingRender) delete window._pendingRender[currentPage];
   closeModal();
   toast('Nhập thành công: +'+added+' mới, ↻'+updated+' cập nhật');
   render();
@@ -13793,6 +13803,7 @@ function savePromotion(id, isNew){
     DB.promotions[i] = data;
   }
   saveData();
+  if(window._pendingRender) delete window._pendingRender[currentPage];
   closeModal();
   toast(isNew?'Đã tạo đề xuất':(_lang==="en"?"Updated":"Đã cập nhật"));
   render();
@@ -14650,6 +14661,7 @@ function saveSevConfig(){
   DB.disciplineSeverityConfig = window._sevTemp;
   window._sevTemp = null;
   saveData();
+  if(window._pendingRender) delete window._pendingRender[currentPage];
   closeModal();
   toast(`Đã lưu ${DB.disciplineSeverityConfig.length} mức kỷ luật`);
   render();
@@ -14742,6 +14754,7 @@ function saveBlacklistConfig(){
     autoFlag: true,
   };
   saveData();
+  if(window._pendingRender) delete window._pendingRender[currentPage];
   closeModal();
   toast(enabled ? 'Đã bật và lưu cấu hình Blacklist' : 'Đã tắt Blacklist');
   render();
@@ -14751,6 +14764,7 @@ function restoreBlacklistDefault(){
   if(!confirm('Khôi phục về cấu hình mặc định?')) return;
   DB.blacklistConfig = JSON.parse(JSON.stringify(DEFAULT_BLACKLIST_CONFIG));
   saveData();
+  if(window._pendingRender) delete window._pendingRender[currentPage];
   closeModal();
   toast((_lang==="en"?"Reset to default":"Đã khôi phục mặc định"));
   render();
@@ -15219,6 +15233,7 @@ function saveBlacklistEntry(isNew){
   }
 
   saveData();
+  if(window._pendingRender) delete window._pendingRender[currentPage];
   closeModal();
   const emp = empById(empId);
   toast(isNew ? `Đã thêm ${emp?.name||''} vào Blacklist` : 'Đã cập nhật lý do');
@@ -15671,6 +15686,7 @@ function restoreRfDefault(){
   if(!confirm('Khôi phục về cấu hình mặc định? Mọi thay đổi sẽ mất.')) return;
   DB.requiredFieldsConfig = JSON.parse(JSON.stringify(DEFAULT_REQUIRED_FIELDS));
   saveData();
+  if(window._pendingRender) delete window._pendingRender[currentPage];
   closeModal();
   toast('Đã khôi phục cấu hình mặc định');
   render();
@@ -15684,6 +15700,7 @@ function saveRfConfig(){
   DB.requiredFieldsConfig = window._rfTemp;
   window._rfTemp = null;
   saveData();
+  if(window._pendingRender) delete window._pendingRender[currentPage];
   closeModal();
   const criticalCount = DB.requiredFieldsConfig.filter(f => f.critical).length;
   toast(`Đã lưu: ${DB.requiredFieldsConfig.length} trường (${criticalCount} bắt buộc)`);
@@ -18365,6 +18382,7 @@ window.confirmTraineeImport = function(){
   });
 
   saveData();
+  if(window._pendingRender) delete window._pendingRender[currentPage];
   closeModal();
   toast((_lang==="en"?"Import successful: ":"Import thành công: ")+added+' sinh viên'+(skipped?' · Bỏ qua '+skipped+' trùng lặp':''));
   render();
