@@ -1536,57 +1536,45 @@ function _fsDocFor(key){
   return 'config'; // fallback
 }
 
-// saveData: lưu localStorage + push đúng Firestore document bị thay đổi
+// saveData: lưu localStorage + push Firestore — Firestore LUÔN chạy dù localStorage lỗi
 function saveData(changedKeys=null){
+  // ── Bước 1: localStorage (không quan trọng nếu lỗi — Firestore là nguồn chính) ──
   try{
-    localStorage.setItem(STORE_KEY, JSON.stringify(DB));
-    // Ảnh lưu riêng
+    const dbNoPhoto = JSON.parse(JSON.stringify(DB));
+    dbNoPhoto.employees = (dbNoPhoto.employees||[]).map(e=>{ const {photo,...r}=e; return r; });
+    localStorage.setItem(STORE_KEY, JSON.stringify(dbNoPhoto));
     const photoMap = {};
     (DB.employees||[]).forEach(e=>{ if(e.photo) photoMap[e.id]=e.photo; });
-    try{ localStorage.setItem(STORE_KEY+'_photos', JSON.stringify(photoMap)); }catch(e2){}
-
-    if(window.fbDb && window.currentUser){
-      // Xác định document(s) cần push
-      const docsToSave = new Set();
-      if(!changedKeys){
-        // Không rõ key nào → push tất cả
-        Object.keys(FS_DOC_MAP).forEach(d=>docsToSave.add(d));
-      } else {
-        (Array.isArray(changedKeys)?changedKeys:[changedKeys])
-          .forEach(k=>docsToSave.add(_fsDocFor(k)));
-      }
-
-      const meta = { _syncBy: window.currentUser.uid, _syncAt: Date.now() };
-      window._lastSaveAt = meta._syncAt; // track để listener biết đây là save của mình
-      docsToSave.forEach(docId=>{
-        const keys = FS_DOC_MAP[docId];
-        const payload = { ...meta };
-        keys.forEach(k=>{
-          let val = DB[k];
-          if(val === undefined) return;
-          payload[k] = val;
-        });
-        window.fbDb.collection('hrdata').doc(docId).set(payload, {merge:true})
-          .catch(err=>{ if(err.code!=='permission-denied') console.warn('FS sync warn:',docId,err.message); });
-      });
-    }
-    return true;
-  }catch(e){
-    if(e.name === 'QuotaExceededError' || /quota/i.test(e.message)){
-      try{
-        const dbNoPhoto = JSON.parse(JSON.stringify(DB));
-        dbNoPhoto.employees = (dbNoPhoto.employees||[]).map(e=>{ const {photo,...r}=e; return r; });
-        localStorage.setItem(STORE_KEY, JSON.stringify(dbNoPhoto));
-        toast('⚠️ Dung lượng gần đầy — ảnh được lưu riêng. Vẫn hoạt động bình thường.','warning');
-        return true;
-      }catch(e3){
-        toast('🚨 Bộ nhớ trình duyệt đầy hoàn toàn. Hãy xoá bớt dữ liệu hoặc ảnh cũ.','error');
-      }
+    try{ localStorage.setItem(STORE_KEY+'_photos', JSON.stringify(photoMap)); }catch(_){}
+  }catch(lsErr){
+    // localStorage lỗi (quota) — chỉ warn, KHÔNG return, vẫn tiếp tục push Firestore
+    if(lsErr.name==='QuotaExceededError'||/quota/i.test(lsErr.message)){
+      toast('⚠️ Bộ nhớ trình duyệt đầy — dữ liệu vẫn được lưu trên cloud.','warning');
     }else{
-      toast('Không thể lưu dữ liệu: '+e.message,'error');
+      console.warn('localStorage saveData error:', lsErr.message);
     }
-    return false;
   }
+
+  // ── Bước 2: Firestore — LUÔN chạy dù localStorage lỗi ──
+  if(window.fbDb && window.currentUser){
+    const docsToSave = new Set();
+    if(!changedKeys){
+      Object.keys(FS_DOC_MAP).forEach(d=>docsToSave.add(d));
+    } else {
+      (Array.isArray(changedKeys)?changedKeys:[changedKeys])
+        .forEach(k=>docsToSave.add(_fsDocFor(k)));
+    }
+    const meta = { _syncBy: window.currentUser.uid, _syncAt: Date.now() };
+    window._lastSaveAt = meta._syncAt;
+    docsToSave.forEach(docId=>{
+      const keys = FS_DOC_MAP[docId];
+      const payload = { ...meta };
+      keys.forEach(k=>{ const val=DB[k]; if(val!==undefined) payload[k]=val; });
+      window.fbDb.collection('hrdata').doc(docId).set(payload,{merge:true})
+        .catch(err=>{ if(err.code!=='permission-denied') console.warn('FS sync warn:',docId,err.message); });
+    });
+  }
+  return true;
 }
 
 // Load ảnh từ localStorage riêng và merge vào DB.employees
@@ -2167,7 +2155,6 @@ function render(){
     leaves: renderLeaves,
     casual: renderCasual,
     trainee: renderTrainee,
-    salary: renderSalaryAnalysis,
     salary: renderSalaryAnalysis,
     recruitment: renderRecruitment,
     'job-detail': renderJobDetail,
@@ -18600,7 +18587,7 @@ fbAuth.onAuthStateChanged(async user => {
               const myLastSave = window._lastSaveAt || 0;
               const isSelf = cloudSyncBy === window.currentUser.uid;
               const isRecent = (Date.now()-cloudSyncAt) < 5000;
-              const isSameAsMySave = Math.abs(cloudSyncAt - myLastSave) < 2000;
+              const isSameAsMySave = Math.abs(cloudSyncAt - myLastSave) < 3000;
               if(isSelf && isRecent && isSameAsMySave){
                 _lastSyncAt[docId] = cloudSyncAt;
                 return;
@@ -18619,11 +18606,11 @@ fbAuth.onAuthStateChanged(async user => {
               _debounces[docId] = setTimeout(()=>{
                 const affectedPages = DOC_PAGES[docId] || [];
                 const modalOpen = document.getElementById('modal')?.classList.contains('open');
-                const focused = document.activeElement && ['INPUT','TEXTAREA','SELECT'].includes(document.activeElement.tagName);
+                // Chỉ block render khi modal đang mở (có form đang nhập)
+                // Input/select trên page thường không cần block — render không xoá giá trị input
 
-                if(modalOpen || focused){
-                  // Đang nhập liệu → KHÔNG render (tránh mất form)
-                  // Đánh dấu cần render lại khi modal đóng
+                if(modalOpen){
+                  // Modal đang mở → KHÔNG render (tránh mất form nhập giữa chừng)
                   updateBadges();
                   if(!window._pendingRender) window._pendingRender = {};
                   affectedPages.forEach(p=>{ window._pendingRender[p]=true; });
