@@ -1587,11 +1587,13 @@ function saveData(changedKeys=null){
       const keys = FS_DOC_MAP[docId];
       const payload = { ...meta };
       keys.forEach(k=>{ const val=DB[k]; if(val!==undefined) payload[k]=val; });
+      console.log('[saveData] pushing doc:', docId, 'keys:', keys.filter(k=>payload[k]!==undefined));
       window.fbDb.collection('hrdata').doc(docId).set(payload,{merge:true})
+        .then(()=>{ console.log('[saveData] ✅ saved:', docId); })
         .catch(err=>{
-          console.warn('FS sync warn:',docId,err.code,err.message);
-          if(err.code==='permission-denied') toast('⚠️ Không có quyền lưu dữ liệu — liên hệ quản trị viên','error');
-          else if(err.code!=='unavailable') toast('❌ Lỗi lưu cloud: '+err.message,'error');
+          console.error('[saveData] ❌ FAILED:', docId, err.code, err.message);
+          if(err.code==='permission-denied') toast('⚠️ Không có quyền lưu — kiểm tra Firestore Rules','error');
+          else toast('❌ Lỗi lưu "'+docId+'": '+err.code+' — '+err.message,'error');
         });
     });
   }
@@ -5677,6 +5679,8 @@ function saveEmployee(id, isNew){
     status: $('#f_status').value,
     kpi: parseFloat($('#f_kpi').value) || 0,
     photo: $('#f_photo')?.value || '',
+    manualRole: true,   // đánh dấu role đã được sửa thủ công → không bị sync promotion đè lên
+    updatedAt: Date.now(),
   };
 
   if(isNew){
@@ -13474,6 +13478,9 @@ function applyPromotionToEmployee(p){
   if(p.newSalary > 0) DB.customData[emp.id].baseSalary  = p.newSalary;
   if(p.newBonus  > 0) DB.customData[emp.id].bonusSalary = p.newBonus;
   if(p.newDeptId && p.newDeptId.trim()) emp.deptId = p.newDeptId.trim();
+  // Promotion apply → reset manualRole để promotion này trở thành nguồn chính thức
+  emp.manualRole = false;
+  emp.updatedAt = new Date(p.effectiveDate||p.date||Date.now()).getTime();
   return true;
 }
 
@@ -13493,8 +13500,11 @@ function syncEmployeeFromPromotions(empId){
 
   if(promotions.length > 0){
     const latest = promotions[0];
+    // Nếu user đã sửa thủ công (manualRole=true) VÀ sau ngày promotion → không sync đè
+    const promoDate = new Date(latest.effectiveDate||latest.date||0).getTime();
+    const updatedAt = emp.updatedAt || 0;
+    if(emp.manualRole && updatedAt > promoDate) return; // manual edit mới hơn promotion → giữ nguyên
     // Chỉ cập nhật e.role/level (dùng trong danh sách, export)
-    // KHÔNG ghi vào customData — để tránh conflict với data nhập thủ công
     if(latest.newRole)   emp.role   = latest.newRole;
     if(latest.newRoleVN) emp.roleVN = latest.newRoleVN;
     if(latest.newLevel)  emp.level  = latest.newLevel;
@@ -18409,7 +18419,7 @@ document.addEventListener('DOMContentLoaded', function(){
   // Apply globally
   document.documentElement.lang = 'vi';
 });
-try { syncAllEmployees(); } catch(e){ console.warn('Sync error', e); }
+// syncAllEmployees chạy sau cloud load để dùng data mới nhất
 try { renderBrand(); } catch(e){ console.warn('Brand render error', e); }
 render();
 
@@ -18591,6 +18601,8 @@ fbAuth.onAuthStateChanged(async user => {
             item.style.display = lvl === 'none' ? 'none' : '';
           });
         }
+        // Sync employees từ promotions SAU khi cloud load xong (không dùng localStorage cũ)
+        try { syncAllEmployees(); } catch(e){ console.warn('Sync error', e); }
         render();
 
         // ── 6 Realtime listeners theo từng Firestore document ──
@@ -18684,6 +18696,8 @@ fbAuth.onAuthStateChanged(async user => {
               _lastSyncAt[docId] = cloudSyncAt;
 
               mergeCloudIntoDb();
+              // Sau merge cloud, sync promotion → employee (dùng data mới từ cloud)
+              try { syncAllEmployees(); } catch(_){}
               // Clear dirty keys từ merge cloud để tránh push ngược lên FS
               if(window._dirtyKeys) window._dirtyKeys.clear();
 
