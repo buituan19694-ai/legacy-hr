@@ -1563,9 +1563,11 @@ function saveEmpProfile(empId){
   if(!emp) return;
   const cd = DB.customData[empId] || {};
   const {photo, ...empNoPhoto} = emp;
+  const _syncAt = Date.now();
+  window._lastSaveAt = _syncAt; // track để listener self-skip
   const doc = {...empNoPhoto, ...cd, _empId: empId,
-               _syncBy: window.currentUser.uid, _syncAt: Date.now()};
-  // Chỉ lưu photoUrl nếu là URL thật (Firebase Storage) — không lưu base64 vào Firestore
+               _syncBy: window.currentUser.uid, _syncAt};
+  // Chỉ lưu photoUrl nếu là URL thật (Cloudinary) — không lưu base64 vào Firestore
   if(photo && photo.startsWith('http')) doc.photoUrl = photo;
   window.fbDb.collection(EMP_COLLECTION).doc(empId).set(doc)
     .then(()=>{ console.log('[EMP] saved:', empId, emp.name); })
@@ -1595,10 +1597,11 @@ async function loadEmpProfiles(localPhotos){
       const cdObj = {};
       Object.entries(d).forEach(([k,v])=>{
         if(k.startsWith('_')) return; // skip meta
+        if(k === 'photoUrl') return;  // xử lý riêng
         if(EMP_KEYS.has(k)) empObj[k] = v;
         else cdObj[k] = v;
       });
-      // Ưu tiên: Storage URL > localPhotos base64
+      // Ưu tiên: Cloudinary URL > localPhotos
       empObj.photo = d.photoUrl || localPhotos[empId] || '';
       employees.push(empObj);
       if(Object.keys(cdObj).length > 0) customData[empId] = cdObj;
@@ -5600,14 +5603,62 @@ function editEmployee(id, prefill = null){
 function removePhoto(){
   $('#f_photo').value = '';
   const name = $('#f_name')?.value || '?';
-  // Trở về placeholder chữ cái
   $('#photoPreview').innerHTML = `<div class="photo-placeholder" style="background:var(--accent-dim)">${initials(name)}</div>`;
-  // Ẩn nút xoá
   const dangerBtn = document.querySelector('.photo-actions .btn-danger');
   if(dangerBtn) dangerBtn.remove();
-  // Reset file input
   const input = $('#photoInput');
   if(input) input.value = '';
+}
+
+function handlePhotoUpload(event){
+  const file = event.target.files[0];
+  if(!file) return;
+  if(!file.type.startsWith('image/')){ toast('File phải là ảnh','error'); return; }
+  if(file.size > 10*1024*1024){ toast('Ảnh quá lớn, tối đa 10MB','error'); return; }
+
+  const reader = new FileReader();
+  reader.onload = ev => {
+    const img = new Image();
+    img.onload = () => {
+      const size = 200;
+      const canvas = document.createElement('canvas');
+      canvas.width = size; canvas.height = size;
+      const ctx = canvas.getContext('2d');
+      const minDim = Math.min(img.width, img.height);
+      const sx = (img.width-minDim)/2, sy = (img.height-minDim)/2;
+      ctx.drawImage(img, sx, sy, minDim, minDim, 0, 0, size, size);
+
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+      $('#f_photo').value = dataUrl;
+      const preview = $('#photoPreview');
+      preview.innerHTML = '<img src="'+dataUrl+'" alt="Avatar">';
+
+      // Upload lên Cloudinary
+      canvas.toBlob(blob => {
+        if(!blob) return;
+        toast('⏳ Đang upload ảnh...','info');
+        const fd = new FormData();
+        fd.append('file', blob, 'avatar.jpg');
+        fd.append('upload_preset', CLOUDINARY_PRESET);
+        fd.append('folder', 'legacy_hr_avatars');
+        fetch('https://api.cloudinary.com/v1_1/'+CLOUDINARY_CLOUD+'/image/upload', {method:'POST',body:fd})
+          .then(r=>r.json())
+          .then(data=>{
+            if(data.secure_url){
+              $('#f_photo').value = data.secure_url;
+              preview.innerHTML = '<img src="'+data.secure_url+'" alt="Avatar">';
+              toast('✅ Ảnh đã upload!','success');
+            } else {
+              console.warn('Cloudinary error:',data);
+              toast('⚠️ Upload ảnh thất bại, lưu tạm trên máy','warning');
+            }
+          })
+          .catch(err=>{ console.warn('Upload err:',err); toast('⚠️ Lưu ảnh tạm trong máy','warning'); });
+      }, 'image/jpeg', 0.85);
+    };
+    img.src = ev.target.result;
+  };
+  reader.readAsDataURL(file);
 }
 
 function toggleFormGroup(name){
@@ -18816,12 +18867,15 @@ fbAuth.onAuthStateChanged(async user => {
                 delete DB.customData[empId];
               } else {
                 // Tách employee fields và customData fields
+                // Fields thuộc employee object (DB.employees)
                 const EMP_KEYS = new Set(['id','code','name','email','phone','phone2','dob','gender',
-                  'deptId','role','roleVN','level','joined','status','kpi','manualRole','updatedAt']);
+                  'deptId','role','roleVN','level','joined','status','kpi','manualRole','updatedAt',
+                  'photoUrl']);
                 const empObj = {id: empId};
                 const cdObj = {};
                 Object.entries(d).forEach(([k,v])=>{
-                  if(k.startsWith('_')) return;
+                  if(k.startsWith('_')) return; // bỏ meta fields
+                  if(k === 'photoUrl') return;   // xử lý riêng bên dưới
                   if(EMP_KEYS.has(k)) empObj[k] = v;
                   else cdObj[k] = v;
                 });
@@ -18850,11 +18904,16 @@ fbAuth.onAuthStateChanged(async user => {
                 render();
               }
               updateBadges();
-              // Lưu localStorage
+              // Lưu localStorage + cập nhật photos map
               try{
                 const dbNoPhoto = JSON.parse(JSON.stringify(DB));
                 dbNoPhoto.employees = (dbNoPhoto.employees||[]).map(e=>{ const {photo,...r}=e; return r; });
                 localStorage.setItem(STORE_KEY, JSON.stringify(dbNoPhoto));
+                // Cập nhật photos map với URL mới từ cloud
+                const pm = {};
+                try{ Object.assign(pm, JSON.parse(localStorage.getItem(STORE_KEY+'_photos')||'{}')); }catch(_){}
+                DB.employees.forEach(e=>{ if(e.photo) pm[e.id]=e.photo; });
+                localStorage.setItem(STORE_KEY+'_photos', JSON.stringify(pm));
               }catch(_){}
             }, 500);
           }, err=>{ console.warn('[EMP] listener error:', err.message); });
