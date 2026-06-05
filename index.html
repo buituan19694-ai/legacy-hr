@@ -1755,7 +1755,7 @@ function loadLgcData(){
 
 // Danh sách hình thức khen thưởng mặc định — Meoz có thể tự edit/thêm/xoá qua "Quản lý hình thức"
 // periodType: 'none' | 'month' | 'quarter' | 'year' | 'text' — quyết định cách hiện ô nhập kỳ
-// LƯU Ý: phải khai báo TRƯỚC `let DB = loadData()` vì loadData migration có reference đến nó
+// LƯU Ý: phải khai báo TRƯỚC 'let DB = loadData()' vì loadData migration có reference đến nó
 const DEFAULT_PERF_REVIEW_TYPES = [
   {label:(_lang==="en"?"Quarterly review":"Đánh giá định kỳ quý"),  color:'#7eb6e8', icon:'📊'},
   {label:(_lang==="en"?"Year-end review":"Đánh giá cuối năm"),     color:'#e8b974', icon:'🏆'},
@@ -1827,7 +1827,7 @@ function openPerfReviewTypeManager(){
   `);
 }
 
-// Helpers cho hình thức khen thưởng — đặt SAU `DB` vì chúng reference DB.rewardTypes
+// Helpers cho hình thức khen thưởng — đặt SAU 'DB' vì chúng reference DB.rewardTypes
 function getRewardTypes(){
   if(!DB.rewardTypes || !Array.isArray(DB.rewardTypes) || DB.rewardTypes.length === 0){
     DB.rewardTypes = JSON.parse(JSON.stringify(DEFAULT_REWARD_TYPES));
@@ -5592,70 +5592,9 @@ function editEmployee(id, prefill = null){
     <div class="modal-actions">
       ${isNew?'':`<button class="btn btn-danger left" onclick="deleteEmployee('${e.id}', true)">${ICONS.trash} Xoá</button>`}
       <button class="btn" onclick="closeModal()">${t('btn_cancel')}</button>
-      <button class="btn btn-primary" onclick="saveEmployee('${e.id}', ${isNew})">${isNew?'Tạo hồ sơ':(_lang==="en"?"Save cfunction handlePhotoUpload(event){
-  const file = event.target.files[0];
-  if(!file) return;
-  if(!file.type.startsWith('image/')){ toast('File phải là ảnh','error'); return; }
-  if(file.size > 10 * 1024 * 1024){ toast('Ảnh quá lớn, tối đa 10MB','error'); return; }
-
-  const reader = new FileReader();
-  reader.onload = ev => {
-    const img = new Image();
-    img.onload = () => {
-      // Resize 200×200
-      const size = 200;
-      const canvas = document.createElement('canvas');
-      canvas.width = size; canvas.height = size;
-      const ctx = canvas.getContext('2d');
-      const minDim = Math.min(img.width, img.height);
-      const sx = (img.width - minDim) / 2;
-      const sy = (img.height - minDim) / 2;
-      ctx.drawImage(img, sx, sy, minDim, minDim, 0, 0, size, size);
-
-      // Preview ngay
-      const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
-      $('#f_photo').value = dataUrl;
-      const preview = $('#photoPreview');
-      preview.innerHTML = `<img src="${dataUrl}" alt="Avatar">`;
-
-      // Upload lên Cloudinary
-      canvas.toBlob(blob => {
-        if(!blob) return;
-        toast('⏳ Đang upload ảnh...', 'info');
-        const fd = new FormData();
-        fd.append('file', blob, 'avatar.jpg');
-        fd.append('upload_preset', CLOUDINARY_PRESET);
-        fd.append('folder', 'legacy_hr_avatars');
-        fetch(`https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD}/image/upload`, {
-          method: 'POST', body: fd
-        })
-        .then(r => r.json())
-        .then(data => {
-          if(data.secure_url){
-            $('#f_photo').value = data.secure_url;
-            preview.innerHTML = `<img src="${data.secure_url}" alt="Avatar">`;
-            toast('✅ Ảnh đã upload!', 'success');
-          } else {
-            console.warn('Cloudinary error:', data);
-            toast('⚠️ Upload ảnh thất bại, lưu tạm trên máy', 'warning');
-          }
-        })
-        .catch(err => {
-          console.warn('Upload err:', err);
-          toast('⚠️ Lưu ảnh tạm trong máy (chưa lên cloud)', 'warning');
-        });
-      }, 'image/jpeg', 0.85);
-    };
-    img.src = ev.target.result;
-  };
-  reader.readAsDataURL(file);
-}
-
-oast('Đã tải ảnh lên');
-    };
-    img.src = ev.target.result;
-  };
-  reader.readAsDataURL(file);
+      <button class="btn btn-primary" onclick="saveEmployee('${e.id}', ${isNew})">${isNew?'Tạo hồ sơ':(_lang==="en"?"Save changes":"Lưu thay đổi")}</button>
+    </div>
+  `, true);
 }
 
 function removePhoto(){
