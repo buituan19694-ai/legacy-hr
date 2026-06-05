@@ -1436,6 +1436,23 @@ function loadData(){
         });
         data._removedProbationStatus = true;
       }
+      // Migration: normalize date fields trong customData về ISO yyyy-mm-dd
+      if(!data._normalizedDates2026){
+        const DATE_KEYS = ['cccdDate', 'warnLastDate', 'rewardLastDate', 'currentContractStart', 'currentContractEnd', 'contractStart', 'contractEnd', 'probationStart', 'probationEnd', 'contract1Start', 'contract1End', 'contract2Start', 'contract2End', 'contractLastStart', 'exitDate'];
+        const toIso = v => {
+          if(!v) return v;
+          if(/^\d{4}-\d{2}-\d{2}$/.test(v)) return v;
+          const m = v.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+          if(m) return m[3]+'-'+m[2].padStart(2,'0')+'-'+m[1].padStart(2,'0');
+          return v;
+        };
+        Object.values(data.customData||{}).forEach(cd=>{
+          DATE_KEYS.forEach(k=>{ if(cd[k]) cd[k] = toIso(cd[k]); });
+        });
+        data._normalizedDates2026 = true;
+        // Lưu localStorage ngay (không thể gọi saveData vì DB chưa được assign)
+        try{ localStorage.setItem(STORE_KEY, JSON.stringify(data)); }catch(_){}
+      }
       // Bổ sung trường mới nếu chưa có (cho user đã có dữ liệu)
       const existingKeys = new Set(data.customFields.map(cf=>cf.key));
       DEFAULT_DATA.customFields.forEach(cf=>{
@@ -1525,7 +1542,7 @@ const FS_DOC_MAP = {
                'dashboardConfig','brandConfig','blacklistConfig','blacklistReasons',
                'disciplineSeverityConfig','requiredFieldsConfig','manualBlacklist',
                'contractTemplates','quickFilterPrefs','recReportConfig','perfReportConfig',
-               '_rewardTypesV2','_levelReset2026','_removedProbationStatus'],
+               '_rewardTypesV2','_levelReset2026','_removedProbationStatus','_normalizedDates2026'],
 };
 
 // Xác định document nào chứa key này
@@ -18489,6 +18506,22 @@ fbAuth.onAuthStateChanged(async user => {
             if(!DB.trainees) DB.trainees=[];
             if(!DB.promotions) DB.promotions=[];
             if(!DB.courses) DB.courses=[];
+            // Migration: normalize date fields trong customData (cloud path)
+            if(!DB._normalizedDates2026){
+              const _DATE_KEYS = ['cccdDate', 'warnLastDate', 'rewardLastDate', 'currentContractStart', 'currentContractEnd', 'contractStart', 'contractEnd', 'probationStart', 'probationEnd', 'contract1Start', 'contract1End', 'contract2Start', 'contract2End', 'contractLastStart', 'exitDate'];
+              const _toIso = v => {
+                if(!v) return v;
+                if(/^\d{4}-\d{2}-\d{2}$/.test(v)) return v;
+                const m = v && v.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+                if(m) return m[3]+'-'+m[2].padStart(2,'0')+'-'+m[1].padStart(2,'0');
+                return v;
+              };
+              Object.values(DB.customData||{}).forEach(cd=>{
+                _DATE_KEYS.forEach(k=>{ if(cd[k]) cd[k] = _toIso(cd[k]); });
+              });
+              DB._normalizedDates2026 = true;
+              saveData(['customData','_normalizedDates2026']);
+            }
             // Migration: convert probation→active (cloud data cũng cần apply)
             if(!DB._removedProbationStatus){
               (DB.employees||[]).forEach(e=>{ if(e.status==='probation') e.status='active'; });
@@ -18584,6 +18617,12 @@ fbAuth.onAuthStateChanged(async user => {
                   if(!e.photo && localPhotos[e.id]) e.photo = localPhotos[e.id];
                   if(e.status==='probation') e.status='active';
                 });
+                // Normalize date fields trong customData (idempotent — chạy sau mỗi merge)
+                (()=>{
+                  const _DK = ['cccdDate','warnLastDate','rewardLastDate','currentContractStart','currentContractEnd','contractStart','contractEnd','probationStart','probationEnd','contract1Start','contract1End','contract2Start','contract2End','contractLastStart','exitDate'];
+                  const _iso = v=>{ if(!v||/^\d{4}-\d{2}-\d{2}$/.test(v)) return v; const m=v.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/); return m?m[3]+'-'+m[2].padStart(2,'0')+'-'+m[1].padStart(2,'0'):v; };
+                  Object.values(DB.customData||{}).forEach(cd=>{ _DK.forEach(k=>{ if(cd[k]) cd[k]=_iso(cd[k]); }); });
+                })();
                 // Lưu localStorage (tách ảnh để tránh QuotaExceeded)
                 try{
                   const dbNoPhoto = JSON.parse(JSON.stringify(DB));
