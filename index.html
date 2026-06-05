@@ -1787,6 +1787,8 @@ const fmtDate = (s)=>{ if(!s) return '—'; const d=new Date(s+'T00:00:00'); if(
 function dispToIso(v){ if(!v) return ''; var m=v.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/); if(m) return m[3]+'-'+m[2].padStart(2,'0')+'-'+m[1].padStart(2,'0'); if(/^\d{4}-\d{2}-\d{2}$/.test(v)) return v; return v; }
 // Convert ISO → display
 function isoToDisp(v){ if(!v) return ''; var m=v.match(/^(\d{4})-(\d{2})-(\d{2})/); if(m) return m[3]+'/'+m[2]+'/'+m[1]; return v; }
+// Đọc date input đã qua initDateInputs (type="text") → ISO yyyy-mm-dd
+function getDateIso(id){ const el = $('#'+id); if(!el) return ''; return el.getAttribute('data-iso') || dispToIso(el.value||'') || ''; }
 // Init all date inputs to text with dd/mm/yyyy format
 function initDateInputs(root){
   (root||document).querySelectorAll('input[type="date"]').forEach(function(el){
@@ -4320,7 +4322,7 @@ function editReward(id, empId){
       ${isNew ? `<div class="field full"><label>Nhân viên</label><select id="r_emp">
         ${DB.employees.map(emp=>`<option value="${emp.id}" ${r.empId===emp.id?'selected':''}>${escapeHtml(emp.name)} — ${emp.code}</option>`).join('')}
       </select></div>` : `<input type="hidden" id="r_emp" value="${r.empId}">`}
-      <div class="field"><label>Ngày *</label><input lang="vi" type="date" id="r_date" value="${r.date}"></div>
+      <div class="field"><label>Ngày *</label><input lang="vi" type="date" id="r_date" value="${dispToIso(r.date||'')}"></div>
       <div class="field"><label>Hình thức *</label><select id="r_type" onchange="onRewardTypeChange()">
         ${rewardTypes.map(t=>`<option value="${escapeHtml(t.label)}" data-period-type="${t.periodType}" ${r.type===t.label?'selected':''}>${t.icon||''} ${escapeHtml(t.label)}</option>`).join('')}
       </select></div>
@@ -4622,7 +4624,7 @@ function editDiscipline(id, empId){
       ${isNew ? `<div class="field full"><label>Nhân viên *</label><select id="d_emp">
         ${DB.employees.filter(e=>e.status!=='exit').map(emp=>`<option value="${emp.id}" ${d.empId===emp.id?'selected':''}>${escapeHtml(emp.name)} — ${emp.code} (${deptName(emp.deptId)})</option>`).join('')}
       </select></div>` : `<input type="hidden" id="d_emp" value="${d.empId}">`}
-      <div class="field"><label>Ngày *</label><input lang="vi" type="date" id="d_date" value="${d.date}"></div>
+      <div class="field"><label>Ngày *</label><input lang="vi" type="date" id="d_date" value="${dispToIso(d.date||'')}"></div>
       <div class="field"><label>Mức kỷ luật *</label><select id="d_severity" onchange="onSeverityChange()">
         ${sevLevels.map(s=>`<option value="${s.key}" ${d.severity===s.key?'selected':''}>${s.icon} ${escapeHtml(s.label)}</option>`).join('')}
       </select></div>
@@ -4654,7 +4656,7 @@ function saveDiscipline(id, isNew){
   if(!reason){ toast('Vui lòng nhập lý do vi phạm','error'); return; }
   const data = {
     id, empId:$('#d_emp').value,
-    date:$('#d_date').value, level:$('#d_level').value,
+    date:getDateIso('d_date'), level:$('#d_level').value,
     reason, decidedBy:$('#d_decided').value.trim(),
     notes:$('#d_notes').value.trim(),
     penalty:$('#d_penalty').value.trim(),
@@ -5467,7 +5469,7 @@ function editEmployee(id, prefill = null){
           <div class="field"><label>Họ và tên *</label><input id="f_name" value="${escapeHtml(e.name)}"></div>
           <div class="field"><label>Email *</label><input id="f_email" type="email" value="${escapeHtml(e.email)}"></div>
           <div class="field"><label>Số điện thoại</label><input id="f_phone" value="${escapeHtml(e.phone)}"></div>
-          <div class="field"><label>Ngày sinh</label><input lang="vi" id="f_dob" type="date" value="${e.dob}"></div>
+          <div class="field"><label>Ngày sinh</label><input lang="vi" id="f_dob" type="date" value="${dispToIso(e.dob||'')}"></div>
           <div class="field"><label>Giới tính</label><select id="f_gender">
             <option value="male" ${e.gender==='male'?'selected':''}>Nam</option>
             <option value="female" ${e.gender==='female'?'selected':''}>Nữ</option>
@@ -5476,9 +5478,9 @@ function editEmployee(id, prefill = null){
           <div class="field"><label>Phòng ban *</label><select id="f_dept">
             ${DB.departments.map(d=>`<option value="${d.id}" ${e.deptId===d.id?'selected':''}>${d.name}</option>`).join('')}
           </select></div>
-          <div class="field"><label>Ngày vào làm *</label><input lang="vi" id="f_joined" type="date" value="${e.joined}"></div>
-          <div class="field"><label>Chức vụ *</label><input id="f_role" value="${escapeHtml(e.role||'')}" placeholder="Vd: Chief Engineering, Front Office Manager..."></div>
-          <div class="field"><label>Chức vụ (tiếng Việt)</label><input id="f_roleVN" value="${escapeHtml(e.roleVN||'')}"></div>
+          <div class="field"><label>Ngày vào làm *</label><input lang="vi" id="f_joined" type="date" value="${dispToIso(e.joined||'')}"></div>
+          <div class="field"><label>Chức vụ *</label><input id="f_role" value="${escapeHtml(e.role||customData.position||'')}" placeholder="Vd: Chief Engineering, Front Office Manager..."></div>
+          <div class="field"><label>Chức vụ (tiếng Việt)</label><input id="f_roleVN" value="${escapeHtml(e.roleVN||customData.jobLocation||'')}"></div>
           <input type="hidden" id="f_level" value="${escapeHtml(e.level||'')}">
           <div class="field"><label>Trạng thái</label><select id="f_status">
             <option value="active" ${e.status==='active'?'selected':''}>Đang làm</option>
@@ -5590,6 +5592,19 @@ function renderCustomFieldInput(cf, value){
       <input id="${id}" ${dataAttr} type="number" step="any" value="${escapeHtml(v)}" placeholder="${placeholder}">
     </div>`;
   }
+  // date field: normalize value về ISO yyyy-mm-dd (data có thể lưu dd/mm/yyyy)
+  if(cf.type === 'date'){
+    const isoV = (()=>{
+      if(!v) return '';
+      if(/^\d{4}-\d{2}-\d{2}$/.test(v)) return v; // đã là ISO
+      const m = v.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})$/);
+      if(m) return m[3]+'-'+m[2].padStart(2,'0')+'-'+m[1].padStart(2,'0');
+      return v;
+    })();
+    return `<div class="${cls}"><label>${label}</label>
+      <input id="${id}" ${dataAttr} type="date" value="${escapeHtml(isoV)}" placeholder="${placeholder}">
+    </div>`;
+  }
   return `<div class="${cls}"><label>${label}</label>
     <input id="${id}" ${dataAttr} type="${cf.type}" value="${escapeHtml(v)}" placeholder="${placeholder}">
   </div>`;
@@ -5611,7 +5626,12 @@ function saveEmployee(id, isNew){
   for(const cf of DB.customFields){
     const el = document.getElementById('cf_'+cf.key);
     if(!el) continue;
-    const val = (el.value||'').trim();
+    let val = (el.value||'').trim();
+    // Date field: ưu tiên data-iso (ISO yyyy-mm-dd), fallback dispToIso nếu user tự nhập
+    if(cf.type === 'date' && val){
+      const iso = el.getAttribute('data-iso') || dispToIso(val);
+      val = iso || val;
+    }
     if(cf.required && !val){ toast(`Vui lòng nhập "${cf.label}"`, 'error'); return; }
     if(val !== '') customValues[cf.key] = val;
   }
@@ -7270,7 +7290,7 @@ function renderGcFormTab(){
         <option value="term24" ${s.type==='term24'?'selected':''}>HĐ xác định 2 năm</option>
         <option value="indefinite" ${s.type==='indefinite'?'selected':''}>HĐ vô thời hạn</option>
       </select></div>
-      <div class="field"><label>Ngày bắt đầu HĐ mới *</label><input lang="vi" type="date" id="gc_start" value="${s.startDate}" onchange="updateGcState('startDate', this.value)"></div>
+      <div class="field"><label>Ngày bắt đầu HĐ mới *</label><input lang="vi" type="date" id="gc_start" value="${dispToIso(s.startDate||'')}" onchange="updateGcState('startDate', this.value)"></div>
       <div class="field"><label>${_lang==="en"?"Base salary":"Lương cơ bản"} (VNĐ)</label><input type="number" id="gc_salary" value="${s.salary}" placeholder="VD: 10000000" onchange="updateGcState('salary', this.value)"></div>
       <div class="field"><label>Phụ cấp (VNĐ)</label><input type="number" id="gc_allowance" value="${s.allowance}" placeholder="0" onchange="updateGcState('allowance', this.value)"></div>
       <div class="field full"><label>Người ký bên công ty</label><input id="gc_signer" value="${escapeHtml(s.signer)}" onchange="updateGcState('signer', this.value)"></div>
@@ -8356,9 +8376,9 @@ function editContract(id){
       <div class="field"><label>Loại HĐ *</label><select id="f_type">
         ${Object.entries(CONTRACT_TYPE).map(([k,v])=>`<option value="${k}" ${c.type===k?'selected':''}>${v}</option>`).join('')}
       </select></div>
-      <div class="field"><label>Ngày ký</label><input lang="vi" type="date" id="f_signed" value="${c.signedDate||''}"></div>
-      <div class="field"><label>Ngày bắt đầu *</label><input lang="vi" type="date" id="f_start" value="${c.startDate}"></div>
-      <div class="field"><label>Ngày kết thúc</label><input lang="vi" type="date" id="f_end" value="${c.endDate||''}" placeholder="Để trống nếu vô thời hạn"></div>
+      <div class="field"><label>Ngày ký</label><input lang="vi" type="date" id="f_signed" value="${dispToIso(c.signedDate||'')}"></div>
+      <div class="field"><label>Ngày bắt đầu *</label><input lang="vi" type="date" id="f_start" value="${dispToIso(c.startDate||'')}"></div>
+      <div class="field"><label>Ngày kết thúc</label><input lang="vi" type="date" id="f_end" value="${dispToIso(c.endDate||'')}" placeholder="Để trống nếu vô thời hạn"></div>
       <div class="field full"><label>Ghi chú</label><textarea id="f_notes">${escapeHtml(c.notes)}</textarea></div>
     </div>
     <div class="modal-actions">
@@ -8376,7 +8396,7 @@ function saveContract(id, isNew){
     type: $('#f_type').value,
     startDate: dispToIso($('#f_start')?.value||''),
     endDate: dispToIso($('#f_end')?.value||''),
-    signedDate: $('#f_signed').value,
+    signedDate: getDateIso('f_signed'),
     notes: $('#f_notes').value.trim(),
   };
   if(!data.empId || !data.startDate){ toast('Vui lòng chọn nhân viên và ngày bắt đầu','error'); return; }
@@ -9960,8 +9980,8 @@ function editLeave(id){
       <div class="field"><label>Trạng thái</label><select id="f_status">
         ${Object.entries(LEAVE_STATUS).map(([k,v])=>`<option value="${k}" ${l.status===k?'selected':''}>${v}</option>`).join('')}
       </select></div>
-      <div class="field"><label>Từ ngày *</label><input lang="vi" type="date" id="f_start" value="${l.startDate}" onchange="recalcDays()"></div>
-      <div class="field"><label>Đến ngày *</label><input lang="vi" type="date" id="f_end" value="${l.endDate}" onchange="recalcDays()"></div>
+      <div class="field"><label>Từ ngày *</label><input lang="vi" type="date" id="f_start" value="${dispToIso(l.startDate||'')}" onchange="recalcDays()"></div>
+      <div class="field"><label>Đến ngày *</label><input lang="vi" type="date" id="f_end" value="${dispToIso(l.endDate||'')}" onchange="recalcDays()"></div>
       <div class="field full"><label>Số ngày *</label><input type="number" id="f_days" value="${l.days}" min="0.5" step="0.5"></div>
       <div class="field full"><label>Lý do</label><textarea id="f_reason">${escapeHtml(l.reason)}</textarea></div>
     </div>
@@ -11530,7 +11550,7 @@ function editCandidate(id, jobId){
       <div class="field"><label>SĐT *</label><input type="tel" id="ca_phone" value="${escapeHtml(a.phone)}" placeholder="0912345678"></div>
       <div class="field"><label>Email</label><input type="email" id="ca_email" value="${escapeHtml(a.email)}" placeholder="email@gmail.com"></div>
 
-      <div class="field"><label>Ngày ứng tuyển *</label><input lang="vi" type="date" id="ca_applied" value="${a.appliedDate}"></div>
+      <div class="field"><label>Ngày ứng tuyển *</label><input lang="vi" type="date" id="ca_applied" value="${dispToIso(a.appliedDate||'')}"></div>
       <div class="field"><label>Nguồn ứng tuyển</label><select id="ca_source">
         <option value="">— Chọn —</option>
         ${SOURCES.map(s=>`<option value="${s}" ${a.source===s?'selected':''}>${s}</option>`).join('')}
@@ -11577,21 +11597,21 @@ function editCandidate(id, jobId){
           <div style="font-size:12px;color:var(--ink-dim);display:flex;align-items:center;gap:6px"><span style="color:#b794d4">🔍</span> <b>Vòng 1 — Sàng lọc CV</b></div>
           <div></div>
           ${renderEmpPickerField('ca_screeningBy', a.screeningBy||'', 'Chọn người sàng lọc (HR Officer)...')}
-          <input lang="vi" type="date" id="ca_screeningDate" value="${a.screeningDate||''}" style="font-size:13px">
+          <input lang="vi" type="date" id="ca_screeningDate" value="${dispToIso(a.screeningDate||'')}" style="font-size:13px">
         </div>
 
         <div style="display:grid;grid-template-columns:1fr 160px;gap:8px;margin-bottom:8px;align-items:center;padding-top:8px;border-top:1px dashed var(--border)">
           <div style="font-size:12px;color:var(--ink-dim);display:flex;align-items:center;gap:6px"><span style="color:var(--info)">👤</span> <b>Vòng 2 — Phỏng vấn HR</b></div>
           <div></div>
           ${renderEmpPickerField('ca_hrInterviewBy', a.hrInterviewBy||'', 'Chọn phụ trách Nhân sự...')}
-          <input lang="vi" type="date" id="ca_hrInterviewDate" value="${a.hrInterviewDate||''}" style="font-size:13px">
+          <input lang="vi" type="date" id="ca_hrInterviewDate" value="${dispToIso(a.hrInterviewDate||'')}" style="font-size:13px">
         </div>
 
         <div style="display:grid;grid-template-columns:1fr 160px;gap:8px;margin-bottom:8px;align-items:center;padding-top:8px;border-top:1px dashed var(--border)">
           <div style="font-size:12px;color:var(--ink-dim);display:flex;align-items:center;gap:6px"><span style="color:var(--warning)">🗣</span> <b>Vòng 3 — Phỏng vấn bộ phận</b></div>
           <div></div>
           ${renderEmpPickerField('ca_deptInterviewBy', a.deptInterviewBy||'', 'Chọn trưởng bộ phận...')}
-          <input lang="vi" type="date" id="ca_deptInterviewDate" value="${a.deptInterviewDate||''}" style="font-size:13px">
+          <input lang="vi" type="date" id="ca_deptInterviewDate" value="${dispToIso(a.deptInterviewDate||'')}" style="font-size:13px">
         </div>
 
         <div style="padding-top:8px;border-top:1px dashed var(--border)">
@@ -11603,7 +11623,7 @@ function editCandidate(id, jobId){
           </label>
           <div id="ca_gmFields" style="display:grid;grid-template-columns:1fr 160px;gap:8px;align-items:center;${a.gmInterviewRequired?'':'opacity:.4;pointer-events:none'}">
             ${renderEmpPickerField('ca_gmInterviewBy', a.gmInterviewBy||'', 'Chọn General Manager...')}
-            <input lang="vi" type="date" id="ca_gmInterviewDate" value="${a.gmInterviewDate||''}" style="font-size:13px">
+            <input lang="vi" type="date" id="ca_gmInterviewDate" value="${dispToIso(a.gmInterviewDate||'')}" style="font-size:13px">
           </div>
         </div>
 
@@ -11616,7 +11636,7 @@ function editCandidate(id, jobId){
           </label>
           <div id="ca_corpFields" style="display:grid;grid-template-columns:1fr 160px;gap:8px;align-items:center;${a.corpInterviewRequired?'':'opacity:.4;pointer-events:none'}">
             <input id="ca_corpInterviewBy" value="${escapeHtml(a.corpInterviewBy||'')}" placeholder="Tên người phỏng vấn (VD: Mark Smith — Regional Director, Accor)" style="font-size:13px;width:100%">
-            <input lang="vi" type="date" id="ca_corpInterviewDate" value="${a.corpInterviewDate||''}" style="font-size:13px">
+            <input lang="vi" type="date" id="ca_corpInterviewDate" value="${dispToIso(a.corpInterviewDate||'')}" style="font-size:13px">
           </div>
         </div>
       </div>
@@ -11639,7 +11659,7 @@ function editCandidate(id, jobId){
         <div style="display:grid;grid-template-columns:1fr 160px;gap:8px;align-items:center;padding-top:8px;border-top:1px dashed var(--border);margin-bottom:8px">
           <div style="font-size:12px;color:var(--ink-dim);grid-column:span 2;display:flex;align-items:center;gap:6px"><span style="color:var(--teal)">✓</span> <b>Người thực hiện check (HR)</b></div>
           ${renderEmpPickerField('ca_refCheckBy', a.refCheckBy||'', 'Chọn nhân viên HR thực hiện check...')}
-          <input lang="vi" type="date" id="ca_refCheckDate" value="${a.refCheckDate||''}" style="font-size:13px">
+          <input lang="vi" type="date" id="ca_refCheckDate" value="${dispToIso(a.refCheckDate||'')}" style="font-size:13px">
         </div>
 
         <textarea id="ca_refResult" placeholder="Kết quả check: thái độ làm việc, lý do nghỉ, có khuyến nghị không..." style="width:100%;min-height:60px;font-size:13px">${escapeHtml(a.refResult||'')}</textarea>
@@ -11720,14 +11740,14 @@ function saveCandidate(id, jobId, isNew){
   if(!name){ toast('Vui lòng nhập tên ứng viên','error'); return; }
   const phone = $('#ca_phone').value.trim();
   if(!phone){ toast('Vui lòng nhập SĐT','error'); return; }
-  const applied = $('#ca_applied').value;
+  const applied = getDateIso('ca_applied');
   if(!applied){ toast('Vui lòng chọn ngày ứng tuyển','error'); return; }
 
   const data = {
     id, jobId: jobId,
     name, phone,
     email: $('#ca_email').value.trim(),
-    appliedDate: applied,
+    appliedDate: getDateIso('ca_applied'),
     status: $('#ca_status').value,
     source: $('#ca_source').value,
     cvLink: $('#ca_cvLink').value.trim(),
@@ -11739,23 +11759,23 @@ function saveCandidate(id, jobId, isNew){
     notes: $('#ca_notes').value.trim(),
     // Quy trình tuyển dụng
     screeningBy: $('#ca_screeningBy').value.trim(),
-    screeningDate: $('#ca_screeningDate').value,
+    screeningDate: getDateIso('ca_screeningDate'),
     hrInterviewBy: $('#ca_hrInterviewBy').value.trim(),
-    hrInterviewDate: $('#ca_hrInterviewDate').value,
+    hrInterviewDate: getDateIso('ca_hrInterviewDate'),
     deptInterviewBy: $('#ca_deptInterviewBy').value.trim(),
-    deptInterviewDate: $('#ca_deptInterviewDate').value,
+    deptInterviewDate: getDateIso('ca_deptInterviewDate'),
     gmInterviewRequired: $('#ca_gmInterviewRequired').checked,
     gmInterviewBy: $('#ca_gmInterviewRequired').checked ? $('#ca_gmInterviewBy').value.trim() : '',
-    gmInterviewDate: $('#ca_gmInterviewRequired').checked ? $('#ca_gmInterviewDate').value : '',
+    gmInterviewDate: $('#ca_gmInterviewRequired').checked ? getDateIso('ca_gmInterviewDate') : '',
     corpInterviewRequired: $('#ca_corpInterviewRequired').checked,
     corpInterviewBy: $('#ca_corpInterviewRequired').checked ? $('#ca_corpInterviewBy').value.trim() : '',
-    corpInterviewDate: $('#ca_corpInterviewRequired').checked ? $('#ca_corpInterviewDate').value : '',
+    corpInterviewDate: $('#ca_corpInterviewRequired').checked ? getDateIso('ca_corpInterviewDate') : '',
     // Reference check
     refName: $('#ca_refName').value.trim(),
     refPhone: $('#ca_refPhone').value.trim(),
     refPosition: $('#ca_refPosition').value.trim(),
     refCheckBy: $('#ca_refCheckBy').value.trim(),
-    refCheckDate: $('#ca_refCheckDate').value,
+    refCheckDate: getDateIso('ca_refCheckDate'),
     refResult: $('#ca_refResult').value.trim(),
   };
 
@@ -11877,8 +11897,8 @@ function editJob(id){
         </div>
       </div>
 
-      <div class="field"><label>Ngày bắt đầu tuyển *</label><input lang="vi" type="date" id="f_startDate" value="${j.startDate||''}"></div>
-      <div class="field"><label>Deadline tuyển</label><input lang="vi" type="date" id="f_deadline" value="${j.deadline||''}"></div>
+      <div class="field"><label>Ngày bắt đầu tuyển *</label><input lang="vi" type="date" id="f_startDate" value="${dispToIso(j.startDate||'')}"></div>
+      <div class="field"><label>Deadline tuyển</label><input lang="vi" type="date" id="f_deadline" value="${dispToIso(j.deadline||'')}"></div>
 
       <div class="field"><label>Ưu tiên</label><select id="f_priority">
         <option value="high" ${j.priority==='high'?'selected':''}>🔥 Cao - cần gấp</option>
@@ -11906,7 +11926,7 @@ function editJob(id){
 function saveJob(id, isNew){
   const title = $('#f_title').value.trim();
   if(!title){ toast('Vui lòng nhập tên vị trí','error'); return; }
-  const startDate = $('#f_startDate').value;
+  const startDate = getDateIso('f_startDate');
   if(!startDate){ toast('Vui lòng chọn ngày bắt đầu tuyển','error'); return; }
 
   const data = {
@@ -12643,8 +12663,8 @@ function editCourse(id){
       <div class="field"><label>Số người tham gia</label><input type="number" id="f_attendees" value="${c.attendees||0}" min="0"></div>
       <div class="field"><label>Chi phí khoá học (VNĐ)</label><input type="number" id="f_cost" value="${c.cost||0}" min="0" step="500000"></div>
 
-      <div class="field"><label>Ngày bắt đầu *</label><input lang="vi" type="date" id="f_start" value="${c.startDate||''}"></div>
-      <div class="field"><label>Ngày kết thúc</label><input lang="vi" type="date" id="f_end" value="${c.endDate||''}"></div>
+      <div class="field"><label>Ngày bắt đầu *</label><input lang="vi" type="date" id="f_start" value="${dispToIso(c.startDate||'')}"></div>
+      <div class="field"><label>Ngày kết thúc</label><input lang="vi" type="date" id="f_end" value="${dispToIso(c.endDate||'')}"></div>
 
       <!-- Giảng viên & địa điểm -->
       <div class="field"><label>Giảng viên</label><input id="f_trainer" value="${escapeHtml(c.trainer||'')}" placeholder="VD: Mr. John Smith"></div>
@@ -13515,8 +13535,8 @@ function editPromotion(id, presetEmpId){
         }).join('')}
       </select></div>
 
-      <div class="field"><label>Ngày đề xuất *</label><input lang="vi" type="date" id="pr_date" value="${p.date||today}"></div>
-      <div class="field"><label>Ngày hiệu lực (nếu duyệt)</label><input lang="vi" type="date" id="pr_effDate" value="${p.effectiveDate||''}"></div>
+      <div class="field"><label>Ngày đề xuất *</label><input lang="vi" type="date" id="pr_date" value="${dispToIso(p.date||today)}"></div>
+      <div class="field"><label>Ngày hiệu lực (nếu duyệt)</label><input lang="vi" type="date" id="pr_effDate" value="${dispToIso(p.effectiveDate||'')}"></div>
 
       <!-- Vị trí cũ → mới -->
       <div class="field full" style="background:rgba(126,182,232,.04);padding:14px;border-radius:8px;border:1px solid rgba(126,182,232,.15)">
@@ -14843,7 +14863,7 @@ function openManualBlacklistForm(existing, candidates){
 
       <div class="field">
         <label>Ngày đánh dấu</label>
-        <input lang="vi" type="date" id="mbl_addedDate" value="${data.addedDate || today}">
+        <input lang="vi" type="date" id="mbl_addedDate" value="${dispToIso(data.addedDate||today)}">
       </div>
       <div class="field">
         <label>Người ghi nhận</label>
@@ -14852,7 +14872,7 @@ function openManualBlacklistForm(existing, candidates){
 
       <div class="field">
         <label>Ngày NV nghỉ việc (nếu có)</label>
-        <input lang="vi" type="date" id="mbl_exitDate" value="${data.exitDate||''}">
+        <input lang="vi" type="date" id="mbl_exitDate" value="${dispToIso(data.exitDate||'')}">
         <div style="font-size:11px;color:var(--ink-muted);margin-top:4px">Để trống nếu vẫn đang làm việc</div>
       </div>
 
@@ -15162,9 +15182,9 @@ function saveBlacklistEntry(isNew){
     reasons,        // mảng các lý do được chọn
     notes,          // ghi chú đặc biệt (text tự do)
     reason: reasonSummary, // backward compat
-    addedDate: document.getElementById('mbl_addedDate').value || new Date().toISOString().slice(0,10),
+    addedDate: getDateIso('mbl_addedDate') || new Date().toISOString().slice(0,10),
     addedBy: document.getElementById('mbl_addedBy').value.trim(),
-    exitDate: document.getElementById('mbl_exitDate').value,
+    exitDate: getDateIso('mbl_exitDate'),
     rehireEligible: document.getElementById('mbl_rehireEligible').checked,
   };
 
@@ -17886,10 +17906,10 @@ function editSchedule(id){
         <input id="sc_school" value="${escapeHtml(sc.school||'')}" placeholder="VD: Đại học Hạ Long, Cao đẳng Nông nghiệp...">
       </div>
       <div class="field"><label>Ngày bắt đầu *</label>
-        <input lang="vi" type="date" id="sc_start" value="${sc.startDate||''}">
+        <input lang="vi" type="date" id="sc_start" value="${dispToIso(sc.startDate||'')}">
       </div>
       <div class="field"><label>Ngày kết thúc</label>
-        <input lang="vi" type="date" id="sc_end" value="${sc.endDate||''}">
+        <input lang="vi" type="date" id="sc_end" value="${dispToIso(sc.endDate||'')}">
       </div>
     </div>
 
@@ -18065,7 +18085,7 @@ function editTrainee(id){
     <div class="form-grid">
       <div class="field"><label>Họ và tên *</label><input id="tr_name" value="${escapeHtml(t.name||'')}"></div>
       <div class="field"><label>Mã số sinh viên</label><input id="tr_code" value="${escapeHtml(t.code||'')}"></div>
-      <div class="field"><label>Ngày sinh</label><input lang="vi" type="date" id="tr_dob" value="${t.dob||''}"></div>
+      <div class="field"><label>Ngày sinh</label><input lang="vi" type="date" id="tr_dob" value="${dispToIso(t.dob||'')}"></div>
       <div class="field"><label>Giới tính</label>
         <select id="tr_gender">
           <option value="" ${!t.gender?'selected':''}>— Chọn —</option>
@@ -18082,10 +18102,10 @@ function editTrainee(id){
         </select>
       </div>
       <div class="field"><label>Số lượng (người)</label><input type="number" id="tr_qty" value="${t.qty||1}" min="1" step="1"></div>
-      <div class="field"><label>Ngày bắt đầu *</label><input lang="vi" type="date" id="tr_start" value="${t.startDate||''}"></div>
-      <div class="field"><label>Ngày kết thúc</label><input lang="vi" type="date" id="tr_end" value="${t.endDate||''}"></div>
+      <div class="field"><label>Ngày bắt đầu *</label><input lang="vi" type="date" id="tr_start" value="${dispToIso(t.startDate||'')}"></div>
+      <div class="field"><label>Ngày kết thúc</label><input lang="vi" type="date" id="tr_end" value="${dispToIso(t.endDate||'')}"></div>
       <div class="field"><label>Số CCCD/CMND</label><input id="tr_cccd" value="${escapeHtml(t.cccd||'')}"></div>
-      <div class="field"><label>Ngày cấp CCCD</label><input lang="vi" type="date" id="tr_cccdDate" value="${t.cccdDate||''}"></div>
+      <div class="field"><label>Ngày cấp CCCD</label><input lang="vi" type="date" id="tr_cccdDate" value="${dispToIso(t.cccdDate||'')}"></div>
       <div class="field full"><label>Nơi cấp CCCD</label><input id="tr_cccdPlace" value="${escapeHtml(t.cccdPlace||'')}" placeholder="VD: Cục Cảnh sát QLHC về TTXH"></div>
       <div class="field"><label>Số tài khoản ngân hàng</label><input id="tr_bank" value="${escapeHtml(t.bank||'')}" placeholder="Số tài khoản"></div>
       <div class="field"><label>Ngân hàng</label><input id="tr_bankName" value="${escapeHtml(t.bankName||'')}" placeholder="VD: Vietcombank, BIDV..."></div>
