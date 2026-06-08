@@ -5654,12 +5654,10 @@ function handlePhotoUpload(event){
             unlock();
             if(data.secure_url){
               const url = data.secure_url;
-              // Ghi URL vào hidden field — saveEmployee sẽ dùng giá trị này
               $('#f_photo').value = url;
               preview.innerHTML = '<img src="'+url+'" alt="Avatar">';
               toast('✅ Ảnh đã upload! Bấm Lưu để hoàn tất.','success');
-              // Lưu ngay vào DB + Firestore (không cần đợi bấm Lưu)
-              // Dùng f_empid — đáng tin cậy hơn currentEmpId khi mở từ danh sách
+              // Lưu ngay vào DB + Firestore — dùng f_empid đáng tin hơn currentEmpId
               const empId = ($('#f_empid')?.value) || currentEmpId || '';
               if(empId && window.fbDb && window.currentUser){
                 const empIdx = (DB.employees||[]).findIndex(e=>e.id===empId);
@@ -5818,7 +5816,7 @@ function saveEmployee(id, isNew){
     const dbNoPhoto = JSON.parse(JSON.stringify(DB));
     dbNoPhoto.employees = (dbNoPhoto.employees||[]).map(e=>{ const {photo,...r}=e; return r; });
     localStorage.setItem(STORE_KEY, JSON.stringify(dbNoPhoto));
-    // Lưu ảnh riêng — kể cả URL Cloudinary để refresh vẫn thấy
+    // Lưu ảnh riêng vào photos map — kể cả URL Cloudinary
     if(data.photo){
       const pm = JSON.parse(localStorage.getItem(STORE_KEY+'_photos')||'{}');
       pm[id] = data.photo;
