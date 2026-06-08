@@ -5611,7 +5611,7 @@ function removePhoto(){
   if(input) input.value = '';
 }
 
-// Cloudinary config — khai báo global để dùng được ở mọi nơi
+// Cloudinary config — khai báo trước handlePhotoUpload để luôn có giá trị
 const CLOUDINARY_CLOUD = 'dmsb6wbg6';
 const CLOUDINARY_PRESET = 'legacy_hr';
 
@@ -5620,7 +5620,6 @@ function handlePhotoUpload(event){
   if(!file) return;
   if(!file.type.startsWith('image/')){ toast('File phải là ảnh','error'); return; }
   if(file.size > 10*1024*1024){ toast('Ảnh quá lớn, tối đa 10MB','error'); return; }
-
   const reader = new FileReader();
   reader.onload = ev => {
     const img = new Image();
@@ -5632,17 +5631,13 @@ function handlePhotoUpload(event){
       const minDim = Math.min(img.width, img.height);
       const sx = (img.width-minDim)/2, sy = (img.height-minDim)/2;
       ctx.drawImage(img, sx, sy, minDim, minDim, 0, 0, size, size);
-
       const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
       $('#f_photo').value = dataUrl;
       const preview = $('#photoPreview');
       preview.innerHTML = '<img src="'+dataUrl+'" alt="Avatar">';
-
-      // Upload lên Cloudinary
       canvas.toBlob(blob => {
         if(!blob) return;
         toast('⏳ Đang upload ảnh lên cloud...','info');
-        // Lock nút Lưu để tránh save base64 trước khi có URL
         const saveBtn = document.querySelector('.modal-actions .btn-primary');
         if(saveBtn){ saveBtn.disabled = true; saveBtn.dataset._photoLock = '1'; }
         const unlock = ()=>{ if(saveBtn && saveBtn.dataset._photoLock){ saveBtn.disabled = false; delete saveBtn.dataset._photoLock; } };
@@ -5659,26 +5654,20 @@ function handlePhotoUpload(event){
               $('#f_photo').value = url;
               preview.innerHTML = '<img src="'+url+'" alt="Avatar">';
               toast('✅ Ảnh đã upload! Bấm Lưu để hoàn tất.','success');
-              // Dùng f_empid — đúng hơn currentEmpId khi mở modal từ danh sách
               const empId = ($('#f_empid')?.value) || currentEmpId || '';
               if(empId && window.fbDb && window.currentUser){
                 const empIdx = (DB.employees||[]).findIndex(e=>e.id===empId);
                 if(empIdx >= 0){
                   DB.employees[empIdx].photo = url;
-                  try{
-                    const pm = JSON.parse(localStorage.getItem(STORE_KEY+'_photos')||'{}');
-                    pm[empId] = url;
-                    localStorage.setItem(STORE_KEY+'_photos', JSON.stringify(pm));
-                  }catch(_){}
+                  try{ const pm=JSON.parse(localStorage.getItem(STORE_KEY+'_photos')||'{}'); pm[empId]=url; localStorage.setItem(STORE_KEY+'_photos',JSON.stringify(pm)); }catch(_){}
                   saveEmpProfile(empId);
                 }
               }
             } else {
-              console.warn('Cloudinary error:',data);
               toast('⚠️ Upload thất bại: '+(data.error?.message||JSON.stringify(data)),'error');
             }
           })
-          .catch(err=>{ unlock(); console.warn('Upload err:',err); toast('⚠️ Lỗi kết nối Cloudinary','error'); });
+          .catch(err=>{ unlock(); toast('⚠️ Lỗi kết nối Cloudinary','error'); });
       }, 'image/jpeg', 0.85);
     };
     img.src = ev.target.result;
@@ -5701,6 +5690,54 @@ function renderCustomFieldInput(cf, value){
   const label = escapeHtml(cf.label) + req;
   const dataAttr = `data-cf-key="${escapeHtml(cf.key)}"`;
 
+  // ── Auto-computed fields từ dob ──
+  if(cf.key === 'age' || cf.key === 'birthMonth' || cf.key === 'ageRange'){
+    // Tính giá trị realtime từ f_dob
+    const calcFromDob = ()=>{
+      const dobEl = document.getElementById('f_dob');
+      const dobIso = dobEl ? (dobEl.getAttribute('data-iso') || dispToIso(dobEl.value||'') || '') : '';
+      if(!dobIso) return '';
+      const dob = new Date(dobIso);
+      if(isNaN(dob)) return '';
+      const today = new Date();
+      if(cf.key === 'birthMonth') return String(dob.getMonth()+1);
+      if(cf.key === 'age'){
+        let age = today.getFullYear() - dob.getFullYear();
+        const m = today.getMonth() - dob.getMonth();
+        if(m < 0 || (m===0 && today.getDate() < dob.getDate())) age--;
+        return String(age);
+      }
+      if(cf.key === 'ageRange'){
+        let age = today.getFullYear() - dob.getFullYear();
+        const m = today.getMonth() - dob.getMonth();
+        if(m < 0 || (m===0 && today.getDate() < dob.getDate())) age--;
+        if(age < 20)  return 'Dưới 20';
+        if(age <= 30) return '20-30';
+        if(age <= 40) return '31-40';
+        if(age <= 50) return '41-50';
+        if(age <= 60) return '51-60';
+        return 'Trên 60';
+      }
+      return '';
+    };
+    const computed = calcFromDob();
+    const displayVal = computed || escapeHtml(String(v));
+    const roStyle = 'background:var(--bg-elev);color:var(--ink-muted);cursor:not-allowed;border-color:var(--border)';
+    if(cf.key === 'ageRange'){
+      const opts = (cf.options||'').split(',').map(s=>s.trim()).filter(Boolean);
+      const selVal = computed || String(v);
+      return `<div class="${cls}"><label>${label} <span style="font-size:10px;color:var(--accent)">(tự động)</span></label>
+        <select id="${id}" ${dataAttr} disabled style="${roStyle}">
+          <option value="">— Chọn —</option>
+          ${opts.map(o=>`<option value="${escapeHtml(o)}" ${selVal===o?'selected':''}>${escapeHtml(o)}</option>`).join('')}
+        </select>
+        <input type="hidden" id="${id}_hidden" value="${escapeHtml(selVal)}">
+      </div>`;
+    }
+    return `<div class="${cls}"><label>${label} <span style="font-size:10px;color:var(--accent)">(tự động)</span></label>
+      <input id="${id}" ${dataAttr} type="text" value="${displayVal}" readonly style="${roStyle}" placeholder="Tự tính từ ngày sinh">
+    </div>`;
+  }
   if(cf.type === 'select'){
     const opts = (cf.options||'').split(',').map(s=>s.trim()).filter(Boolean);
     return `<div class="${cls}"><label>${label}</label>
@@ -5751,6 +5788,25 @@ function saveEmployee(id, isNew){
 
   // Thu thập custom fields — bắt đầu từ data cũ để không mất field không hiển thị trong form
   const customValues = Object.assign({}, DB.customData[id] || {});
+  // Auto-compute age/birthMonth/ageRange từ dob
+  const _dobIso = dispToIso($('#f_dob')?.value||'') || '';
+  if(_dobIso){
+    const _dob = new Date(_dobIso);
+    if(!isNaN(_dob)){
+      const _today = new Date();
+      customValues.birthMonth = String(_dob.getMonth()+1);
+      let _age = _today.getFullYear() - _dob.getFullYear();
+      const _m = _today.getMonth() - _dob.getMonth();
+      if(_m < 0 || (_m===0 && _today.getDate() < _dob.getDate())) _age--;
+      customValues.age = String(_age);
+      if(_age < 20)       customValues.ageRange = 'Dưới 20';
+      else if(_age <= 30) customValues.ageRange = '20-30';
+      else if(_age <= 40) customValues.ageRange = '31-40';
+      else if(_age <= 50) customValues.ageRange = '41-50';
+      else if(_age <= 60) customValues.ageRange = '51-60';
+      else                customValues.ageRange = 'Trên 60';
+    }
+  }
   for(const cf of DB.customFields){
     const el = document.getElementById('cf_'+cf.key);
     if(!el) continue;
@@ -5818,11 +5874,7 @@ function saveEmployee(id, isNew){
     const dbNoPhoto = JSON.parse(JSON.stringify(DB));
     dbNoPhoto.employees = (dbNoPhoto.employees||[]).map(e=>{ const {photo,...r}=e; return r; });
     localStorage.setItem(STORE_KEY, JSON.stringify(dbNoPhoto));
-    if(data.photo){
-      const pm = JSON.parse(localStorage.getItem(STORE_KEY+'_photos')||'{}');
-      pm[id] = data.photo;
-      localStorage.setItem(STORE_KEY+'_photos', JSON.stringify(pm));
-    }
+    if(data.photo){ const pm=JSON.parse(localStorage.getItem(STORE_KEY+'_photos')||'{}'); pm[id]=data.photo; localStorage.setItem(STORE_KEY+'_photos',JSON.stringify(pm)); }
   }catch(_){}
   // Push NV lên Firestore
   if(window.fbDb && window.currentUser){
@@ -6080,8 +6132,8 @@ function exportEmployeesXLSX(){
     // For phone — ensure it's exported as text
     const std = [
       e.code, e.name, e.email||'', {v: e.phone||'', t:'s'},
-      e.dob||'', e.gender==='male'?'Nam':e.gender==='female'?'Nữ':(_lang==="en"?"Other":"Khác"),
-      deptName(e.deptId), e.role||'', e.level||'', e.joined||'',
+      e.dob ? isoToDisp(e.dob) : '', e.gender==='male'?'Nam':e.gender==='female'?'Nữ':(_lang==="en"?"Other":"Khác"),
+      deptName(e.deptId), e.role||'', e.level||'', e.joined ? isoToDisp(e.joined) : '',
       STATUS_LABEL[e.status]||'', e.kpi||0,
     ];
     const custom = DB.customFields
@@ -6089,6 +6141,8 @@ function exportEmployeesXLSX(){
       .map(cf => {
         const val = cd[cf.key] || '';
         if(SALARY_KEYS.includes(cf.key) && val) return parseInt(val)||0;
+        // Date fields: convert ISO to dd/mm/yyyy
+        if(cf.type==='date' && val) return isoToDisp(val);
         // String-type fields (cccd, phone, bank account): force text
         if(cf.type==='text'||cf.type==='phone'||!cf.type) return {v: String(val), t:'s'};
         return val;
@@ -6602,7 +6656,7 @@ function exportRecruitmentXLSX(){
       j.title||'', dept?.name||'',
       j.positions||1, hired, remain,
       j.applicants||0, pct,
-      j.startDate||'', j.deadline||'',
+      j.startDate ? isoToDisp(j.startDate) : '', j.deadline ? isoToDisp(j.deadline) : '',
       j.priority||'', JOB_STATUS[j.status]||j.status||'',
       base, bonus, base+bonus,
       j.jobType||'', j.notes||''
@@ -6623,7 +6677,7 @@ function exportRecruitmentXLSX(){
     return [
       job?.title||'', dept?.name||'',
       c.name||'', c.phone||'', c.email||'',
-      c.appliedDate||'', c.source||'',
+      c.appliedDate ? isoToDisp(c.appliedDate) : '', c.source||'',
       statusMap[c.status]||c.status||'',
       ...(canSeeRecInfo?[c.expectedSalary||0]:[]),
       c.rating||'', c.notes||''
@@ -6687,7 +6741,7 @@ function exportRecruitmentPDF(){
         </div>
         <span style="margin-left:4px;font-size:10px">${pct}%</span>
       </td>
-      <td>${j.deadline||'—'}</td>
+      <td>${j.deadline ? fmtDate(j.deadline) : '—'}</td>
       <td style="text-align:center"><span style="color:${prioColor};font-weight:600">${j.priority==='high'?(_lang==="en"?"High":"Cao"):j.priority==='medium'?'TB':(_lang==="en"?"Low":"Thấp")}</span></td>
       <td><span style="color:${statusColor};font-weight:600">${JOB_STATUS[j.status]||j.status||''}</span></td>
       <td style="font-family:monospace;font-size:10px">${base+bonus>0?fmtMoney(base+bonus)+' đ':'—'}</td>
@@ -6791,7 +6845,7 @@ function exportCSV(type){
       const c = stillValid || sorted[0];
       const days = c.endDate ? Math.ceil((new Date(c.endDate)-today)/86400000) : '';
       const status = !c.endDate ? (_lang==="en"?"Indefinite":"Vô thời hạn") : (days < 0 ? (_lang==="en"?"Overdue":"Đã quá hạn") : days <= 7 ? 'Cấp bách' : days <= 60 ? 'Sắp hết hạn' : 'Còn hiệu lực');
-      rows.push([emp.code, emp.name, deptName(emp.deptId), emp.role, CONTRACT_TYPE[c.type], c.startDate, c.endDate||'', days, status, c.notes||'']);
+      rows.push([emp.code, emp.name, deptName(emp.deptId), emp.role, CONTRACT_TYPE[c.type], isoToDisp(c.startDate||''), c.endDate ? isoToDisp(c.endDate) : '', days, status, c.notes||'']);
     });
     filename = 'contracts.csv';
   } else if(type==='jobs'){
@@ -6800,13 +6854,13 @@ function exportCSV(type){
       const hired = getJobHired(j.id);
       const remain = j.positions - hired;
       const prio = j.priority==='high'?(_lang==="en"?"High":"Cao"):j.priority==='medium'?(_lang==="en"?"Medium":"Trung bình"):(_lang==="en"?"Low":"Thấp");
-      return [j.title, deptName(j.deptId), j.level||'', j.positions, hired, remain, j.applicants||0, j.startDate||'', j.deadline||'', (j.baseSalary||j.salary||0)+(j.bonusSalary||0), j.hiringManager||'', prio, JOB_STATUS[j.status]||j.status, j.notes||''];
+      return [j.title, deptName(j.deptId), j.level||'', j.positions, hired, remain, j.applicants||0, j.startDate ? isoToDisp(j.startDate) : '', j.deadline ? isoToDisp(j.deadline) : '', (j.baseSalary||j.salary||0)+(j.bonusSalary||0), j.hiringManager||'', prio, JOB_STATUS[j.status]||j.status, j.notes||''];
     });
     filename = 'jobs.csv';
   } else if(type==='courses'){
     header = ['Tên khoá học','Phân loại','Hình thức',(_lang==="en"?"Hours":"Số giờ"),'Số người tham gia',(_lang==="en"?"Cost (VND)":"Chi phí (VNĐ)"),(_lang==="en"?"Start date":"Ngày bắt đầu"),(_lang==="en"?"End date":"Ngày kết thúc"),'Giảng viên','Đơn vị tổ chức','Địa điểm',(_lang==="en"?"Description":"Mô tả"),'Đối tượng','Tài liệu',(_lang==="en"?"Status":"Trạng thái"),(_lang==="en"?"Notes":"Ghi chú")];
     rows = DB.courses.map(c=>{
-      return [c.name, COURSE_CAT[c.category]||'', COURSE_FORMAT[c.format]||'', c.hours||0, c.attendees||0, c.cost||0, c.startDate||'', c.endDate||'', c.trainer||'', c.provider||'', c.location||'', c.description||'', c.targetAudience||'', c.materials||'', COURSE_STATUS[c.status]||c.status, c.notes||''];
+      return [c.name, COURSE_CAT[c.category]||'', COURSE_FORMAT[c.format]||'', c.hours||0, c.attendees||0, c.cost||0, c.startDate ? isoToDisp(c.startDate) : '', c.endDate ? isoToDisp(c.endDate) : '', c.trainer||'', c.provider||'', c.location||'', c.description||'', c.targetAudience||'', c.materials||'', COURSE_STATUS[c.status]||c.status, c.notes||''];
     });
     filename = 'courses.csv';
   }
@@ -18181,12 +18235,12 @@ function deleteSchedule(id, fromModal=false){
 
 
 function viewTrainee(id){
-  const t = (DB.trainees||[]).find(x=>x.id===id);
-  if(!t) return;
+  const tr = (DB.trainees||[]).find(x=>x.id===id);
+  if(!tr) return;
   const today = new Date();
   const now   = today.toISOString().slice(0,10);
-  const isActive = !t.endDate || t.endDate >= now;
-  const daysLeft = t.endDate ? Math.ceil((new Date(t.endDate)-today)/864e5) : null;
+  const isActive = !tr.endDate || tr.endDate >= now;
+  const daysLeft = tr.endDate ? Math.ceil((new Date(tr.endDate)-today)/864e5) : null;
   const row = (label, val, full) => val ? `
     <div style="display:grid;grid-template-columns:${full?'1fr':'140px 1fr'};gap:6px;padding:8px 0;border-bottom:1px solid var(--border)">
       <div style="font-size:11px;color:var(--ink-muted);font-weight:600;text-transform:uppercase;letter-spacing:.06em;padding-top:2px">${label}</div>
@@ -18202,33 +18256,33 @@ function viewTrainee(id){
     <div class="modal-head" style="padding-bottom:0">
       <div style="display:flex;align-items:center;gap:14px;margin-bottom:14px">
         <div style="width:54px;height:54px;border-radius:50%;background:var(--accent);display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:700;color:var(--bg);flex-shrink:0">
-          ${(t.name||'?').trim().split(' ').pop()[0].toUpperCase()}
+          ${(tr.name||'?').trim().split(' ').pop()[0].toUpperCase()}
         </div>
         <div>
-          <div style="font-size:18px;font-weight:700">${escapeHtml(t.name||'')}</div>
-          <div style="font-size:12px;color:var(--ink-muted);margin-top:3px">${escapeHtml(t.code||'')}${t.code&&t.school?' · ':''}${escapeHtml(t.school||'')}</div>
+          <div style="font-size:18px;font-weight:700">${escapeHtml(tr.name||'')}</div>
+          <div style="font-size:12px;color:var(--ink-muted);margin-top:3px">${escapeHtml(tr.code||'')}${tr.code&&tr.school?' · ':''}${escapeHtml(tr.school||'')}</div>
           <div style="margin-top:6px;display:flex;align-items:center">${badge}${daysTag}</div>
         </div>
       </div>
     </div>
     <div style="padding:0 4px">
-      ${row((_lang==="en"?"Department":"Bộ phận"), escapeHtml(deptName(t.deptId)))}
-      ${row((_lang==="en"?"Quantity":"Số lượng"), t.qty > 1 ? t.qty + ' người' : '')}
-      ${row((_lang==="en"?"Start date":"Ngày bắt đầu"), fmtDate(t.startDate))}
-      ${row((_lang==="en"?"End date":"Ngày kết thúc"), fmtDate(t.endDate))}
-      ${row((_lang==="en"?"Date of birth":"Ngày sinh"), fmtDate(t.dob))}
-      ${row((_lang==="en"?"Gender":"Giới tính"), t.gender==='male'?'Nam':t.gender==='female'?'Nữ':'')}
-      ${row((_lang==="en"?"Phone number":"Số điện thoại"), t.phone ? `<a href="tel:${escapeHtml(t.phone)}" style="color:var(--accent)">${escapeHtml(t.phone)}</a>` : '')}
-      ${row((_lang==="en"?"ID number":"Số CCCD/CMND"), escapeHtml(t.cccd||''))}
-      ${row('Ngày cấp CCCD', fmtDate(t.cccdDate))}
-      ${row('Nơi cấp CCCD', escapeHtml(t.cccdPlace||''))}
-      ${row('Số TK ngân hàng', t.bank ? `<span style="font-family:'JetBrains Mono',monospace">${escapeHtml(t.bank)}</span>` : '')}
-      ${row((_lang==="en"?"Banking":"Ngân hàng"), escapeHtml(t.bankName||''))}
-      ${t.notes ? row((_lang==="en"?"Notes":"Ghi chú"), `<span style="color:var(--ink-muted);font-style:italic">${escapeHtml(t.notes)}</span>`) : ''}
+      ${row((_lang==="en"?"Department":"Bộ phận"), escapeHtml(deptName(tr.deptId)))}
+      ${row((_lang==="en"?"Quantity":"Số lượng"), tr.qty > 1 ? tr.qty + ' người' : '')}
+      ${row((_lang==="en"?"Start date":"Ngày bắt đầu"), fmtDate(tr.startDate))}
+      ${row((_lang==="en"?"End date":"Ngày kết thúc"), fmtDate(tr.endDate))}
+      ${row((_lang==="en"?"Date of birth":"Ngày sinh"), fmtDate(tr.dob))}
+      ${row((_lang==="en"?"Gender":"Giới tính"), tr.gender==='male'?'Nam':tr.gender==='female'?'Nữ':'')}
+      ${row((_lang==="en"?"Phone number":"Số điện thoại"), tr.phone ? `<a href="tel:${escapeHtml(tr.phone)}" style="color:var(--accent)">${escapeHtml(tr.phone)}</a>` : '')}
+      ${row((_lang==="en"?"ID number":"Số CCCD/CMND"), escapeHtml(tr.cccd||''))}
+      ${row('Ngày cấp CCCD', fmtDate(tr.cccdDate))}
+      ${row('Nơi cấp CCCD', escapeHtml(tr.cccdPlace||''))}
+      ${row('Số TK ngân hàng', tr.bank ? `<span style="font-family:'JetBrains Mono',monospace">${escapeHtml(tr.bank)}</span>` : '')}
+      ${row((_lang==="en"?"Banking":"Ngân hàng"), escapeHtml(tr.bankName||''))}
+      ${tr.notes ? row((_lang==="en"?"Notes":"Ghi chú"), `<span style="color:var(--ink-muted);font-style:italic">${escapeHtml(tr.notes)}</span>`) : ''}
     </div>
     <div class="modal-actions">
       <button class="btn" onclick="closeModal()">${t('btn_close')}</button>
-      <button class="btn btn-primary" onclick="closeModal();editTrainee('${t.id}')">✏️ Chỉnh sửa</button>
+      <button class="btn btn-primary" onclick="closeModal();editTrainee('${tr.id}')">✏️ Chỉnh sửa</button>
     </div>
   `);
 }
@@ -18237,13 +18291,13 @@ function editTrainee(id){
   const isNew = !id;
   const nextTraineeCode = (()=>{
     const nums = (DB.trainees||[])
-      .map(t=>(t.code||'').match(/^MG-Trainee(\d+)$/i))
+      .map(tr=>(tr.code||'').match(/^MG-Trainee(\d+)$/i))
       .filter(Boolean)
       .map(m=>parseInt(m[1]));
     const max = nums.length ? Math.max(...nums) : 0;
     return 'MG-Trainee' + (max+1);
   })();
-  const t = isNew
+  const tr = isNew
     ? {id:'',name:'',code:nextTraineeCode,dob:'',phone:'',school:'',deptId:'',startDate:'',endDate:'',qty:1,cccd:'',bank:'',bankName:'',notes:''}
     : (DB.trainees||[]).find(x=>x.id===id)||{};
 
@@ -18253,36 +18307,36 @@ function editTrainee(id){
       <div class="modal-sub">${isNew?'Thêm sinh viên thực tập mới':'Cập nhật thông tin'}</div>
     </div>
     <div class="form-grid">
-      <div class="field"><label>Họ và tên *</label><input id="tr_name" value="${escapeHtml(t.name||'')}"></div>
-      <div class="field"><label>Mã số sinh viên</label><input id="tr_code" value="${escapeHtml(t.code||'')}"></div>
-      <div class="field"><label>Ngày sinh</label><input lang="vi" type="date" id="tr_dob" value="${dispToIso(t.dob||'')}"></div>
+      <div class="field"><label>Họ và tên *</label><input id="tr_name" value="${escapeHtml(tr.name||'')}"></div>
+      <div class="field"><label>Mã số sinh viên</label><input id="tr_code" value="${escapeHtml(tr.code||'')}"></div>
+      <div class="field"><label>Ngày sinh</label><input lang="vi" type="date" id="tr_dob" value="${dispToIso(tr.dob||'')}"></div>
       <div class="field"><label>Giới tính</label>
         <select id="tr_gender">
-          <option value="" ${!t.gender?'selected':''}>— Chọn —</option>
-          <option value="male"   ${t.gender==='male'  ?'selected':''}>Nam</option>
-          <option value="female" ${t.gender==='female'?'selected':''}>Nữ</option>
+          <option value="" ${!tr.gender?'selected':''}>— Chọn —</option>
+          <option value="male"   ${tr.gender==='male'  ?'selected':''}>Nam</option>
+          <option value="female" ${tr.gender==='female'?'selected':''}>Nữ</option>
         </select>
       </div>
-      <div class="field"><label>Số điện thoại</label><input id="tr_phone" value="${escapeHtml(t.phone||'')}"></div>
-      <div class="field full"><label>Tên trường / Đơn vị *</label><input id="tr_school" value="${escapeHtml(t.school||'')}" placeholder="VD: Đại học Hạ Long, Cao đẳng Nông nghiệp..."></div>
+      <div class="field"><label>Số điện thoại</label><input id="tr_phone" value="${escapeHtml(tr.phone||'')}"></div>
+      <div class="field full"><label>Tên trường / Đơn vị *</label><input id="tr_school" value="${escapeHtml(tr.school||'')}" placeholder="VD: Đại học Hạ Long, Cao đẳng Nông nghiệp..."></div>
       <div class="field"><label>Bộ phận thực tập *</label>
         <select id="tr_dept">
           <option value="">— Chọn —</option>
-          ${DB.departments.map(d=>`<option value="${d.id}" ${t.deptId===d.id?'selected':''}>${escapeHtml(d.name)}</option>`).join('')}
+          ${DB.departments.map(d=>`<option value="${d.id}" ${tr.deptId===d.id?'selected':''}>${escapeHtml(d.name)}</option>`).join('')}
         </select>
       </div>
-      <div class="field"><label>Số lượng (người)</label><input type="number" id="tr_qty" value="${t.qty||1}" min="1" step="1"></div>
-      <div class="field"><label>Ngày bắt đầu *</label><input lang="vi" type="date" id="tr_start" value="${dispToIso(t.startDate||'')}"></div>
-      <div class="field"><label>Ngày kết thúc</label><input lang="vi" type="date" id="tr_end" value="${dispToIso(t.endDate||'')}"></div>
-      <div class="field"><label>Số CCCD/CMND</label><input id="tr_cccd" value="${escapeHtml(t.cccd||'')}"></div>
-      <div class="field"><label>Ngày cấp CCCD</label><input lang="vi" type="date" id="tr_cccdDate" value="${dispToIso(t.cccdDate||'')}"></div>
-      <div class="field full"><label>Nơi cấp CCCD</label><input id="tr_cccdPlace" value="${escapeHtml(t.cccdPlace||'')}" placeholder="VD: Cục Cảnh sát QLHC về TTXH"></div>
-      <div class="field"><label>Số tài khoản ngân hàng</label><input id="tr_bank" value="${escapeHtml(t.bank||'')}" placeholder="Số tài khoản"></div>
-      <div class="field"><label>Ngân hàng</label><input id="tr_bankName" value="${escapeHtml(t.bankName||'')}" placeholder="VD: Vietcombank, BIDV..."></div>
-      <div class="field full"><label>Ghi chú</label><input id="tr_notes" value="${escapeHtml(t.notes||'')}"></div>
+      <div class="field"><label>Số lượng (người)</label><input type="number" id="tr_qty" value="${tr.qty||1}" min="1" step="1"></div>
+      <div class="field"><label>Ngày bắt đầu *</label><input lang="vi" type="date" id="tr_start" value="${dispToIso(tr.startDate||'')}"></div>
+      <div class="field"><label>Ngày kết thúc</label><input lang="vi" type="date" id="tr_end" value="${dispToIso(tr.endDate||'')}"></div>
+      <div class="field"><label>Số CCCD/CMND</label><input id="tr_cccd" value="${escapeHtml(tr.cccd||'')}"></div>
+      <div class="field"><label>Ngày cấp CCCD</label><input lang="vi" type="date" id="tr_cccdDate" value="${dispToIso(tr.cccdDate||'')}"></div>
+      <div class="field full"><label>Nơi cấp CCCD</label><input id="tr_cccdPlace" value="${escapeHtml(tr.cccdPlace||'')}" placeholder="VD: Cục Cảnh sát QLHC về TTXH"></div>
+      <div class="field"><label>Số tài khoản ngân hàng</label><input id="tr_bank" value="${escapeHtml(tr.bank||'')}" placeholder="Số tài khoản"></div>
+      <div class="field"><label>Ngân hàng</label><input id="tr_bankName" value="${escapeHtml(tr.bankName||'')}" placeholder="VD: Vietcombank, BIDV..."></div>
+      <div class="field full"><label>Ghi chú</label><input id="tr_notes" value="${escapeHtml(tr.notes||'')}"></div>
     </div>
     <div class="modal-actions">
-      ${isNew?'':`<button class="btn btn-danger left" onclick="deleteTrainee('${t.id}',true)">${ICONS.trash} Xoá</button>`}
+      ${isNew?'':`<button class="btn btn-danger left" onclick="deleteTrainee('${tr.id}',true)">${ICONS.trash} Xoá</button>`}
       <button class="btn" onclick="closeModal()">${t('btn_cancel')}</button>
       <button class="btn btn-primary" onclick="saveTrainee('${id||''}',${isNew})">💾 Lưu</button>
     </div>
