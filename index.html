@@ -2734,7 +2734,7 @@ function renderDashboard(main){
   };
 
   // Years có data
-  const yearsSet = new Set([p.year, today.getFullYear()]);
+  const yearsSet = new Set([p.year, today.getFullYear(), today.getFullYear()+1]);
   DB.employees.forEach(e => {
     if(e.joined) yearsSet.add(new Date(e.joined).getFullYear());
   });
@@ -7253,7 +7253,7 @@ function renderContracts(main){
   }).sort((a,b) => new Date(a.endDate) - new Date(b.endDate));
 
   // Lấy danh sách năm có HĐ hết hạn
-  const yearsWithExpiry = new Set();
+  const yearsWithExpiry = new Set([new Date().getFullYear(), new Date().getFullYear()+1]);
   currentContracts.forEach(c => {
     if(c.endDate) yearsWithExpiry.add(new Date(c.endDate).getFullYear());
   });
@@ -9101,7 +9101,7 @@ function renderLeaveReports(main){
   const bal = window._leaveBal;
   const balRates = leaveAccrualRates();
   const balMono = "font-family:'JetBrains Mono',monospace";
-  const balYears = (()=>{ const s=new Set([today.getFullYear()]); DB.leaves.forEach(l=>{ if(l.startDate) s.add(new Date(l.startDate).getFullYear()); }); if(DB.leaveSheet){ Object.values(DB.leaveSheet).forEach(emp=>{ Object.keys(emp).forEach(y=>s.add(parseInt(y))); }); } return [...s].sort((a,b)=>b-a); })();
+  const balYears = (()=>{ const s=new Set([today.getFullYear()+1, today.getFullYear()]); DB.leaves.forEach(l=>{ if(l.startDate) s.add(new Date(l.startDate).getFullYear()); }); if(DB.leaveSheet){ Object.values(DB.leaveSheet).forEach(emp=>{ Object.keys(emp).forEach(y=>s.add(parseInt(y))); }); } return [...s].sort((a,b)=>b-a); })();
   const fnum = n => (Math.round((n||0)*100)/100).toString();
   const statusFilter = bal.statusFilter||'active';
   const allPool = statusFilter==='all' ? DB.employees
@@ -9109,6 +9109,22 @@ function renderLeaveReports(main){
     : DB.employees.filter(e=>getEffectiveStatus(e)!=='exit');
   const allActive = allPool;
   let scopeEmps = bal.emp ? allPool.filter(e=>e.id===bal.emp) : (bal.dept ? allPool.filter(e=>e.deptId===bal.dept) : allPool);
+
+  // Thêm trainee đang thực tập vào — chỉ hiện CL (không có AL)
+  if(!bal.emp){
+    const now = today.toISOString().slice(0,10);
+    const activeTrainees = (DB.trainees||[])
+      .filter(tr => tr.startDate && (!tr.endDate || tr.endDate >= now))
+      .filter(tr => !bal.dept || tr.deptId === bal.dept)
+      .map(tr => ({
+        id: tr.id, code: tr.code||'', name: tr.name||'',
+        role: 'Thực tập sinh', deptId: tr.deptId||'',
+        joined: tr.startDate||'', status: 'active',
+        _isTrainee: true,
+      }));
+    scopeEmps = [...scopeEmps, ...activeTrainees];
+  }
+
   const isSingle = !!bal.emp;
   const scopeEmp = isSingle ? DB.employees.find(e=>e.id===bal.emp) : null;
 
@@ -9147,6 +9163,7 @@ function renderLeaveReports(main){
     else if(field==='entitle') sh.entitle[month]=v;
     else if(field==='taken')   sh.taken[month]=v;
     else if(field==='clearAL') sh.clearAL=v;
+    else if(field==='planNext') sh.planNext=v;
     if(!DB.leaveSheet[empId]) DB.leaveSheet[empId]={};
     if(!DB.leaveSheet[empId][bal.year]) DB.leaveSheet[empId][bal.year]={};
     DB.leaveSheet[empId][bal.year][leaveType]=sh;
@@ -9296,14 +9313,24 @@ window.toggleLeaveGroup = function(did){
               <th ${thStyle} rowspan="3" style="background:rgba(183,148,212,.15);color:var(--purple);border:1px solid rgba(183,148,212,.3);min-width:52px">Tổng<br>đã nghỉ<br><span style="font-size:9px;opacity:.7">tự động</span></th>
               <th ${thStyle} rowspan="3" style="background:rgba(183,148,212,.15);color:var(--purple);border:1px solid rgba(183,148,212,.3);min-width:52px">Tồn cuối<br>năm ${bal.year}<br><span style="font-size:9px;opacity:.7">tự động</span></th>
               <th ${thStyle} rowspan="3" style="background:rgba(183,148,212,.2);color:var(--purple);font-weight:700;border:2px solid rgba(183,148,212,.5);min-width:52px">Còn lại<br>tháng<br>lương<br><span style="font-size:9px;opacity:.7">tự động</span></th>
+              <th ${thStyle} colspan="2" style="background:rgba(255,160,80,.15);color:#ff9f43;border:2px solid rgba(255,160,80,.4)">📋 KH tháng T${curMonth===12?1:curMonth+1}${curMonth===12?'/'+(bal.year+1):''}</th>
+              <th ${thStyle} colspan="2" style="background:rgba(255,80,80,.12);color:var(--danger);border:1px solid rgba(255,80,80,.3)">Δ Chênh lệch<br><span style="font-size:9px;opacity:.7">KH − Thực T${curMonth}</span></th>
             </tr>
             <tr style="background:#151b23">
               ${mnShort.map(m=>`<th ${thStyle} style="background:rgba(126,198,153,.07);color:var(--success);min-width:42px">${m}</th>`).join('')}
               ${['T1','T2','Clear AL','T3','T4','T5','T6','T7','T8','T9','T10','T11','T12'].map((m,i)=>`<th ${thStyle} style="background:rgba(212,165,116,.07);color:${i===2?'var(--warning)':'var(--accent)'};min-width:42px">${m}</th>`).join('')}
+              <th ${thStyle} style="background:rgba(255,160,80,.1);color:#ff9f43;min-width:46px">KH AL</th>
+              <th ${thStyle} style="background:rgba(255,160,80,.1);color:#ff9f43;min-width:46px">KH CL</th>
+              <th ${thStyle} style="background:rgba(255,80,80,.08);color:var(--danger);min-width:46px">Δ AL</th>
+              <th ${thStyle} style="background:rgba(255,80,80,.08);color:var(--danger);min-width:46px">Δ CL</th>
             </tr>
             <tr style="background:#111820;color:var(--ink-muted);font-size:9.5px">
               ${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'].map(m=>`<th ${thStyle}>${m}</th>`).join('')}
               ${['Jan','Feb','prev yr','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'].map((m,i)=>`<th ${thStyle} style="${i===2?'color:var(--warning)':''}">${m}</th>`).join('')}
+              <th ${thStyle} style="color:#ff9f43">nhập tay</th>
+              <th ${thStyle} style="color:#ff9f43">nhập tay</th>
+              <th ${thStyle} style="color:var(--danger)">tự động</th>
+              <th ${thStyle} style="color:var(--danger)">tự động</th>
             </tr>
           </thead>
           <tbody>
@@ -9335,8 +9362,8 @@ window.toggleLeaveGroup = function(did){
                 const renderTypeRow=(lt,d,label,ent_color,ent_bg,taken_color,taken_bg,isFirst)=>{
                   const pfx='ls_'+e.id+'_'+lt+'_';
                   return `<tr data-leave-dept="${did}" style="display:${isCollapsed?'none':''};border-bottom:1px solid ${isFirst?'transparent':'var(--border)'}">
-                    ${isFirst?`<td rowspan="2" style="padding:5px 10px;position:sticky;left:0;background:${rowBase};z-index:1;border-right:2px solid var(--border-strong);min-width:160px;vertical-align:top">
-                      <div style="font-size:11.5px;font-weight:600;font-family:'Inter Tight',sans-serif">${escapeHtml(e.name)}</div>
+                    ${isFirst?`<td rowspan="${e._isTrainee?1:2}" style="padding:5px 10px;position:sticky;left:0;background:${rowBase};z-index:1;border-right:2px solid var(--border-strong);min-width:160px;vertical-align:top">
+                      <div style="font-size:11.5px;font-weight:600;font-family:'Inter Tight',sans-serif">${escapeHtml(e.name)}${e._isTrainee?` <span style="font-size:9px;background:rgba(126,182,232,.2);color:var(--info);padding:1px 5px;border-radius:3px;font-weight:600">TTS</span>`:''}</div>
                       <div style="font-size:10px;color:var(--ink-muted)">${escapeHtml(e.code)}</div>
                       <div style="font-size:9.5px;color:var(--ink-muted)">${cd.position||e.role||''} · ${yrs} năm CT</div>
                     </td>`:''}
@@ -9365,9 +9392,36 @@ window.toggleLeaveGroup = function(did){
                     ${compCell(pfx+'cur',d.pending,d.pending<0?'var(--danger)':'var(--success)','rgba(183,148,212,.1)')}
                   </tr>`;
                 };
-                return renderTypeRow('al',al,'AL / Phép năm','var(--success)','rgba(126,198,153,.07)','var(--accent)','rgba(212,165,116,.07)',true)
-                     + renderTypeRow('cl',cl,'CL / Nghỉ bù','var(--info)','rgba(126,182,232,.07)','var(--info)','rgba(126,182,232,.05)',false)
-                     + `<tr data-leave-dept="${did}" style="display:${isCollapsed?'none':''}"><td colspan="32" style="height:3px;background:rgba(255,255,255,.03)"></td></tr>`;
+                return (e._isTrainee ? '' : renderTypeRow('al',al,'AL / Phép năm','var(--success)','rgba(126,198,153,.07)','var(--accent)','rgba(212,165,116,.07)',true))
+                     + renderTypeRow('cl',cl,'CL / Nghỉ bù','var(--info)','rgba(126,182,232,.07)','var(--info)','rgba(126,182,232,.05)', e._isTrainee ? true : false)
+                     + (()=>{
+                    // KH tháng kế tiếp + delta
+                    const sh = getSheet(e.id, 'al');
+                    const shCl = getSheet(e.id, 'cl');
+                    const planAL = parseFloat(sh.planNext||0);
+                    const planCL = parseFloat(shCl.planNext||0);
+                    const realAL = curMonth>=1 ? (al.months[curMonth-1]?.used||0) : 0;
+                    const realCL = curMonth>=1 ? (cl.months[curMonth-1]?.used||0) : 0;
+                    const deltaAL = planAL - realAL;
+                    const deltaCL = planCL - realCL;
+                    const deltaCol = (v) => v===0?'var(--ink-muted)':v>0?'var(--success)':'var(--danger)';
+                    const inpPlan = (lt, val) => `<input type="number" min="0" step="0.5" value="${val||''}" placeholder="0"
+                      oninput="saveLeaveCell('${e.id}','${lt}','planNext',0,this.value)"
+                      style="width:42px;padding:2px 3px;background:rgba(255,160,80,.1);border:1px solid #ff9f43;border-radius:3px;color:#ff9f43;font-family:JetBrains Mono,monospace;font-size:11px;text-align:center">`;
+                    return `<tr data-leave-dept="${did}" style="display:${isCollapsed?'none':''};background:rgba(255,160,80,.03);border-top:2px solid rgba(255,160,80,.2)">
+                      <td style="padding:5px 10px;position:sticky;left:0;background:rgba(255,160,80,.05);z-index:1;border-right:2px solid var(--border-strong);font-size:10px;color:#ff9f43;font-weight:600">
+                        📋 KH T${curMonth===12?1:curMonth+1}
+                      </td>
+                      <td colspan="28" style="padding:3px 6px;color:var(--ink-muted);font-size:10px">
+                        Kế hoạch nghỉ phép tháng tới · nhập tay · so sánh với thực tế T${curMonth}
+                      </td>
+                      <td style="padding:3px 2px;text-align:center">${inpPlan('al', planAL)}</td>
+                      <td style="padding:3px 2px;text-align:center">${inpPlan('cl', planCL)}</td>
+                      <td style="padding:3px 2px;text-align:center;font-weight:700;font-size:11px;color:${deltaCol(deltaAL)}">${deltaAL===0?'—':(deltaAL>0?'+':'')+fnum(deltaAL)}</td>
+                      <td style="padding:3px 2px;text-align:center;font-weight:700;font-size:11px;color:${deltaCol(deltaCL)}">${deltaCL===0?'—':(deltaCL>0?'+':'')+fnum(deltaCL)}</td>
+                    </tr>`;
+                  })()
+                     + `<tr data-leave-dept="${did}" style="display:${isCollapsed?'none':''}"><td colspan="36" style="height:3px;background:rgba(255,255,255,.03)"></td></tr>`;
               }).join('');
 
               return deptHeader + empRows;
@@ -9384,6 +9438,19 @@ window.toggleLeaveGroup = function(did){
               <td style="text-align:center;color:var(--purple)">${fnum(empMonthData.reduce((s,x)=>s+x.al.totalUsed,0))}</td>
               <td style="text-align:center;color:var(--success)">${fnum(empMonthData.reduce((s,x)=>s+(x.al.totalEntitle-x.al.totalUsed),0))}</td>
               <td style="text-align:center;color:var(--success)">${fnum(empMonthData.reduce((s,x)=>s+x.al.pending,0))}</td>
+              ${(()=>{
+                const totPlanAL = empMonthData.reduce((s,x)=>s+parseFloat(getSheet(x.e.id,'al').planNext||0),0);
+                const totPlanCL = empMonthData.reduce((s,x)=>s+parseFloat(getSheet(x.e.id,'cl').planNext||0),0);
+                const totRealAL = curMonth>=1 ? empMonthData.reduce((s,x)=>s+(x.al.months[curMonth-1]?.used||0),0) : 0;
+                const totRealCL = curMonth>=1 ? empMonthData.reduce((s,x)=>s+(x.cl.months[curMonth-1]?.used||0),0) : 0;
+                const dAL = totPlanAL - totRealAL;
+                const dCL = totPlanCL - totRealCL;
+                const dc = v => v===0?'var(--ink-muted)':v>0?'var(--success)':'var(--danger)';
+                return `<td style="text-align:center;color:#ff9f43">${fnum(totPlanAL)||'—'}</td>
+                        <td style="text-align:center;color:#ff9f43">${fnum(totPlanCL)||'—'}</td>
+                        <td style="text-align:center;color:${dc(dAL)}">${dAL===0?'—':(dAL>0?'+':'')+fnum(dAL)}</td>
+                        <td style="text-align:center;color:${dc(dCL)}">${dCL===0?'—':(dCL>0?'+':'')+fnum(dCL)}</td>`;
+              })()}
             </tr>
           </tfoot>
         </table>
@@ -9954,7 +10021,7 @@ function renderLeaves(main){
         <div class="card" style="padding:12px 16px;margin-bottom:14px">
           <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
             <select class="filter-select" onchange="window._leaveBal=(window._leaveBal||{});window._leaveBal.year=parseInt(this.value);render()">
-              ${[2026,2025,2024].map(y=>`<option value="${y}" ${yr===y?'selected':''}>${y}</option>`).join('')}
+              ${(()=>{ const s=new Set([new Date().getFullYear(),new Date().getFullYear()-1,new Date().getFullYear()-2]); if(DB.leaveSheet){Object.values(DB.leaveSheet).forEach(emp=>Object.keys(emp).forEach(y=>s.add(parseInt(y))));} DB.leaves.forEach(l=>{if(l.startDate)s.add(new Date(l.startDate).getFullYear());}); return [...s].sort((a,b)=>b-a); })().map(y=>`<option value="${y}" ${yr===y?'selected':''}>${y}</option>`).join('')}
             </select>
             <select class="filter-select" onchange="window._leaveBal=(window._leaveBal||{});window._leaveBal.reportMonth=parseInt(this.value);render()">
               <option value="0" ${!bal.reportMonth?'selected':''}>📅 Cả năm</option>
@@ -12316,6 +12383,8 @@ function renderTraining(main){
     if(c.endDate) yearsSet.add(new Date(c.endDate).getFullYear());
   });
   yearsSet.add(p.year);
+  yearsSet.add(new Date().getFullYear());
+  yearsSet.add(new Date().getFullYear()+1);
   const yearsList = [...yearsSet].sort();
 
   const periodLabel = p.mode === 'all' ? 'Toàn thời gian'
@@ -14398,7 +14467,7 @@ function renderWarnings(main){
       .sort((a,b) => (b.severe - a.severe) || (b.count - a.count));
   })();
 
-  const yearsSet = new Set([thisYear]);
+  const yearsSet = new Set([thisYear, thisYear+1]);
   allRecords.forEach(r => { if(r.date) yearsSet.add(new Date(r.date).getFullYear()); });
   const yearsList = [...yearsSet].sort((a,b)=>b-a);
 
@@ -16438,7 +16507,7 @@ function renderSalaryAnalysis(main){
   const fixedRatio = kpi.totalFund ? Math.round(kpi.totalBase/kpi.totalFund*100) : 0;
 
   // ── Năm selector ──
-  const yearsSet=new Set([curYear,curYear-1,curYear-2]);
+  const yearsSet=new Set([curYear+1,curYear,curYear-1,curYear-2]);
   DB.employees.forEach(e=>{ if(e.joined) yearsSet.add(new Date(e.joined).getFullYear()); });
   const yearsList=[...yearsSet].sort((a,b)=>b-a);
   const yearOpts=yearsList.map(y=>`<option value="${y}" ${y===F.year?'selected':''}>${y}</option>`).join('');
@@ -16836,7 +16905,7 @@ function renderSvcTab(){
     return `<span style="font-size:10.5px;padding:1px 6px;border-radius:4px;font-weight:700;background:${bg};color:${c}">${p>=0?'+':''}${p}%</span>`;
   };
 
-  const years = [...new Set([curYear, curYear-1, ...(Object.keys(DB.svcData||{}).map(Number))])].sort((a,b)=>b-a);
+  const years = [...new Set([curYear+1, curYear, curYear-1, ...(Object.keys(DB.svcData||{}).map(Number))])].sort((a,b)=>b-a);
 
   // Save SVC cell
   window.saveSvcCell = function(yr, m, val){
@@ -17118,7 +17187,7 @@ function renderCasual(main){
 
   const fmtNum = n => Math.round(n).toLocaleString('vi-VN');
   const mnShort = ['T1','T2','T3','T4','T5','T6','T7','T8','T9','T10','T11','T12'];
-  const years = [...new Set([today.getFullYear(), today.getFullYear()-1, ...(DB.casuals||[]).map(r=>r.year)])].sort((a,b)=>b-a);
+  const years = [...new Set([today.getFullYear()+1, today.getFullYear(), today.getFullYear()-1, ...(DB.casuals||[]).map(r=>r.year)])].sort((a,b)=>b-a);
 
   main.innerHTML = `
     <div class="topbar">
@@ -17299,7 +17368,7 @@ function renderCasualAnalysis(){
   const yr  = cf.year;
   const cyr = cf.cmpYear || (yr-1);
   const showCmp = !!cf.showCmp;
-  const years = [...new Set([today.getFullYear(), today.getFullYear()-1, ...(DB.casuals||[]).map(r=>r.year)])].sort((a,b)=>b-a);
+  const years = [...new Set([today.getFullYear()+1, today.getFullYear(), today.getFullYear()-1, ...(DB.casuals||[]).map(r=>r.year)])].sort((a,b)=>b-a);
   const fmtN = n => Math.round(n||0).toLocaleString('vi-VN');
   const fmtM = n => n>=1e9?(n/1e9).toFixed(2)+'B':n>=1e6?(n/1e6).toFixed(1)+'M':fmtN(n);
 
