@@ -1534,7 +1534,7 @@ function loadData(){
 // ── Mapping: DB field → Firestore document ──
 const FS_DOC_MAP = {
   employees:  ['departments'],
-  hr:         ['leaves','contracts','leaveSheet','leaveOpening'],
+  hr:         ['leaves','contracts','leaveSheet','leaveOpening','leavePlan'],
   recruitment:['candidates','jobs'],
   workforce:  ['casuals','trainees','traineeSchedules','svcData','courses'],
   performance:['kpiReviews','promotions','rewardRecords','disciplineRecords'],
@@ -9313,24 +9313,14 @@ window.toggleLeaveGroup = function(did){
               <th ${thStyle} rowspan="3" style="background:rgba(183,148,212,.15);color:var(--purple);border:1px solid rgba(183,148,212,.3);min-width:52px">Tổng<br>đã nghỉ<br><span style="font-size:9px;opacity:.7">tự động</span></th>
               <th ${thStyle} rowspan="3" style="background:rgba(183,148,212,.15);color:var(--purple);border:1px solid rgba(183,148,212,.3);min-width:52px">Tồn cuối<br>năm ${bal.year}<br><span style="font-size:9px;opacity:.7">tự động</span></th>
               <th ${thStyle} rowspan="3" style="background:rgba(183,148,212,.2);color:var(--purple);font-weight:700;border:2px solid rgba(183,148,212,.5);min-width:52px">Còn lại<br>tháng<br>lương<br><span style="font-size:9px;opacity:.7">tự động</span></th>
-              <th ${thStyle} colspan="2" style="background:rgba(255,160,80,.15);color:#ff9f43;border:2px solid rgba(255,160,80,.4)">📋 KH tháng T${curMonth===12?1:curMonth+1}${curMonth===12?'/'+(bal.year+1):''}</th>
-              <th ${thStyle} colspan="2" style="background:rgba(255,80,80,.12);color:var(--danger);border:1px solid rgba(255,80,80,.3)">Δ Chênh lệch<br><span style="font-size:9px;opacity:.7">KH − Thực T${curMonth}</span></th>
             </tr>
             <tr style="background:#151b23">
               ${mnShort.map(m=>`<th ${thStyle} style="background:rgba(126,198,153,.07);color:var(--success);min-width:42px">${m}</th>`).join('')}
               ${['T1','T2','Clear AL','T3','T4','T5','T6','T7','T8','T9','T10','T11','T12'].map((m,i)=>`<th ${thStyle} style="background:rgba(212,165,116,.07);color:${i===2?'var(--warning)':'var(--accent)'};min-width:42px">${m}</th>`).join('')}
-              <th ${thStyle} style="background:rgba(255,160,80,.1);color:#ff9f43;min-width:46px">KH AL</th>
-              <th ${thStyle} style="background:rgba(255,160,80,.1);color:#ff9f43;min-width:46px">KH CL</th>
-              <th ${thStyle} style="background:rgba(255,80,80,.08);color:var(--danger);min-width:46px">Δ AL</th>
-              <th ${thStyle} style="background:rgba(255,80,80,.08);color:var(--danger);min-width:46px">Δ CL</th>
             </tr>
             <tr style="background:#111820;color:var(--ink-muted);font-size:9.5px">
               ${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'].map(m=>`<th ${thStyle}>${m}</th>`).join('')}
               ${['Jan','Feb','prev yr','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'].map((m,i)=>`<th ${thStyle} style="${i===2?'color:var(--warning)':''}">${m}</th>`).join('')}
-              <th ${thStyle} style="color:#ff9f43">nhập tay</th>
-              <th ${thStyle} style="color:#ff9f43">nhập tay</th>
-              <th ${thStyle} style="color:var(--danger)">tự động</th>
-              <th ${thStyle} style="color:var(--danger)">tự động</th>
             </tr>
           </thead>
           <tbody>
@@ -9394,34 +9384,7 @@ window.toggleLeaveGroup = function(did){
                 };
                 return (e._isTrainee ? '' : renderTypeRow('al',al,'AL / Phép năm','var(--success)','rgba(126,198,153,.07)','var(--accent)','rgba(212,165,116,.07)',true))
                      + renderTypeRow('cl',cl,'CL / Nghỉ bù','var(--info)','rgba(126,182,232,.07)','var(--info)','rgba(126,182,232,.05)', e._isTrainee ? true : false)
-                     + (()=>{
-                    // KH tháng kế tiếp + delta
-                    const sh = getSheet(e.id, 'al');
-                    const shCl = getSheet(e.id, 'cl');
-                    const planAL = parseFloat(sh.planNext||0);
-                    const planCL = parseFloat(shCl.planNext||0);
-                    const realAL = curMonth>=1 ? (al.months[curMonth-1]?.used||0) : 0;
-                    const realCL = curMonth>=1 ? (cl.months[curMonth-1]?.used||0) : 0;
-                    const deltaAL = planAL - realAL;
-                    const deltaCL = planCL - realCL;
-                    const deltaCol = (v) => v===0?'var(--ink-muted)':v>0?'var(--success)':'var(--danger)';
-                    const inpPlan = (lt, val) => `<input type="number" min="0" step="0.5" value="${val||''}" placeholder="0"
-                      oninput="saveLeaveCell('${e.id}','${lt}','planNext',0,this.value)"
-                      style="width:42px;padding:2px 3px;background:rgba(255,160,80,.1);border:1px solid #ff9f43;border-radius:3px;color:#ff9f43;font-family:JetBrains Mono,monospace;font-size:11px;text-align:center">`;
-                    return `<tr data-leave-dept="${did}" style="display:${isCollapsed?'none':''};background:rgba(255,160,80,.03);border-top:2px solid rgba(255,160,80,.2)">
-                      <td style="padding:5px 10px;position:sticky;left:0;background:rgba(255,160,80,.05);z-index:1;border-right:2px solid var(--border-strong);font-size:10px;color:#ff9f43;font-weight:600">
-                        📋 KH T${curMonth===12?1:curMonth+1}
-                      </td>
-                      <td colspan="28" style="padding:3px 6px;color:var(--ink-muted);font-size:10px">
-                        Kế hoạch nghỉ phép tháng tới · nhập tay · so sánh với thực tế T${curMonth}
-                      </td>
-                      <td style="padding:3px 2px;text-align:center">${inpPlan('al', planAL)}</td>
-                      <td style="padding:3px 2px;text-align:center">${inpPlan('cl', planCL)}</td>
-                      <td style="padding:3px 2px;text-align:center;font-weight:700;font-size:11px;color:${deltaCol(deltaAL)}">${deltaAL===0?'—':(deltaAL>0?'+':'')+fnum(deltaAL)}</td>
-                      <td style="padding:3px 2px;text-align:center;font-weight:700;font-size:11px;color:${deltaCol(deltaCL)}">${deltaCL===0?'—':(deltaCL>0?'+':'')+fnum(deltaCL)}</td>
-                    </tr>`;
-                  })()
-                     + `<tr data-leave-dept="${did}" style="display:${isCollapsed?'none':''}"><td colspan="36" style="height:3px;background:rgba(255,255,255,.03)"></td></tr>`;
+                     + `<tr data-leave-dept="${did}" style="display:${isCollapsed?'none':''}"><td colspan="32" style="height:3px;background:rgba(255,255,255,.03)"></td></tr>`;
               }).join('');
 
               return deptHeader + empRows;
@@ -9438,19 +9401,6 @@ window.toggleLeaveGroup = function(did){
               <td style="text-align:center;color:var(--purple)">${fnum(empMonthData.reduce((s,x)=>s+x.al.totalUsed,0))}</td>
               <td style="text-align:center;color:var(--success)">${fnum(empMonthData.reduce((s,x)=>s+(x.al.totalEntitle-x.al.totalUsed),0))}</td>
               <td style="text-align:center;color:var(--success)">${fnum(empMonthData.reduce((s,x)=>s+x.al.pending,0))}</td>
-              ${(()=>{
-                const totPlanAL = empMonthData.reduce((s,x)=>s+parseFloat(getSheet(x.e.id,'al').planNext||0),0);
-                const totPlanCL = empMonthData.reduce((s,x)=>s+parseFloat(getSheet(x.e.id,'cl').planNext||0),0);
-                const totRealAL = curMonth>=1 ? empMonthData.reduce((s,x)=>s+(x.al.months[curMonth-1]?.used||0),0) : 0;
-                const totRealCL = curMonth>=1 ? empMonthData.reduce((s,x)=>s+(x.cl.months[curMonth-1]?.used||0),0) : 0;
-                const dAL = totPlanAL - totRealAL;
-                const dCL = totPlanCL - totRealCL;
-                const dc = v => v===0?'var(--ink-muted)':v>0?'var(--success)':'var(--danger)';
-                return `<td style="text-align:center;color:#ff9f43">${fnum(totPlanAL)||'—'}</td>
-                        <td style="text-align:center;color:#ff9f43">${fnum(totPlanCL)||'—'}</td>
-                        <td style="text-align:center;color:${dc(dAL)}">${dAL===0?'—':(dAL>0?'+':'')+fnum(dAL)}</td>
-                        <td style="text-align:center;color:${dc(dCL)}">${dCL===0?'—':(dCL>0?'+':'')+fnum(dCL)}</td>`;
-              })()}
             </tr>
           </tfoot>
         </table>
@@ -9473,7 +9423,179 @@ function leaveTabsHTML(active){
   return `
     <div class="rec-tabs">
       <button class="rec-tab ${active==='tracking'?'active':''}" onclick="setLeaveView('tracking')">📋 Theo dõi nghỉ phép</button>
+      <button class="rec-tab ${active==='plan'?'active':''}" onclick="setLeaveView('plan')">📅 Kế hoạch nghỉ phép</button>
       <button class="rec-tab ${active==='reports'?'active':''}" onclick="setLeaveView('reports')">📊 Báo cáo & Phân tích</button>
+    </div>
+  `;
+}
+
+function renderLeavePlan(main){
+  const today = new Date();
+  const curYear = (window._leaveBal||{}).year || today.getFullYear();
+  const curMonth = today.getFullYear()===curYear ? today.getMonth()+1 : 12;
+  const mnShort = ['T1','T2','T3','T4','T5','T6','T7','T8','T9','T10','T11','T12'];
+
+  // Lấy dữ liệu thực tế từ leaveSheet — tổng theo bộ phận
+  if(!DB.leaveSheet) DB.leaveSheet = {};
+  if(!DB.leavePlan) DB.leavePlan = {}; // {year: {deptId: {m0..m11: {al, cl}}}}
+  if(!DB.leavePlan[curYear]) DB.leavePlan[curYear] = {};
+
+  const savePlan = (deptId, mi, type, val) => {
+    if(!DB.leavePlan[curYear][deptId]) DB.leavePlan[curYear][deptId] = {};
+    if(!DB.leavePlan[curYear][deptId][mi]) DB.leavePlan[curYear][deptId][mi] = {al:0, cl:0};
+    DB.leavePlan[curYear][deptId][mi][type] = parseFloat(val)||0;
+    saveData(['leavePlan']);
+  };
+  window._saveLeavePlan = savePlan;
+
+  // Tính thực tế từng bộ phận từng tháng (AL+CL) dựa trên leaveSheet
+  const activeEmps = DB.employees.filter(e => e.status !== 'exit');
+  const depts = DB.departments;
+
+  const getRealByDept = (deptId, mi) => {
+    const emps = activeEmps.filter(e => e.deptId === deptId);
+    let al = 0, cl = 0;
+    emps.forEach(e => {
+      const yr = (DB.leaveSheet[e.id]||{})[curYear]||{};
+      al += parseFloat((yr.al?.taken||[])[mi]||0);
+      cl += parseFloat((yr.cl?.taken||[])[mi]||0);
+    });
+    return {al: Math.round(al*100)/100, cl: Math.round(cl*100)/100};
+  };
+
+  const fnum = v => (Math.round((v||0)*100)/100) || 0;
+  const dc = (plan, real) => {
+    const d = plan - real;
+    if(d === 0) return {color:'var(--ink-muted)', text:'—'};
+    return {color: d > 0 ? 'var(--success)' : 'var(--danger)', text: (d>0?'+':'')+Math.round(d*100)/100};
+  };
+
+  const inpStyle = (color) => `width:38px;padding:2px 3px;background:transparent;border:1px solid ${color};border-radius:3px;color:${color};font-family:'JetBrains Mono',monospace;font-size:11px;text-align:center`;
+  const thS = `style="padding:6px 4px;text-align:center;font-size:10.5px;white-space:nowrap;border:1px solid var(--border)"`;
+
+  const tableRows = depts.map(dept => {
+    const plan = DB.leavePlan[curYear][dept.id] || {};
+    const rows = ['al','cl'].map(type => {
+      const isAL = type === 'al';
+      const color = isAL ? 'var(--success)' : 'var(--info)';
+      const planColor = '#ff9f43';
+      const cells = mnShort.map((_,mi) => {
+        const real = getRealByDept(dept.id, mi);
+        const realVal = real[type];
+        const planVal = (plan[mi]||{})[type] || 0;
+        const delta = dc(planVal, realVal);
+        const isFuture = (mi+1) > curMonth;
+        return `
+          <td style="padding:2px 1px;text-align:center;background:${isFuture?'rgba(255,160,80,.04)':''}">
+            <div style="display:flex;flex-direction:column;align-items:center;gap:1px">
+              <span style="font-size:10px;font-weight:600;color:${color};font-family:'JetBrains Mono',monospace">${realVal||'—'}</span>
+              <input type="number" min="0" step="0.5" value="${planVal||''}" placeholder="0"
+                oninput="window._saveLeavePlan('${dept.id}',${mi},'${type}',this.value)"
+                style="${inpStyle(planColor)}">
+              <span style="font-size:9px;font-weight:700;color:${delta.color}">${delta.text}</span>
+            </div>
+          </td>`;
+      }).join('');
+
+      return `<tr>
+        ${isAL ? `<td rowspan="2" style="padding:5px 10px;font-weight:600;font-size:12px;border-right:2px solid var(--border-strong);position:sticky;left:0;background:var(--bg-card);z-index:1;min-width:140px">
+          ${escapeHtml(dept.name)}
+        </td>` : ''}
+        <td style="padding:3px 6px;font-size:10px;font-weight:700;color:${color};white-space:nowrap;border-right:1px solid var(--border)">
+          ${isAL ? 'AL' : 'CL'}
+        </td>
+        ${cells}
+      </tr>`;
+    }).join('') + `<tr><td colspan="${13+mnShort.length}" style="height:2px;background:rgba(255,255,255,.04)"></td></tr>`;
+    return rows;
+  }).join('');
+
+  // Tổng toàn khách sạn
+  const totalRow = ['al','cl'].map(type => {
+    const isAL = type === 'al';
+    const color = isAL ? 'var(--success)' : 'var(--info)';
+    const cells = mnShort.map((_,mi) => {
+      let totalReal = 0, totalPlan = 0;
+      depts.forEach(d => {
+        totalReal += getRealByDept(d.id, mi)[type];
+        totalPlan += ((DB.leavePlan[curYear][d.id]||{})[mi]||{})[type] || 0;
+      });
+      totalReal = Math.round(totalReal*100)/100;
+      totalPlan = Math.round(totalPlan*100)/100;
+      const delta = dc(totalPlan, totalReal);
+      return `<td style="padding:4px 2px;text-align:center">
+        <div style="font-weight:700;color:${color};font-size:11px;font-family:'JetBrains Mono',monospace">${totalReal||'—'}</div>
+        <div style="font-size:10px;color:#ff9f43;font-family:'JetBrains Mono',monospace">${totalPlan||'—'}</div>
+        <div style="font-size:9px;font-weight:700;color:${delta.color}">${delta.text}</div>
+      </td>`;
+    }).join('');
+    return `<tr style="background:var(--bg-elev)">
+      ${isAL ? `<td rowspan="2" style="padding:6px 10px;font-weight:700;font-size:12px;color:var(--accent);border-right:2px solid var(--border-strong);position:sticky;left:0;background:var(--bg-elev);z-index:1">TỔNG</td>` : ''}
+      <td style="padding:3px 6px;font-size:10px;font-weight:700;color:${color};border-right:1px solid var(--border)">${isAL?'AL':'CL'}</td>
+      ${cells}
+    </tr>`;
+  }).join('');
+
+  main.innerHTML = `
+    <div class="topbar">
+      <div class="topbar-left">
+        <h1 class="page-title">Theo dõi <em>nghỉ phép</em></h1>
+        <div class="page-sub">Năm ${curYear} · Kế hoạch & Thực tế theo bộ phận</div>
+      </div>
+      <div class="topbar-actions">
+        <select class="filter-select" onchange="window._leaveBal=(window._leaveBal||{});window._leaveBal.year=parseInt(this.value);render()">
+          ${(()=>{ const s=new Set([today.getFullYear()+1,today.getFullYear()]); if(DB.leavePlan)Object.keys(DB.leavePlan).forEach(y=>s.add(parseInt(y))); return [...s].sort((a,b)=>b-a).map(y=>`<option value="${y}" ${y===curYear?'selected':''}>${y}</option>`).join(''); })()}
+        </select>
+      </div>
+    </div>
+
+    ${leaveTabsHTML('plan')}
+
+    <div class="card" style="margin-top:12px">
+      <div class="card-head">
+        <div>
+          <div class="card-title">📅 Kế hoạch nghỉ phép · ${curYear}</div>
+          <div class="card-sub">
+            Số trên: <span style="color:var(--success)">Thực tế AL</span> / <span style="color:var(--info)">Thực tế CL</span> · 
+            Ô nhập: <span style="color:#ff9f43">Kế hoạch (điền tay)</span> · 
+            Số nhỏ: chênh lệch KH−Thực tế
+            <span style="color:var(--success)"> (+xanh = KH nhiều hơn thực)</span>
+            <span style="color:var(--danger)"> (đỏ = thực vượt KH)</span>
+          </div>
+        </div>
+      </div>
+      <div style="overflow-x:auto">
+        <table style="border-collapse:collapse;min-width:100%;font-size:11px">
+          <thead>
+            <tr style="background:var(--bg-elev)">
+              <th ${thS} style="position:sticky;left:0;background:var(--bg-elev);z-index:2;min-width:140px;text-align:left">Bộ phận</th>
+              <th ${thS} style="min-width:36px">Loại</th>
+              ${mnShort.map((m,i) => `<th ${thS} style="min-width:68px;${i+1===curMonth?'border-bottom:2px solid var(--accent);color:var(--accent)':''}">
+                ${m}${i+1===curMonth?' ◀':''}
+                <div style="font-size:9px;color:var(--ink-muted);font-weight:400">${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][i]}</div>
+              </th>`).join('')}
+            </tr>
+            <tr style="background:var(--bg-card);font-size:9.5px;color:var(--ink-muted)">
+              <th colspan="2" style="padding:3px 8px;text-align:left;position:sticky;left:0;background:var(--bg-card);z-index:2">Hàng: Thực tế / KH (nhập) / Δ</th>
+              ${mnShort.map((_,i) => `<th style="padding:2px;text-align:center;font-size:9px">${i+1<curMonth?'✓ Đã qua':i+1===curMonth?'▶ Tháng này':'KH tới'}</th>`).join('')}
+            </tr>
+          </thead>
+          <tbody>
+            ${tableRows}
+          </tbody>
+          <tfoot>
+            <tr style="background:var(--bg-elev);border-top:2px solid var(--border-strong)">
+              <td colspan="${2+12}" style="padding:2px"></td>
+            </tr>
+            ${totalRow}
+          </tfoot>
+        </table>
+      </div>
+    </div>
+
+    <div style="margin-top:8px;padding:10px 16px;background:var(--bg-elev);border-radius:8px;border:1px solid var(--border);font-size:11.5px;color:var(--ink-muted)">
+      💡 Kế hoạch lưu theo năm và bộ phận. Thực tế tự động lấy từ bảng Theo dõi nghỉ phép.
+      Cột tháng hiện tại (▶) được tô đậm để dễ nhìn.
     </div>
   `;
 }
@@ -9485,6 +9607,7 @@ function renderLeaves(main){
   }
   if(!window._leaveView) window._leaveView = 'tracking';
   if(window._leaveView === 'tracking') return renderLeaveReports(main);
+  if(window._leaveView === 'plan') return renderLeavePlan(main);
   const today = new Date(); today.setHours(0,0,0,0);
 
   // === Theo dõi số dư AL/CL theo 12 tháng ===
