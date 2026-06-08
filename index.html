@@ -2052,7 +2052,7 @@ document.querySelectorAll('.nav-item').forEach(item=>{
 
 function updateBadges(){
   $('#navEmpCount').textContent = DB.employees.filter(e=>e.status!=='exit').length;
-  $('#navLeaveCount').textContent = DB.leaves.filter(l=>l.status==='pending').length;
+  $('#navLeaveCount').textContent = (DB.leaves||[]).filter(l=>l.status==='pending').length;
   // Badge sinh nhật: số SN trong 7 ngày tới
   const bd = $('#navBirthdayCount');
   if(bd){
@@ -2577,7 +2577,7 @@ function renderDashboard(main){
 
   // Khác
   const openJobs = DB.jobs.filter(j => j.status === 'open').length;
-  const pendingLeaves = DB.leaves.filter(l => l.status === 'pending').length;
+  const pendingLeaves = (DB.leaves||[]).filter(l => l.status === 'pending').length;
   const runningCourses = DB.courses.filter(c => c.status === 'running').length;
 
   // Tất cả giá trị KPI
@@ -2773,6 +2773,76 @@ function renderDashboard(main){
         <div class="chart-wrap"><canvas id="chartSalaryDist"></canvas></div>
       </div>
     </div>
+
+    <!-- ── TRAINEE CHARTS ── -->
+    ${(()=>{ const h=(cfg.hiddenCharts||[]); const showTM=!h.includes('traineeMonth'); const showTD=!h.includes('traineeDept'); if(!showTM&&!showTD) return '';
+    return `<div class="row row-2">
+      ${showTM?`<div class="card">
+        <div class="card-head"><div>
+          <div class="card-title">🎓 Thực tập sinh <em>theo tháng</em></div>
+          <div class="card-sub">Số TTS đang thực tập cuối tháng · Năm ${p.year}</div>
+        </div></div>
+        <div class="chart-wrap" style="height:220px"><canvas id="chartTraineeMonth"></canvas></div>
+      </div>`:''}
+      ${showTD?`<div class="card">
+        <div class="card-head"><div>
+          <div class="card-title">🎓 Thực tập sinh <em>theo bộ phận</em></div>
+          <div class="card-sub">${(()=>{ const n=new Date().toISOString().slice(0,10); return (DB.trainees||[]).filter(tr=>tr.startDate&&(!tr.endDate||tr.endDate>=n)).length; })()} TTS đang thực tập</div>
+        </div></div>
+        <div class="chart-wrap" style="height:220px"><canvas id="chartTraineeDept"></canvas></div>
+      </div>`:''}
+    </div>`; })()}
+
+    <!-- ── SALARY TREND ── -->
+    ${(()=>{ const h=(cfg.hiddenCharts||[]); const showST=!h.includes('salaryTrend'); const showSD=!h.includes('salaryDeptAvg'); if(!showST&&!showSD) return '';
+    return `<div class="row row-2">
+      ${showST?`<div class="card">
+        <div class="card-head"><div>
+          <div class="card-title">💰 Quỹ lương <em>theo tháng</em></div>
+          <div class="card-sub">Tổng CB + Bổ sung KQCV (triệu đồng) · Năm ${p.year}</div>
+        </div></div>
+        <div class="chart-wrap" style="height:220px"><canvas id="chartSalaryTrend"></canvas></div>
+      </div>`:''}
+      ${showSD?`<div class="card">
+        <div class="card-head"><div>
+          <div class="card-title">💰 Lương TB <em>theo bộ phận</em></div>
+          <div class="card-sub">Lương trung bình (triệu đồng/người) · Tháng ${p.month}/${p.year}</div>
+        </div></div>
+        <div class="chart-wrap" style="height:220px"><canvas id="chartSalaryDeptAvg"></canvas></div>
+      </div>`:''}
+    </div>`; })()}
+
+    <!-- ── MODULE CHARTS ROW 1 ── -->
+    ${(()=>{ const h=(cfg.hiddenCharts||[]); const r1=[
+      {k:'casual',   id:'chartDashCasual',  icon:'👤', title:'Casual',     sub:'Số lượt casual'},
+      {k:'recruit',  id:'chartDashRecruit', icon:'🎯', title:'Tuyển dụng', sub:'Ứng viên mới'},
+      {k:'training', id:'chartDashTraining',icon:'📚', title:'Đào tạo',    sub:'Số khoá học'},
+    ].filter(x=>!h.includes(x.k)); if(!r1.length) return '';
+    return `<div class="row row-${r1.length}">
+      ${r1.map(x=>`<div class="card">
+        <div class="card-head"><div>
+          <div class="card-title">${x.icon} ${x.title} <em>theo tháng</em></div>
+          <div class="card-sub">${x.sub} · Năm ${p.year}</div>
+        </div></div>
+        <div class="chart-wrap short"><canvas id="${x.id}"></canvas></div>
+      </div>`).join('')}
+    </div>`; })()}
+
+    <!-- ── MODULE CHARTS ROW 2 ── -->
+    ${(()=>{ const h=(cfg.hiddenCharts||[]); const r2=[
+      {k:'perf',   id:'chartDashPerf',   icon:'⭐', title:'Performance',  sub:'Số đánh giá'},
+      {k:'reward', id:'chartDashReward', icon:'🏆', title:'Khen thưởng',  sub:'Số lượt khen thưởng'},
+      {k:'warn',   id:'chartDashWarn',   icon:'⚠️', title:'Kỷ luật',      sub:'Số lượt kỷ luật/cảnh cáo'},
+    ].filter(x=>!h.includes(x.k)); if(!r2.length) return '';
+    return `<div class="row row-${r2.length}">
+      ${r2.map(x=>`<div class="card">
+        <div class="card-head"><div>
+          <div class="card-title">${x.icon} ${x.title} <em>theo tháng</em></div>
+          <div class="card-sub">${x.sub} · Năm ${p.year}</div>
+        </div></div>
+        <div class="chart-wrap short"><canvas id="${x.id}"></canvas></div>
+      </div>`).join('')}
+    </div>`; })()}
   `;
 
   window._dashFilteredPool = filteredPool;
@@ -2841,6 +2911,7 @@ function renderKpiMiniCharts(){
     const max = Math.max(...data,1);
     Chart.defaults.font.family = "'Inter Tight',sans-serif";
     Chart.defaults.color = '#8b949e';
+    if(Chart.getChart(el)) Chart.getChart(el).destroy();
     new Chart(el, {
       type:'line',
       data:{
@@ -2921,6 +2992,10 @@ function openDashboardEditor(){
         style="padding:6px 16px;border-radius:6px;border:none;cursor:pointer;font-size:12px;font-family:inherit;background:transparent;color:var(--ink-muted)">
         📊 Biểu đồ tổng hợp
       </button>
+      <button onclick="dashEditorTab('charts',this)" id="dashTab_charts"
+        style="padding:6px 16px;border-radius:6px;border:none;cursor:pointer;font-size:12px;font-family:inherit;background:transparent;color:var(--ink-muted)">
+        📈 Biểu đồ module
+      </button>
     </div>
 
     <!-- Tab KPI -->
@@ -2974,6 +3049,38 @@ function openDashboardEditor(){
       <button class="btn" onclick="addComboChart()" style="margin-top:8px">+ Thêm biểu đồ tổng hợp</button>
     </div>
 
+    <!-- Tab Biểu đồ module -->
+    <div id="dashPane_charts" style="display:none">
+      <div style="margin-bottom:14px;padding:10px 14px;background:rgba(126,182,232,.08);border-left:3px solid var(--info);border-radius:4px;font-size:12.5px;color:var(--ink-muted)">
+        💡 Bật/tắt từng biểu đồ hiển thị trên Dashboard
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:8px;max-height:60vh;overflow-y:auto">
+        ${[
+          {k:'traineeMonth',  label:'🎓 TTS theo tháng',         desc:'Bar chart số TTS đang thực tập'},
+          {k:'traineeDept',   label:'🎓 TTS theo bộ phận',        desc:'Donut chart phân bổ TTS'},
+          {k:'salaryTrend',   label:'💰 Quỹ lương theo tháng',    desc:'Bar chart tổng CB + Bổ sung KQCV'},
+          {k:'salaryDeptAvg', label:'💰 Lương TB theo bộ phận',   desc:'Bar chart ngang lương trung bình'},
+          {k:'casual',        label:'👤 Casual theo tháng',       desc:'Số lượt casual'},
+          {k:'recruit',       label:'🎯 Tuyển dụng theo tháng',   desc:'Số ứng viên mới apply'},
+          {k:'training',      label:'📚 Đào tạo theo tháng',      desc:'Số khoá học khai giảng'},
+          {k:'perf',          label:'⭐ Performance theo tháng',  desc:'Số đánh giá KPI'},
+          {k:'reward',        label:'🏆 Khen thưởng theo tháng',  desc:'Số lượt khen thưởng'},
+          {k:'warn',          label:'⚠️ Kỷ luật theo tháng',      desc:'Số lượt kỷ luật/cảnh cáo'},
+        ].map(item => {
+          const hidden = ((DB.dashboardConfig||{}).hiddenCharts||[]).includes(item.k);
+          const shown = !hidden;
+          return `<div class="dash-item ${shown?'selected':''}" style="display:flex;align-items:center;gap:10px;padding:10px 12px">
+            <input type="checkbox" ${shown?'checked':''} onchange="toggleDashChart('${item.k}',this.checked,this.closest('.dash-item'))"
+              style="width:16px;height:16px;cursor:pointer;flex-shrink:0">
+            <div style="flex:1">
+              <div style="font-weight:600;font-size:13px;color:var(--ink)">${item.label}</div>
+              <div style="font-size:11px;color:var(--ink-muted);margin-top:2px">${item.desc}</div>
+            </div>
+          </div>`;
+        }).join('')}
+      </div>
+    </div>
+
     <div class="modal-actions">
       <button class="btn" onclick="closeModal()">${t('btn_cancel')}</button>
       <button class="btn btn-primary" onclick="saveDashConfig()">💾 Lưu cấu hình</button>
@@ -2983,8 +3090,9 @@ function openDashboardEditor(){
 }
 
 function dashEditorTab(tab, btn){
-  document.getElementById('dashPane_kpi').style.display   = tab==='kpi'   ? '' : 'none';
-  document.getElementById('dashPane_combo').style.display = tab==='combo' ? '' : 'none';
+  document.getElementById('dashPane_kpi').style.display    = tab==='kpi'    ? '' : 'none';
+  document.getElementById('dashPane_combo').style.display  = tab==='combo'  ? '' : 'none';
+  document.getElementById('dashPane_charts').style.display = tab==='charts' ? '' : 'none';
   document.querySelectorAll('[id^=dashTab_]').forEach(b=>{
     b.style.background='transparent'; b.style.color='var(--ink-muted)'; b.style.fontWeight='400';
   });
@@ -3115,6 +3223,7 @@ function renderDashCombos(){
     if(Chart.getChart(el)) Chart.getChart(el).destroy();
     Chart.defaults.font.family="'Inter Tight',sans-serif";
     Chart.defaults.color='#8b949e';
+    if(Chart.getChart(el)) Chart.getChart(el).destroy();
     new Chart(el,{
       type:'bar',
       data:{
@@ -3178,6 +3287,13 @@ function dashSelectDefault(){
   document.getElementById('dash_count').textContent = window._dashEditTemp.size;
 }
 
+function toggleDashChart(key, checked, el){
+  if(!window._dashHiddenTemp) window._dashHiddenTemp = new Set((DB.dashboardConfig||{}).hiddenCharts||[]);
+  if(checked) window._dashHiddenTemp.delete(key);
+  else window._dashHiddenTemp.add(key);
+  el.classList.toggle('selected', checked);
+}
+
 function saveDashConfig(){
   const kpis = [...(window._dashEditTemp || new Set())];
   if(kpis.length === 0){
@@ -3193,7 +3309,9 @@ function saveDashConfig(){
     kpis: sorted,
     kpiModes: window._dashModeTemp || {},
     combos: window._dashComboTemp || [],
+    hiddenCharts: [...(window._dashHiddenTemp || new Set((DB.dashboardConfig||{}).hiddenCharts||[]))],
   };
+  window._dashHiddenTemp = null;
   saveData();
   if(window._pendingRender) delete window._pendingRender[currentPage];
   closeModal();
@@ -3582,6 +3700,188 @@ function renderDashboardCharts(){
       }
     });
   }
+
+  // ── TRAINEE + SALARY + MODULE CHARTS ──
+  const cfg2 = DB.dashboardConfig||{};
+  const p2 = cfg2.period||{month:new Date().getMonth()+1, year:new Date().getFullYear()};
+  const hiddenCharts = new Set(cfg2.hiddenCharts||[]);
+  const yr2 = p2.year;
+  const mnL = ['T1','T2','T3','T4','T5','T6','T7','T8','T9','T10','T11','T12'];
+  const today2 = new Date();
+  const pal2 = ['#7eb6e8','#7ec699','#d4a574','#b794d4','#e8b974','#7dd3c0','#e57373','#a8b4f0','#f9a8d4','#86efac','#fcd34d','#93c5fd'];
+  const isFut2 = (mi) => yr2 === today2.getFullYear() ? (mi+1) > today2.getMonth()+1 : yr2 > today2.getFullYear();
+  const chartOpts = (color) => ({
+    responsive:true, maintainAspectRatio:false,
+    plugins:{legend:{display:false}, datalabels:{display:false}},
+    scales:{
+      x:{grid:{display:false}, ticks:{color:'#8b949e',font:{size:10}}},
+      y:{grid:{color:'#1f2630'}, beginAtZero:true, ticks:{color:'#8b949e',font:{size:10}}}
+    }
+  });
+
+  // 1. Trainee theo tháng (bar)
+  const traineeEl = $('#chartTraineeMonth');
+  if(traineeEl && !hiddenCharts.has('traineeMonth')){
+    if(Chart.getChart(traineeEl)) Chart.getChart(traineeEl).destroy();
+    const now2 = today2.toISOString().slice(0,10);
+    const traineeMonthData = mnL.map((_,mi) => {
+      if(isFut2(mi)) return null;
+      const snapDate = yr2===today2.getFullYear()&&mi===today2.getMonth()
+        ? now2
+        : `${yr2}-${String(mi+2).padStart(2,'0')}-01`; // ngày đầu tháng sau = cuối tháng hiện
+      const snapStr = mi===11 ? `${yr2+1}-01-01` : `${yr2}-${String(mi+2).padStart(2,'0')}-01`;
+      return (DB.trainees||[]).filter(tr=>{
+        if(!tr.startDate || tr.startDate >= snapStr) return false;
+        if(tr.endDate && tr.endDate < `${yr2}-${String(mi+1).padStart(2,'0')}-01`) return false;
+        return !tr.endDate || tr.endDate >= snapStr || tr.endDate.slice(0,7) === `${yr2}-${String(mi+1).padStart(2,'0')}`;
+      }).length;
+    });
+    if(Chart.getChart(traineeEl)) Chart.getChart(traineeEl).destroy();
+    new Chart(traineeEl, {
+      type:'bar',
+      data:{labels:mnL, datasets:[{data:traineeMonthData, backgroundColor:'rgba(126,182,232,.7)', borderRadius:4, borderSkipped:false}]},
+      options: chartOpts('#7eb6e8')
+    });
+  }
+
+  // 2. Trainee theo bộ phận (donut)
+  const traineeDeptEl = $('#chartTraineeDept');
+  if(traineeDeptEl && !hiddenCharts.has('traineeDept')){
+    if(Chart.getChart(traineeDeptEl)) Chart.getChart(traineeDeptEl).destroy();
+    const nowStr = today2.toISOString().slice(0,10);
+    const activeTrainees = (DB.trainees||[]).filter(tr=>tr.startDate&&(!tr.endDate||tr.endDate>=nowStr));
+    const deptCount = {};
+    activeTrainees.forEach(tr=>{ const d=deptName(tr.deptId)||'Khác'; deptCount[d]=(deptCount[d]||0)+1; });
+    const dLabels = Object.keys(deptCount);
+    const dData = dLabels.map(k=>deptCount[k]);
+    if(Chart.getChart(traineeDeptEl)) Chart.getChart(traineeDeptEl).destroy();
+    new Chart(traineeDeptEl, {
+      type:'doughnut',
+      data:{labels:dLabels, datasets:[{data:dData, backgroundColor:pal2, borderWidth:0, hoverOffset:6}]},
+      options:{responsive:true, maintainAspectRatio:false,
+        plugins:{legend:{position:'right',labels:{usePointStyle:true,padding:10,font:{size:10}}}, datalabels:{display:false}}}
+    });
+  }
+
+  // 3. Quỹ lương theo tháng
+  const salTrendEl = $('#chartSalaryTrend');
+  if(salTrendEl && !hiddenCharts.has('salaryTrend')){
+    if(Chart.getChart(salTrendEl)) Chart.getChart(salTrendEl).destroy();
+    const salByMonth = mnL.map((_,mi)=>{
+      if(isFut2(mi)) return null;
+      const emps = (DB.employees||[]).filter(e=>e.status!=='exit');
+      let total = 0;
+      emps.forEach(e=>{
+        const sal = (DB.salaryData||{})[e.id]||{};
+        const mKey = `${yr2}-${String(mi+1).padStart(2,'0')}`;
+        const ms = (sal.monthly||{})[mKey]||{};
+        total += (parseFloat(ms.base)||parseFloat(e.baseSalary)||0) + (parseFloat(ms.bonus)||0);
+      });
+      return Math.round(total/1e6*10)/10; // triệu đồng
+    });
+    if(Chart.getChart(salTrendEl)) Chart.getChart(salTrendEl).destroy();
+    new Chart(salTrendEl, {
+      type:'bar',
+      data:{labels:mnL, datasets:[{data:salByMonth, backgroundColor:'rgba(212,165,116,.7)', borderRadius:4}]},
+      options: chartOpts('#d4a574')
+    });
+  }
+
+  // 4. Lương TB theo bộ phận
+  const salDeptAvgEl = $('#chartSalaryDeptAvg');
+  if(salDeptAvgEl && !hiddenCharts.has('salaryDeptAvg')){
+    if(Chart.getChart(salDeptAvgEl)) Chart.getChart(salDeptAvgEl).destroy();
+    const deptAvg = DB.departments.map(d=>{
+      const emps = (DB.employees||[]).filter(e=>e.deptId===d.id&&e.status!=='exit');
+      if(!emps.length) return {name:d.name, avg:0};
+      const total = emps.reduce((s,e)=>{
+        const base = parseFloat((DB.customData||{})[e.id]?.baseSalary||e.baseSalary||0);
+        return s + base;
+      },0);
+      return {name:d.name, avg:Math.round(total/emps.length/1e5)/10}; // triệu
+    }).filter(d=>d.avg>0).sort((a,b)=>b.avg-a.avg);
+    if(Chart.getChart(salDeptAvgEl)) Chart.getChart(salDeptAvgEl).destroy();
+    new Chart(salDeptAvgEl, {
+      type:'bar',
+      data:{labels:deptAvg.map(d=>d.name), datasets:[{data:deptAvg.map(d=>d.avg), backgroundColor:pal2, borderRadius:4}]},
+      options:{...chartOpts('#d4a574'), indexAxis:'y'}
+    });
+  }
+
+  // 5. Casual theo tháng
+  const casualEl = $('#chartDashCasual');
+  if(casualEl && !hiddenCharts.has('casual')){
+    if(Chart.getChart(casualEl)) Chart.getChart(casualEl).destroy();
+    const cData = mnL.map((_,mi)=>isFut2(mi)?null:(DB.casuals||[]).filter(c=>c.year===yr2&&c.month===mi+1).reduce((s,c)=>s+(parseFloat(c.qty)||0),0));
+    new Chart(casualEl, {type:'bar', data:{labels:mnL,datasets:[{data:cData,backgroundColor:'rgba(126,198,153,.7)',borderRadius:3}]}, options:chartOpts('#7ec699')});
+  }
+
+  // 6. Tuyển dụng theo tháng (ứng viên mới apply)
+  const recruitEl = $('#chartDashRecruit');
+  if(recruitEl && !hiddenCharts.has('recruit')){
+    if(Chart.getChart(recruitEl)) Chart.getChart(recruitEl).destroy();
+    const rData = mnL.map((_,mi)=>{
+      if(isFut2(mi)) return null;
+      const mStr = `${yr2}-${String(mi+1).padStart(2,'0')}`;
+      return (DB.candidates||[]).filter(c=>(c.appliedDate||'').startsWith(mStr)).length;
+    });
+    if(Chart.getChart(recruitEl)) Chart.getChart(recruitEl).destroy();
+    new Chart(recruitEl, {type:'bar', data:{labels:mnL,datasets:[{data:rData,backgroundColor:'rgba(183,148,212,.7)',borderRadius:3}]}, options:chartOpts('#b794d4')});
+  }
+
+  // 7. Đào tạo theo tháng (số khoá học)
+  const trainingEl = $('#chartDashTraining');
+  if(trainingEl && !hiddenCharts.has('training')){
+    if(Chart.getChart(trainingEl)) Chart.getChart(trainingEl).destroy();
+    const tData = mnL.map((_,mi)=>{
+      if(isFut2(mi)) return null;
+      const mStr = `${yr2}-${String(mi+1).padStart(2,'0')}`;
+      return (DB.courses||[]).filter(c=>(c.startDate||'').startsWith(mStr)).length;
+    });
+    if(Chart.getChart(trainingEl)) Chart.getChart(trainingEl).destroy();
+    new Chart(trainingEl, {type:'bar', data:{labels:mnL,datasets:[{data:tData,backgroundColor:'rgba(232,185,116,.7)',borderRadius:3}]}, options:chartOpts('#e8b974')});
+  }
+
+  // 8. Performance theo tháng (số đánh giá)
+  const perfEl = $('#chartDashPerf');
+  if(perfEl && !hiddenCharts.has('perf')){
+    if(Chart.getChart(perfEl)) Chart.getChart(perfEl).destroy();
+    const pData = mnL.map((_,mi)=>{
+      if(isFut2(mi)) return null;
+      return (DB.kpiRecords||[]).filter(k=>{
+        const d = k.date||k.period||'';
+        return d.startsWith(`${yr2}-${String(mi+1).padStart(2,'0')}`);
+      }).length;
+    });
+    if(Chart.getChart(perfEl)) Chart.getChart(perfEl).destroy();
+    new Chart(perfEl, {type:'bar', data:{labels:mnL,datasets:[{data:pData,backgroundColor:'rgba(125,211,192,.7)',borderRadius:3}]}, options:chartOpts('#7dd3c0')});
+  }
+
+  // 9. Khen thưởng theo tháng
+  const rewardEl = $('#chartDashReward');
+  if(rewardEl && !hiddenCharts.has('reward')){
+    if(Chart.getChart(rewardEl)) Chart.getChart(rewardEl).destroy();
+    const rwData = mnL.map((_,mi)=>{
+      if(isFut2(mi)) return null;
+      const mStr = `${yr2}-${String(mi+1).padStart(2,'0')}`;
+      return (DB.rewards||[]).filter(r=>(r.date||'').startsWith(mStr)).length;
+    });
+    if(Chart.getChart(rewardEl)) Chart.getChart(rewardEl).destroy();
+    new Chart(rewardEl, {type:'bar', data:{labels:mnL,datasets:[{data:rwData,backgroundColor:'rgba(251,191,36,.7)',borderRadius:3}]}, options:chartOpts('#fbbf24')});
+  }
+
+  // 10. Kỷ luật theo tháng
+  const warnEl = $('#chartDashWarn');
+  if(warnEl && !hiddenCharts.has('warn')){
+    if(Chart.getChart(warnEl)) Chart.getChart(warnEl).destroy();
+    const wData = mnL.map((_,mi)=>{
+      if(isFut2(mi)) return null;
+      const mStr = `${yr2}-${String(mi+1).padStart(2,'0')}`;
+      return (DB.warnings||[]).filter(w=>(w.date||'').startsWith(mStr)).length;
+    });
+    if(Chart.getChart(warnEl)) Chart.getChart(warnEl).destroy();
+    new Chart(warnEl, {type:'bar', data:{labels:mnL,datasets:[{data:wData,backgroundColor:'rgba(229,115,115,.7)',borderRadius:3}]}, options:chartOpts('#e57373')});
+  }
 }
 
 function renderDeptPerformance(){
@@ -3603,7 +3903,7 @@ function renderDeptPerformance(){
 function renderAlerts(){
   const el = $('#alertsList');
   const items = [];
-  DB.contracts.forEach(c=>{
+  (DB.contracts||[]).forEach(c=>{
     if(c.endDate){
       const days = daysBetween(new Date(), c.endDate);
       if(days>0 && days<=60){
@@ -3612,7 +3912,7 @@ function renderAlerts(){
       }
     }
   });
-  DB.leaves.filter(l=>l.status==='pending').forEach(l=>{
+  (DB.leaves||[]).filter(l=>l.status==='pending').forEach(l=>{
     const emp = empById(l.empId);
     if(emp) items.push({title: emp.name+' xin '+LEAVE_TYPE[l.type].toLowerCase(), meta:`${l.days} ngày · ${fmtDate(l.startDate)}`, color:'var(--info)'});
   });
@@ -3755,8 +4055,8 @@ function renderEmployeeProfile(main){
   });
 
   // Lấy các bản ghi liên quan
-  const contracts = DB.contracts.filter(c=>c.empId===e.id);
-  const leaves = DB.leaves.filter(l=>l.empId===e.id).sort((a,b)=> new Date(b.startDate) - new Date(a.startDate));
+  const contracts = (DB.contracts||[]).filter(c=>c.empId===e.id);
+  const leaves = (DB.leaves||[]).filter(l=>l.empId===e.id).sort((a,b)=> new Date(b.startDate) - new Date(a.startDate));
   const reviews = DB.kpiReviews.filter(k=>k.empId===e.id).sort((a,b)=> (b.period||'').localeCompare(a.period||''));
   const disciplines = (DB.disciplineRecords||[]).filter(d=>d.empId===e.id).sort((a,b)=> new Date(b.date) - new Date(a.date));
   const rewards = (DB.rewardRecords||[]).filter(r=>r.empId===e.id).sort((a,b)=> new Date(b.date) - new Date(a.date));
@@ -5581,7 +5881,7 @@ function toggleFormGroup(name){
 
 function renderCustomFieldInput(cf, value){
   const v = value == null ? '' : value;
-  const req = cf.required ? ' *' : '';
+  const req = (cf.required === true || cf.required === 'true') ? ' *' : '';
   const isFullWidth = cf.type === 'textarea';
   const cls = isFullWidth ? 'field full' : 'field';
   const id = 'cf_' + cf.key;
@@ -5648,7 +5948,7 @@ function saveEmployee(id, isNew){
       const iso = el.getAttribute('data-iso') || dispToIso(val);
       val = iso || val;
     }
-    if(cf.required && !val){ toast(`Vui lòng nhập "${cf.label}"`, 'error'); return; }
+    if((cf.required === true || cf.required === 'true') && !val){ toast(`Vui lòng nhập "${cf.label}"`, 'error'); return; }
     // Cập nhật field: nếu val rỗng thì xoá khỏi customValues (user đã xoá), nếu có thì ghi
     if(val !== '') customValues[cf.key] = val;
     else delete customValues[cf.key];
@@ -5726,8 +6026,8 @@ function deleteEmployee(id, fromModal=false){
   if(fromModal) closeModal();
   confirmDialog('Xoá nhân viên?', `Sẽ xoá <b>${escapeHtml(e.name)}</b> cùng các hợp đồng, đơn nghỉ và đánh giá liên quan. Không thể hoàn tác.`, ()=>{
     DB.employees = DB.employees.filter(x=>x.id!==id);
-    DB.contracts = DB.contracts.filter(c=>c.empId!==id);
-    DB.leaves = DB.leaves.filter(l=>l.empId!==id);
+    DB.contracts = (DB.contracts||[]).filter(c=>c.empId!==id);
+    DB.leaves = (DB.leaves||[]).filter(l=>l.empId!==id);
     DB.kpiReviews = DB.kpiReviews.filter(k=>k.empId!==id);
     delete DB.customData[id];
     // Xóa doc khỏi emp_profiles collection
@@ -5848,8 +6148,8 @@ function editCustomField(id){
       </div>
       <div class="field"><label>Bắt buộc?</label>
         <select id="cf_required">
-          <option value="false" ${!cf.required?'selected':''}>Không</option>
-          <option value="true" ${cf.required?'selected':''}>Có</option>
+          <option value="false" ${(cf.required !== true && cf.required !== 'true')?'selected':''}>Không</option>
+          <option value="true" ${(cf.required === true || cf.required === 'true')?'selected':''}>Có</option>
         </select>
       </div>
       <div class="field full"><label>Gợi ý nhập (placeholder)</label>
@@ -6674,7 +6974,7 @@ function exportCSV(type){
     rows = [];
     activeEmpIds.forEach(empId=>{
       const emp = empById(empId);
-      const list = DB.contracts.filter(c => c.empId === empId);
+      const list = (DB.contracts||[]).filter(c => c.empId === empId);
       if(list.length === 0) return;
       const sorted = [...list].sort((a,b) => new Date(b.startDate) - new Date(a.startDate));
       const stillValid = sorted.find(c => !c.endDate || new Date(c.endDate) >= today);
@@ -6690,7 +6990,7 @@ function exportCSV(type){
       const hired = getJobHired(j.id);
       const remain = j.positions - hired;
       const prio = j.priority==='high'?(_lang==="en"?"High":"Cao"):j.priority==='medium'?(_lang==="en"?"Medium":"Trung bình"):(_lang==="en"?"Low":"Thấp");
-      return [j.title, deptName(j.deptId), j.level||'', j.positions, hired, remain, j.applicants||0, j.startDate||'', j.deadline||'', (j.baseSalary||j.salary||0)+(j.bonusSalary||0), j.hiringManager||'', prio, JOB_STATUS[j.status]||j.status, j.notes||''];
+      return [j.title, deptName(j.deptId), j.level||'', j.positions, hired, remain, j.applicants||0, j.startDate?isoToDisp(j.startDate):'', j.deadline?isoToDisp(j.deadline):'', (j.baseSalary||j.salary||0)+(j.bonusSalary||0), j.hiringManager||'', prio, JOB_STATUS[j.status]||j.status, j.notes||''];
     });
     filename = 'jobs.csv';
   } else if(type==='courses'){
@@ -7046,7 +7346,7 @@ function renderContracts(main){
   // Lấy HĐ hiện tại (cuối cùng) của mỗi NV đang làm
   // Mỗi NV có thể nhiều HĐ; HĐ hiện tại = HĐ có startDate mới nhất và (endDate rỗng hoặc chưa hết)
   function getCurrentContract(empId){
-    const list = DB.contracts.filter(c => c.empId === empId);
+    const list = (DB.contracts||[]).filter(c => c.empId === empId);
     if(list.length === 0) return null;
     // Sort theo startDate desc, lấy cái mới nhất chưa hết hạn
     const sorted = [...list].sort((a,b) => new Date(b.startDate) - new Date(a.startDate));
@@ -7271,7 +7571,7 @@ function setContractFilterCurrent(){
    Mở trong tab mới, có thể chỉnh sửa, in hoặc lưu PDF
    ========================================================= */
 function generateContract(contractId){
-  const c = DB.contracts.find(x => x.id === contractId);
+  const c = (DB.contracts||[]).find(x => x.id === contractId);
   if(!c){ toast('Không tìm thấy hợp đồng', 'error'); return; }
   const emp = empById(c.empId);
   if(!emp){ toast((_lang==="en"?"No employee found":"Không tìm thấy nhân viên"), 'error'); return; }
@@ -7300,7 +7600,7 @@ function generateContract(contractId){
 
 function renderGenerateContractModal(){
   const s = window._gcState;
-  const c = DB.contracts.find(x => x.id === s.contractId);
+  const c = (DB.contracts||[]).find(x => x.id === s.contractId);
   const emp = empById(s.empId);
 
   return `
@@ -7719,7 +8019,7 @@ function doGenerateContract(){
   const s = window._gcState;
   if(!s){ toast('Lỗi state, vui lòng thử lại','error'); return; }
 
-  const oldC = DB.contracts.find(x => x.id === s.contractId);
+  const oldC = (DB.contracts||[]).find(x => x.id === s.contractId);
   const emp = empById(s.empId);
   const cd = DB.customData[emp.id] || {};
   const dept = DB.departments.find(d => d.id === emp.deptId);
@@ -8413,7 +8713,7 @@ ${body}
 
 function editContract(id){
   const isNew = !id;
-  const c = isNew ? {id:uid(), empId:DB.employees[0]?.id||'', type:'term12', startDate:new Date().toISOString().slice(0,10), endDate:'', signedDate:new Date().toISOString().slice(0,10), notes:''} : {...DB.contracts.find(x=>x.id===id)};
+  const c = isNew ? {id:uid(), empId:DB.employees[0]?.id||'', type:'term12', startDate:new Date().toISOString().slice(0,10), endDate:'', signedDate:new Date().toISOString().slice(0,10), notes:''} : {...(DB.contracts||[]).find(x=>x.id===id)};
   if(!c) return;
   openModal(`
     <div class="modal-head">
@@ -8458,7 +8758,7 @@ function saveContract(id, isNew){
 function deleteContract(id, fromModal=false){
   if(fromModal) closeModal();
   confirmDialog('Xoá hợp đồng?', (_lang==="en"?"This action cannot be undone.":"Hành động này không thể hoàn tác."), ()=>{
-    DB.contracts = DB.contracts.filter(x=>x.id!==id);
+    DB.contracts = (DB.contracts||[]).filter(x=>x.id!==id);
     saveData(); toast('Đã xoá hợp đồng'); render();
   });
 }
@@ -10076,7 +10376,7 @@ function tenureYears(joinedDate){
 
 // Tổng ngày đã dùng (đã duyệt) của 1 NV theo nhóm loại, trong 1 năm tới hết tháng monthMax
 function _leaveUsed(empId, types, year, monthMin, monthMax){
-  return DB.leaves.filter(l=>{
+  return (DB.leaves||[]).filter(l=>{
     if(l.status!=='approved' || l.empId!==empId || !types.includes(l.type) || !l.startDate) return false;
     const d = new Date(l.startDate);
     const m = d.getMonth()+1;
@@ -10222,7 +10522,7 @@ function approveLeave(id, approve){
 function deleteLeave(id, fromModal=false){
   if(fromModal) closeModal();
   confirmDialog('Xoá đơn nghỉ?', (_lang==="en"?"This action cannot be undone.":"Hành động này không thể hoàn tác."), ()=>{
-    DB.leaves = DB.leaves.filter(x=>x.id!==id);
+    DB.leaves = (DB.leaves||[]).filter(x=>x.id!==id);
     saveData(); toast((_lang==="en"?"Deleted":"Đã xoá")); render();
   });
 }
@@ -16206,10 +16506,6 @@ function renderSettings(main){
           <div class="card-sub">Sao lưu và khôi phục</div>
         </div></div>
         <div style="display:flex;flex-direction:column;gap:10px">
-          <button class="btn btn-primary" onclick="loadLgcData()" style="border-color:var(--accent)">
-            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" width="14" height="14"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5"/></svg>
-            Tải dữ liệu Legacy Yên Tử (187 nhân viên)
-          </button>
           <button class="btn" onclick="exportJSON()">${ICONS.download} Xuất toàn bộ dữ liệu (JSON)</button>
           <label class="btn" style="cursor:pointer">
             <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" width="14" height="14"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
@@ -17270,6 +17566,7 @@ function renderCasual(main){
     });
     Chart.defaults.font.family="'Inter Tight',sans-serif";
     Chart.defaults.color='#8b949e';
+    if(Chart.getChart(el)) Chart.getChart(el).destroy();
     new Chart(el, {
       type:'bar',
       data:{
