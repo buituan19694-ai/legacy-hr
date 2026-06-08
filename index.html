@@ -5638,9 +5638,11 @@ function handlePhotoUpload(event){
       canvas.toBlob(blob => {
         if(!blob) return;
         toast('⏳ Đang upload ảnh...','info');
-        // Block nút Lưu khi đang upload — tránh save base64 vào Firestore
+
+        // Lock nút Lưu — tránh save base64 trước khi Cloudinary trả URL
         const saveBtn = document.querySelector('.modal-actions .btn-primary');
-        if(saveBtn){ saveBtn.disabled = true; saveBtn.dataset._uploadLock = '1'; }
+        if(saveBtn){ saveBtn.disabled = true; saveBtn.dataset._photoLock = '1'; }
+        const unlock = ()=>{ if(saveBtn && saveBtn.dataset._photoLock){ saveBtn.disabled = false; delete saveBtn.dataset._photoLock; } };
 
         const fd = new FormData();
         fd.append('file', blob, 'avatar.jpg');
@@ -5649,14 +5651,15 @@ function handlePhotoUpload(event){
         fetch('https://api.cloudinary.com/v1_1/'+CLOUDINARY_CLOUD+'/image/upload', {method:'POST',body:fd})
           .then(r=>r.json())
           .then(data=>{
-            // Unlock nút Lưu
-            if(saveBtn && saveBtn.dataset._uploadLock){ saveBtn.disabled = false; delete saveBtn.dataset._uploadLock; }
+            unlock();
             if(data.secure_url){
               const url = data.secure_url;
+              // Ghi URL vào hidden field — saveEmployee sẽ dùng giá trị này
               $('#f_photo').value = url;
               preview.innerHTML = '<img src="'+url+'" alt="Avatar">';
-              toast('✅ Ảnh đã upload!','success');
-              // Dùng f_empid thay currentEmpId — chính xác hơn kể cả khi mở từ danh sách
+              toast('✅ Ảnh đã upload! Bấm Lưu để hoàn tất.','success');
+              // Lưu ngay vào DB + Firestore (không cần đợi bấm Lưu)
+              // Dùng f_empid — đáng tin cậy hơn currentEmpId khi mở từ danh sách
               const empId = ($('#f_empid')?.value) || currentEmpId || '';
               if(empId && window.fbDb && window.currentUser){
                 const empIdx = (DB.employees||[]).findIndex(e=>e.id===empId);
@@ -5672,14 +5675,10 @@ function handlePhotoUpload(event){
               }
             } else {
               console.warn('Cloudinary error:',data);
-              toast('⚠️ Upload ảnh thất bại, lưu tạm trên máy','warning');
+              toast('⚠️ Upload thất bại: '+(data.error?.message||'lỗi không xác định'),'error');
             }
           })
-          .catch(err=>{
-            if(saveBtn && saveBtn.dataset._uploadLock){ saveBtn.disabled = false; delete saveBtn.dataset._uploadLock; }
-            console.warn('Upload err:',err);
-            toast('⚠️ Lưu ảnh tạm trong máy','warning');
-          });
+          .catch(err=>{ unlock(); console.warn('Upload err:',err); toast('⚠️ Lỗi kết nối Cloudinary','error'); });
       }, 'image/jpeg', 0.85);
     };
     img.src = ev.target.result;
@@ -5819,7 +5818,7 @@ function saveEmployee(id, isNew){
     const dbNoPhoto = JSON.parse(JSON.stringify(DB));
     dbNoPhoto.employees = (dbNoPhoto.employees||[]).map(e=>{ const {photo,...r}=e; return r; });
     localStorage.setItem(STORE_KEY, JSON.stringify(dbNoPhoto));
-    // Lưu ảnh vào photos map riêng (kể cả URL Cloudinary)
+    // Lưu ảnh riêng — kể cả URL Cloudinary để refresh vẫn thấy
     if(data.photo){
       const pm = JSON.parse(localStorage.getItem(STORE_KEY+'_photos')||'{}');
       pm[id] = data.photo;
