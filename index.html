@@ -5634,12 +5634,10 @@ function handlePhotoUpload(event){
       const preview = $('#photoPreview');
       preview.innerHTML = '<img src="'+dataUrl+'" alt="Avatar">';
 
-      // Upload lên Cloudinary
       canvas.toBlob(blob => {
         if(!blob) return;
-        toast('⏳ Đang upload ảnh...','info');
-
-        // Lock nút Lưu — tránh save base64 trước khi Cloudinary trả URL
+        toast('⏳ Đang upload ảnh lên cloud...','info');
+        // Lock nút Lưu để tránh save base64 trước khi có URL
         const saveBtn = document.querySelector('.modal-actions .btn-primary');
         if(saveBtn){ saveBtn.disabled = true; saveBtn.dataset._photoLock = '1'; }
         const unlock = ()=>{ if(saveBtn && saveBtn.dataset._photoLock){ saveBtn.disabled = false; delete saveBtn.dataset._photoLock; } };
@@ -5657,7 +5655,7 @@ function handlePhotoUpload(event){
               $('#f_photo').value = url;
               preview.innerHTML = '<img src="'+url+'" alt="Avatar">';
               toast('✅ Ảnh đã upload! Bấm Lưu để hoàn tất.','success');
-              // Lưu ngay vào DB + Firestore — dùng f_empid đáng tin hơn currentEmpId
+              // Dùng f_empid — chính xác hơn currentEmpId khi mở từ danh sách NV
               const empId = ($('#f_empid')?.value) || currentEmpId || '';
               if(empId && window.fbDb && window.currentUser){
                 const empIdx = (DB.employees||[]).findIndex(e=>e.id===empId);
@@ -5673,10 +5671,10 @@ function handlePhotoUpload(event){
               }
             } else {
               console.warn('Cloudinary error:',data);
-              toast('⚠️ Upload thất bại: '+(data.error?.message||'lỗi không xác định'),'error');
+              toast('⚠️ Upload thất bại: '+(data.error?.message||JSON.stringify(data)),'error');
             }
           })
-          .catch(err=>{ unlock(); console.warn('Upload err:',err); toast('⚠️ Lỗi kết nối Cloudinary','error'); });
+          .catch(err=>{ unlock(); console.warn('Upload err:',err); toast('⚠️ Lỗi kết nối Cloudinary: '+err.message,'error'); });
       }, 'image/jpeg', 0.85);
     };
     img.src = ev.target.result;
@@ -5816,7 +5814,6 @@ function saveEmployee(id, isNew){
     const dbNoPhoto = JSON.parse(JSON.stringify(DB));
     dbNoPhoto.employees = (dbNoPhoto.employees||[]).map(e=>{ const {photo,...r}=e; return r; });
     localStorage.setItem(STORE_KEY, JSON.stringify(dbNoPhoto));
-    // Lưu ảnh riêng vào photos map — kể cả URL Cloudinary
     if(data.photo){
       const pm = JSON.parse(localStorage.getItem(STORE_KEY+'_photos')||'{}');
       pm[id] = data.photo;
