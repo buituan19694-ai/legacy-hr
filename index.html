@@ -5611,6 +5611,10 @@ function removePhoto(){
   if(input) input.value = '';
 }
 
+// Cloudinary config — khai báo global để dùng được ở mọi nơi
+const CLOUDINARY_CLOUD = 'dmsb6wbg6';
+const CLOUDINARY_PRESET = 'legacy_hr';
+
 function handlePhotoUpload(event){
   const file = event.target.files[0];
   if(!file) return;
@@ -5634,6 +5638,7 @@ function handlePhotoUpload(event){
       const preview = $('#photoPreview');
       preview.innerHTML = '<img src="'+dataUrl+'" alt="Avatar">';
 
+      // Upload lên Cloudinary
       canvas.toBlob(blob => {
         if(!blob) return;
         toast('⏳ Đang upload ảnh lên cloud...','info');
@@ -5641,7 +5646,6 @@ function handlePhotoUpload(event){
         const saveBtn = document.querySelector('.modal-actions .btn-primary');
         if(saveBtn){ saveBtn.disabled = true; saveBtn.dataset._photoLock = '1'; }
         const unlock = ()=>{ if(saveBtn && saveBtn.dataset._photoLock){ saveBtn.disabled = false; delete saveBtn.dataset._photoLock; } };
-
         const fd = new FormData();
         fd.append('file', blob, 'avatar.jpg');
         fd.append('upload_preset', CLOUDINARY_PRESET);
@@ -5655,7 +5659,7 @@ function handlePhotoUpload(event){
               $('#f_photo').value = url;
               preview.innerHTML = '<img src="'+url+'" alt="Avatar">';
               toast('✅ Ảnh đã upload! Bấm Lưu để hoàn tất.','success');
-              // Dùng f_empid — chính xác hơn currentEmpId khi mở từ danh sách NV
+              // Dùng f_empid — đúng hơn currentEmpId khi mở modal từ danh sách
               const empId = ($('#f_empid')?.value) || currentEmpId || '';
               if(empId && window.fbDb && window.currentUser){
                 const empIdx = (DB.employees||[]).findIndex(e=>e.id===empId);
@@ -5674,7 +5678,7 @@ function handlePhotoUpload(event){
               toast('⚠️ Upload thất bại: '+(data.error?.message||JSON.stringify(data)),'error');
             }
           })
-          .catch(err=>{ unlock(); console.warn('Upload err:',err); toast('⚠️ Lỗi kết nối Cloudinary: '+err.message,'error'); });
+          .catch(err=>{ unlock(); console.warn('Upload err:',err); toast('⚠️ Lỗi kết nối Cloudinary','error'); });
       }, 'image/jpeg', 0.85);
     };
     img.src = ev.target.result;
