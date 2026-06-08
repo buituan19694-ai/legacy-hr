@@ -5889,6 +5889,48 @@ function renderCustomFieldInput(cf, value){
   const label = escapeHtml(cf.label) + req;
   const dataAttr = `data-cf-key="${escapeHtml(cf.key)}"`;
 
+  // ── Auto-compute từ DB.contracts ──
+  if(['currentContractType','currentContractStart','currentContractEnd'].includes(cf.key)){
+    // Lấy empId từ form đang mở
+    const empId = document.getElementById('f_empid')?.value || currentEmpId || '';
+    const today = new Date(); today.setHours(0,0,0,0);
+    const empContracts = (DB.contracts||[]).filter(c=>c.empId===empId);
+    // HĐ hiện tại = mới nhất còn hiệu lực
+    const sorted = [...empContracts].sort((a,b)=>new Date(b.startDate)-new Date(a.startDate));
+    const cur = sorted.find(c=>!c.endDate||new Date(c.endDate)>=today) || sorted[0];
+
+    const roStyle = 'background:var(--bg-elev);color:var(--ink-muted);cursor:not-allowed;border-color:var(--border)';
+    const autoLabel = `${label} <span style="font-size:9px;color:var(--accent)">(tự động)</span>`;
+
+    if(cf.key === 'currentContractType'){
+      const opts = (cf.options||'').split(',').map(s=>s.trim()).filter(Boolean);
+      const autoVal = cur ? (CONTRACT_TYPE[cur.type]||cur.type||'') : '';
+      // Ghi vào customData để saveEmployee lưu được
+      if(cur && empId && DB.customData[empId] !== undefined){
+        DB.customData[empId].currentContractType = autoVal;
+      }
+      return `<div class="${cls}"><label>${autoLabel}</label>
+        <select id="${id}" ${dataAttr} disabled style="${roStyle}">
+          <option value="">— Chọn —</option>
+          ${opts.map(o=>`<option value="${escapeHtml(o)}" ${autoVal===o?'selected':''}>${escapeHtml(o)}</option>`).join('')}
+        </select>
+        <input type="hidden" id="${id}_val" value="${escapeHtml(autoVal)}">
+      </div>`;
+    }
+    if(cf.key === 'currentContractStart'){
+      const autoVal = cur?.startDate ? isoToDisp(cur.startDate) : '';
+      return `<div class="${cls}"><label>${autoLabel}</label>
+        <input id="${id}" ${dataAttr} type="text" value="${autoVal}" readonly style="${roStyle}" placeholder="Chưa có HĐ">
+      </div>`;
+    }
+    if(cf.key === 'currentContractEnd'){
+      const autoVal = cur?.endDate ? isoToDisp(cur.endDate) : (cur ? 'Vô thời hạn' : '');
+      return `<div class="${cls}"><label>${autoLabel}</label>
+        <input id="${id}" ${dataAttr} type="text" value="${autoVal}" readonly style="${roStyle}" placeholder="Vô thời hạn">
+      </div>`;
+    }
+  }
+
   if(cf.type === 'select'){
     const opts = (cf.options||'').split(',').map(s=>s.trim()).filter(Boolean);
     return `<div class="${cls}"><label>${label}</label>
@@ -5942,6 +5984,21 @@ function saveEmployee(id, isNew){
   for(const cf of DB.customFields){
     const el = document.getElementById('cf_'+cf.key);
     if(!el) continue;
+    // Auto-computed fields: đọc từ hidden _val hoặc giữ nguyên giá trị đã tính
+    if(['currentContractType','currentContractStart','currentContractEnd'].includes(cf.key)){
+      const hiddenEl = document.getElementById('cf_'+cf.key+'_val');
+      const autoVal = hiddenEl ? hiddenEl.value : (el.value||'').trim();
+      // currentContractStart/End là readonly text → chuyển ngược về ISO
+      if(cf.key === 'currentContractStart' || cf.key === 'currentContractEnd'){
+        const iso = autoVal === 'Vô thời hạn' ? '' : (autoVal ? dispToIso(autoVal)||autoVal : '');
+        if(iso) customValues[cf.key] = iso;
+        else delete customValues[cf.key];
+      } else {
+        if(autoVal) customValues[cf.key] = autoVal;
+        else delete customValues[cf.key];
+      }
+      continue;
+    }
     let val = (el.value||'').trim();
     // Date field: ưu tiên data-iso (ISO yyyy-mm-dd), fallback dispToIso nếu user tự nhập
     if(cf.type === 'date' && val){
@@ -7488,6 +7545,14 @@ function renderContracts(main){
                   <button class="btn btn-icon" onclick="generateContract('${c.id}')" title="Tạo HĐ mới" style="color:var(--accent)">📄</button>
                   <button class="btn btn-icon" onclick="viewEmployee('${emp.id}')" title="Xem hồ sơ">${ICONS.eye}</button>
                   <button class="btn btn-icon" onclick="editContract('${c.id}')" title="Sửa HĐ">${ICONS.edit}</button>
+                  <button class="btn btn-sm" onclick="renewContract('${c.id}','${emp.id}')" title="Gia hạn HĐ"
+                    style="background:rgba(126,198,153,.15);color:var(--success);border:1px solid var(--success);font-size:11px;padding:3px 8px;border-radius:5px;white-space:nowrap">
+                    ✅ Gia hạn
+                  </button>
+                  <button class="btn btn-sm" onclick="exitFromContract('${emp.id}')" title="Không ký tiếp"
+                    style="background:rgba(229,115,115,.12);color:var(--danger);border:1px solid var(--danger);font-size:11px;padding:3px 8px;border-radius:5px;white-space:nowrap">
+                    ❌ Không ký
+                  </button>
                 </div></td>
               </tr>`;
             }).join('')}
@@ -7570,6 +7635,214 @@ function setContractFilterCurrent(){
    GENERATE CONTRACT — Tạo hợp đồng mới từ template
    Mở trong tab mới, có thể chỉnh sửa, in hoặc lưu PDF
    ========================================================= */
+function renewContract(contractId, empId){
+  const c = (DB.contracts||[]).find(x=>x.id===contractId);
+  const emp = DB.employees.find(x=>x.id===empId);
+  if(!c || !emp){ toast('Không tìm thấy dữ liệu','error'); return; }
+
+  // Xác định loại HĐ tiếp theo theo thứ tự: probation → term12 → term24 → indefinite
+  const ORDER = ['probation','term12','term24','indefinite'];
+  const curIdx = ORDER.indexOf(c.type);
+  let nextType, nextEndDate;
+  if(curIdx === -1 || c.type === 'indefinite'){
+    // Vô thời hạn → không cần gia hạn
+    toast('HĐ vô thời hạn không cần gia hạn','warning'); return;
+  }
+  nextType = ORDER[Math.min(curIdx+1, ORDER.length-1)];
+
+  // startDate mới = ngày tiếp theo sau endDate cũ
+  const oldEnd = new Date(c.endDate);
+  const newStart = new Date(oldEnd); newStart.setDate(newStart.getDate()+1);
+  const newStartISO = newStart.toISOString().slice(0,10);
+
+  // endDate mới
+  if(nextType === 'term12'){
+    const e = new Date(newStart); e.setFullYear(e.getFullYear()+1); e.setDate(e.getDate()-1);
+    nextEndDate = e.toISOString().slice(0,10);
+  } else if(nextType === 'term24'){
+    const e = new Date(newStart); e.setFullYear(e.getFullYear()+2); e.setDate(e.getDate()-1);
+    nextEndDate = e.toISOString().slice(0,10);
+  } else {
+    nextEndDate = ''; // indefinite
+  }
+
+  const typeLabel = {term12:'Xác định 12 tháng', term24:'Xác định 24 tháng', indefinite:'Vô thời hạn'}[nextType] || nextType;
+  const endLabel = nextEndDate ? fmtDate(nextEndDate) : 'Vô thời hạn';
+
+  openModal(`
+    <div class="modal-head">
+      <div class="modal-title">✅ Gia hạn hợp đồng</div>
+      <div class="modal-sub">${escapeHtml(emp.name)} · ${escapeHtml(emp.code)}</div>
+    </div>
+    <div style="background:rgba(126,198,153,.08);border:1px solid rgba(126,198,153,.3);border-radius:8px;padding:14px 18px;margin-bottom:16px">
+      <div style="font-size:12px;color:var(--ink-muted);margin-bottom:8px">HĐ hiện tại</div>
+      <div style="font-weight:600">${CONTRACT_TYPE[c.type]||c.type} — hết hạn ${fmtDate(c.endDate)}</div>
+    </div>
+    <div style="background:rgba(212,165,116,.08);border:1px solid rgba(212,165,116,.3);border-radius:8px;padding:14px 18px;margin-bottom:16px">
+      <div style="font-size:12px;color:var(--ink-muted);margin-bottom:8px">HĐ mới sẽ tạo</div>
+      <div style="font-weight:700;color:var(--accent)">${typeLabel}</div>
+      <div style="font-size:12px;color:var(--ink-muted);margin-top:4px">
+        Bắt đầu: <b style="color:var(--ink)">${fmtDate(newStartISO)}</b> &nbsp;|&nbsp;
+        Kết thúc: <b style="color:var(--ink)">${endLabel}</b>
+      </div>
+    </div>
+    <div class="form-grid">
+      <div class="field"><label>Ngày bắt đầu HĐ mới</label>
+        <input type="date" id="rn_start" value="${newStartISO}">
+      </div>
+      <div class="field"><label>Ngày ký</label>
+        <input type="date" id="rn_signed" value="${newStartISO}">
+      </div>
+      <div class="field full"><label>Ghi chú</label>
+        <input id="rn_notes" placeholder="VD: Gia hạn lần 2...">
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeModal()">Huỷ</button>
+      <button class="btn btn-primary" onclick="confirmRenewContract('${contractId}','${empId}','${nextType}','${nextEndDate}')">
+        ✅ Xác nhận gia hạn
+      </button>
+    </div>
+  `);
+  setTimeout(()=>initDateInputs($('#modalBox')), 10);
+}
+
+function confirmRenewContract(oldContractId, empId, nextType, nextEndDate){
+  const startEl = document.getElementById('rn_start');
+  const signedEl = document.getElementById('rn_signed');
+  const notesEl = document.getElementById('rn_notes');
+
+  const startISO = startEl?.getAttribute('data-iso') || dispToIso(startEl?.value||'') || startEl?.value||'';
+  const signedISO = signedEl?.getAttribute('data-iso') || dispToIso(signedEl?.value||'') || signedEl?.value||'';
+  const notes = notesEl?.value.trim()||'';
+  const endISO = nextEndDate || '';
+
+  if(!startISO){ toast('Vui lòng nhập ngày bắt đầu','error'); return; }
+
+  // 1. Tạo HĐ mới trong DB.contracts
+  const newContract = {
+    id: uid(), empId,
+    type: nextType,
+    startDate: startISO,
+    endDate: endISO,
+    signedDate: signedISO,
+    notes,
+  };
+  if(!DB.contracts) DB.contracts = [];
+  DB.contracts.push(newContract);
+
+  // 2. Cập nhật customData — HĐ hiện tại
+  if(!DB.customData[empId]) DB.customData[empId] = {};
+  const typeLabel = {
+    term12: 'HĐ xác định thời hạn (01 năm)',
+    term24: 'HĐ xác định thời hạn (02 năm)',
+    indefinite: 'HĐ Không xác định thời hạn (Indefinite Contract)',
+    probation: 'HĐ Thử việc',
+  }[nextType] || nextType;
+
+  DB.customData[empId].currentContractType  = typeLabel;
+  DB.customData[empId].currentContractStart = startISO;
+  DB.customData[empId].currentContractEnd   = endISO;
+
+  // 3. Cập nhật status NV nếu đang probation → active
+  const empIdx = DB.employees.findIndex(x=>x.id===empId);
+  if(empIdx >= 0 && DB.employees[empIdx].status === 'probation' && nextType !== 'probation'){
+    DB.employees[empIdx].status = 'active';
+  }
+
+  // 4. Push lên Firestore (emp_profiles + hrdata)
+  if(window.fbDb && window.currentUser){
+    saveEmpProfile(empId);   // sync hồ sơ NV lên emp_profiles
+  }
+  saveData();                 // sync DB.contracts + customData lên hrdata
+
+  closeModal();
+  toast(`✅ Đã gia hạn HĐ ${nextType === 'indefinite' ? 'vô thời hạn' : typeLabel} thành công`, 'success');
+  render();
+}
+
+function exitFromContract(empId){
+  const emp = DB.employees.find(x=>x.id===empId);
+  if(!emp){ toast('Không tìm thấy nhân viên','error'); return; }
+
+  const exitReasons = ['Hết hạn HĐ — không ký tiếp','Tự nguyện nghỉ việc','Nghỉ theo thỏa thuận',
+    'Vi phạm nội quy','Thôi việc theo nguyện vọng cá nhân','Chấm dứt HĐ theo quy định pháp luật','Lý do khác'];
+
+  openModal(`
+    <div class="modal-head">
+      <div class="modal-title">❌ Không ký tiếp hợp đồng</div>
+      <div class="modal-sub">${escapeHtml(emp.name)} · ${escapeHtml(emp.code)}</div>
+    </div>
+    <div style="background:rgba(229,115,115,.08);border:1px solid rgba(229,115,115,.3);border-radius:8px;padding:12px 16px;margin-bottom:16px;font-size:12.5px;color:var(--ink-muted)">
+      ⚠️ Xác nhận không ký tiếp HĐ sẽ chuyển trạng thái NV sang <b style="color:var(--danger)">Nghỉ việc</b>.
+    </div>
+    <div class="form-grid">
+      <div class="field full"><label>Lý do nghỉ việc *</label>
+        <select id="ex_reason">
+          <option value="">— Chọn lý do —</option>
+          ${exitReasons.map(r=>`<option value="${escapeHtml(r)}">${escapeHtml(r)}</option>`).join('')}
+        </select>
+      </div>
+      <div class="field"><label>Ngày nghỉ việc chính thức *</label>
+        <input type="date" id="ex_date" value="${new Date().toISOString().slice(0,10)}">
+      </div>
+      <div class="field"><label>Người phỏng vấn thôi việc</label>
+        <input id="ex_interviewer" placeholder="VD: Trưởng bộ phận, HR Manager...">
+      </div>
+      <div class="field full"><label>Ghi chú</label>
+        <input id="ex_notes" placeholder="Thông tin bổ sung...">
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeModal()">Huỷ</button>
+      <button class="btn btn-danger" onclick="confirmExitFromContract('${empId}')">
+        ❌ Xác nhận nghỉ việc
+      </button>
+    </div>
+  `);
+  setTimeout(()=>initDateInputs($('#modalBox')), 10);
+}
+
+function confirmExitFromContract(empId){
+  const reason = document.getElementById('ex_reason')?.value;
+  const dateEl = document.getElementById('ex_date');
+  const interviewer = document.getElementById('ex_interviewer')?.value.trim()||'';
+  const notes = document.getElementById('ex_notes')?.value.trim()||'';
+
+  if(!reason){ toast('Vui lòng chọn lý do nghỉ việc','error'); return; }
+  const exitDateISO = dateEl?.getAttribute('data-iso') || dispToIso(dateEl?.value||'') || dateEl?.value||'';
+  if(!exitDateISO){ toast('Vui lòng nhập ngày nghỉ việc','error'); return; }
+
+  // 1. Cập nhật DB.employees
+  const empIdx = DB.employees.findIndex(x=>x.id===empId);
+  if(empIdx < 0){ toast('Không tìm thấy nhân viên','error'); return; }
+  const empName = DB.employees[empIdx].name;
+  DB.employees[empIdx].status = 'exit';
+
+  // 2. Cập nhật customData — đầy đủ thông tin nghỉ việc
+  if(!DB.customData[empId]) DB.customData[empId] = {};
+  DB.customData[empId].exitDate        = exitDateISO;
+  DB.customData[empId].exitReason      = reason;
+  if(interviewer) DB.customData[empId].exitInterviewer = interviewer;
+  if(notes)       DB.customData[empId].exitNotes       = notes;
+
+  // 3. Set endDate HĐ vô thời hạn đang active → ngày nghỉ
+  const today0 = new Date(); today0.setHours(0,0,0,0);
+  const activeCon = (DB.contracts||[])
+    .filter(c=>c.empId===empId)
+    .sort((a,b)=>new Date(b.startDate)-new Date(a.startDate))
+    .find(c=>!c.endDate||new Date(c.endDate)>=today0);
+  if(activeCon && !activeCon.endDate) activeCon.endDate = exitDateISO;
+
+  // 4. Push lên Firestore — cả emp_profiles lẫn hrdata
+  if(window.fbDb && window.currentUser) saveEmpProfile(empId);
+  saveData();
+
+  closeModal();
+  toast(`✅ Đã chuyển ${empName} sang nghỉ việc`, 'success');
+  render();
+}
+
 function generateContract(contractId){
   const c = (DB.contracts||[]).find(x => x.id === contractId);
   if(!c){ toast('Không tìm thấy hợp đồng', 'error'); return; }
