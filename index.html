@@ -6364,7 +6364,14 @@ function handleImportFile(file){
     try {
       const wb = XLSX.read(e.target.result, {type:'binary', cellDates:true, cellText:true, cellNF:true});
       // Dùng sheet đầu tiên (hoặc sheet "Mẫu nhập liệu" nếu có)
-      const sheetName = wb.SheetNames.find(n=>n.includes('nhập')||n.includes('Nhập')) || wb.SheetNames[0];
+      // Ưu tiên sheet "Mẫu nhập liệu" nếu có data > 1 dòng, không thì lấy sheet "Nhân viên"
+      let sheetName = wb.SheetNames.find(n=>n.includes('nhập')||n.includes('Nhập'));
+      if(sheetName){
+        const _testWs = wb.Sheets[sheetName];
+        const _testRange = XLSX.utils.decode_range(_testWs['!ref']||'A1');
+        if(_testRange.e.r < 2) sheetName = null; // chỉ có header + 1 dòng mẫu → bỏ qua
+      }
+      if(!sheetName) sheetName = wb.SheetNames.find(n=>n.includes('Nhân viên')||n.includes('nhan vien')||n.includes('Employee')) || wb.SheetNames[0];
       const ws = wb.Sheets[sheetName];
 
       // Build data manually to preserve leading zeros:
@@ -6459,8 +6466,6 @@ function handleImportFile(file){
         const errors = [];
         if(!code) errors.push('Thiếu Mã NV');
         if(!name) errors.push('Thiếu Họ tên');
-        if(!role) errors.push('Thiếu Chức vụ');
-        if(!joined) errors.push('Thiếu Ngày vào làm');
 
         const genderRaw = get(row,(_lang==="en"?"Gender":"Giới tính")).toLowerCase();
         const gender = genderRaw.includes('nữ')||genderRaw==='f'||genderRaw==='female'?'female'
