@@ -19351,32 +19351,24 @@ fbAuth.onAuthStateChanged(async user => {
             const _OBS = ['currentContractStart','currentContractEnd','probationResult','contractExpireMonth'];
             const _beforeLen = DB.customFields.length;
             DB.customFields = DB.customFields.filter(cf=>!_OBS.includes(cf.key));
-            if(DB.customFields.length !== _beforeLen){
-              console.log('[Migration] Removed obsolete customFields, saving...');
-              setTimeout(()=>saveData(), 500);
-            }
-            // Migration: tự động thêm field mặc định còn thiếu (không cần user bấm gì)
+
+            // Migration: thêm field còn thiếu + reorder theo DEFAULT
             {
-              const _curKeys = new Set(DB.customFields.map(cf=>cf.key));
-              const _missing = DEFAULT_DATA.customFields.filter(cf=>!_curKeys.has(cf.key));
-              if(_missing.length > 0){
-                _missing.forEach(newCf=>{
-                  const _di = DEFAULT_DATA.customFields.findIndex(cf=>cf.key===newCf.key);
-                  let _insertAfterKey = null;
-                  for(let i=_di-1;i>=0;i--){
-                    const _pk = DEFAULT_DATA.customFields[i].key;
-                    if(_curKeys.has(_pk)){_insertAfterKey=_pk;break;}
-                  }
-                  if(_insertAfterKey){
-                    const _ii = DB.customFields.findIndex(cf=>cf.key===_insertAfterKey);
-                    DB.customFields.splice(_ii+1,0,newCf);
-                  } else {
-                    DB.customFields.unshift(newCf);
-                  }
-                  _curKeys.add(newCf.key);
-                });
-                console.log('[Migration] Added missing fields:', _missing.map(cf=>cf.key));
-                setTimeout(()=>saveData(), 800);
+              const _defaultOrder = DEFAULT_DATA.customFields.map(cf=>cf.key);
+              const _curMap = new Map(DB.customFields.map(cf=>[cf.key, cf]));
+              const _missing = DEFAULT_DATA.customFields.filter(cf=>!_curMap.has(cf.key));
+              // Thêm field còn thiếu
+              _missing.forEach(cf=>_curMap.set(cf.key, cf));
+              // Reorder: field nào có trong DEFAULT thì theo thứ tự DEFAULT, field user tự tạo thêm vào cuối
+              const _userExtra = DB.customFields.filter(cf=>!_defaultOrder.includes(cf.key));
+              DB.customFields = [
+                ..._defaultOrder.filter(k=>_curMap.has(k)).map(k=>_curMap.get(k)),
+                ..._userExtra
+              ];
+              const _changed = DB.customFields.length !== _beforeLen || _missing.length > 0;
+              if(_changed){
+                console.log('[Migration] customFields synced, saving...');
+                setTimeout(()=>saveData(), 500);
               }
             }
             if(!DB.casuals) DB.casuals=[];
@@ -19541,24 +19533,17 @@ fbAuth.onAuthStateChanged(async user => {
                 (DB.employees||[]).forEach(e=>{ if(e.photo) localPhotos[e.id]=e.photo; });
                 try{ const pm=JSON.parse(localStorage.getItem(STORE_KEY+'_photos')||'{}'); Object.assign(localPhotos,pm); }catch(pe){}
                 FS_DOC_MAP[docId].forEach(key=>{ if(cloudData[key] !== undefined) DB[key] = cloudData[key]; });
-                // Migration: xóa + thêm field mặc định còn thiếu — tự động, không cần user bấm
+                // Migration: xóa + thêm + reorder field mặc định — tự động
                 if(DB.customFields){
                   const _OBS2=['currentContractStart','currentContractEnd','probationResult','contractExpireMonth'];
                   const _b2=DB.customFields.length;
                   DB.customFields=DB.customFields.filter(cf=>!_OBS2.includes(cf.key));
-                  const _curKeys2=new Set(DB.customFields.map(cf=>cf.key));
-                  const _missing2=DEFAULT_DATA.customFields.filter(cf=>!_curKeys2.has(cf.key));
-                  if(_missing2.length>0){
-                    _missing2.forEach(newCf=>{
-                      const _di=DEFAULT_DATA.customFields.findIndex(cf=>cf.key===newCf.key);
-                      let _iak=null;
-                      for(let i=_di-1;i>=0;i--){ const _pk=DEFAULT_DATA.customFields[i].key; if(_curKeys2.has(_pk)){_iak=_pk;break;} }
-                      if(_iak){ const _ii=DB.customFields.findIndex(cf=>cf.key===_iak); DB.customFields.splice(_ii+1,0,newCf); }
-                      else DB.customFields.unshift(newCf);
-                      _curKeys2.add(newCf.key);
-                    });
-                  }
-                  if(DB.customFields.length!==_b2||_missing2.length>0) setTimeout(()=>saveData(),800);
+                  const _defOrder2=DEFAULT_DATA.customFields.map(cf=>cf.key);
+                  const _curMap2=new Map(DB.customFields.map(cf=>[cf.key,cf]));
+                  DEFAULT_DATA.customFields.filter(cf=>!_curMap2.has(cf.key)).forEach(cf=>_curMap2.set(cf.key,cf));
+                  const _userExtra2=DB.customFields.filter(cf=>!_defOrder2.includes(cf.key));
+                  DB.customFields=[..._defOrder2.filter(k=>_curMap2.has(k)).map(k=>_curMap2.get(k)),..._userExtra2];
+                  if(DB.customFields.length!==_b2) setTimeout(()=>saveData(),500);
                 }
                 // Ghép ảnh + convert probation→active (defensive)
                 if(DB.employees) DB.employees.forEach(e=>{
