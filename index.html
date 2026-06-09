@@ -1814,19 +1814,19 @@ let DB = loadData();
 loadPhotosFromStorage();
 // ── Init guard: dynamic keys không lưu localStorage → phải đảm bảo không undefined ──
 // Firestore sẽ overwrite sau khi login, nhưng trước đó cần có giá trị mặc định
-if(!DB.leaves)            DB.leaves            = [];
-if(!DB.kpiReviews)        DB.kpiReviews        = [];
-if(!DB.rewardRecords)     DB.rewardRecords      = [];
-if(!DB.casuals)           DB.casuals            = [];
-if(!DB.candidates)        DB.candidates         = [];
-if(!DB.promotions)        DB.promotions         = [];
-if(!DB.disciplineRecords) DB.disciplineRecords  = [];
-if(!DB.leaveSheet)        DB.leaveSheet         = {};
-if(!DB.leaveOpening)      DB.leaveOpening       = {};
-if(!DB.leavePlan)         DB.leavePlan          = {};
-if(!DB.salaryYears)       DB.salaryYears        = {};
-if(!DB.trainingExtraYears)DB.trainingExtraYears = {};
-if(!DB.leaveExtraYears)   DB.leaveExtraYears    = {};
+if(!Array.isArray(DB.leaves))            DB.leaves            = [];
+if(!Array.isArray(DB.kpiReviews))        DB.kpiReviews        = [];
+if(!Array.isArray(DB.rewardRecords))     DB.rewardRecords      = [];
+if(!Array.isArray(DB.casuals))           DB.casuals            = [];
+if(!Array.isArray(DB.candidates))        DB.candidates         = [];
+if(!Array.isArray(DB.promotions))        DB.promotions         = [];
+if(!Array.isArray(DB.disciplineRecords)) DB.disciplineRecords  = [];
+if(!DB.leaveSheet   || typeof DB.leaveSheet   !== 'object') DB.leaveSheet         = {};
+if(!DB.leaveOpening || typeof DB.leaveOpening !== 'object') DB.leaveOpening       = {};
+if(!DB.leavePlan    || typeof DB.leavePlan    !== 'object') DB.leavePlan          = {};
+if(!DB.salaryYears  || typeof DB.salaryYears  !== 'object') DB.salaryYears        = {};
+if(!DB.trainingExtraYears||typeof DB.trainingExtraYears!=='object') DB.trainingExtraYears = {};
+if(!DB.leaveExtraYears   ||typeof DB.leaveExtraYears   !=='object') DB.leaveExtraYears    = {};
 // Proxy để tự động track key nào bị thay đổi → saveData sẽ chỉ push đúng Firestore doc
 window._dirtyKeys = new Set();
 DB = new Proxy(DB, {
@@ -4310,7 +4310,7 @@ function renderEmployeeProfile(main){
   // Lấy các bản ghi liên quan
   const contracts = (DB.contracts||[]).filter(c=>c.empId===e.id);
   const leaves = (DB.leaves||[]).filter(l=>l.empId===e.id).sort((a,b)=> new Date(b.startDate) - new Date(a.startDate));
-  const reviews = DB.kpiReviews.filter(k=>k.empId===e.id).sort((a,b)=> (b.period||'').localeCompare(a.period||''));
+  const reviews = (DB.kpiReviews||[]).filter(k=>k.empId===e.id).sort((a,b)=> (b.period||'').localeCompare(a.period||''));
   const disciplines = (DB.disciplineRecords||[]).filter(d=>d.empId===e.id).sort((a,b)=> new Date(b.date) - new Date(a.date));
   const rewards = (DB.rewardRecords||[]).filter(r=>r.empId===e.id).sort((a,b)=> new Date(b.date) - new Date(a.date));
   const promotions = (DB.promotions||[]).filter(p=>p.empId===e.id).sort((a,b)=> new Date(b.date) - new Date(a.date));
@@ -4839,7 +4839,7 @@ function editReward(id, empId){
   const defaultType = rewardTypes[0]?.label || (_lang==="en"?"Custom":"Tuỳ chỉnh");
   const r = isNew
     ? {id:uid(), empId:empId, date:new Date().toISOString().slice(0,10), type:defaultType, reason:'', awardedBy:'', notes:'', amount:0, period:''}
-    : {...DB.rewardRecords.find(x=>x.id===id)};
+    : {...(DB.rewardRecords||[]).find(x=>x.id===id)};
   if(!r) return;
 
   const currentMeta = getRewardTypeMeta(r.type);
@@ -5022,7 +5022,7 @@ function saveReward(id, isNew){
   };
   if(!DB.rewardRecords) DB.rewardRecords = [];
   if(isNew) DB.rewardRecords.push(data);
-  else{ const i = DB.rewardRecords.findIndex(x=>x.id===id); DB.rewardRecords[i] = data; }
+  else{ const i = (DB.rewardRecords||[]).findIndex(x=>x.id===id); DB.rewardRecords[i] = data; }
   saveData(); closeModal(); toast(isNew?'Đã ghi nhận khen thưởng':(_lang==="en"?"Updated":"Đã cập nhật")); render();
 }
 
@@ -5155,7 +5155,7 @@ function editDiscipline(id, empId){
   const defaultSev = sevLevels[0]?.key || 'reminder';
   const d = isNew
     ? {id:uid(), empId:empId, date:new Date().toISOString().slice(0,10), severity: defaultSev, level: sevLevels[0]?.label||'', reason:'', decidedBy:'', notes:'', penalty:''}
-    : {...DB.disciplineRecords.find(x=>x.id===id)};
+    : {...(DB.disciplineRecords||[]).find(x=>x.id===id)};
   if(!d) return;
 
   // Migration: nếu record cũ chỉ có 'level' (string) mà không có 'severity' → map sang
@@ -5212,7 +5212,7 @@ function saveDiscipline(id, isNew){
   };
   if(!DB.disciplineRecords) DB.disciplineRecords = [];
   if(isNew) DB.disciplineRecords.push(data);
-  else{ const i = DB.disciplineRecords.findIndex(x=>x.id===id); DB.disciplineRecords[i] = data; }
+  else{ const i = (DB.disciplineRecords||[]).findIndex(x=>x.id===id); DB.disciplineRecords[i] = data; }
   saveData(); closeModal(); toast(isNew?'Đã ghi nhận kỷ luật':(_lang==="en"?"Updated":"Đã cập nhật")); render();
 }
 
@@ -6307,7 +6307,7 @@ function deleteEmployee(id, fromModal=false){
     DB.employees = DB.employees.filter(x=>x.id!==id);
     DB.contracts = (DB.contracts||[]).filter(c=>c.empId!==id);
     DB.leaves = (DB.leaves||[]).filter(l=>l.empId!==id);
-    DB.kpiReviews = DB.kpiReviews.filter(k=>k.empId!==id);
+    DB.kpiReviews = (DB.kpiReviews||[]).filter(k=>k.empId!==id);
     delete DB.customData[id];
     // Xóa doc khỏi emp_profiles collection
     if(window.fbDb && window.currentUser){
@@ -9793,7 +9793,7 @@ function renderLeaveReports(main){
   const bal = window._leaveBal;
   const balRates = leaveAccrualRates();
   const balMono = "font-family:'JetBrains Mono',monospace";
-  const balYears = (()=>{ const s=new Set([today.getFullYear()+1, today.getFullYear()]); DB.leaves.forEach(l=>{ if(l.startDate) s.add(new Date(l.startDate).getFullYear()); }); if(DB.leaveSheet){ Object.values(DB.leaveSheet).forEach(emp=>{ Object.keys(emp).forEach(y=>s.add(parseInt(y))); }); } return [...s].sort((a,b)=>b-a); })();
+  const balYears = (()=>{ const s=new Set([today.getFullYear()+1, today.getFullYear()]); (DB.leaves||[]).forEach(l=>{ if(l.startDate) s.add(new Date(l.startDate).getFullYear()); }); if(DB.leaveSheet){ Object.values(DB.leaveSheet).forEach(emp=>{ Object.keys(emp).forEach(y=>s.add(parseInt(y))); }); } return [...s].sort((a,b)=>b-a); })();
   const fnum = n => (Math.round((n||0)*100)/100).toString();
   const statusFilter = bal.statusFilter||'active';
   const allPool = statusFilter==='all' ? DB.employees
@@ -10399,7 +10399,7 @@ function renderLeaves(main){
   const balRates = leaveAccrualRates();
   const balMono = "font-family:'JetBrains Mono',monospace";
   const monthShort = ['T1','T2','T3','T4','T5','T6','T7','T8','T9','T10','T11','T12'];
-  const balYears = (()=>{ const s=new Set([today.getFullYear()]); DB.leaves.forEach(l=>{ if(l.startDate) s.add(new Date(l.startDate).getFullYear()); }); return [...s].sort((a,b)=>b-a); })();
+  const balYears = (()=>{ const s=new Set([today.getFullYear()]); (DB.leaves||[]).forEach(l=>{ if(l.startDate) s.add(new Date(l.startDate).getFullYear()); }); return [...s].sort((a,b)=>b-a); })();
   const fnum = n => (Math.round((n||0)*100)/100).toString();
 
   // Phạm vi: 1 NV cụ thể, hoặc tất cả NV (lọc theo phòng ban nếu có)
@@ -10925,7 +10925,7 @@ function renderLeaves(main){
         <div class="card" style="padding:12px 16px;margin-bottom:14px">
           <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
             <select class="filter-select" onchange="window._leaveBal=(window._leaveBal||{});window._leaveBal.year=parseInt(this.value);render()">
-              ${(()=>{ const s=new Set([new Date().getFullYear()+1,new Date().getFullYear(),new Date().getFullYear()-1]); if(DB.leaveSheet){Object.values(DB.leaveSheet).forEach(emp=>Object.keys(emp).forEach(y=>s.add(parseInt(y))));} DB.leaves.forEach(l=>{if(l.startDate)s.add(new Date(l.startDate).getFullYear());}); return [...s].sort((a,b)=>b-a); })().map(y=>`<option value="${y}" ${yr===y?'selected':''}>${y}</option>`).join('')}
+              ${(()=>{ const s=new Set([new Date().getFullYear()+1,new Date().getFullYear(),new Date().getFullYear()-1]); if(DB.leaveSheet){Object.values(DB.leaveSheet).forEach(emp=>Object.keys(emp).forEach(y=>s.add(parseInt(y))));} (DB.leaves||[]).forEach(l=>{if(l.startDate)s.add(new Date(l.startDate).getFullYear());}); return [...s].sort((a,b)=>b-a); })().map(y=>`<option value="${y}" ${yr===y?'selected':''}>${y}</option>`).join('')}
             </select>
             <select class="filter-select" onchange="window._leaveBal=(window._leaveBal||{});window._leaveBal.reportMonth=parseInt(this.value);render()">
               <option value="0" ${!bal.reportMonth?'selected':''}>📅 Cả năm</option>
@@ -11149,7 +11149,7 @@ function saveLeaveOpening(){
 
 function editLeave(id){
   const isNew = !id;
-  const l = isNew ? {id:uid(), empId:DB.employees[0]?.id||'', type:'annual', startDate:new Date().toISOString().slice(0,10), endDate:new Date().toISOString().slice(0,10), days:1, reason:'', status:'pending'} : {...DB.leaves.find(x=>x.id===id)};
+  const l = isNew ? {id:uid(), empId:DB.employees[0]?.id||'', type:'annual', startDate:new Date().toISOString().slice(0,10), endDate:new Date().toISOString().slice(0,10), days:1, reason:'', status:'pending'} : {...(DB.leaves||[]).find(x=>x.id===id)};
   if(!l) return;
   openModal(`
     <div class="modal-head">
@@ -11192,12 +11192,12 @@ function saveLeave(id, isNew){
   };
   if(!data.empId || !data.startDate || !data.endDate){ toast((_lang==="en"?"Please fill in all required fields":"Vui lòng nhập đủ thông tin"),'error'); return; }
   if(isNew) DB.leaves.push(data);
-  else{ const i = DB.leaves.findIndex(x=>x.id===id); DB.leaves[i] = data; }
+  else{ const i = (DB.leaves||[]).findIndex(x=>x.id===id); DB.leaves[i] = data; }
   saveData(); closeModal(); toast(isNew?'Đã tạo đơn':(_lang==="en"?"Updated":"Đã cập nhật")); render();
 }
 
 function approveLeave(id, approve){
-  const l = DB.leaves.find(x=>x.id===id); if(!l) return;
+  const l = (DB.leaves||[]).find(x=>x.id===id); if(!l) return;
   l.status = approve ? 'approved' : 'rejected';
   saveData(); toast(approve?'Đã duyệt đơn':'Đã từ chối đơn'); render();
 }
@@ -13383,7 +13383,7 @@ function saveCandidate(id, jobId, isNew){
     const j = DB.jobs.find(j=>j.id===jobId);
     if(j) j.applicants = (j.applicants||0) + 1;
   } else {
-    const i = DB.candidates.findIndex(x=>x.id===id);
+    const i = (DB.candidates||[]).findIndex(x=>x.id===id);
     const oldStatus = DB.candidates[i].status;
     const oldHiredDate = DB.candidates[i].hiredDate;
     DB.candidates[i] = data;
@@ -14753,7 +14753,7 @@ function renderPerformance(main){
   const avgKPI = scoredEmps.length ? (scoredEmps.reduce((s,e)=>s+e.kpi,0)/scoredEmps.length).toFixed(1) : '—';
   const excellent = DB.employees.filter(e=>e.kpi>=90).length;
   const needSupport = DB.employees.filter(e=>e.kpi>0 && e.kpi<70).length;
-  const reviewing = DB.kpiReviews.length;
+  const reviewing = (DB.kpiReviews||[]).length;
 
   // Promotions stats
   const allPromotions = DB.promotions || [];
@@ -14790,7 +14790,7 @@ function renderPerformance(main){
       <div class="topbar-left">
         <div class="crumb">Phát triển · <span>Performance</span></div>
         <h1 class="page-title">Đánh giá <em>Performance</em></h1>
-        <div class="page-sub">${DB.kpiReviews.length} lượt đánh giá · ${allPromotions.length} đề xuất thăng chức</div>
+        <div class="page-sub">${(DB.kpiReviews||[]).length} lượt đánh giá · ${allPromotions.length} đề xuất thăng chức</div>
       </div>
       <div class="topbar-actions">
         <button class="btn" onclick="editPromotion()">🚀 Đề xuất thăng chức</button>
@@ -14916,12 +14916,12 @@ function renderPerformance(main){
     </div>
 
     <div class="card" style="margin-top:16px">
-      <div class="card-head"><div><div class="card-title">Lịch sử <em>đánh giá</em></div><div class="card-sub">${DB.kpiReviews.length} bản ghi</div></div></div>
-      ${DB.kpiReviews.length===0 ? `<div class="empty-state"><h3>Chưa có đánh giá nào</h3><button class="btn btn-primary" onclick="editReview()">${ICONS.plus} Tạo đánh giá</button></div>` : `
+      <div class="card-head"><div><div class="card-title">Lịch sử <em>đánh giá</em></div><div class="card-sub">${(DB.kpiReviews||[]).length} bản ghi</div></div></div>
+      ${(DB.kpiReviews||[]).length===0 ? `<div class="empty-state"><h3>Chưa có đánh giá nào</h3><button class="btn btn-primary" onclick="editReview()">${ICONS.plus} Tạo đánh giá</button></div>` : `
         <table class="tbl">
           <thead><tr><th>Nhân viên</th><th>${_lang==="en"?"Period":"Kỳ đánh giá"}</th><th>${_lang==="en"?"Format":"Hình thức"}</th><th>${_lang==="en"?"Score":"Điểm"}</th><th>${_lang==="en"?"Reviewer":"Người đánh giá"}</th><th>${_lang==="en"?"Comments":"Nhận xét"}</th><th></th></tr></thead>
           <tbody>
-            ${DB.kpiReviews.map(k=>{
+            ${(DB.kpiReviews||[]).map(k=>{
               const emp = empById(k.empId); if(!emp) return '';
               return `<tr>
                 <td><div class="cell-emp">
@@ -14971,7 +14971,7 @@ function renderPerformance(main){
 
 function editReview(id){
   const isNew = !id;
-  const k = isNew ? {id:uid(), empId:DB.employees[0]?.id||'', period:'Q'+(Math.ceil((new Date().getMonth()+1)/3))+'/'+new Date().getFullYear(), score:85, reviewer:'', notes:''} : {...DB.kpiReviews.find(x=>x.id===id)};
+  const k = isNew ? {id:uid(), empId:DB.employees[0]?.id||'', period:'Q'+(Math.ceil((new Date().getMonth()+1)/3))+'/'+new Date().getFullYear(), score:85, reviewer:'', notes:''} : {...(DB.kpiReviews||[]).find(x=>x.id===id)};
   if(!k) return;
   const perfTypes = getPerfReviewTypes();
   openModal(`
@@ -15016,7 +15016,7 @@ function saveReview(id, isNew){
   };
   if(!data.empId || !data.period){ toast((_lang==="en"?"Please fill in all required fields":"Vui lòng nhập đủ thông tin"),'error'); return; }
   if(isNew) DB.kpiReviews.push(data);
-  else{ const i = DB.kpiReviews.findIndex(x=>x.id===id); DB.kpiReviews[i] = data; }
+  else{ const i = (DB.kpiReviews||[]).findIndex(x=>x.id===id); DB.kpiReviews[i] = data; }
   // Đồng bộ điểm KPI hiện tại của nhân viên (lấy review mới nhất)
   syncEmployeeKPI(data.empId);
   saveData(); closeModal(); toast(isNew?'Đã tạo đánh giá':(_lang==="en"?"Updated":"Đã cập nhật")); render();
@@ -15025,9 +15025,9 @@ function saveReview(id, isNew){
 function deleteReview(id, fromModal=false){
   if(fromModal) closeModal();
   confirmDialog('Xoá đánh giá?', (_lang==="en"?"This action cannot be undone.":"Hành động này không thể hoàn tác."), ()=>{
-    const review = DB.kpiReviews.find(x=>x.id===id);
+    const review = (DB.kpiReviews||[]).find(x=>x.id===id);
     const empId = review?.empId;
-    DB.kpiReviews = DB.kpiReviews.filter(x=>x.id!==id);
+    DB.kpiReviews = (DB.kpiReviews||[]).filter(x=>x.id!==id);
     // Đồng bộ KPI sau khi xoá
     if(empId) syncEmployeeKPI(empId);
     saveData(); toast((_lang==="en"?"Deleted":"Đã xoá")); render();
@@ -15042,7 +15042,7 @@ function deleteReview(id, fromModal=false){
 function syncEmployeeKPI(empId){
   const emp = DB.employees.find(e => e.id === empId);
   if(!emp) return;
-  const reviews = DB.kpiReviews.filter(k => k.empId === empId);
+  const reviews = (DB.kpiReviews||[]).filter(k => k.empId === empId);
   if(reviews.length === 0){
     emp.kpi = 0;
     return;
@@ -15144,7 +15144,7 @@ function editPromotion(id, presetEmpId){
     approvedBy: '',
     reason: '',
     notes: ''
-  } : {...DB.promotions.find(x => x.id === id)};
+  } : {...(DB.promotions||[]).find(x => x.id === id)};
   if(!p) return;
 
   // Tự fill thông tin cũ từ NV được chọn
@@ -15416,7 +15416,7 @@ function savePromotion(id, isNew){
 
   if(isNew) DB.promotions.push(data);
   else{
-    const i = DB.promotions.findIndex(x => x.id === id);
+    const i = (DB.promotions||[]).findIndex(x => x.id === id);
     DB.promotions[i] = data;
   }
   saveData();
@@ -17651,10 +17651,10 @@ function renderSettings(main){
           Nhân viên: <span style="color:var(--accent);font-family:monospace">${DB.employees.length}</span> ·
           Phòng ban: <span style="color:var(--accent);font-family:monospace">${DB.departments.length}</span> ·
           Hợp đồng: <span style="color:var(--accent);font-family:monospace">${DB.contracts.length}</span><br>
-          Đơn nghỉ: <span style="color:var(--accent);font-family:monospace">${DB.leaves.length}</span> ·
+          Đơn nghỉ: <span style="color:var(--accent);font-family:monospace">${(DB.leaves||[]).length}</span> ·
           Vị trí: <span style="color:var(--accent);font-family:monospace">${DB.jobs.length}</span> ·
           Khoá học: <span style="color:var(--accent);font-family:monospace">${DB.courses.length}</span> ·
-          Đánh giá: <span style="color:var(--accent);font-family:monospace">${DB.kpiReviews.length}</span>
+          Đánh giá: <span style="color:var(--accent);font-family:monospace">${(DB.kpiReviews||[]).length}</span>
         </div>
       </div>
     </div>
@@ -18776,7 +18776,7 @@ function renderCasual(main){
     if(!el) return;
     const monthlyData = Array(12).fill(0);
     const monthlyCost = Array(12).fill(0);
-    DB.casuals.filter(r=>r.year===cf.year).forEach(r=>{
+    (DB.casuals||[]).filter(r=>r.year===cf.year).forEach(r=>{
       monthlyData[r.month-1] += r.qty||0;
       monthlyCost[r.month-1] += r.total||((r.qty||0)*(r.hours||0)*(r.rate||0));
     });
@@ -19021,7 +19021,7 @@ function renderCasualAnalysis(){
 
 function editCasual(id){
   const isNew = !id;
-  const r = isNew ? {id:'', deptId:'', month: new Date().getMonth()+1, year: new Date().getFullYear(), qty:0, hours:0, rate:0, desc:'', notes:''} : DB.casuals.find(x=>x.id===id)||{};
+  const r = isNew ? {id:'', deptId:'', month: new Date().getMonth()+1, year: new Date().getFullYear(), qty:0, hours:0, rate:0, desc:'', notes:''} : (DB.casuals||[]).find(x=>x.id===id)||{};
   openModal(`
     <div class="modal-head">
       <div class="modal-title">${isNew?(_lang==="en"?"Add":"Thêm"):(_lang==="en"?"Edit":"Sửa")} <em>bản ghi Casual</em></div>
@@ -19091,7 +19091,7 @@ function saveCasual(id, isNew){
   };
   if(!DB.casuals) DB.casuals=[];
   if(isNew) DB.casuals.push(data);
-  else { const i=DB.casuals.findIndex(x=>x.id===id); if(i>=0) DB.casuals[i]=data; }
+  else { const i=(DB.casuals||[]).findIndex(x=>x.id===id); if(i>=0) DB.casuals[i]=data; }
   saveData(); closeModal();
   toast(isNew?'Đã thêm bản ghi casual':(_lang==="en"?"Updated":"Đã cập nhật"));
   render();
@@ -19108,7 +19108,7 @@ function deleteCasual(id, fromModal=false){
 function exportCasualXLSX(){
   if(typeof XLSX==='undefined'){toast((_lang==="en"?"SheetJS not loaded":"SheetJS chưa tải"),'error');return;}
   const cf=window._casualFilter||{year:new Date().getFullYear()};
-  const recs=DB.casuals.filter(r=>(!cf.year||r.year===cf.year)&&(!cf.month||r.month===cf.month)&&(!cf.dept||r.deptId===cf.dept));
+  const recs=(DB.casuals||[]).filter(r=>(!cf.year||r.year===cf.year)&&(!cf.month||r.month===cf.month)&&(!cf.dept||r.deptId===cf.dept));
   const rows=recs.map(r=>[r.year,r.month,deptName(r.deptId),r.desc||'',r.qty||0,r.hours||0,r.total||(r.qty||0)*(r.hours||0)*(r.rate||0),r.notes||'']);
   const ws=XLSX.utils.aoa_to_sheet([['Năm','Tháng',(_lang==="en"?"Department":"Phòng ban"),(_lang==="en"?"Description":"Mô tả"),(_lang==="en"?"Quantity":"Số lượng"),(_lang==="en"?"Hours":"Số giờ"),'Tổng tiền',(_lang==="en"?"Notes":"Ghi chú")],...rows]);
   ws['!cols']=[{wch:6},{wch:6},{wch:20},{wch:30},{wch:10},{wch:10},{wch:14},{wch:16},{wch:24}];
