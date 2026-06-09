@@ -9673,7 +9673,8 @@ function importLeaveXLSX(){
 
 
 function deleteLeaveYear(){
-  const yr = (window._leaveBal||{}).year || new Date().getFullYear();
+  const yr = parseInt((window._leaveBal||{}).year || new Date().getFullYear());
+  const yrStr = String(yr);
   const curYr = new Date().getFullYear();
   if(yr === curYr){
     toast(`Không thể xóa năm hiện tại (${curYr})`, 'error');
@@ -9686,17 +9687,20 @@ function deleteLeaveYear(){
       Không thể hoàn tác sau khi xóa.
     </div>`,
     ()=>{
-      // Xóa từ leaveSheet của từng NV
-      Object.keys(DB.leaveSheet||{}).forEach(empId=>{
-        if(DB.leaveSheet[empId] && DB.leaveSheet[empId][yr]){
-          delete DB.leaveSheet[empId][yr];
-        }
-      });
-      // Xóa leaveOpening/leavePlan năm đó
-      if(DB.leaveOpening && DB.leaveOpening[yr]) delete DB.leaveOpening[yr];
-      if(DB.leavePlan && DB.leavePlan[yr]) delete DB.leavePlan[yr];
-      // Xóa khỏi leaveExtraYears nếu có
-      if(DB.leaveExtraYears) DB.leaveExtraYears = DB.leaveExtraYears.filter(y=>y!==yr);
+      // Xóa từ leaveSheet — dùng String key để đảm bảo match
+      if(DB.leaveSheet){
+        Object.keys(DB.leaveSheet).forEach(empId=>{
+          if(DB.leaveSheet[empId]){
+            delete DB.leaveSheet[empId][yr];
+            delete DB.leaveSheet[empId][yrStr];
+          }
+        });
+      }
+      // Xóa leaveOpening/leavePlan năm đó (cả number và string key)
+      if(DB.leaveOpening){ delete DB.leaveOpening[yr]; delete DB.leaveOpening[yrStr]; }
+      if(DB.leavePlan){ delete DB.leavePlan[yr]; delete DB.leavePlan[yrStr]; }
+      // Xóa khỏi leaveExtraYears
+      if(DB.leaveExtraYears) DB.leaveExtraYears = DB.leaveExtraYears.filter(y=>parseInt(y)!==yr);
       // Xóa leaves thuộc năm đó
       DB.leaves = (DB.leaves||[]).filter(l=>{
         if(!l.startDate) return true;
@@ -9705,15 +9709,10 @@ function deleteLeaveYear(){
       saveData();
       // ── Xóa Firestore sharded docs của năm đó ──
       if(window.fbDb && window.currentUser){
-        const docsToDelete = [
-          `leavesheet_${yr}`,
-          `leavemeta_${yr}`,
-          `leaves_${yr}`,
-        ];
-        docsToDelete.forEach(docId=>{
+        [`leavesheet_${yr}`, `leavemeta_${yr}`, `leaves_${yr}`].forEach(docId=>{
           window.fbDb.collection('hrdata').doc(docId).delete()
             .then(()=>console.log('[deleteLeaveYear] Deleted:', docId))
-            .catch(()=>{}); // không sao nếu doc không tồn tại
+            .catch(()=>{});
         });
       }
       // Chuyển về năm hiện tại
@@ -9811,7 +9810,21 @@ function renderLeaveReports(main){
   const bal = window._leaveBal;
   const balRates = leaveAccrualRates();
   const balMono = "font-family:'JetBrains Mono',monospace";
-  const balYears = (()=>{ const s=new Set([today.getFullYear()+1, today.getFullYear()]); (DB.leaves||[]).forEach(l=>{ if(l.startDate) s.add(new Date(l.startDate).getFullYear()); }); if(DB.leaveSheet){ Object.values(DB.leaveSheet).forEach(emp=>{ Object.keys(emp).forEach(y=>s.add(parseInt(y))); }); } return [...s].sort((a,b)=>b-a); })();
+  const balYears = (()=>{
+    const s=new Set([today.getFullYear()]); // chỉ mặc định năm hiện tại
+    // Thêm năm có đơn nghỉ thực sự
+    (DB.leaves||[]).forEach(l=>{ if(l.startDate) s.add(new Date(l.startDate).getFullYear()); });
+    // Thêm năm có leaveSheet data thực sự (không rỗng)
+    if(DB.leaveSheet){ Object.values(DB.leaveSheet).forEach(emp=>{
+      Object.keys(emp).forEach(y=>{
+        const yi=parseInt(y);
+        if(!isNaN(yi) && emp[y] && typeof emp[y]==='object' && Object.keys(emp[y]).length>0) s.add(yi);
+      });
+    }); }
+    // Thêm năm user đã mở thủ công
+    (DB.leaveExtraYears||[]).forEach(y=>{ const yi=parseInt(y); if(!isNaN(yi)) s.add(yi); });
+    return [...s].filter(y=>!isNaN(y)).sort((a,b)=>b-a);
+  })();
   const fnum = n => (Math.round((n||0)*100)/100).toString();
   const statusFilter = bal.statusFilter||'active';
   const allPool = statusFilter==='all' ? DB.employees
@@ -10417,7 +10430,15 @@ function renderLeaves(main){
   const balRates = leaveAccrualRates();
   const balMono = "font-family:'JetBrains Mono',monospace";
   const monthShort = ['T1','T2','T3','T4','T5','T6','T7','T8','T9','T10','T11','T12'];
-  const balYears = (()=>{ const s=new Set([today.getFullYear()]); (DB.leaves||[]).forEach(l=>{ if(l.startDate) s.add(new Date(l.startDate).getFullYear()); }); return [...s].sort((a,b)=>b-a); })();
+  const balYears = (()=>{
+    const s=new Set([today.getFullYear()]);
+    (DB.leaves||[]).forEach(l=>{ if(l.startDate) s.add(new Date(l.startDate).getFullYear()); });
+    if(DB.leaveSheet){ Object.values(DB.leaveSheet).forEach(emp=>{
+      Object.keys(emp).forEach(y=>{ const yi=parseInt(y); if(!isNaN(yi) && emp[y] && Object.keys(emp[y]).length>0) s.add(yi); });
+    }); }
+    (DB.leaveExtraYears||[]).forEach(y=>{ const yi=parseInt(y); if(!isNaN(yi)) s.add(yi); });
+    return [...s].sort((a,b)=>b-a);
+  })();
   const fnum = n => (Math.round((n||0)*100)/100).toString();
 
   // Phạm vi: 1 NV cụ thể, hoặc tất cả NV (lọc theo phòng ban nếu có)
