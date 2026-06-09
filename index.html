@@ -3965,6 +3965,45 @@ function renderAnniversaries(){
   `).join('');
 }
 
+function syncCustomFields(){
+  // Lấy DEFAULT_CUSTOM_FIELDS và merge vào DB.customFields hiện tại
+  // Giữ các field user đã tạo thêm, chỉ thêm field mặc định còn thiếu
+  const defaultKeys = new Set(DEFAULT_DATA.customFields.map(cf=>cf.key));
+  const currentKeys = new Set((DB.customFields||[]).map(cf=>cf.key));
+
+  // Tìm field mặc định còn thiếu
+  const missing = DEFAULT_DATA.customFields.filter(cf=>!currentKeys.has(cf.key));
+
+  if(missing.length === 0){
+    toast('✅ Tất cả trường đã đồng bộ, không có gì thiếu','success');
+    return;
+  }
+
+  // Thêm field thiếu vào đúng vị trí (theo thứ tự trong DEFAULT)
+  missing.forEach(newCf=>{
+    // Tìm vị trí đúng dựa theo thứ tự trong DEFAULT
+    const defaultIdx = DEFAULT_DATA.customFields.findIndex(cf=>cf.key===newCf.key);
+    // Tìm field liền trước trong DB.customFields
+    let insertAfterKey = null;
+    for(let i=defaultIdx-1; i>=0; i--){
+      const prevKey = DEFAULT_DATA.customFields[i].key;
+      if(currentKeys.has(prevKey)){ insertAfterKey = prevKey; break; }
+    }
+    if(!DB.customFields) DB.customFields = [];
+    if(insertAfterKey){
+      const insertIdx = DB.customFields.findIndex(cf=>cf.key===insertAfterKey);
+      DB.customFields.splice(insertIdx+1, 0, newCf);
+    } else {
+      DB.customFields.unshift(newCf);
+    }
+    currentKeys.add(newCf.key);
+  });
+
+  saveData();
+  render();
+  toast(`✅ Đã thêm ${missing.length} trường còn thiếu: ${missing.map(cf=>cf.label).join(', ')}`, 'success');
+}
+
 function exportJSON(){
   const blob = new Blob([JSON.stringify(DB, null, 2)], {type:'application/json'});
   const a = document.createElement('a');
@@ -16789,6 +16828,9 @@ function renderSettings(main){
         </div></div>
         <div style="display:flex;flex-direction:column;gap:10px">
           <button class="btn" onclick="exportJSON()">${ICONS.download} Xuất toàn bộ dữ liệu (JSON)</button>
+          <button class="btn" onclick="syncCustomFields()" style="border-color:var(--accent);color:var(--accent)">
+            🔄 Đồng bộ cấu hình trường (customFields)
+          </button>
           <label class="btn" style="cursor:pointer">
             <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" width="14" height="14"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
             Nhập dữ liệu (JSON)
@@ -19361,7 +19403,31 @@ fbAuth.onAuthStateChanged(async user => {
             DB.customFields = DB.customFields.filter(cf=>!_OBS.includes(cf.key));
             if(DB.customFields.length !== _beforeLen){
               console.log('[Migration] Removed obsolete customFields, saving...');
-              setTimeout(()=>saveData(), 500); // push lên Firestore sau khi load xong
+              setTimeout(()=>saveData(), 500);
+            }
+            // Migration: tự động thêm field mặc định còn thiếu (không cần user bấm gì)
+            {
+              const _curKeys = new Set(DB.customFields.map(cf=>cf.key));
+              const _missing = DEFAULT_DATA.customFields.filter(cf=>!_curKeys.has(cf.key));
+              if(_missing.length > 0){
+                _missing.forEach(newCf=>{
+                  const _di = DEFAULT_DATA.customFields.findIndex(cf=>cf.key===newCf.key);
+                  let _insertAfterKey = null;
+                  for(let i=_di-1;i>=0;i--){
+                    const _pk = DEFAULT_DATA.customFields[i].key;
+                    if(_curKeys.has(_pk)){_insertAfterKey=_pk;break;}
+                  }
+                  if(_insertAfterKey){
+                    const _ii = DB.customFields.findIndex(cf=>cf.key===_insertAfterKey);
+                    DB.customFields.splice(_ii+1,0,newCf);
+                  } else {
+                    DB.customFields.unshift(newCf);
+                  }
+                  _curKeys.add(newCf.key);
+                });
+                console.log('[Migration] Added missing fields:', _missing.map(cf=>cf.key));
+                setTimeout(()=>saveData(), 800);
+              }
             }
             if(!DB.casuals) DB.casuals=[];
             if(!DB.trainees) DB.trainees=[];
@@ -19525,12 +19591,24 @@ fbAuth.onAuthStateChanged(async user => {
                 (DB.employees||[]).forEach(e=>{ if(e.photo) localPhotos[e.id]=e.photo; });
                 try{ const pm=JSON.parse(localStorage.getItem(STORE_KEY+'_photos')||'{}'); Object.assign(localPhotos,pm); }catch(pe){}
                 FS_DOC_MAP[docId].forEach(key=>{ if(cloudData[key] !== undefined) DB[key] = cloudData[key]; });
-                // Migration: xóa custom fields lỗi thời sau khi sync Firestore
+                // Migration: xóa + thêm field mặc định còn thiếu — tự động, không cần user bấm
                 if(DB.customFields){
                   const _OBS2=['currentContractStart','currentContractEnd','probationResult'];
                   const _b2=DB.customFields.length;
                   DB.customFields=DB.customFields.filter(cf=>!_OBS2.includes(cf.key));
-                  if(DB.customFields.length!==_b2) setTimeout(()=>saveData(),500);
+                  const _curKeys2=new Set(DB.customFields.map(cf=>cf.key));
+                  const _missing2=DEFAULT_DATA.customFields.filter(cf=>!_curKeys2.has(cf.key));
+                  if(_missing2.length>0){
+                    _missing2.forEach(newCf=>{
+                      const _di=DEFAULT_DATA.customFields.findIndex(cf=>cf.key===newCf.key);
+                      let _iak=null;
+                      for(let i=_di-1;i>=0;i--){ const _pk=DEFAULT_DATA.customFields[i].key; if(_curKeys2.has(_pk)){_iak=_pk;break;} }
+                      if(_iak){ const _ii=DB.customFields.findIndex(cf=>cf.key===_iak); DB.customFields.splice(_ii+1,0,newCf); }
+                      else DB.customFields.unshift(newCf);
+                      _curKeys2.add(newCf.key);
+                    });
+                  }
+                  if(DB.customFields.length!==_b2||_missing2.length>0) setTimeout(()=>saveData(),800);
                 }
                 // Ghép ảnh + convert probation→active (defensive)
                 if(DB.employees) DB.employees.forEach(e=>{
