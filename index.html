@@ -593,6 +593,11 @@ input:checked + .slider::before{transform:translateX(16px);background:var(--bg)}
         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"/></svg>
         <span data-i18n="nav_recruitment">Tuyển dụng</span>
       </div>
+      <div class="nav-item" data-page="workforce">
+        <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+        <span>Biến động NS</span>
+        <span class="nav-badge" id="navWorkforceCount"></span>
+      </div>
       <div class="nav-item" data-page="training">
         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 14l9-5-9-5-9 5 9 5z"/><path stroke-linecap="round" stroke-linejoin="round" d="M12 14l6.16-3.422a12.083 12.083 0 01.665 6.479A11.952 11.952 0 0012 20.055a11.952 11.952 0 00-6.824-2.998 12.078 12.078 0 01.665-6.479L12 14z"/></svg>
         <span data-i18n="nav_training2">Đào tạo</span>
@@ -2141,6 +2146,7 @@ function render(){
     'job-detail': renderJobDetail,
     training: renderTraining,
     performance: renderPerformance,
+    workforce: renderWorkforce,
     awards: renderAwards,
     warnings: renderWarnings,
     tasks: renderTasks,
@@ -11546,6 +11552,302 @@ function renderRecruitmentReports(main){
       });
     }
   }, 0);
+}
+
+// ═══════════════════════════════════════════════
+// BIẾN ĐỘNG NHÂN SỰ — NV Mới & Nghỉ Việc
+// ═══════════════════════════════════════════════
+function renderWorkforce(main){
+  const today = new Date();
+  const curYear = today.getFullYear();
+  const curMonth = today.getMonth() + 1;
+  if(!window._wfTab) window._wfTab = 'new';
+  if(!window._wfYear) window._wfYear = curYear;
+  const tab = window._wfTab;
+  const yr = window._wfYear;
+  const mnL = ['T1','T2','T3','T4','T5','T6','T7','T8','T9','T10','T11','T12'];
+  const PAL = ['#7eb6e8','#7ec699','#d4a574','#b794d4','#e8b974','#7dd3c0','#e57373','#a8b4f0'];
+
+  // Build year list
+  const yearsSet = new Set([curYear, curYear-1, curYear-2, curYear-3]);
+  DB.employees.forEach(e=>{ if(e.joined) yearsSet.add(new Date(e.joined).getFullYear()); });
+  DB.employees.forEach(e=>{
+    const ex = getExitDate(e);
+    if(ex) yearsSet.add(ex.getFullYear());
+  });
+  const yearsList = [...yearsSet].sort((a,b)=>b-a);
+  const yearOpts = yearsList.map(y=>`<option value="${y}" ${y===yr?'selected':''}>${y}</option>`).join('');
+
+  // ── NV MỚI ──
+  const newEmps = DB.employees.filter(e=>{
+    if(!e.joined) return false;
+    return new Date(e.joined).getFullYear() === yr;
+  }).sort((a,b)=>new Date(b.joined)-new Date(a.joined));
+
+  const newByMonth = mnL.map((_,mi)=>newEmps.filter(e=>new Date(e.joined).getMonth()===mi).length);
+  const totalNew = newEmps.length;
+
+  // Dept breakdown for new
+  const newByDept = {};
+  newEmps.forEach(e=>{ const d=deptName(e.deptId)||'Khác'; newByDept[d]=(newByDept[d]||0)+1; });
+
+  // ── NV NGHỈ VIỆC ──
+  const exitEmps = DB.employees.filter(e=>{
+    const ex = getExitDate(e);
+    return ex && ex.getFullYear() === yr;
+  }).sort((a,b)=>{ const xa=getExitDate(a),xb=getExitDate(b); return xb-xa; });
+
+  const exitByMonth = mnL.map((_,mi)=>exitEmps.filter(e=>{
+    const ex=getExitDate(e); return ex && ex.getMonth()===mi;
+  }).length);
+  const totalExit = exitEmps.length;
+
+  // Exit reasons
+  const exitReasons = {};
+  exitEmps.forEach(e=>{
+    const reason = (DB.customData[e.id]||{}).exitReason || 'Không rõ';
+    exitReasons[reason] = (exitReasons[reason]||0)+1;
+  });
+
+  // Exit by dept
+  const exitByDept = {};
+  exitEmps.forEach(e=>{ const d=deptName(e.deptId)||'Khác'; exitByDept[d]=(exitByDept[d]||0)+1; });
+
+  // Turnover rate (YTD)
+  const avgHC = (()=>{
+    let total=0, count=0;
+    for(let m=0;m<(yr===curYear?curMonth:12);m++){
+      const snap = new Date(yr, m+1, 0);
+      const hc = DB.employees.filter(e=>{
+        if(!e.joined||new Date(e.joined)>snap) return false;
+        const ex=getExitDate(e); return !ex||ex>snap;
+      }).length;
+      total+=hc; count++;
+    }
+    return count?Math.round(total/count):0;
+  })();
+  const turnoverRate = avgHC ? (totalExit/avgHC*100).toFixed(1) : '—';
+
+  main.innerHTML = `
+    <div class="topbar">
+      <div class="topbar-left">
+        <h1 class="page-title">Biến động <em>nhân sự</em></h1>
+        <div class="page-sub">NV mới & nghỉ việc · ${totalNew} vào · ${totalExit} ra · Tỷ lệ turnover ${turnoverRate}%</div>
+      </div>
+      <div class="topbar-actions">
+        <select class="filter-select" onchange="window._wfYear=parseInt(this.value);render()">${yearOpts}</select>
+        <button class="btn" onclick="exportWorkforce(${yr})">⬇ Xuất Excel</button>
+      </div>
+    </div>
+
+    <!-- KPI Cards -->
+    <div class="row row-4" style="margin-bottom:12px">
+      <div class="card" style="padding:16px 20px">
+        <div style="font-size:10px;font-weight:700;letter-spacing:.08em;color:var(--ink-muted);margin-bottom:6px">NV MỚI ${yr}</div>
+        <div style="font-size:32px;font-weight:800;color:var(--success)">${totalNew}</div>
+        <div style="font-size:11px;color:var(--ink-muted)">Nhân viên gia nhập</div>
+      </div>
+      <div class="card" style="padding:16px 20px">
+        <div style="font-size:10px;font-weight:700;letter-spacing:.08em;color:var(--ink-muted);margin-bottom:6px">NGHỈ VIỆC ${yr}</div>
+        <div style="font-size:32px;font-weight:800;color:var(--danger)">${totalExit}</div>
+        <div style="font-size:11px;color:var(--ink-muted)">Nhân viên rời đi</div>
+      </div>
+      <div class="card" style="padding:16px 20px">
+        <div style="font-size:10px;font-weight:700;letter-spacing:.08em;color:var(--ink-muted);margin-bottom:6px">TĂNG THUẦN</div>
+        <div style="font-size:32px;font-weight:800;color:${totalNew-totalExit>=0?'var(--success)':'var(--danger)'}">${totalNew-totalExit>=0?'+':''}${totalNew-totalExit}</div>
+        <div style="font-size:11px;color:var(--ink-muted)">Net headcount change</div>
+      </div>
+      <div class="card" style="padding:16px 20px">
+        <div style="font-size:10px;font-weight:700;letter-spacing:.08em;color:var(--ink-muted);margin-bottom:6px">TURNOVER RATE</div>
+        <div style="font-size:32px;font-weight:800;color:var(--accent)">${turnoverRate}%</div>
+        <div style="font-size:11px;color:var(--ink-muted)">HC trung bình: ${avgHC} NV</div>
+      </div>
+    </div>
+
+    <!-- Tabs -->
+    <div style="display:flex;gap:6px;margin-bottom:14px">
+      <button class="rec-tab ${tab==='new'?'active':''}" onclick="window._wfTab='new';render()">
+        🟢 NV Mới (${totalNew})
+      </button>
+      <button class="rec-tab ${tab==='exit'?'active':''}" onclick="window._wfTab='exit';render()">
+        🔴 Nghỉ việc (${totalExit})
+      </button>
+    </div>
+
+    ${tab==='new' ? renderWfNew(newEmps, newByMonth, newByDept, mnL, PAL, yr, curYear, curMonth) : renderWfExit(exitEmps, exitByMonth, exitByDept, exitReasons, mnL, PAL, yr, curYear, curMonth)}
+  `;
+
+  setTimeout(()=>{
+    // Chart: monthly bar
+    const chartId = tab==='new' ? 'chartWfNew' : 'chartWfExit';
+    const chartEl = document.getElementById(chartId);
+    if(chartEl){
+      if(Chart.getChart(chartEl)) Chart.getChart(chartEl).destroy();
+      const data = tab==='new' ? newByMonth : exitByMonth;
+      const color = tab==='new' ? 'rgba(126,198,153,.75)' : 'rgba(229,115,115,.75)';
+      new Chart(chartEl, {
+        type:'bar',
+        data:{labels:mnL, datasets:[{data:data.map((v,i)=>(yr<curYear||(yr===curYear&&i<curMonth))?v:null), backgroundColor:color, borderRadius:5}]},
+        options:{responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false},datalabels:{display:false}},
+          scales:{x:{grid:{display:false}}, y:{grid:{color:'#1f2630'}, beginAtZero:true, ticks:{stepSize:1}}}}
+      });
+    }
+    // Chart: donut by dept
+    const deptId = tab==='new' ? 'chartWfNewDept' : 'chartWfExitDept';
+    const deptEl = document.getElementById(deptId);
+    if(deptEl){
+      if(Chart.getChart(deptEl)) Chart.getChart(deptEl).destroy();
+      const deptData = tab==='new' ? newByDept : exitByDept;
+      const labels = Object.keys(deptData);
+      const vals = labels.map(k=>deptData[k]);
+      new Chart(deptEl, {
+        type:'doughnut',
+        data:{labels, datasets:[{data:vals, backgroundColor:PAL, borderWidth:0, hoverOffset:6}]},
+        options:{responsive:true, maintainAspectRatio:false,
+          plugins:{legend:{position:'right',labels:{usePointStyle:true,padding:10,font:{size:10}}},datalabels:{display:false}}}
+      });
+    }
+    // Chart: exit reasons (only exit tab)
+    if(tab==='exit'){
+      const rrEl = document.getElementById('chartWfExitReason');
+      if(rrEl){
+        if(Chart.getChart(rrEl)) Chart.getChart(rrEl).destroy();
+        const rLabels = Object.keys(exitReasons);
+        const rVals = rLabels.map(k=>exitReasons[k]);
+        new Chart(rrEl, {
+          type:'bar',
+          data:{labels:rLabels, datasets:[{data:rVals, backgroundColor:PAL, borderRadius:4}]},
+          options:{responsive:true, maintainAspectRatio:false, indexAxis:'y',
+            plugins:{legend:{display:false},datalabels:{display:false}},
+            scales:{x:{grid:{color:'#1f2630'}, beginAtZero:true, ticks:{stepSize:1}}, y:{grid:{display:false}}}}
+        });
+      }
+    }
+  }, 50);
+}
+
+function renderWfNew(emps, byMonth, byDept, mnL, PAL, yr, curYear, curMonth){
+  const rows = emps.map(e=>`
+    <tr onclick="viewEmployee('${e.id}')" style="cursor:pointer">
+      <td><div style="font-weight:600">${escapeHtml(e.name||'')}</div><div style="font-size:11px;color:var(--ink-muted)">${escapeHtml(e.code||'')}</div></td>
+      <td>${escapeHtml(deptName(e.deptId))}</td>
+      <td>${escapeHtml(e.role||'')}</td>
+      <td>${fmtDate(e.joined)}</td>
+      <td><span class="badge active" style="font-size:10px">Đang làm</span></td>
+    </tr>`).join('');
+
+  return `
+    <div class="row row-2" style="margin-bottom:12px">
+      <div class="card">
+        <div class="card-head"><div><div class="card-title">🟢 NV mới theo tháng — ${yr}</div></div></div>
+        <div class="chart-wrap" style="height:220px"><canvas id="chartWfNew"></canvas></div>
+      </div>
+      <div class="card">
+        <div class="card-head"><div><div class="card-title">Phân bổ theo bộ phận</div></div></div>
+        <div class="chart-wrap" style="height:220px"><canvas id="chartWfNewDept"></canvas></div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-head">
+        <div><div class="card-title">Danh sách NV mới — ${yr}</div><div class="card-sub">${emps.length} nhân viên</div></div>
+      </div>
+      ${emps.length ? `
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr>
+            <th>Họ tên</th><th>Bộ phận</th><th>Chức vụ</th><th>Ngày vào</th><th>Trạng thái</th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>` : `<div class="empty-state"><div>Không có NV mới trong năm ${yr}</div></div>`}
+    </div>`;
+}
+
+function renderWfExit(emps, byMonth, byDept, reasons, mnL, PAL, yr, curYear, curMonth){
+  const rows = emps.map(e=>{
+    const exitDate = getExitDate(e);
+    const cd = DB.customData[e.id]||{};
+    return `<tr onclick="viewEmployee('${e.id}')" style="cursor:pointer">
+      <td><div style="font-weight:600">${escapeHtml(e.name||'')}</div><div style="font-size:11px;color:var(--ink-muted)">${escapeHtml(e.code||'')}</div></td>
+      <td>${escapeHtml(deptName(e.deptId))}</td>
+      <td>${escapeHtml(e.role||'')}</td>
+      <td>${exitDate?fmtDate(exitDate.toISOString().slice(0,10)):'—'}</td>
+      <td style="max-width:200px;font-size:11.5px">${escapeHtml(cd.exitReason||'—')}</td>
+    </tr>`;
+  }).join('');
+
+  const reasonRows = Object.entries(reasons).sort((a,b)=>b[1]-a[1]).map(([r,c])=>`
+    <tr>
+      <td>${escapeHtml(r)}</td>
+      <td style="font-weight:700;color:var(--danger);font-family:'JetBrains Mono',monospace">${c}</td>
+      <td><div style="height:6px;background:rgba(229,115,115,.15);border-radius:3px"><div style="height:6px;background:var(--danger);border-radius:3px;width:${Math.round(c/emps.length*100)}%"></div></div></td>
+      <td style="font-size:11px;color:var(--ink-muted)">${emps.length?Math.round(c/emps.length*100):0}%</td>
+    </tr>`).join('');
+
+  return `
+    <div class="row row-2" style="margin-bottom:12px">
+      <div class="card">
+        <div class="card-head"><div><div class="card-title">🔴 Nghỉ việc theo tháng — ${yr}</div></div></div>
+        <div class="chart-wrap" style="height:220px"><canvas id="chartWfExit"></canvas></div>
+      </div>
+      <div class="card">
+        <div class="card-head"><div><div class="card-title">Phân bổ theo bộ phận</div></div></div>
+        <div class="chart-wrap" style="height:220px"><canvas id="chartWfExitDept"></canvas></div>
+      </div>
+    </div>
+    <div class="row row-2" style="margin-bottom:12px">
+      <div class="card">
+        <div class="card-head"><div><div class="card-title">Lý do nghỉ việc</div><div class="card-sub">${emps.length} NV nghỉ · ${yr}</div></div></div>
+        <div class="chart-wrap" style="height:${Math.max(150, Object.keys(reasons).length*40)}px"><canvas id="chartWfExitReason"></canvas></div>
+      </div>
+      <div class="card">
+        <div class="card-head"><div><div class="card-title">Tổng hợp lý do</div></div></div>
+        ${Object.keys(reasons).length ? `
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead><tr><th>Lý do</th><th>Số NV</th><th style="width:120px">Tỷ trọng</th><th>%</th></tr></thead>
+            <tbody>${reasonRows}</tbody>
+          </table>
+        </div>` : `<div class="empty-state"><div>Chưa có dữ liệu</div></div>`}
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-head">
+        <div><div class="card-title">Danh sách NV nghỉ việc — ${yr}</div><div class="card-sub">${emps.length} nhân viên</div></div>
+      </div>
+      ${emps.length ? `
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr><th>Họ tên</th><th>Bộ phận</th><th>Chức vụ</th><th>Ngày nghỉ</th><th>Lý do</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>` : `<div class="empty-state"><div>Không có NV nghỉ việc trong năm ${yr}</div></div>`}
+    </div>`;
+}
+
+function exportWorkforce(yr){
+  if(typeof XLSX === 'undefined'){ toast('SheetJS chưa tải','error'); return; }
+  const wb = XLSX.utils.book_new();
+
+  // Sheet 1: NV mới
+  const newEmps = DB.employees.filter(e=>e.joined&&new Date(e.joined).getFullYear()===yr)
+    .sort((a,b)=>new Date(b.joined)-new Date(a.joined));
+  const newRows = [['Mã NV','Họ tên','Bộ phận','Chức vụ','Ngày vào làm','Cấp bậc'],
+    ...newEmps.map(e=>[e.code,e.name,deptName(e.deptId),e.role,isoToDisp(e.joined),e.level||''])];
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(newRows), `NV Mới ${yr}`);
+
+  // Sheet 2: Nghỉ việc
+  const exitEmps = DB.employees.filter(e=>{ const ex=getExitDate(e); return ex&&ex.getFullYear()===yr; })
+    .sort((a,b)=>getExitDate(b)-getExitDate(a));
+  const exitRows = [['Mã NV','Họ tên','Bộ phận','Chức vụ','Ngày vào','Ngày nghỉ','Lý do nghỉ'],
+    ...exitEmps.map(e=>{
+      const ex=getExitDate(e); const cd=DB.customData[e.id]||{};
+      return [e.code,e.name,deptName(e.deptId),e.role,isoToDisp(e.joined),ex?isoToDisp(ex.toISOString().slice(0,10)):'',cd.exitReason||''];
+    })];
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(exitRows), `Nghỉ Việc ${yr}`);
+
+  XLSX.writeFile(wb, `BienDongNhanSu_${yr}.xlsx`);
+  toast(`✅ Xuất file BienDongNhanSu_${yr}.xlsx`, 'success');
 }
 
 function renderRecruitment(main){
