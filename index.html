@@ -1477,7 +1477,7 @@ function loadData(){
 // ── Mapping: DB field → Firestore document ──
 const FS_DOC_MAP = {
   employees:  ['departments'],
-  hr:         ['leaves','contracts','leaveSheet','leaveOpening','leavePlan','salaryYears'],
+  hr:         ['leaves','contracts','leaveSheet','leaveOpening','leavePlan','salaryYears','trainingExtraYears','leaveExtraYears'],
   recruitment:['candidates','jobs'],
   workforce:  ['casuals','trainees','traineeSchedules','svcData','courses'],
   performance:['kpiReviews','promotions','rewardRecords','disciplineRecords'],
@@ -1560,7 +1560,8 @@ async function loadEmpProfiles(localPhotos){
 
 // saveData: lưu localStorage + push Firestore — Firestore LUÔN chạy dù localStorage lỗi
 function saveData(changedKeys=null){
-  // ── Bước 1: localStorage (không quan trọng nếu lỗi — Firestore là nguồn chính) ──
+  // Đánh dấu thời điểm lưu để tránh cloud cũ đè lên
+  DB._lastSaved = Date.now();
   try{
     const dbNoPhoto = JSON.parse(JSON.stringify(DB));
     dbNoPhoto.employees = (dbNoPhoto.employees||[]).map(e=>{ const {photo,...r}=e; return r; });
@@ -2495,6 +2496,17 @@ const DEFAULT_BLACKLIST_CONFIG = {
 function getExitDate(e){
   const cd = DB.customData[e.id] || {};
   if(cd.exitDate) return new Date(cd.exitDate);
+  // Fallback: nếu status=exit mà không có exitDate → dùng ngày joined làm proxy (để tính năm)
+  // hoặc return một Date cũ để vẫn được tính vào count
+  if(e.status === 'exit'){
+    // Trả về 1 ngày hợp lệ — dùng joined + 6 tháng nếu không có exitDate
+    if(e.joined){
+      const d = new Date(e.joined.match(/^\d{2}\/\d{2}\/\d{4}$/) ? e.joined.split('/').reverse().join('-') : e.joined);
+      d.setMonth(d.getMonth()+6);
+      return d;
+    }
+    return new Date(); // fallback: hôm nay
+  }
   return null;
 }
 const MN = ['T1','T2','T3','T4','T5','T6','T7','T8','T9','T10','T11','T12'];
@@ -3425,46 +3437,29 @@ function renderDashboardCharts(){
       datasets:[
         {
           type:'bar',
-          label:(_lang==="en"?"Working":"Đang làm"),
-          data:headcountData,
-          backgroundColor:'rgba(212,165,116,.55)',
-          borderColor:'#d4a574',
-          borderWidth:1.5,
+          label:(_lang==="en"?"New hires":"Nhận việc"),
+          data:newHiresData,
+          backgroundColor:'rgba(126,198,153,.8)',
+          borderColor:'#7ec699',
+          borderWidth:0,
           borderRadius:4,
-          barThickness:18,
+          barThickness:14,
           yAxisID:'y',
-          order:2,
+          order:1,
           skipNull:true
         },
         {
-          type:'line',
-          label:(_lang==="en"?"New hires":"Nhận việc"),
-          data:newHiresData,
-          borderColor:'#7ec699',
-          backgroundColor:'transparent',
-          borderWidth:2,
-          tension:.3,
-          pointBackgroundColor:'#7ec699',
-          pointRadius:3,
-          yAxisID:'y1',
-          borderDash:[5,3],
-          spanGaps:false,
-          order:1
-        },
-        {
-          type:'line',
+          type:'bar',
           label:(_lang==="en"?"Resigned":"Nghỉ việc"),
           data:exitsData,
+          backgroundColor:'rgba(229,115,115,.8)',
           borderColor:'#e57373',
-          backgroundColor:'transparent',
-          borderWidth:2,
-          tension:.3,
-          pointBackgroundColor:'#e57373',
-          pointRadius:3,
-          yAxisID:'y1',
-          borderDash:[5,3],
-          spanGaps:false,
-          order:1
+          borderWidth:0,
+          borderRadius:4,
+          barThickness:14,
+          yAxisID:'y',
+          order:1,
+          skipNull:true
         }
       ]
     },
@@ -3474,8 +3469,7 @@ function renderDashboardCharts(){
       plugins:{legend:{position:'top', labels:{usePointStyle:true, padding:12, boxWidth:8, font:{size:11}}}},
       scales:{
         x:{grid:{display:false}},
-        y:{position:'left', grid:{color:'#1f2630'}, beginAtZero:false, ticks:{color:'#d4a574'}},
-        y1:{position:'right', grid:{drawOnChartArea:false}, beginAtZero:true, ticks:{color:'#7ec699'}}
+        y:{position:'left', grid:{color:'#1f2630'}, beginAtZero:true, ticks:{stepSize:1}}
       }
     }
   });
@@ -4053,20 +4047,33 @@ function renderEmployeeProfile(main){
   const dept = DB.departments.find(d=>d.id===e.deptId);
   const deptColor = dept ? dept.color : 'var(--accent)';
 
-  // Tính thâm niên
-  const joined = new Date(e.joined);
+  // Tính thâm niên — chuẩn hóa date format dd/mm/yyyy hoặc yyyy-mm-dd
+  const _toISO = (s) => {
+    if(!s) return null;
+    if(/^\d{2}\/\d{2}\/\d{4}$/.test(s)) return s.split('/').reverse().join('-');
+    return s;
+  };
   const now = new Date();
-  let years = now.getFullYear() - joined.getFullYear();
-  let months = now.getMonth() - joined.getMonth();
-  if(months < 0){ years--; months += 12; }
-  const tenureStr = years > 0 ? `${years} năm ${months} tháng` : `${months} tháng`;
+  const joinedISO = _toISO(e.joined);
+  const joined = joinedISO ? new Date(joinedISO) : null;
+  let tenureStr = '—';
+  if(joined && !isNaN(joined)){
+    let years = now.getFullYear() - joined.getFullYear();
+    let months = now.getMonth() - joined.getMonth();
+    if(months < 0){ years--; months += 12; }
+    if(years < 0){ years = 0; months = 0; }
+    tenureStr = years > 0 ? `${years} năm ${months} tháng` : months > 0 ? `${months} tháng` : 'Mới vào';
+  }
 
-  // Tính tuổi nếu có ngày sinh
+  // Tính tuổi — auto theo ngày hiện tại
   let age = '';
   if(e.dob){
-    const dob = new Date(e.dob);
-    age = now.getFullYear() - dob.getFullYear();
-    if(now.getMonth() < dob.getMonth() || (now.getMonth() === dob.getMonth() && now.getDate() < dob.getDate())) age--;
+    const dobISO = _toISO(e.dob);
+    const dob = dobISO ? new Date(dobISO) : null;
+    if(dob && !isNaN(dob)){
+      age = now.getFullYear() - dob.getFullYear();
+      if(now.getMonth() < dob.getMonth() || (now.getMonth() === dob.getMonth() && now.getDate() < dob.getDate())) age--;
+    }
   }
 
   // Nhóm custom fields có dữ liệu — hiển thị TẤT CẢ, kể cả keys chưa đăng ký
@@ -7427,7 +7434,8 @@ function renderContracts(main){
   });
 
   // KPIs - chỉ cho NV đang làm
-  const totalActive = currentContracts.length;
+  // totalActive = tổng NV đang làm (không phụ thuộc vào có HĐ trong DB.contracts hay không)
+  const totalActive = activeEmpIds.size;
   const validContracts = currentContracts.filter(c => !c.endDate || new Date(c.endDate) >= today);
   const expiringIn60 = currentContracts.filter(c => {
     if(!c.endDate) return false;
@@ -9844,6 +9852,41 @@ function leaveTabsHTML(active){
   `;
 }
 
+function addLeavePlanYear(){
+  const curYr = new Date().getFullYear();
+  openModal(`
+    <div class="modal-head"><div class="modal-title">📅 Thêm năm — Kế hoạch nghỉ phép</div></div>
+    <div class="form-grid">
+      <div class="field full"><label>Năm muốn thêm</label>
+        <input type="number" id="lp_new_year" value="${curYr+1}" min="2000" max="2100" style="font-size:18px;font-weight:700;text-align:center">
+      </div>
+      <div class="field full"><label>Gợi ý nhanh</label>
+        <div style="display:flex;flex-wrap:wrap;gap:6px">
+          ${[curYr,curYr+1,curYr+2,curYr+3].map(y=>`<button class="btn" onclick="document.getElementById('lp_new_year').value=${y}" style="font-size:13px;font-weight:600">${y}</button>`).join('')}
+        </div>
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeModal()">Huỷ</button>
+      <button class="btn btn-primary" onclick="confirmAddLeavePlanYear()">✅ Thêm</button>
+    </div>
+  `);
+}
+function confirmAddLeavePlanYear(){
+  const yr = parseInt(document.getElementById('lp_new_year')?.value);
+  if(!yr||yr<2000||yr>2100){ toast('Năm không hợp lệ','error'); return; }
+  if(!DB.leaveExtraYears) DB.leaveExtraYears=[];
+  if(!DB.leaveExtraYears.includes(yr)) DB.leaveExtraYears.push(yr);
+  if(!DB.leavePlan) DB.leavePlan={};
+  if(!DB.leavePlan[yr]) DB.leavePlan[yr]={};
+  saveData();
+  if(!window._leaveBal) window._leaveBal={};
+  window._leaveBal.year=yr;
+  window._leaveView='plan';
+  closeModal(); render();
+  toast(`✅ Đã thêm năm ${yr}`,'success');
+}
+
 function renderLeavePlan(main){
   const today = new Date();
   const curYear = (window._leaveBal||{}).year || today.getFullYear();
@@ -9933,6 +9976,77 @@ function renderLeavePlan(main){
       ${cells}
     </tr>`;
   }).join('');
+  if(!window._leavePlanShow) window._leavePlanShow = {al:true, cl:true};
+  const showAL = window._leavePlanShow.al;
+  const showCL = window._leavePlanShow.cl;
+
+  // Lọc rows theo AL/CL toggle
+  const filteredTableRows = depts.map(dept => {
+    const plan = DB.leavePlan[curYear][dept.id] || {};
+    const types = ['al','cl'].filter(t => t==='al'?showAL:showCL);
+    if(!types.length) return '';
+    const rows = types.map(type => {
+      const isAL = type === 'al';
+      const color = isAL ? 'var(--success)' : 'var(--info)';
+      const planColor = '#ff9f43';
+      const cells = mnShort.map((_,mi) => {
+        const real = getRealByDept(dept.id, mi);
+        const realVal = real[type];
+        const planVal = (plan[mi]||{})[type] || 0;
+        const delta = dc(planVal, realVal);
+        const isFuture = (mi+1) > curMonth;
+        return `<td style="padding:2px 1px;text-align:center;background:${isFuture?'rgba(255,160,80,.04)':''}">
+          <div style="display:flex;flex-direction:column;align-items:center;gap:1px">
+            <span style="font-size:10px;font-weight:600;color:${color};font-family:'JetBrains Mono',monospace">${realVal||'—'}</span>
+            <input type="number" min="0" step="0.5" value="${planVal||''}" placeholder="0"
+              oninput="window._saveLeavePlan('${dept.id}',${mi},'${type}',this.value)"
+              style="${inpStyle(planColor)}">
+            <span style="font-size:9px;font-weight:700;color:${delta.color}">${delta.text}</span>
+          </div>
+        </td>`;
+      }).join('');
+      const rowspan = types.length;
+      return `<tr>
+        ${type===types[0] ? `<td rowspan="${rowspan}" style="padding:5px 10px;font-weight:600;font-size:12px;border-right:2px solid var(--border-strong);position:sticky;left:0;background:var(--bg-card);z-index:1;min-width:140px">${escapeHtml(dept.name)}</td>` : ''}
+        <td style="padding:3px 6px;font-size:10px;font-weight:700;color:${color};white-space:nowrap;border-right:1px solid var(--border)">${isAL?'AL':'CL'}</td>
+        ${cells}
+      </tr>`;
+    }).join('') + `<tr><td colspan="14" style="height:2px;background:rgba(255,255,255,.04)"></td></tr>`;
+    return rows;
+  }).join('');
+
+  const filteredTotalRow = ['al','cl'].filter(t=>t==='al'?showAL:showCL).map(type => {
+    const isAL = type === 'al';
+    const color = isAL ? 'var(--success)' : 'var(--info)';
+    const cells = mnShort.map((_,mi) => {
+      let totalReal = 0, totalPlan = 0;
+      depts.forEach(d => {
+        totalReal += getRealByDept(d.id, mi)[type];
+        totalPlan += ((DB.leavePlan[curYear][d.id]||{})[mi]||{})[type] || 0;
+      });
+      totalReal = Math.round(totalReal*100)/100;
+      totalPlan = Math.round(totalPlan*100)/100;
+      const delta = dc(totalPlan, totalReal);
+      return `<td style="padding:4px 2px;text-align:center">
+        <div style="font-weight:700;color:${color};font-size:11px;font-family:'JetBrains Mono',monospace">${totalReal||'—'}</div>
+        <div style="font-size:10px;color:#ff9f43;font-family:'JetBrains Mono',monospace">${totalPlan||'—'}</div>
+        <div style="font-size:9px;font-weight:700;color:${delta.color}">${delta.text}</div>
+      </td>`;
+    }).join('');
+    const types = ['al','cl'].filter(t=>t==='al'?showAL:showCL);
+    return `<tr style="background:var(--bg-elev)">
+      ${type===types[0] ? `<td rowspan="${types.length}" style="padding:6px 10px;font-weight:700;font-size:12px;color:var(--accent);border-right:2px solid var(--border-strong);position:sticky;left:0;background:var(--bg-elev);z-index:1">TỔNG</td>` : ''}
+      <td style="padding:3px 6px;font-size:10px;font-weight:700;color:${color};border-right:1px solid var(--border)">${isAL?'AL':'CL'}</td>
+      ${cells}
+    </tr>`;
+  }).join('');
+
+  // Build year options (dùng chung với _leaveBal + DB.leavePlan keys)
+  const lpYears = new Set([today.getFullYear()+1, today.getFullYear()]);
+  if(DB.leavePlan) Object.keys(DB.leavePlan).forEach(y=>lpYears.add(parseInt(y)));
+  (DB.leaveExtraYears||[]).forEach(y=>lpYears.add(y));
+  const lpYearOpts = [...lpYears].sort((a,b)=>b-a).map(y=>`<option value="${y}" ${y===curYear?'selected':''}>${y}</option>`).join('');
+
   main.innerHTML = `
     <div class="topbar">
       <div class="topbar-left">
@@ -9940,16 +10054,33 @@ function renderLeavePlan(main){
         <div class="page-sub">Năm ${curYear} · Kế hoạch & Thực tế theo bộ phận</div>
       </div>
       <div class="topbar-actions">
+        <!-- Toggle AL/CL -->
+        <div style="display:flex;gap:4px;align-items:center">
+          <button onclick="window._leavePlanShow=window._leavePlanShow||{al:true,cl:true};window._leavePlanShow.al=!window._leavePlanShow.al;render()"
+            style="padding:4px 12px;border-radius:6px;border:2px solid var(--success);font-size:12px;font-weight:700;cursor:pointer;
+                   background:${showAL?'rgba(126,198,153,.2)':'transparent'};color:${showAL?'var(--success)':'var(--ink-muted)'}">
+            AL ${showAL?'✓':''}
+          </button>
+          <button onclick="window._leavePlanShow=window._leavePlanShow||{al:true,cl:true};window._leavePlanShow.cl=!window._leavePlanShow.cl;render()"
+            style="padding:4px 12px;border-radius:6px;border:2px solid var(--info);font-size:12px;font-weight:700;cursor:pointer;
+                   background:${showCL?'rgba(126,182,232,.2)':'transparent'};color:${showCL?'var(--info)':'var(--ink-muted)'}">
+            CL ${showCL?'✓':''}
+          </button>
+        </div>
         <select class="filter-select" onchange="window._leaveBal=(window._leaveBal||{});window._leaveBal.year=parseInt(this.value);render()">
-          ${(()=>{ const s=new Set([today.getFullYear()+1,today.getFullYear()]); if(DB.leavePlan)Object.keys(DB.leavePlan).forEach(y=>s.add(parseInt(y))); return [...s].sort((a,b)=>b-a).map(y=>`<option value="${y}" ${y===curYear?'selected':''}>${y}</option>`).join(''); })()}
+          ${lpYearOpts}
         </select>
+        <button class="btn" onclick="addLeavePlanYear()" style="font-size:12px;padding:4px 10px">+ Năm</button>
       </div>
     </div>
     ${leaveTabsHTML('plan')}
     <div class="card" style="margin-top:12px">
       <div class="card-head">
         <div>
-          <div class="card-title">📅 Kế hoạch nghỉ phép · ${curYear}</div>
+          <div class="card-title">📅 Kế hoạch nghỉ phép · ${curYear}
+            ${!showAL?'<span style="margin-left:8px;font-size:11px;background:rgba(126,198,153,.1);color:var(--success);padding:2px 7px;border-radius:4px">AL ẩn</span>':''}
+            ${!showCL?'<span style="margin-left:4px;font-size:11px;background:rgba(126,182,232,.1);color:var(--info);padding:2px 7px;border-radius:4px">CL ẩn</span>':''}
+          </div>
           <div class="card-sub">Số trên: <span style="color:var(--success)">Thực tế AL</span> / <span style="color:var(--info)">Thực tế CL</span> · Ô nhập: <span style="color:#ff9f43">Kế hoạch (điền tay)</span> · Số nhỏ: Δ KH−Thực</div>
         </div>
       </div>
@@ -9962,12 +10093,12 @@ function renderLeavePlan(main){
               ${mnShort.map((m,i) => `<th ${thS} style="min-width:68px;${i+1===curMonth?'border-bottom:2px solid var(--accent);color:var(--accent)':''}">${m}${i+1===curMonth?' ◀':''}<div style="font-size:9px;color:var(--ink-muted);font-weight:400">${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][i]}</div></th>`).join('')}
             </tr>
           </thead>
-          <tbody>${tableRows}</tbody>
+          <tbody>${filteredTableRows}</tbody>
           <tfoot>
             <tr style="background:var(--bg-elev);border-top:2px solid var(--border-strong)">
               <td colspan="14" style="padding:2px"></td>
             </tr>
-            ${totalRow}
+            ${filteredTotalRow}
           </tfoot>
         </table>
       </div>
@@ -11561,6 +11692,10 @@ function renderRecruitmentReports(main){
 // BIẾN ĐỘNG NHÂN SỰ
 // ═══════════════════════════════════════════════
 function renderWorkforce(main){
+  if(!window.canDo('workforce')){
+    main.innerHTML='<div class="topbar"><div class="topbar-left"><h1 class="page-title">🔒 Không có quyền</h1><div class="page-sub">Bạn không được cấp quyền truy cập module Biến động nhân sự</div></div></div>';
+    return;
+  }
   const today = new Date();
   const curYear = today.getFullYear();
   const curMonth = today.getMonth()+1;
@@ -11641,6 +11776,7 @@ function renderWorkforce(main){
       <div class="topbar-actions">
         <select class="filter-select" onchange="window._wfYear=parseInt(this.value);window._wfMonth=0;render()">${yearOpts}</select>
         <select class="filter-select" onchange="window._wfMonth=parseInt(this.value);render()">${monOpts}</select>
+        <button class="btn" onclick="addWfTestData()" style="font-size:11px;opacity:.6;border-style:dashed">🧪 Test data</button>
         <button class="btn" onclick="addWfYear()" title="Thêm năm" style="padding:4px 10px;font-size:12px">+ Năm</button>
         <button class="btn" onclick="exportWorkforce(${yr},${mon})">📥 Xuất Excel</button>
       </div>
@@ -11752,8 +11888,11 @@ function _wfNewTab(emps,byDept,PAL,yr,mon){
   const rows=emps.map((e,i)=>{
     const cd=DB.customData[e.id]||{};
     const ct=cd.currentContractType||'—';
-    const d=Math.floor((new Date()-new Date(e.joined||0))/864e5);
-    const tenure=d<30?d+'ng':d<365?Math.floor(d/30)+'th':Math.floor(d/365)+'n'+Math.floor((d%365)/30)+'th';
+    const joinedStr = e.joined||'';
+    const joinedISO = joinedStr.match(/^\d{2}\/\d{2}\/\d{4}$/) ? joinedStr.split('/').reverse().join('-') : joinedStr;
+    const joinedDate = joinedISO ? new Date(joinedISO) : null;
+    const d = (joinedDate && !isNaN(joinedDate)) ? Math.max(0, Math.floor((new Date()-joinedDate)/864e5)) : -1;
+    const tenure = d<0 ? '—' : d===0 ? 'Hôm nay' : d<30 ? d+'ng' : d<365 ? Math.floor(d/30)+'th' : Math.floor(d/365)+'n'+Math.floor((d%365)/30)+'th';
     return `<tr onclick="viewEmployee('${e.id}')" style="cursor:pointer">
       <td style="width:28px;text-align:center;color:var(--ink-muted);font-size:11px">${i+1}</td>
       <td><div style="font-weight:600">${escapeHtml(e.name||'')}</div><div style="font-size:10.5px;color:var(--ink-muted)">${escapeHtml(e.code||'')}${e.level?' · '+e.level:''}</div></td>
@@ -11886,6 +12025,31 @@ function addWfYear(){
     </div>
   `);
 }
+
+function addWfTestData(){
+  const depts = DB.departments||[];
+  const reasons = ['Hết hạn HĐ — không ký tiếp','Tự nguyện nghỉ việc','Nghỉ theo thỏa thuận','Vi phạm nội quy','Thôi việc theo nguyện vọng','Lý do cá nhân','Chuyển công tác'];
+  const roles = ['Nhân viên','Tổ trưởng','Giám sát','Thu ngân','Phục vụ','Lễ tân','Bảo vệ','Kế toán'];
+  const names = ['Nguyễn Thị Lan','Trần Văn Bình','Lê Thị Hoa','Phạm Văn Đức','Hoàng Thị Mai','Đặng Văn Long','Vũ Thị Thu','Bùi Văn Hải','Đỗ Thị Ngọc','Ngô Văn Tuấn'];
+  const yr = window._wfYear || new Date().getFullYear();
+  names.forEach((name,i)=>{
+    const deptId = depts[i%depts.length]?.id || '';
+    const joinedMonth = (i%6)+1;
+    const exitMonth = Math.min(joinedMonth+2+(i%3),12);
+    const empId = 'test_exit_'+i;
+    const joined = `${yr-1}-${String(joinedMonth).padStart(2,'0')}-${String(10+i).padStart(2,'0')}`;
+    const exitDate = `${yr}-${String(exitMonth).padStart(2,'0')}-${String(15+i%10).padStart(2,'0')}`;
+    if(!DB.employees.find(e=>e.id===empId)){
+      DB.employees.push({id:empId,code:`MG-TEST${String(i+1).padStart(2,'0')}`,name,deptId,role:roles[i%roles.length],joined,status:'exit',gender:i%2===0?'female':'male'});
+    }
+    if(!DB.customData[empId]) DB.customData[empId]={};
+    DB.customData[empId].exitDate=exitDate;
+    DB.customData[empId].exitReason=reasons[i%reasons.length];
+  });
+  render();
+  toast('✅ Đã thêm 10 NV test — nhớ xoá sau khi test','success');
+}
+
 function confirmAddWfYear(){
   const yr=parseInt(document.getElementById('wf_new_year')?.value);
   if(!yr||yr<2000||yr>2100){ toast('Năm không hợp lệ','error'); return; }
@@ -13127,6 +13291,39 @@ const PROMOTION_TYPE = {
   combined: 'Thăng chức + tăng lương'
 };
 
+function addTrainingYear(){
+  const curYr = new Date().getFullYear();
+  openModal(`
+    <div class="modal-head"><div class="modal-title">📅 Thêm năm — Đào tạo</div></div>
+    <div class="form-grid">
+      <div class="field full"><label>Năm muốn thêm</label>
+        <input type="number" id="tr_new_year" value="${curYr+2}" min="2000" max="2100" style="font-size:18px;font-weight:700;text-align:center">
+      </div>
+      <div class="field full"><label>Gợi ý nhanh</label>
+        <div style="display:flex;flex-wrap:wrap;gap:6px">
+          ${[curYr+2,curYr+3,curYr+4,curYr+5].map(y=>`<button class="btn" onclick="document.getElementById('tr_new_year').value=${y}" style="font-size:13px;font-weight:600">${y}</button>`).join('')}
+        </div>
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeModal()">Huỷ</button>
+      <button class="btn btn-primary" onclick="confirmAddTrainingYear()">✅ Thêm</button>
+    </div>
+  `);
+}
+function confirmAddTrainingYear(){
+  const yr = parseInt(document.getElementById('tr_new_year')?.value);
+  if(!yr||yr<2000||yr>2100){ toast('Năm không hợp lệ','error'); return; }
+  if(!DB.trainingExtraYears) DB.trainingExtraYears=[];
+  if(!DB.trainingExtraYears.includes(yr)) DB.trainingExtraYears.push(yr);
+  saveData();
+  // Set selected year
+  if(!window._trainingPeriod) window._trainingPeriod={mode:'year',year:yr,month:new Date().getMonth()+1};
+  window._trainingPeriod.year=yr;
+  closeModal(); render();
+  toast(`✅ Đã thêm năm ${yr}`,'success');
+}
+
 function renderTraining(main){
   if(!window.canDo('training')){
     main.innerHTML='<div class="topbar"><div class="topbar-left"><h1 class="page-title">🔒 Không có quyền</h1><div class="page-sub">Bạn không được cấp quyền truy cập module Đào tạo</div></div></div>';
@@ -13248,6 +13445,8 @@ function renderTraining(main){
   yearsSet.add(p.year);
   yearsSet.add(new Date().getFullYear());
   yearsSet.add(new Date().getFullYear()+1);
+  // Thêm năm custom
+  (DB.trainingExtraYears||[]).forEach(y=>yearsSet.add(y));
   const yearsList = [...yearsSet].sort();
 
   const periodLabel = p.mode === 'all' ? 'Toàn thời gian'
@@ -13263,6 +13462,7 @@ function renderTraining(main){
       </div>
       <div class="topbar-actions">
         <button class="btn" onclick="exportCSV('courses')">${ICONS.download} Xuất CSV</button>
+        <button class="btn" onclick="addTrainingYear()" style="font-size:12px;padding:4px 10px">+ Năm</button>
         <button class="btn btn-primary" onclick="editCourse()">${ICONS.plus} ${_lang==="en"?"Add Course":"Thêm khoá học"}</button>
       </div>
     </div>
@@ -16848,6 +17048,7 @@ const MODULE_LIST = [
   {key:'birthdays',  label:(_lang==="en"?"Birthdays":"Sinh nhật")},
   {key:'leaves',     label:(_lang==="en"?"Leave":"Nghỉ phép")},
   {key:'recruitment',label:(_lang==="en"?"Recruitment":"Tuyển dụng")},
+  {key:'workforce',  label:'Biến động nhân sự'},
   {key:'casual',     label:'Lao động Casual'},
   {key:'trainee',    label:(_lang==="en"?"Trainees":"Thực tập sinh")},
   {key:'training',   label:(_lang==="en"?"Training":"Đào tạo")},
@@ -19900,6 +20101,17 @@ fbAuth.onAuthStateChanged(async user => {
                 const localPhotos = {};
                 (DB.employees||[]).forEach(e=>{ if(e.photo) localPhotos[e.id]=e.photo; });
                 try{ const pm=JSON.parse(localStorage.getItem(STORE_KEY+'_photos')||'{}'); Object.assign(localPhotos,pm); }catch(pe){}
+
+                // Chỉ apply cloud data nếu cloud mới hơn hoặc bằng local
+                // _lastSaved là timestamp lần saveData() gần nhất
+                const localTs = DB._lastSaved || 0;
+                const cloudTs = cloudData._lastSaved || 0;
+                if(cloudTs < localTs){
+                  // Cloud cũ hơn local (user vừa xóa/sửa) — bỏ qua merge key này
+                  console.log('[Sync] Cloud older than local, skipping merge for', docId);
+                  return;
+                }
+
                 FS_DOC_MAP[docId].forEach(key=>{ if(cloudData[key] !== undefined) DB[key] = cloudData[key]; });
                 // Migration: xóa + thêm + reorder field mặc định — tự động
                 if(DB.customFields){
