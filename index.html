@@ -2559,15 +2559,18 @@ function renderDashboard(main){
   // Tuyển mới trong tháng
   const newHires = DB.employees.filter(e => {
     if(!e.joined) return false;
-    const d = new Date(e.joined);
+    const d = _parseAnyDate(e.joined);
+    if(!d) return false;
     return d.getMonth() + 1 === p.month && d.getFullYear() === p.year;
   }).length;
 
   // Nghỉ việc trong tháng (dùng exitDate trong customData)
   const exits = DB.employees.filter(e => {
+    if(e.status !== 'exit') return false;
     const cd = DB.customData[e.id] || {};
     if(!cd.exitDate) return false;
-    const d = new Date(cd.exitDate);
+    const d = _parseAnyDate(cd.exitDate);
+    if(!d) return false;
     return d.getMonth() + 1 === p.month && d.getFullYear() === p.year;
   }).length;
 
@@ -2579,9 +2582,13 @@ function renderDashboard(main){
 
   // HĐ hết hạn trong tháng (chỉ NV đang làm)
   const expiringContracts = filteredPool.filter(e => {
+    if(e.status === 'exit') return false;
     const cd = DB.customData[e.id] || {};
-    if(!cd.currentContractEnd) return false;
-    const d = new Date(cd.currentContractEnd);
+    // Dùng contractEnd (nhập tay) hoặc currentContractEnd
+    const endRaw = cd.contractEnd || cd.currentContractEnd || '';
+    if(!endRaw) return false;
+    const d = _parseAnyDate(endRaw);
+    if(!d) return false;
     return d.getMonth() + 1 === p.month && d.getFullYear() === p.year;
   }).length;
 
@@ -2925,8 +2932,8 @@ function renderKpiMiniCharts(){
     const yr = p.year;
     const mn = Array.from({length:12},(_,i)=>i+1);
     switch(k){
-      case 'newHires': return mn.map(m=>DB.employees.filter(e=>{ const d=new Date(e.joined||''); return d.getFullYear()===yr&&d.getMonth()+1===m; }).length);
-      case 'exits': return mn.map(m=>DB.employees.filter(e=>{ const cd=DB.customData[e.id]||{}; const d=new Date(cd.exitDate||''); return d.getFullYear()===yr&&d.getMonth()+1===m; }).length);
+      case 'newHires': return mn.map(m=>DB.employees.filter(e=>{ const d=_parseAnyDate(e.joined||''); return d&&d.getFullYear()===yr&&d.getMonth()+1===m; }).length);
+      case 'exits': return mn.map(m=>DB.employees.filter(e=>{ if(e.status!=='exit') return false; const cd=DB.customData[e.id]||{}; if(!cd.exitDate) return false; const d=_parseAnyDate(cd.exitDate); return d&&d.getFullYear()===yr&&d.getMonth()+1===m; }).length);
       case 'casualThisMonth': case 'casualYTD': return mn.map(m=>(DB.casuals||[]).filter(r=>r.year===yr&&r.month===m).reduce((s,r)=>s+(r.qty||0),0));
       case 'casualCostMonth': return mn.map(m=>Math.round((DB.casuals||[]).filter(r=>r.year===yr&&r.month===m).reduce((s,r)=>s+(r.total||0),0)/1e6));
       case 'newCandidates': return mn.map(m=>(DB.candidates||[]).filter(c=>{ const d=new Date(c.appliedDate||c.date||''); return d.getFullYear()===yr&&d.getMonth()+1===m; }).length);
@@ -3164,8 +3171,8 @@ const COMBO_KPI_OPTS=[
 function buildComboMonthData(k,yr){
   const mn=Array.from({length:12},(_,i)=>i+1);
   switch(k){
-    case 'newHires':        return mn.map(m=>DB.employees.filter(e=>{const d=new Date(e.joined||'');return d.getFullYear()===yr&&d.getMonth()+1===m;}).length);
-    case 'exits':           return mn.map(m=>DB.employees.filter(e=>{const cd=DB.customData[e.id]||{};const d=new Date(cd.exitDate||'');return d.getFullYear()===yr&&d.getMonth()+1===m;}).length);
+    case 'newHires':        return mn.map(m=>DB.employees.filter(e=>{const d=_parseAnyDate(e.joined||'');return d&&d.getFullYear()===yr&&d.getMonth()+1===m;}).length);
+    case 'exits':           return mn.map(m=>DB.employees.filter(e=>{if(e.status!=='exit') return false; const cd=DB.customData[e.id]||{};if(!cd.exitDate) return false; const d=_parseAnyDate(cd.exitDate);return d&&d.getFullYear()===yr&&d.getMonth()+1===m;}).length);
     case 'promotionsMonth': return mn.map(m=>(DB.promotions||[]).filter(pr=>{const d=new Date(pr.effectiveDate||pr.date||'');return pr.status==='completed'&&d.getFullYear()===yr&&d.getMonth()+1===m;}).length);
     case 'casualThisMonth': return mn.map(m=>(DB.casuals||[]).filter(r=>r.year===yr&&r.month===m).reduce((s,r)=>s+(r.qty||0),0));
     case 'casualCostMonth': return mn.map(m=>Math.round((DB.casuals||[]).filter(r=>r.year===yr&&r.month===m).reduce((s,r)=>s+(r.total||0),0)/1e6));
@@ -3413,7 +3420,7 @@ function renderDashboardCharts(){
       : new Date(m.getFullYear(), m.getMonth()+1, 0, 23, 59, 59); // ngày cuối tháng
     return DB.employees.filter(e => {
       if(!e.joined) return false;
-      if(new Date(e.joined) > snap) return false;
+      const _jd=_parseAnyDate(e.joined); if(!_jd||_jd > snap) return false;
       const exitD = getExitDate(e);
       if(exitD && exitD <= snap) return false;
       if(!exitD && e.status === 'exit') return false;
@@ -3601,7 +3608,7 @@ function renderDashboardCharts(){
     if(Chart.getChart(tenureEl)) Chart.getChart(tenureEl).destroy();
     const tenureBuckets = {[_lang==="en"?"<1 year":"<1 năm"]:0,[_lang==="en"?"1-2 years":"1-2 năm"]:0,[_lang==="en"?"3-5 years":"3-5 năm"]:0,[_lang==="en"?"6-10 years":"6-10 năm"]:0,[_lang==="en"?">10 years":">10 năm"]:0};
     pool.filter(e=>e.joined).forEach(e=>{
-      const yrs = (new Date()-new Date(e.joined))/(365.25*24*3600*1000);
+      const _jd2=_parseAnyDate(e.joined); const yrs = _jd2?(new Date()-_jd2)/(365.25*24*3600*1000):0;
       if(yrs<1) tenureBuckets[(_lang==="en"?"<1 year":"<1 năm")]++;
       else if(yrs<=2) tenureBuckets[(_lang==="en"?"1-2 years":"1-2 năm")]++;
       else if(yrs<=5) tenureBuckets[(_lang==="en"?"3-5 years":"3-5 năm")]++;
@@ -5401,14 +5408,14 @@ function applyEmpFilter(){
   if(empFilter.colCode)       r = r.filter(e=>(e.code||'').toLowerCase().includes(empFilter.colCode.toLowerCase()));
   if(empFilter.colContact)    r = r.filter(e=>(e.email||'').toLowerCase().includes(empFilter.colContact.toLowerCase())||(e.phone||'').includes(empFilter.colContact));
   if(empFilter.colGender)     r = r.filter(e=>e.gender===empFilter.colGender);
-  if(empFilter.colJoinedYear) r = r.filter(e=>e.joined&&new Date(e.joined).getFullYear()===parseInt(empFilter.colJoinedYear));
+  if(empFilter.colJoinedYear) r = r.filter(e=>{ const d=_parseAnyDate(e.joined); return d&&d.getFullYear()===parseInt(empFilter.colJoinedYear); });
   if(empFilter.colRole)       r = r.filter(e=>(e.role||'')===empFilter.colRole);
 
   // Lọc ngày vào làm
   if(empFilter.joinedFrom) r = r.filter(e=>e.joined && e.joined >= empFilter.joinedFrom);
   if(empFilter.joinedTo)   r = r.filter(e=>e.joined && e.joined <= empFilter.joinedTo);
-  if(empFilter.joinedMonth) r = r.filter(e=>e.joined && new Date(e.joined).getMonth()+1===empFilter.joinedMonth);
-  if(empFilter.joinedYear)  r = r.filter(e=>e.joined && new Date(e.joined).getFullYear()===empFilter.joinedYear);
+  if(empFilter.joinedMonth) r = r.filter(e=>{ const d=_parseAnyDate(e.joined); return d&&d.getMonth()+1===empFilter.joinedMonth; });
+  if(empFilter.joinedYear)  r = r.filter(e=>{ const d=_parseAnyDate(e.joined); return d&&d.getFullYear()===empFilter.joinedYear; });
   // Lọc ngày sinh
   if(empFilter.dobMonth) r = r.filter(e=>e.dob && _parseDob(e.dob).getMonth()+1===empFilter.dobMonth);
   if(empFilter.dobYear)  r = r.filter(e=>e.dob && _parseDob(e.dob).getFullYear()===empFilter.dobYear);
@@ -17631,7 +17638,7 @@ function renderSalaryAnalysis(main){
       // nếu lọc theo tháng cụ thể: NV phải đang làm trong tháng đó
       if(m > 0){
         if(!e.joined) return false;
-        const joined  = new Date(e.joined);
+        const joined  = _parseAnyDate(e.joined);
         const endMonth = new Date(yr, m, 0); // cuối tháng
         if(joined > endMonth) return false;
       }
