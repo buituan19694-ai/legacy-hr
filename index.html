@@ -2495,18 +2495,14 @@ const DEFAULT_BLACKLIST_CONFIG = {
 // Helper global: lấy exitDate thực tế từ customData
 function getExitDate(e){
   const cd = DB.customData[e.id] || {};
-  if(cd.exitDate) return new Date(cd.exitDate);
-  // Fallback: nếu status=exit mà không có exitDate → dùng ngày joined làm proxy (để tính năm)
-  // hoặc return một Date cũ để vẫn được tính vào count
-  if(e.status === 'exit'){
-    // Trả về 1 ngày hợp lệ — dùng joined + 6 tháng nếu không có exitDate
-    if(e.joined){
-      const d = new Date(e.joined.match(/^\d{2}\/\d{2}\/\d{4}$/) ? e.joined.split('/').reverse().join('-') : e.joined);
-      d.setMonth(d.getMonth()+6);
-      return d;
-    }
-    return new Date(); // fallback: hôm nay
+  if(cd.exitDate){
+    const iso = cd.exitDate.match(/^\d{2}\/\d{2}\/\d{4}$/)
+      ? cd.exitDate.split('/').reverse().join('-') : cd.exitDate;
+    const d = new Date(iso);
+    return isNaN(d) ? null : d;
   }
+  // Không có exitDate → trả null (không count theo tháng cụ thể)
+  // Chỉ dùng status='exit' để biết đã nghỉ
   return null;
 }
 const MN = ['T1','T2','T3','T4','T5','T6','T7','T8','T9','T10','T11','T12'];
@@ -7411,8 +7407,9 @@ let contractFilter = {
 
 function renderContracts(main){
   const today = new Date();
-  // Chỉ tính HĐ của NV đang làm việc (status != 'exit')
-  const activeEmpIds = new Set(DB.employees.filter(e => e.status !== 'exit').map(e=>e.id));
+  // NV đang làm = status active/probation/leave (không phải exit)
+  const activeEmpsAll = DB.employees.filter(e => e.status !== 'exit');
+  const activeEmpIds = new Set(activeEmpsAll.map(e=>e.id));
 
   // Lấy HĐ hiện tại (cuối cùng) của mỗi NV đang làm
   // Mỗi NV có thể nhiều HĐ; HĐ hiện tại = HĐ có startDate mới nhất và (endDate rỗng hoặc chưa hết)
@@ -7433,28 +7430,47 @@ function renderContracts(main){
     if(c) currentContracts.push(c);
   });
 
-  // KPIs - chỉ cho NV đang làm
-  // totalActive = tổng NV đang làm (không phụ thuộc vào có HĐ trong DB.contracts hay không)
-  const totalActive = activeEmpIds.size;
-  const validContracts = currentContracts.filter(c => !c.endDate || new Date(c.endDate) >= today);
-  const expiringIn60 = currentContracts.filter(c => {
+  // KPIs
+  // totalActive = NV đang làm thực tế (active + probation + leave)
+  const totalActive = activeEmpsAll.filter(e => ['active','probation','leave'].includes(e.status)).length;
+
+  // Bổ sung: NV có contractEnd trong customData (nhập tay qua form NV, không qua DB.contracts)
+  const _toISOc = s => s&&/^\d{2}\/\d{2}\/\d{4}$/.test(s)?s.split('/').reverse().join('-'):s;
+  const empContractEndList = activeEmpsAll.map(e=>{
+    const cd = DB.customData[e.id]||{};
+    const endRaw = cd.contractEnd||cd.currentContractEnd||'';
+    if(!endRaw) return null;
+    const endISO = _toISOc(endRaw);
+    const endDate = endISO ? new Date(endISO) : null;
+    if(!endDate||isNaN(endDate)) return null;
+    // Chỉ tính nếu chưa có trong DB.contracts (tránh duplicate)
+    const alreadyInContracts = currentContracts.some(c=>c.empId===e.id);
+    if(alreadyInContracts) return null;
+    return {id:'cf_'+e.id, empId:e.id, endDate:endISO, type:cd.currentContractType||'', _fromCustom:true};
+  }).filter(Boolean);
+
+  // Gộp cả 2 nguồn
+  const allContractsForExpiry = [...currentContracts, ...empContractEndList];
+
+  const validContracts = allContractsForExpiry.filter(c => !c.endDate || new Date(c.endDate) >= today);
+  const expiringIn60 = allContractsForExpiry.filter(c => {
     if(!c.endDate) return false;
     const d = daysBetween(today, c.endDate);
     return d > 0 && d <= 60;
   });
-  const expiringIn7 = currentContracts.filter(c => {
+  const expiringIn7 = allContractsForExpiry.filter(c => {
     if(!c.endDate) return false;
     const d = daysBetween(today, c.endDate);
     return d >= 0 && d <= 7;
   });
-  const expiringIn3 = currentContracts.filter(c => {
+  const expiringIn3 = allContractsForExpiry.filter(c => {
     if(!c.endDate) return false;
     const d = daysBetween(today, c.endDate);
     return d >= 0 && d <= 3;
   });
 
   // Filter theo tháng/năm cho bảng renew
-  const expiringInMonth = currentContracts.filter(c => {
+  const expiringInMonth = allContractsForExpiry.filter(c => {
     if(!c.endDate) return false;
     const ed = new Date(c.endDate);
     return ed.getMonth() + 1 === contractFilter.month && ed.getFullYear() === contractFilter.year;
@@ -7487,7 +7503,7 @@ function renderContracts(main){
     </div>
 
     <div class="kpi-grid">
-      ${kpiCard('CBNV có HĐ', totalActive, (_lang==="en"?"Working":"Đang làm việc"), '', 'success')}
+      ${kpiCard('NV ĐANG LÀM', totalActive, (_lang==="en"?"Currently working":"Đang làm việc"), '', 'success')}
       ${kpiCard('Sắp hết hạn (60d)', expiringIn60.length, 'Trong 60 ngày tới', '', 'warning')}
       ${kpiCard('Hết hạn ≤ 7 ngày', expiringIn7.length, 'Ưu tiên xử lý', '', 'info')}
       ${kpiCard('Hết hạn ≤ 3 ngày', expiringIn3.length, 'Cấp bách', '', 'danger')}
@@ -11721,28 +11737,53 @@ function renderWorkforce(main){
     MN.map((m,i)=>`<option value="${i+1}" ${mon===i+1?'selected':''}>${m}</option>`).join('');
 
   // Filter helpers
+  const _toISO2 = (s) => {
+    if(!s) return null;
+    if(/^\d{2}\/\d{2}\/\d{4}$/.test(s)) return s.split('/').reverse().join('-');
+    return s;
+  };
   const inPeriod = (dateStr) => {
-    if(!dateStr) return false;
-    const d = new Date(dateStr);
+    const iso = _toISO2(dateStr);
+    if(!iso) return false;
+    const d = new Date(iso);
+    if(isNaN(d)) return false;
     if(d.getFullYear()!==yr) return false;
     return mon===0 || d.getMonth()+1===mon;
   };
   const inPeriodDate = (d) => {
-    if(!d) return false;
+    if(!d||isNaN(d)) return false;
     if(d.getFullYear()!==yr) return false;
     return mon===0 || d.getMonth()+1===mon;
   };
 
-  // NV mới
+  // NV mới: theo e.joined (Ngày vào làm trong hồ sơ NV)
   const newEmps = DB.employees.filter(e=>inPeriod(e.joined))
-    .sort((a,b)=>new Date(b.joined)-new Date(a.joined));
-  // NV nghỉ
-  const exitEmps = DB.employees.filter(e=>{ const x=getExitDate(e); return x&&inPeriodDate(x); })
-    .sort((a,b)=>getExitDate(b)-getExitDate(a));
+    .sort((a,b)=>new Date(_toISO2(b.joined)||0)-new Date(_toISO2(a.joined)||0));
+
+  // NV nghỉ việc: theo status='exit' + exitDate trong customData
+  // Nếu có exitDate → count theo tháng exitDate
+  // Nếu không có exitDate nhưng status='exit' → count vào năm (cả năm), không count tháng cụ thể
+  const exitEmps = DB.employees.filter(e=>{
+    if(e.status !== 'exit') return false;
+    const x = getExitDate(e);
+    if(x) return inPeriodDate(x); // có exitDate → filter theo tháng
+    // Không có exitDate: chỉ hiện khi xem cả năm (mon===0)
+    return mon === 0;
+  }).sort((a,b)=>{
+    const xa=getExitDate(a), xb=getExitDate(b);
+    if(xa&&xb) return xb-xa;
+    if(xa) return -1; if(xb) return 1;
+    return 0;
+  });
 
   // Monthly data (full year, for overview chart)
-  const newByMonth  = MN.map((_,mi)=>DB.employees.filter(e=>e.joined&&new Date(e.joined).getFullYear()===yr&&new Date(e.joined).getMonth()===mi).length);
-  const exitByMonth = MN.map((_,mi)=>DB.employees.filter(e=>{ const x=getExitDate(e); return x&&x.getFullYear()===yr&&x.getMonth()===mi; }).length);
+  const newByMonth = MN.map((_,mi)=>DB.employees.filter(e=>{
+    const iso=_toISO2(e.joined); if(!iso) return false;
+    const d=new Date(iso); return !isNaN(d)&&d.getFullYear()===yr&&d.getMonth()===mi;
+  }).length);
+  const exitByMonth = MN.map((_,mi)=>DB.employees.filter(e=>{
+    const x=getExitDate(e); return x&&!isNaN(x)&&x.getFullYear()===yr&&x.getMonth()===mi;
+  }).length);
 
   // Breakdowns for selected period
   const newByDept={}, exitByDept={}, exitReasons={};
