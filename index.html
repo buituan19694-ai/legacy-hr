@@ -1332,6 +1332,8 @@ const DEFAULT_DATA = {
     {id:'cf_contractEnd', key:'contractEnd', label:'Ngày kết thúc HĐ hiện tại', type:'date', group:(_lang==="en"?"Contract":"Hợp đồng"), placeholder:'Để trống nếu vô thời hạn', showInTable:false, required:false, options:''},
     {id:'cf_contractExp', key:'contractExpireMonth', label:'Tháng hết hạn HĐ', type:'text', group:(_lang==="en"?"Contract":"Hợp đồng"), placeholder:'VD: 06/2026', showInTable:false, required:false, options:''},
     {id:'cf_c1Start', key:'contract1Start', label:'HĐ lần 1 — Bắt đầu', type:'date', group:(_lang==="en"?"Contract":"Hợp đồng"), placeholder:'1 năm', showInTable:false, required:false, options:''},
+    {id:'cf_probStart', key:'probationStart', label:'Ngày bắt đầu thử việc', type:'date', group:(_lang==="en"?"Contract":"Hợp đồng"), placeholder:'', showInTable:false, required:false, options:''},
+    {id:'cf_probEnd', key:'probationEnd', label:'Ngày kết thúc thử việc', type:'date', group:(_lang==="en"?"Contract":"Hợp đồng"), placeholder:'', showInTable:false, required:false, options:''},
     {id:'cf_c1End', key:'contract1End', label:'HĐ lần 1 — Kết thúc', type:'date', group:(_lang==="en"?"Contract":"Hợp đồng"), placeholder:'', showInTable:false, required:false, options:''},
     {id:'cf_c2Start', key:'contract2Start', label:'HĐ lần 2 — Bắt đầu', type:'date', group:(_lang==="en"?"Contract":"Hợp đồng"), placeholder:'2 năm', showInTable:false, required:false, options:''},
     {id:'cf_c2End', key:'contract2End', label:'HĐ lần 2 — Kết thúc', type:'date', group:(_lang==="en"?"Contract":"Hợp đồng"), placeholder:'', showInTable:false, required:false, options:''},
@@ -1381,7 +1383,7 @@ function loadData(){
       if(!data.requiredFieldsConfig) data.requiredFieldsConfig = JSON.parse(JSON.stringify(DEFAULT_REQUIRED_FIELDS));
       if(!data.manualBlacklist) data.manualBlacklist = [];
       // Migration: xóa các custom field lỗi thời (đã tự động tính hoặc bị gộp)
-      const OBSOLETE_CF_KEYS = ['currentContractStart','currentContractEnd','probationStart','probationEnd','probationResult'];
+      const OBSOLETE_CF_KEYS = ['currentContractStart','currentContractEnd','probationResult'];
       if(data.customFields){
         data.customFields = data.customFields.filter(cf => !OBSOLETE_CF_KEYS.includes(cf.key));
       }
@@ -5889,14 +5891,18 @@ function renderCustomFieldInput(cf, value){
   const dataAttr = `data-cf-key="${escapeHtml(cf.key)}"`;
 
   // ── Auto-compute từ DB.contracts ──
-  if(['currentContractType','currentContractStart','currentContractEnd'].includes(cf.key)){
-    // Lấy empId từ form đang mở
+  const AUTO_CONTRACT_KEYS = ['currentContractType','contractStart','contractEnd','currentContractStart','currentContractEnd'];
+  const AUTO_PROBATION_KEYS = ['probationStart','probationEnd'];
+
+  if(AUTO_CONTRACT_KEYS.includes(cf.key)){
     const empId = document.getElementById('f_empid')?.value || currentEmpId || '';
     const today = new Date(); today.setHours(0,0,0,0);
     const empContracts = (DB.contracts||[]).filter(c=>c.empId===empId);
-    // HĐ hiện tại = mới nhất còn hiệu lực
     const sorted = [...empContracts].sort((a,b)=>new Date(b.startDate)-new Date(a.startDate));
-    const cur = sorted.find(c=>!c.endDate||new Date(c.endDate)>=today) || sorted[0];
+    // HĐ hiện tại = mới nhất còn hiệu lực (không phải probation nếu có HĐ chính thức)
+    const nonProbation = sorted.filter(c=>c.type!=='probation');
+    const cur = (nonProbation.find(c=>!c.endDate||new Date(c.endDate)>=today) || nonProbation[0])
+             || (sorted.find(c=>!c.endDate||new Date(c.endDate)>=today) || sorted[0]);
 
     const roStyle = 'background:var(--bg-elev);color:var(--ink-muted);cursor:not-allowed;border-color:var(--border)';
     const autoLabel = `${label} <span style="font-size:9px;color:var(--accent)">(tự động)</span>`;
@@ -5904,7 +5910,6 @@ function renderCustomFieldInput(cf, value){
     if(cf.key === 'currentContractType'){
       const opts = (cf.options||'').split(',').map(s=>s.trim()).filter(Boolean);
       const autoVal = cur ? (CONTRACT_TYPE[cur.type]||cur.type||'') : '';
-      // Ghi vào customData để saveEmployee lưu được
       if(cur && empId && DB.customData[empId] !== undefined){
         DB.customData[empId].currentContractType = autoVal;
       }
@@ -5916,16 +5921,37 @@ function renderCustomFieldInput(cf, value){
         <input type="hidden" id="${id}_val" value="${escapeHtml(autoVal)}">
       </div>`;
     }
-    if(cf.key === 'currentContractStart'){
+    if(cf.key === 'contractStart' || cf.key === 'currentContractStart'){
       const autoVal = cur?.startDate ? isoToDisp(cur.startDate) : '';
       return `<div class="${cls}"><label>${autoLabel}</label>
         <input id="${id}" ${dataAttr} type="text" value="${autoVal}" readonly style="${roStyle}" placeholder="Chưa có HĐ">
       </div>`;
     }
-    if(cf.key === 'currentContractEnd'){
+    if(cf.key === 'contractEnd' || cf.key === 'currentContractEnd'){
       const autoVal = cur?.endDate ? isoToDisp(cur.endDate) : (cur ? 'Vô thời hạn' : '');
       return `<div class="${cls}"><label>${autoLabel}</label>
         <input id="${id}" ${dataAttr} type="text" value="${autoVal}" readonly style="${roStyle}" placeholder="Vô thời hạn">
+      </div>`;
+    }
+  }
+
+  // ── Auto-compute probation từ DB.contracts ──
+  if(AUTO_PROBATION_KEYS.includes(cf.key)){
+    const empId = document.getElementById('f_empid')?.value || currentEmpId || '';
+    const empContracts = (DB.contracts||[]).filter(c=>c.empId===empId && c.type==='probation');
+    const probCon = [...empContracts].sort((a,b)=>new Date(b.startDate)-new Date(a.startDate))[0];
+    const roStyle = 'background:var(--bg-elev);color:var(--ink-muted);cursor:not-allowed;border-color:var(--border)';
+    const autoLabel = `${label} <span style="font-size:9px;color:var(--accent)">(tự động)</span>`;
+    if(cf.key === 'probationStart'){
+      const autoVal = probCon?.startDate ? isoToDisp(probCon.startDate) : '';
+      return `<div class="${cls}"><label>${autoLabel}</label>
+        <input id="${id}" ${dataAttr} type="text" value="${autoVal}" readonly style="${roStyle}" placeholder="Chưa có HĐ thử việc">
+      </div>`;
+    }
+    if(cf.key === 'probationEnd'){
+      const autoVal = probCon?.endDate ? isoToDisp(probCon.endDate) : '';
+      return `<div class="${cls}"><label>${autoLabel}</label>
+        <input id="${id}" ${dataAttr} type="text" value="${autoVal}" readonly style="${roStyle}" placeholder="Chưa có HĐ thử việc">
       </div>`;
     }
   }
@@ -19297,7 +19323,7 @@ fbAuth.onAuthStateChanged(async user => {
             if(!DB.customFields) DB.customFields=[];
             if(!DB.customData) DB.customData={};
             // Migration: xóa custom fields lỗi thời — push lên Firestore ngay
-            const _OBS = ['currentContractStart','currentContractEnd','probationStart','probationEnd','probationResult'];
+            const _OBS = ['currentContractStart','currentContractEnd','probationResult'];
             const _beforeLen = DB.customFields.length;
             DB.customFields = DB.customFields.filter(cf=>!_OBS.includes(cf.key));
             if(DB.customFields.length !== _beforeLen){
@@ -19468,7 +19494,7 @@ fbAuth.onAuthStateChanged(async user => {
                 FS_DOC_MAP[docId].forEach(key=>{ if(cloudData[key] !== undefined) DB[key] = cloudData[key]; });
                 // Migration: xóa custom fields lỗi thời sau khi sync Firestore
                 if(DB.customFields){
-                  const _OBS2=['currentContractStart','currentContractEnd','probationStart','probationEnd','probationResult'];
+                  const _OBS2=['currentContractStart','currentContractEnd','probationResult'];
                   const _b2=DB.customFields.length;
                   DB.customFields=DB.customFields.filter(cf=>!_OBS2.includes(cf.key));
                   if(DB.customFields.length!==_b2) setTimeout(()=>saveData(),500);
