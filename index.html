@@ -1490,7 +1490,7 @@ function loadData(){
 const FS_DOC_MAP = {
   employees:  ['departments'],
   contracts:  ['contracts'],
-  workforce:  ['trainees','traineeSchedules','svcData','courses','casualExtraYears'],
+  workforce:  ['trainees','traineeSchedules','svcData','courses','casualExtraYears','salaryYears','trainingExtraYears','leaveExtraYears'],
   jobs:       ['jobs'],
   config:     ['customFields','rewardTypes','perfReviewTypes','company',
                'dashboardConfig','brandConfig','blacklistConfig','blacklistReasons',
@@ -1509,8 +1509,9 @@ const FS_DOC_MAP = {
 // hrdata/leavesheet_{YYYY}    → DB.leaveSheet slice by year key
 // hrdata/leavemeta_{YYYY}     → DB.leaveOpening + leavePlan + salaryYears + trainingExtraYears + leaveExtraYears slice by year
 const FS_DYNAMIC_KEYS = ['leaves','kpiReviews','rewardRecords','casuals','candidates',
-                          'promotions','disciplineRecords','leaveSheet','leaveOpening',
-                          'leavePlan','salaryYears','trainingExtraYears','leaveExtraYears'];
+                          'promotions','disciplineRecords','leaveSheet','leaveOpening','leavePlan'];
+// Simple year-list arrays — nhỏ, lưu cùng flat docs (không cần shard)
+// salaryYears/trainingExtraYears/leaveExtraYears thuộc hrdata/workforce
 
 // Lấy năm từ 1 record
 function _recYear(r){
@@ -1813,20 +1814,19 @@ const DEFAULT_REWARD_TYPES = [
 let DB = loadData();
 loadPhotosFromStorage();
 // ── Init guard: dynamic keys không lưu localStorage → phải đảm bảo không undefined ──
-// Firestore sẽ overwrite sau khi login, nhưng trước đó cần có giá trị mặc định
-if(!Array.isArray(DB.leaves))            DB.leaves            = [];
-if(!Array.isArray(DB.kpiReviews))        DB.kpiReviews        = [];
-if(!Array.isArray(DB.rewardRecords))     DB.rewardRecords      = [];
-if(!Array.isArray(DB.casuals))           DB.casuals            = [];
-if(!Array.isArray(DB.candidates))        DB.candidates         = [];
-if(!Array.isArray(DB.promotions))        DB.promotions         = [];
-if(!Array.isArray(DB.disciplineRecords)) DB.disciplineRecords  = [];
-if(!DB.leaveSheet   || typeof DB.leaveSheet   !== 'object') DB.leaveSheet         = {};
-if(!DB.leaveOpening || typeof DB.leaveOpening !== 'object') DB.leaveOpening       = {};
-if(!DB.leavePlan    || typeof DB.leavePlan    !== 'object') DB.leavePlan          = {};
-if(!DB.salaryYears  || typeof DB.salaryYears  !== 'object') DB.salaryYears        = {};
-if(!DB.trainingExtraYears||typeof DB.trainingExtraYears!=='object') DB.trainingExtraYears = {};
-if(!DB.leaveExtraYears   ||typeof DB.leaveExtraYears   !=='object') DB.leaveExtraYears    = {};
+if(!Array.isArray(DB.leaves))             DB.leaves             = [];
+if(!Array.isArray(DB.kpiReviews))         DB.kpiReviews         = [];
+if(!Array.isArray(DB.rewardRecords))      DB.rewardRecords      = [];
+if(!Array.isArray(DB.casuals))            DB.casuals            = [];
+if(!Array.isArray(DB.candidates))         DB.candidates         = [];
+if(!Array.isArray(DB.promotions))         DB.promotions         = [];
+if(!Array.isArray(DB.disciplineRecords))  DB.disciplineRecords  = [];
+if(!Array.isArray(DB.salaryYears))        DB.salaryYears        = [];
+if(!Array.isArray(DB.trainingExtraYears)) DB.trainingExtraYears = [];
+if(!Array.isArray(DB.leaveExtraYears))    DB.leaveExtraYears    = [];
+if(!DB.leaveSheet   || Array.isArray(DB.leaveSheet))   DB.leaveSheet   = {};
+if(!DB.leaveOpening || Array.isArray(DB.leaveOpening)) DB.leaveOpening = {};
+if(!DB.leavePlan    || Array.isArray(DB.leavePlan))    DB.leavePlan    = {};
 // Proxy để tự động track key nào bị thay đổi → saveData sẽ chỉ push đúng Firestore doc
 window._dirtyKeys = new Set();
 DB = new Proxy(DB, {
@@ -20254,8 +20254,7 @@ fbAuth.onAuthStateChanged(async user => {
           const dynamicAccum = {
             leaves:[], kpiReviews:[], rewardRecords:[], casuals:[], candidates:[],
             promotions:[], disciplineRecords:[],
-            leaveSheet:{}, leaveOpening:{}, leavePlan:{}, salaryYears:{},
-            trainingExtraYears:{}, leaveExtraYears:{}
+            leaveSheet:{}, leaveOpening:{}, leavePlan:{}
           };
           hrdataSnap.forEach(doc=>{
             const id=doc.id; const d=doc.data();
@@ -20288,7 +20287,7 @@ fbAuth.onAuthStateChanged(async user => {
           const _mergeArr = (key)=>{ if(dynamicAccum[key].length){ DB[key]=dynamicAccum[key]; hasCloud=true; } };
           const _mergeObj = (key)=>{ if(Object.keys(dynamicAccum[key]).length){ DB[key]=dynamicAccum[key]; hasCloud=true; } };
           ['leaves','kpiReviews','rewardRecords','casuals','candidates','promotions','disciplineRecords'].forEach(_mergeArr);
-          ['leaveSheet','leaveOpening','leavePlan','salaryYears','trainingExtraYears','leaveExtraYears'].forEach(_mergeObj);
+          ['leaveSheet','leaveOpening','leavePlan'].forEach(_mergeObj);
 
           // ── Migration: data cũ từ hrdata/hr, hrdata/recruitment, hrdata/workforce,
           //   hrdata/performance, hrdata/leavedata, hrdata/promotions, hrdata/discipline ──
