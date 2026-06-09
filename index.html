@@ -2069,7 +2069,7 @@ function updateBadges(){
     let count = 0;
     DB.employees.forEach(e=>{
       if(e.status === 'exit' || !e.dob) return;
-      const dob = new Date(e.dob);
+      const dob = _parseDob(e.dob);
       const bday = new Date(todayY, dob.getMonth(), dob.getDate());
       const diff = Math.floor((bday - todayDate)/86400000);
       if(diff >= 0 && diff <= 7) count++;
@@ -2506,6 +2506,15 @@ function getExitDate(e){
   return null;
 }
 const MN = ['T1','T2','T3','T4','T5','T6','T7','T8','T9','T10','T11','T12'];
+// Parse dob/date an toàn: hỗ trợ dd/mm/yyyy và yyyy-mm-dd
+function _parseDob(s){
+  if(!s) return null;
+  if(/^\d{2}\/\d{2}\/\d{4}$/.test(s)){
+    const [d,m,y]=s.split('/'); return new Date(parseInt(y),parseInt(m)-1,parseInt(d));
+  }
+  const dt = new Date(s);
+  return isNaN(dt)?null:dt;
+}
 
 function renderDashboard(main){
   const today = new Date();
@@ -2558,7 +2567,7 @@ function renderDashboard(main){
   // SN trong tháng
   const birthMonth = filteredPool.filter(e => {
     if(!e.dob) return false;
-    return new Date(e.dob).getMonth() + 1 === p.month;
+    return _parseDob(e.dob).getMonth() + 1 === p.month;
   }).length;
 
   // HĐ hết hạn trong tháng (chỉ NV đang làm)
@@ -2585,7 +2594,7 @@ function renderDashboard(main){
   const ages = filteredPool
     .filter(e => e.dob && getEffectiveStatus(e) !== 'exit')
     .map(e => {
-      const dob = new Date(e.dob);
+      const dob = _parseDob(e.dob);
       let age = today.getFullYear() - dob.getFullYear();
       if(today.getMonth() < dob.getMonth() || (today.getMonth() === dob.getMonth() && today.getDate() < dob.getDate())) age--;
       return age;
@@ -2919,7 +2928,7 @@ function renderKpiMiniCharts(){
       case 'traineeActive': return mn.map(m=>{ const ms=yr+'-'+String(m).padStart(2,'0')+'-15'; return (DB.traineeSchedules||[]).filter(s=>s.startDate<=ms&&(!s.endDate||s.endDate>=ms)).reduce((n,s)=>n+(parseInt(s.qty)||0),0); });
       case 'totalSalary': return mn.map(m=>{ const pool=DB.employees.filter(e=>getEffectiveStatus(e)!=='exit'); return Math.round(pool.reduce((s,e)=>{ const cd=DB.customData[e.id]||{}; return s+(parseInt(cd.baseSalary)||0)+(parseInt(cd.bonusSalary)||0); },0)/1e6); });
       case 'totalEmp': return mn.map(m=>DB.employees.filter(e=>{ if(!e.joined) return false; return new Date(e.joined)<=new Date(yr,m,0); }).length);
-      case 'birthMonth': return mn.map(m=>DB.employees.filter(e=>e.dob&&new Date(e.dob).getMonth()+1===m).length);
+      case 'birthMonth': return mn.map(m=>DB.employees.filter(e=>e.dob&&_parseDob(e.dob).getMonth()+1===m).length);
       default: return mn.map(()=>0);
     }
   };
@@ -3156,7 +3165,7 @@ function buildComboMonthData(k,yr){
     case 'newCandidates':   return mn.map(m=>(DB.candidates||[]).filter(c=>{const d=new Date(c.appliedDate||c.date||'');return d.getFullYear()===yr&&d.getMonth()+1===m;}).length);
     case 'hiredThisMonth':  return mn.map(m=>(DB.candidates||[]).filter(c=>{const d=new Date(c.hiredDate||'');return c.status==='hired'&&d.getFullYear()===yr&&d.getMonth()+1===m;}).length);
     case 'traineeActive':   return mn.map(m=>{const ms=yr+'-'+String(m).padStart(2,'0')+'-15';return (DB.traineeSchedules||[]).filter(s=>s.startDate<=ms&&(!s.endDate||s.endDate>=ms)).reduce((n,s)=>n+(parseInt(s.qty)||0),0);});
-    case 'birthMonth':      return mn.map(m=>DB.employees.filter(e=>e.dob&&new Date(e.dob).getMonth()+1===m).length);
+    case 'birthMonth':      return mn.map(m=>DB.employees.filter(e=>e.dob&&_parseDob(e.dob).getMonth()+1===m).length);
     case 'totalEmp':        return mn.map(m=>DB.employees.filter(e=>!e.joined||new Date(e.joined)<=new Date(yr,m,0)).length);
     case 'openJobs':        return mn.map(()=>(DB.jobs||[]).filter(j=>j.status==='open').length);
     case 'runningCourses':  return mn.map(m=>{
@@ -3552,7 +3561,7 @@ function renderDashboardCharts(){
     const ageBuckets = {'<25':0,'25-30':0,'31-35':0,'36-40':0,'41-45':0,'46-50':0,'>50':0};
     const today2 = new Date();
     pool.filter(e=>e.dob).forEach(e=>{
-      const age = Math.floor((today2-new Date(e.dob))/(365.25*24*3600*1000));
+      const age = Math.floor((today2-_parseDob(e.dob))/(365.25*24*3600*1000));
       if(age<25) ageBuckets['<25']++;
       else if(age<=30) ageBuckets['25-30']++;
       else if(age<=35) ageBuckets['31-35']++;
@@ -3929,14 +3938,14 @@ function renderDashboardBirthdays(){
   if(!el) return;
   const today = new Date();
   const items = DB.employees.filter(e=>e.dob).map(e=>{
-    const d = new Date(e.dob);
+    const d = _parseDob(e.dob);
     const next = new Date(today.getFullYear(), d.getMonth(), d.getDate());
     if(next < today) next.setFullYear(next.getFullYear()+1);
     return {emp:e, date:next, days: daysBetween(today, next)};
   }).filter(i=>i.days<=30).sort((a,b)=>a.days-b.days);
   if(items.length===0){ el.innerHTML='<div class="empty-state"><p>Không có sinh nhật trong 30 ngày tới</p></div>'; return; }
   el.innerHTML = items.slice(0,5).map(i=>{
-    const age = i.date.getFullYear() - new Date(i.emp.dob).getFullYear();
+    const age = i.date.getFullYear() - _parseDob(i.emp.dob).getFullYear();
     return `<div class="event-row">
       <div class="event-date"><div class="event-day">${i.date.getDate()}</div><div class="event-month">T${i.date.getMonth()+1}</div></div>
       <div class="event-body"><div class="event-title">${i.emp.name}</div><div class="event-meta">${deptName(i.emp.deptId)} · ${age} tuổi</div></div>
@@ -4311,17 +4320,26 @@ function renderEmployeeProfile(main){
               </div>`}
             </div>` : '';
 
+          const CONTRACT_HIGHLIGHT_KEYS = ['currentContractType','contractStart','contractEnd','currentContractStart','currentContractEnd'];
           const fieldRows = (groupName === (_lang==="en"?"Recruitment":"Tuyển dụng"))
             ? otherFields.map(({cf,val})=>`
                 <div class="profile-field">
                   <div class="profile-field-label">${escapeHtml(cf.label)}</div>
                   <div class="profile-field-value">${fmtFieldVal(cf, val)}</div>
                 </div>`).join('') + salaryBlock
-            : fields.map(({cf,val})=>`
-                <div class="profile-field">
-                  <div class="profile-field-label">${escapeHtml(cf.label)}</div>
-                  <div class="profile-field-value">${fmtFieldVal(cf, val)}</div>
-                </div>`).join('');
+            : fields.map(({cf,val})=>{
+                const isType  = cf.key === 'currentContractType';
+                const isStart = cf.key === 'contractStart' || cf.key === 'currentContractStart';
+                const isEnd   = cf.key === 'contractEnd'   || cf.key === 'currentContractEnd';
+                const isCurrent = isType || isStart || isEnd;
+                const valStyle  = isCurrent ? 'color:var(--accent);font-weight:700' : '';
+                const bgStyle = isCurrent ? 'style="background:rgba(255,255,255,.03);border-radius:6px;padding:5px 8px;margin:-2px -8px"' : '';
+                const labelMark = isCurrent ? '★ ' : '';
+                return `<div class="profile-field" ${bgStyle}>
+                  <div class="profile-field-label" ${isCurrent?'style="font-weight:600"':''}>${labelMark}${escapeHtml(cf.label)}</div>
+                  <div class="profile-field-value" ${valStyle?`style="${valStyle}"`:''}>${fmtFieldVal(cf, val)||'<span style="color:var(--ink-muted)">—</span>'}</div>
+                </div>`;
+              }).join('');
 
           return `
           <div class="profile-section">
@@ -5214,7 +5232,7 @@ function renderEmployees(main){
             ${extraCells}
             ${EC.dob?`<td style="font-size:12px;color:var(--ink-dim)">${(()=>{
               if(!e.dob) return '—';
-              const dobD = new Date(e.dob);
+              const dobD = _parseDob(e.dob);
               const today = new Date();
               let age = today.getFullYear() - dobD.getFullYear();
               if(today.getMonth() < dobD.getMonth() || (today.getMonth()===dobD.getMonth()&&today.getDate()<dobD.getDate())) age--;
@@ -5381,8 +5399,8 @@ function applyEmpFilter(){
   if(empFilter.joinedMonth) r = r.filter(e=>e.joined && new Date(e.joined).getMonth()+1===empFilter.joinedMonth);
   if(empFilter.joinedYear)  r = r.filter(e=>e.joined && new Date(e.joined).getFullYear()===empFilter.joinedYear);
   // Lọc ngày sinh
-  if(empFilter.dobMonth) r = r.filter(e=>e.dob && new Date(e.dob).getMonth()+1===empFilter.dobMonth);
-  if(empFilter.dobYear)  r = r.filter(e=>e.dob && new Date(e.dob).getFullYear()===empFilter.dobYear);
+  if(empFilter.dobMonth) r = r.filter(e=>e.dob && _parseDob(e.dob).getMonth()+1===empFilter.dobMonth);
+  if(empFilter.dobYear)  r = r.filter(e=>e.dob && _parseDob(e.dob).getFullYear()===empFilter.dobYear);
 
   // Áp dụng quick filters (multi-toggle, AND logic)
   const flags = empFilter.flags || {};
@@ -5401,7 +5419,7 @@ function matchesQuickFilters(e, flags){
   // Tính tuổi và thâm niên 1 lần
   let age = null;
   if(e.dob){
-    const dob = new Date(e.dob);
+    const dob = _parseDob(e.dob);
     age = today.getFullYear() - dob.getFullYear();
     if(today.getMonth() < dob.getMonth() || (today.getMonth() === dob.getMonth() && today.getDate() < dob.getDate())) age--;
   }
@@ -7152,7 +7170,7 @@ function renderDepartmentDetail(main){
   // Tuổi trung bình
   const now = new Date();
   const ages = DB.employees.filter(e=>e.deptId===d.id && e.dob && getEffectiveStatus(e)!=='exit').map(e=>{
-    const dob = new Date(e.dob);
+    const dob = _parseDob(e.dob);
     let age = now.getFullYear() - dob.getFullYear();
     if(now.getMonth() < dob.getMonth() || (now.getMonth() === dob.getMonth() && now.getDate() < dob.getDate())) age--;
     return age;
@@ -9119,7 +9137,7 @@ function renderBirthdays(main){
 
   // Helper tính ngày sinh nhật năm nay
   function makeBdayInfo(e){
-    const dob = new Date(e.dob);
+    const dob = _parseDob(e.dob);
     const birthMonth = dob.getMonth() + 1;
     const birthDay = dob.getDate();
     // Tuổi đến cuối năm
@@ -9242,7 +9260,7 @@ function generateBirthdayWish(empId){
   const emp = empById(empId);
   if(!emp){ toast((_lang==="en"?"No employee found":"Không tìm thấy nhân viên"),'error'); return; }
   const dept = DB.departments.find(d => d.id === emp.deptId);
-  const dob = new Date(emp.dob);
+  const dob = _parseDob(emp.dob);
   const today = new Date();
   let age = today.getFullYear() - dob.getFullYear();
   const html = `<!DOCTYPE html>
