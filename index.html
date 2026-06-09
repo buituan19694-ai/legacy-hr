@@ -11558,35 +11558,58 @@ function renderRecruitmentReports(main){
 }
 
 // ═══════════════════════════════════════════════
-// BIẾN ĐỘNG NHÂN SỰ — NV Mới & Nghỉ Việc
+// BIẾN ĐỘNG NHÂN SỰ
 // ═══════════════════════════════════════════════
 function renderWorkforce(main){
   const today = new Date();
   const curYear = today.getFullYear();
   const curMonth = today.getMonth()+1;
-  if(!window._wfTab) window._wfTab = 'new';
+  if(!window._wfTab)  window._wfTab  = 'new';
   if(!window._wfYear) window._wfYear = curYear;
-  const tab = window._wfTab;
-  const yr = window._wfYear;
+  if(!window._wfMonth) window._wfMonth = 0; // 0 = cả năm
+  const tab  = window._wfTab;
+  const yr   = window._wfYear;
+  const mon  = window._wfMonth; // 0=all, 1-12=month
+
   const PAL = ['#7eb6e8','#7ec699','#d4a574','#b794d4','#e8b974','#7dd3c0','#e57373','#a8b4f0','#f9a8d4','#86efac'];
 
+  // Years list (dynamic)
   const yearsSet = new Set([curYear+1,curYear,curYear-1,curYear-2,curYear-3]);
   DB.employees.forEach(e=>{
     if(e.joined) yearsSet.add(new Date(e.joined).getFullYear());
-    const ex=getExitDate(e); if(ex) yearsSet.add(ex.getFullYear());
+    const x=getExitDate(e); if(x) yearsSet.add(x.getFullYear());
   });
+  (DB.wfExtraYears||[]).forEach(y=>yearsSet.add(y));
   const yearsList=[...yearsSet].sort((a,b)=>b-a);
   const yearOpts=yearsList.map(y=>`<option value="${y}" ${y===yr?'selected':''}>${y}</option>`).join('');
+  const monOpts=`<option value="0" ${mon===0?'selected':''}>Cả năm</option>`+
+    MN.map((m,i)=>`<option value="${i+1}" ${mon===i+1?'selected':''}>${m}</option>`).join('');
 
-  // Data
-  const newEmps = DB.employees.filter(e=>e.joined&&new Date(e.joined).getFullYear()===yr)
+  // Filter helpers
+  const inPeriod = (dateStr) => {
+    if(!dateStr) return false;
+    const d = new Date(dateStr);
+    if(d.getFullYear()!==yr) return false;
+    return mon===0 || d.getMonth()+1===mon;
+  };
+  const inPeriodDate = (d) => {
+    if(!d) return false;
+    if(d.getFullYear()!==yr) return false;
+    return mon===0 || d.getMonth()+1===mon;
+  };
+
+  // NV mới
+  const newEmps = DB.employees.filter(e=>inPeriod(e.joined))
     .sort((a,b)=>new Date(b.joined)-new Date(a.joined));
-  const exitEmps = DB.employees.filter(e=>{ const x=getExitDate(e); return x&&x.getFullYear()===yr; })
+  // NV nghỉ
+  const exitEmps = DB.employees.filter(e=>{ const x=getExitDate(e); return x&&inPeriodDate(x); })
     .sort((a,b)=>getExitDate(b)-getExitDate(a));
 
-  const newByMonth = MN.map((_,mi)=>newEmps.filter(e=>new Date(e.joined).getMonth()===mi).length);
-  const exitByMonth = MN.map((_,mi)=>exitEmps.filter(e=>{ const x=getExitDate(e); return x&&x.getMonth()===mi; }).length);
+  // Monthly data (full year, for overview chart)
+  const newByMonth  = MN.map((_,mi)=>DB.employees.filter(e=>e.joined&&new Date(e.joined).getFullYear()===yr&&new Date(e.joined).getMonth()===mi).length);
+  const exitByMonth = MN.map((_,mi)=>DB.employees.filter(e=>{ const x=getExitDate(e); return x&&x.getFullYear()===yr&&x.getMonth()===mi; }).length);
 
+  // Breakdowns for selected period
   const newByDept={}, exitByDept={}, exitReasons={};
   newEmps.forEach(e=>{ const d=deptName(e.deptId)||'Khác'; newByDept[d]=(newByDept[d]||0)+1; });
   exitEmps.forEach(e=>{
@@ -11594,6 +11617,8 @@ function renderWorkforce(main){
     const r=(DB.customData[e.id]||{}).exitReason||'Không rõ'; exitReasons[r]=(exitReasons[r]||0)+1;
   });
 
+  // Turnover (full year)
+  const allExitYear = DB.employees.filter(e=>{ const x=getExitDate(e); return x&&x.getFullYear()===yr; });
   const avgHC=(()=>{
     let t=0,c=0;
     for(let m=0;m<(yr===curYear?curMonth:12);m++){
@@ -11603,197 +11628,186 @@ function renderWorkforce(main){
     }
     return c?Math.round(t/c):0;
   })();
-  const turnover = avgHC?(exitEmps.length/avgHC*100).toFixed(1):'—';
-  const net = newEmps.length - exitEmps.length;
-
-  const fTenure = (start, end) => {
-    if(!start) return '—';
-    const d = Math.floor(((end||new Date())-new Date(start))/864e5);
-    if(d<30) return d+'d';
-    if(d<365) return Math.floor(d/30)+'th';
-    const y=Math.floor(d/365), m=Math.floor((d%365)/30);
-    return y+'n'+(m?m+'th':'');
-  };
-
-  // ── KPI summary bar ──
-  const kpiHtml = `
-    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px">
-      ${[
-        {label:'NV MỚI', val:newEmps.length, color:'var(--success)', sub:'nhân viên gia nhập', icon:'🟢'},
-        {label:'NGHỈ VIỆC', val:exitEmps.length, color:'var(--danger)', sub:'nhân viên rời đi', icon:'🔴'},
-        {label:'TĂNG THUẦN', val:(net>=0?'+':'')+net, color:net>=0?'var(--success)':'var(--danger)', sub:'net headcount change', icon:net>=0?'📈':'📉'},
-        {label:'TURNOVER', val:turnover+'%', color:'var(--accent)', sub:'HC TB: '+avgHC+' NV', icon:'🔄'},
-      ].map(k=>`
-        <div class="card" style="padding:18px 20px;border-top:3px solid ${k.color}">
-          <div style="font-size:10.5px;font-weight:700;letter-spacing:.07em;color:var(--ink-muted);margin-bottom:8px">${k.icon} ${k.label}</div>
-          <div style="font-size:30px;font-weight:800;color:${k.color};line-height:1.1">${k.val}</div>
-          <div style="font-size:11px;color:var(--ink-muted);margin-top:4px">${k.sub}</div>
-        </div>`).join('')}
-    </div>`;
-
-  // ── Combo overview chart (new vs exit per month) ──
-  const overviewHtml = `
-    <div class="card" style="margin-bottom:16px">
-      <div class="card-head">
-        <div>
-          <div class="card-title">📊 Biến động nhân sự theo tháng — ${yr}</div>
-          <div class="card-sub">NV mới (xanh) vs Nghỉ việc (đỏ) · <span style="color:var(--success)">+${newEmps.length} vào</span> · <span style="color:var(--danger)">-${exitEmps.length} ra</span></div>
-        </div>
-      </div>
-      <div style="height:240px;padding:0 4px"><canvas id="chartWfOverview"></canvas></div>
-    </div>`;
-
-  // ── Tab content ──
-  const tabContent = tab==='new' ? buildNewTab(newEmps, newByDept, PAL, yr) : buildExitTab(exitEmps, exitByDept, exitReasons, PAL, yr);
+  const turnover=avgHC?(allExitYear.length/avgHC*100).toFixed(1):'—';
+  const net=newEmps.length-exitEmps.length;
+  const periodLabel = mon===0 ? `Năm ${yr}` : `T${mon}/${yr}`;
 
   main.innerHTML = `
     <div class="topbar">
       <div class="topbar-left">
         <h1 class="page-title">Biến động <em>nhân sự</em></h1>
-        <div class="page-sub">Năm ${yr} · ${newEmps.length} gia nhập · ${exitEmps.length} rời đi · Turnover ${turnover}%</div>
+        <div class="page-sub">${periodLabel} · ${newEmps.length} gia nhập · ${exitEmps.length} rời đi · Turnover ${turnover}%</div>
       </div>
       <div class="topbar-actions">
-        <select class="filter-select" onchange="window._wfYear=parseInt(this.value);render()">${yearOpts}</select>
-        <button class="btn" onclick="exportWorkforce(${yr})">📥 Xuất Excel</button>
+        <select class="filter-select" onchange="window._wfYear=parseInt(this.value);window._wfMonth=0;render()">${yearOpts}</select>
+        <select class="filter-select" onchange="window._wfMonth=parseInt(this.value);render()">${monOpts}</select>
+        <button class="btn" onclick="addWfYear()" title="Thêm năm" style="padding:4px 10px;font-size:12px">+ Năm</button>
+        <button class="btn" onclick="exportWorkforce(${yr},${mon})">📥 Xuất Excel</button>
       </div>
     </div>
-    ${kpiHtml}
-    ${overviewHtml}
+
+    <!-- KPI cards -->
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:18px">
+      ${[
+        {label:'NV MỚI', val:newEmps.length, color:'var(--success)', icon:'🟢', sub:'gia nhập · '+periodLabel},
+        {label:'NGHỈ VIỆC', val:exitEmps.length, color:'var(--danger)', icon:'🔴', sub:'rời đi · '+periodLabel},
+        {label:'TĂNG THUẦN', val:(net>=0?'+':'')+net, color:net>=0?'var(--success)':'var(--danger)', icon:net>=0?'📈':'📉', sub:'net headcount'},
+        {label:'TURNOVER', val:turnover+'%', color:'var(--accent)', icon:'🔄', sub:'HC TB: '+avgHC+' NV (cả năm)'},
+      ].map(k=>`
+        <div class="card" style="padding:18px 20px;border-top:3px solid ${k.color}">
+          <div style="font-size:10px;font-weight:700;letter-spacing:.08em;color:var(--ink-muted);margin-bottom:8px">${k.icon} ${k.label}</div>
+          <div style="font-size:30px;font-weight:800;color:${k.color};line-height:1.1">${k.val}</div>
+          <div style="font-size:11px;color:var(--ink-muted);margin-top:4px">${k.sub}</div>
+        </div>`).join('')}
+    </div>
+
+    <!-- Overview chart: always full year -->
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-head">
+        <div>
+          <div class="card-title">📊 Biến động theo tháng — ${yr}</div>
+          <div class="card-sub">NV mới <span style="color:var(--success)">●</span> vs Nghỉ việc <span style="color:var(--danger)">●</span>${mon>0?` · Đang lọc T${mon}`:''}
+          ${mon>0?`<button onclick="window._wfMonth=0;render()" style="margin-left:8px;font-size:10px;background:rgba(255,255,255,.07);border:none;border-radius:4px;padding:1px 7px;cursor:pointer;color:var(--ink-muted)">✕ Xem cả năm</button>`:''}</div>
+        </div>
+      </div>
+      <div style="height:220px;padding:0 4px"><canvas id="chartWfOverview"></canvas></div>
+    </div>
+
+    <!-- Tabs -->
     <div style="display:flex;gap:6px;margin-bottom:14px">
       <button class="rec-tab ${tab==='new'?'active':''}" onclick="window._wfTab='new';render()">
-        🟢 NV Mới &nbsp;<span style="background:rgba(126,198,153,.2);color:var(--success);border-radius:10px;padding:1px 7px;font-size:11px">${newEmps.length}</span>
+        🟢 NV Mới <span style="background:rgba(126,198,153,.2);color:var(--success);border-radius:10px;padding:1px 8px;font-size:11px;margin-left:4px">${newEmps.length}</span>
       </button>
       <button class="rec-tab ${tab==='exit'?'active':''}" onclick="window._wfTab='exit';render()">
-        🔴 Nghỉ việc &nbsp;<span style="background:rgba(229,115,115,.2);color:var(--danger);border-radius:10px;padding:1px 7px;font-size:11px">${exitEmps.length}</span>
+        🔴 Nghỉ việc <span style="background:rgba(229,115,115,.2);color:var(--danger);border-radius:10px;padding:1px 8px;font-size:11px;margin-left:4px">${exitEmps.length}</span>
       </button>
     </div>
-    ${tabContent}
+    ${tab==='new' ? _wfNewTab(newEmps,newByDept,PAL,yr,mon) : _wfExitTab(exitEmps,exitByDept,exitReasons,PAL,yr,mon)}
   `;
 
   setTimeout(()=>{
     // Overview combo chart
-    const ovEl = document.getElementById('chartWfOverview');
+    const ovEl=document.getElementById('chartWfOverview');
     if(ovEl){
       if(Chart.getChart(ovEl)) Chart.getChart(ovEl).destroy();
-      const isFut = (mi) => yr===curYear ? mi>=curMonth : yr>curYear;
-      new Chart(ovEl,{
-        type:'bar',
-        data:{labels:MN, datasets:[
-          {label:'NV Mới', data:newByMonth.map((v,i)=>isFut(i)?null:v), backgroundColor:'rgba(126,198,153,.7)', borderRadius:4, borderSkipped:false},
-          {label:'Nghỉ việc', data:exitByMonth.map((v,i)=>isFut(i)?null:v), backgroundColor:'rgba(229,115,115,.7)', borderRadius:4, borderSkipped:false},
+      const isFut=(mi)=>yr===curYear?mi>=curMonth:yr>curYear;
+      // Highlight selected month
+      const newColors = newByMonth.map((_,i)=>{
+        if(isFut(i)) return 'transparent';
+        return mon===0||mon===i+1?'rgba(126,198,153,.8)':'rgba(126,198,153,.25)';
+      });
+      const exitColors = exitByMonth.map((_,i)=>{
+        if(isFut(i)) return 'transparent';
+        return mon===0||mon===i+1?'rgba(229,115,115,.8)':'rgba(229,115,115,.25)';
+      });
+      new Chart(ovEl,{type:'bar',
+        data:{labels:MN,datasets:[
+          {label:'NV Mới',data:newByMonth.map((v,i)=>isFut(i)?null:v),backgroundColor:newColors,borderRadius:4,borderSkipped:false},
+          {label:'Nghỉ việc',data:exitByMonth.map((v,i)=>isFut(i)?null:v),backgroundColor:exitColors,borderRadius:4,borderSkipped:false},
         ]},
         options:{responsive:true,maintainAspectRatio:false,
-          plugins:{legend:{position:'top',labels:{usePointStyle:true,padding:16}},datalabels:{display:false}},
-          scales:{x:{grid:{display:false},stacked:false}, y:{grid:{color:'#1f2630'},beginAtZero:true,ticks:{stepSize:1}}}}
+          plugins:{legend:{position:'top',labels:{usePointStyle:true,padding:16,font:{size:11}}},datalabels:{display:false},
+            tooltip:{callbacks:{afterTitle:items=>mon>0&&items[0].dataIndex===mon-1?'◀ Đang chọn':''}}},
+          scales:{x:{grid:{display:false}},y:{grid:{color:'#1f2630'},beginAtZero:true,ticks:{stepSize:1}}},
+          onClick:(e,els)=>{
+            if(els.length){const m=els[0].index+1;window._wfMonth=window._wfMonth===m?0:m;render();}
+          }
+        }
       });
     }
-    // Dept donut
-    const deptId = tab==='new'?'chartWfNewDept':'chartWfExitDept';
-    const deptEl = document.getElementById(deptId);
-    if(deptEl){
-      if(Chart.getChart(deptEl)) Chart.getChart(deptEl).destroy();
-      const data = tab==='new'?newByDept:exitByDept;
-      const labels=Object.keys(data), vals=labels.map(k=>data[k]);
-      new Chart(deptEl,{type:'doughnut',data:{labels,datasets:[{data:vals,backgroundColor:PAL,borderWidth:0,hoverOffset:6}]},
-        options:{responsive:true,maintainAspectRatio:false,
-          plugins:{legend:{position:'right',labels:{usePointStyle:true,padding:8,font:{size:10}}},datalabels:{display:false}}}});
-    }
-    // Exit reason chart
-    if(tab==='exit'){
-      const rrEl=document.getElementById('chartWfReason');
-      if(rrEl){
-        if(Chart.getChart(rrEl)) Chart.getChart(rrEl).destroy();
-        const sorted=Object.entries(exitReasons).sort((a,b)=>b[1]-a[1]);
-        new Chart(rrEl,{type:'bar',
-          data:{labels:sorted.map(r=>r[0]),datasets:[{data:sorted.map(r=>r[1]),backgroundColor:sorted.map((_,i)=>PAL[i%PAL.length]),borderRadius:4}]},
-          options:{responsive:true,maintainAspectRatio:false,indexAxis:'y',
-            plugins:{legend:{display:false},datalabels:{display:false}},
-            scales:{x:{grid:{color:'#1f2630'},beginAtZero:true,ticks:{stepSize:1}},y:{grid:{display:false}}}}});
-      }
-    }
+    // Sub charts
+    _wfRenderCharts(tab,newByDept,exitByDept,exitReasons,PAL);
   },60);
 }
 
-function buildNewTab(emps, byDept, PAL, yr){
-  if(!emps.length) return `<div class="card"><div class="empty-state"><div style="font-size:32px">🟢</div><div>Chưa có NV mới trong năm ${yr}</div></div></div>`;
+function _wfRenderCharts(tab,newByDept,exitByDept,exitReasons,PAL){
+  const deptId=tab==='new'?'chartWfDept':'chartWfExitDept';
+  const deptEl=document.getElementById(deptId);
+  if(deptEl){
+    if(Chart.getChart(deptEl)) Chart.getChart(deptEl).destroy();
+    const data=tab==='new'?newByDept:exitByDept;
+    const labels=Object.keys(data),vals=labels.map(k=>data[k]);
+    if(labels.length){
+      new Chart(deptEl,{type:'doughnut',data:{labels,datasets:[{data:vals,backgroundColor:PAL,borderWidth:0,hoverOffset:8}]},
+        options:{responsive:true,maintainAspectRatio:false,
+          plugins:{legend:{position:'right',labels:{usePointStyle:true,padding:9,font:{size:10}}},datalabels:{display:false}}}});
+    }
+  }
+  if(tab==='exit'){
+    const rrEl=document.getElementById('chartWfReason');
+    if(rrEl&&Object.keys(exitReasons).length){
+      if(Chart.getChart(rrEl)) Chart.getChart(rrEl).destroy();
+      const sorted=Object.entries(exitReasons).sort((a,b)=>b[1]-a[1]);
+      new Chart(rrEl,{type:'bar',
+        data:{labels:sorted.map(r=>r[0]),datasets:[{data:sorted.map(r=>r[1]),backgroundColor:sorted.map((_,i)=>PAL[i%PAL.length]),borderRadius:4,borderSkipped:false}]},
+        options:{responsive:true,maintainAspectRatio:false,indexAxis:'y',
+          plugins:{legend:{display:false},datalabels:{display:false}},
+          scales:{x:{grid:{color:'#1f2630'},beginAtZero:true,ticks:{stepSize:1}},y:{grid:{display:false},ticks:{font:{size:11}}}}}});
+    }
+  }
+}
 
-  const rows = emps.map((e,i)=>{
+function _wfNewTab(emps,byDept,PAL,yr,mon){
+  if(!emps.length) return `<div class="card"><div class="empty-state"><div style="font-size:36px">🟢</div><div>Chưa có NV mới ${mon>0?'tháng '+mon+'/':''+'năm '}${yr}</div></div></div>`;
+  const rows=emps.map((e,i)=>{
     const cd=DB.customData[e.id]||{};
     const ct=cd.currentContractType||'—';
-    const mn=e.joined?MN[new Date(e.joined).getMonth()]:'—';
-    const tenure=(()=>{const d=Math.floor((new Date()-new Date(e.joined||0))/864e5);if(d<30)return d+'ng';if(d<365)return Math.floor(d/30)+'th';return Math.floor(d/365)+'n';})();
+    const d=Math.floor((new Date()-new Date(e.joined||0))/864e5);
+    const tenure=d<30?d+'ng':d<365?Math.floor(d/30)+'th':Math.floor(d/365)+'n'+Math.floor((d%365)/30)+'th';
     return `<tr onclick="viewEmployee('${e.id}')" style="cursor:pointer">
-      <td style="text-align:center;color:var(--ink-muted);font-size:11px;width:28px">${i+1}</td>
-      <td>
-        <div style="font-weight:600">${escapeHtml(e.name||'')}</div>
-        <div style="font-size:10.5px;color:var(--ink-muted)">${escapeHtml(e.code||'')}${e.level?' · '+e.level:''}</div>
-      </td>
+      <td style="width:28px;text-align:center;color:var(--ink-muted);font-size:11px">${i+1}</td>
+      <td><div style="font-weight:600">${escapeHtml(e.name||'')}</div><div style="font-size:10.5px;color:var(--ink-muted)">${escapeHtml(e.code||'')}${e.level?' · '+e.level:''}</div></td>
       <td>${escapeHtml(deptName(e.deptId))}</td>
       <td>${escapeHtml(e.role||'—')}</td>
       <td style="font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--success)">${fmtDate(e.joined)}</td>
-      <td style="text-align:center;font-size:11.5px;color:var(--accent)">${mn}</td>
-      <td style="font-size:11px;color:var(--ink-muted);white-space:nowrap">${escapeHtml(ct)}</td>
-      <td style="text-align:center;font-size:11px;font-family:'JetBrains Mono',monospace;color:var(--ink-muted)">${tenure}</td>
+      <td style="font-size:11px;color:var(--ink-muted);max-width:160px">${escapeHtml(ct)}</td>
+      <td style="text-align:center;font-size:11px;color:var(--ink-muted);font-family:'JetBrains Mono',monospace">${tenure}</td>
     </tr>`;
   }).join('');
+
+  const maxNew=Math.max(...MN.map((_,i)=>DB.employees.filter(e=>e.joined&&new Date(e.joined).getFullYear()===yr&&new Date(e.joined).getMonth()===i).length),0);
 
   return `
     <div class="row row-2-equal" style="margin-bottom:14px">
       <div class="card">
-        <div class="card-head"><div><div class="card-title">Phân bổ theo bộ phận</div><div class="card-sub">${emps.length} NV · ${yr}</div></div></div>
-        <div style="height:200px"><canvas id="chartWfNewDept"></canvas></div>
+        <div class="card-head"><div><div class="card-title">🏢 Phân bổ theo bộ phận</div><div class="card-sub">${emps.length} NV mới</div></div></div>
+        <div style="height:200px">${Object.keys(byDept).length?'<canvas id="chartWfDept"></canvas>':'<div class="empty-state" style="height:100%"><div>Không có dữ liệu</div></div>'}</div>
       </div>
-      <div class="card" style="padding:20px">
-        <div style="font-size:12px;font-weight:700;color:var(--ink-muted);margin-bottom:12px;letter-spacing:.05em">THÁNG CÓ NHIỀU NV MỚI NHẤT</div>
-        ${(()=>{
-          const maxVal=Math.max(...newByMonth.filter(v=>v>0),0);
-          return MN.map((m,i)=>{
-            const v=newByMonth[i]; if(!v) return '';
-            return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:7px">
-              <div style="width:24px;font-size:11px;color:var(--ink-muted);font-weight:600">${m}</div>
-              <div style="flex:1;height:6px;background:rgba(255,255,255,.06);border-radius:3px">
-                <div style="height:6px;background:var(--success);border-radius:3px;width:${Math.round(v/maxVal*100)}%;opacity:.8"></div>
-              </div>
-              <div style="width:20px;text-align:right;font-size:11px;font-weight:700;color:var(--success)">${v}</div>
-            </div>`;
-          }).join('');
-        })()}
+      <div class="card" style="padding:18px 20px">
+        <div style="font-size:11px;font-weight:700;color:var(--ink-muted);margin-bottom:12px;letter-spacing:.05em">📅 PHÂN BỔ THEO THÁNG — ${yr}</div>
+        ${MN.map((m,i)=>{
+          const v=DB.employees.filter(e=>e.joined&&new Date(e.joined).getFullYear()===yr&&new Date(e.joined).getMonth()===i).length;
+          const isSelected = mon===i+1;
+          return v>0||isSelected?`<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;${isSelected?'background:rgba(126,198,153,.08);border-radius:5px;padding:2px 4px;':''}" onclick="window._wfMonth=${i+1}===window._wfMonth?0:${i+1};render()" style="cursor:pointer">
+            <div style="width:22px;font-size:11px;font-weight:600;color:${isSelected?'var(--success)':'var(--ink-muted)'}">${m}</div>
+            <div style="flex:1;height:6px;background:rgba(255,255,255,.06);border-radius:3px"><div style="height:6px;background:var(--success);border-radius:3px;width:${maxNew?Math.round(v/maxNew*100):0}%;opacity:${isSelected?.95:.7}"></div></div>
+            <div style="font-size:11px;font-weight:700;color:${isSelected?'var(--success)':'var(--ink)'}">${v}</div>
+          </div>`:'';
+        }).join('')}
       </div>
     </div>
     <div class="card">
-      <div class="card-head">
-        <div><div class="card-title">Danh sách NV mới — ${yr}</div><div class="card-sub">${emps.length} nhân viên</div></div>
-      </div>
+      <div class="card-head"><div><div class="card-title">Danh sách NV mới</div><div class="card-sub">${emps.length} nhân viên · ${mon>0?'T'+mon+'/':''}${yr}</div></div></div>
       <div class="table-wrap"><table class="data-table">
-        <thead><tr>
-          <th style="width:28px">#</th><th>Họ tên</th><th>Bộ phận</th><th>Chức vụ</th>
-          <th>Ngày vào</th><th style="text-align:center">Tháng</th><th>Loại HĐ</th><th style="text-align:center">Thâm niên</th>
-        </tr></thead>
+        <thead><tr><th style="width:28px">#</th><th>Họ tên</th><th>Bộ phận</th><th>Chức vụ</th><th>Ngày vào</th><th>Loại HĐ</th><th style="text-align:center">Thâm niên</th></tr></thead>
         <tbody>${rows}</tbody>
       </table></div>
     </div>`;
 }
 
-function buildExitTab(emps, byDept, reasons, PAL, yr){
-  if(!emps.length) return `<div class="card"><div class="empty-state"><div style="font-size:32px">🔴</div><div>Chưa có NV nghỉ việc trong năm ${yr}</div></div></div>`;
-
+function _wfExitTab(emps,byDept,reasons,PAL,yr,mon){
+  if(!emps.length) return `<div class="card"><div class="empty-state"><div style="font-size:36px">🔴</div><div>Chưa có NV nghỉ việc ${mon>0?'tháng '+mon+'/':''+'năm '}${yr}</div></div></div>`;
   const total=emps.length;
   const reasonEntries=Object.entries(reasons).sort((a,b)=>b[1]-a[1]);
+  const maxExit=Math.max(...MN.map((_,i)=>DB.employees.filter(e=>{ const x=getExitDate(e); return x&&x.getFullYear()===yr&&x.getMonth()===i; }).length),0);
 
   const rows=emps.map((e,i)=>{
     const ex=getExitDate(e); const cd=DB.customData[e.id]||{};
-    const tenure=(()=>{
-      if(!e.joined||!ex) return '—';
-      const d=Math.floor((ex-new Date(e.joined))/864e5);
-      if(d<30) return d+'ng'; if(d<365) return Math.floor(d/30)+'th';
-      return Math.floor(d/365)+'n'+Math.floor((d%365)/30)+'th';
-    })();
+    const d=(e.joined&&ex)?Math.floor((ex-new Date(e.joined))/864e5):0;
+    const tenure=!d?'—':d<30?d+'ng':d<365?Math.floor(d/30)+'th':Math.floor(d/365)+'n'+Math.floor((d%365)/30)+'th';
     return `<tr onclick="viewEmployee('${e.id}')" style="cursor:pointer">
-      <td style="text-align:center;color:var(--ink-muted);font-size:11px;width:28px">${i+1}</td>
-      <td>
-        <div style="font-weight:600">${escapeHtml(e.name||'')}</div>
-        <div style="font-size:10.5px;color:var(--ink-muted)">${escapeHtml(e.code||'')}${e.level?' · '+e.level:''}</div>
-      </td>
+      <td style="width:28px;text-align:center;color:var(--ink-muted);font-size:11px">${i+1}</td>
+      <td><div style="font-weight:600">${escapeHtml(e.name||'')}</div><div style="font-size:10.5px;color:var(--ink-muted)">${escapeHtml(e.code||'')}${e.level?' · '+e.level:''}</div></td>
       <td>${escapeHtml(deptName(e.deptId))}</td>
       <td>${escapeHtml(e.role||'—')}</td>
       <td style="font-family:'JetBrains Mono',monospace;font-size:11.5px">${fmtDate(e.joined)}</td>
@@ -11806,64 +11820,101 @@ function buildExitTab(emps, byDept, reasons, PAL, yr){
   return `
     <div class="row row-2-equal" style="margin-bottom:14px">
       <div class="card">
-        <div class="card-head"><div><div class="card-title">Phân bổ theo bộ phận</div><div class="card-sub">${total} NV nghỉ</div></div></div>
-        <div style="height:200px"><canvas id="chartWfExitDept"></canvas></div>
+        <div class="card-head"><div><div class="card-title">🏢 Nghỉ việc theo bộ phận</div><div class="card-sub">${total} NV · ${mon>0?'T'+mon+'/':''}${yr}</div></div></div>
+        <div style="height:210px">${Object.keys(byDept).length?'<canvas id="chartWfExitDept"></canvas>':'<div class="empty-state" style="height:100%"><div>Không có dữ liệu</div></div>'}</div>
       </div>
       <div class="card">
-        <div class="card-head"><div><div class="card-title">Lý do nghỉ việc</div><div class="card-sub">Top ${Math.min(reasonEntries.length,6)} lý do</div></div></div>
-        <div style="height:200px"><canvas id="chartWfReason"></canvas></div>
+        <div class="card-head"><div><div class="card-title">📋 Lý do nghỉ việc</div><div class="card-sub">${total} NV · ${reasonEntries.length} lý do</div></div></div>
+        <div style="height:210px">${reasonEntries.length?'<canvas id="chartWfReason"></canvas>':'<div class="empty-state" style="height:100%"><div>Chưa có dữ liệu lý do</div></div>'}</div>
       </div>
     </div>
-    <div class="card" style="margin-bottom:14px">
-      <div class="card-head"><div><div class="card-title">Phân tích lý do nghỉ việc</div></div></div>
-      <div style="padding:4px 16px 12px">
+
+    <!-- Reason analysis + month breakdown -->
+    <div class="row row-2-equal" style="margin-bottom:14px">
+      <div class="card" style="padding:18px 20px">
+        <div style="font-size:11px;font-weight:700;color:var(--ink-muted);margin-bottom:12px;letter-spacing:.05em">📊 PHÂN TÍCH LÝ DO</div>
         ${reasonEntries.map(([r,c])=>`
-          <div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid rgba(255,255,255,.04)">
-            <div style="flex:1;font-size:12.5px">${escapeHtml(r)}</div>
-            <div style="width:120px;height:5px;background:rgba(229,115,115,.12);border-radius:3px">
-              <div style="height:5px;background:var(--danger);border-radius:3px;width:${Math.round(c/total*100)}%;opacity:.75"></div>
+          <div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid rgba(255,255,255,.04)">
+            <div style="flex:1;font-size:12px">${escapeHtml(r)}</div>
+            <div style="width:100px;height:5px;background:rgba(229,115,115,.12);border-radius:3px">
+              <div style="height:5px;background:var(--danger);border-radius:3px;width:${Math.round(c/total*100)}%;opacity:.8"></div>
             </div>
-            <div style="width:24px;text-align:right;font-weight:700;color:var(--danger);font-size:12px;font-family:'JetBrains Mono',monospace">${c}</div>
-            <div style="width:36px;text-align:right;font-size:11px;color:var(--ink-muted)">${Math.round(c/total*100)}%</div>
+            <div style="font-weight:700;color:var(--danger);font-size:12px;font-family:'JetBrains Mono',monospace;width:20px;text-align:right">${c}</div>
+            <div style="color:var(--ink-muted);font-size:11px;width:32px;text-align:right">${Math.round(c/total*100)}%</div>
           </div>`).join('')}
       </div>
-    </div>
-    <div class="card">
-      <div class="card-head">
-        <div><div class="card-title">Danh sách NV nghỉ việc — ${yr}</div><div class="card-sub">${total} nhân viên</div></div>
+      <div class="card" style="padding:18px 20px">
+        <div style="font-size:11px;font-weight:700;color:var(--ink-muted);margin-bottom:12px;letter-spacing:.05em">📅 NGHỈ VIỆC THEO THÁNG — ${yr}</div>
+        ${MN.map((m,i)=>{
+          const v=DB.employees.filter(e=>{ const x=getExitDate(e); return x&&x.getFullYear()===yr&&x.getMonth()===i; }).length;
+          const isSelected=mon===i+1;
+          return v>0||isSelected?`<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;${isSelected?'background:rgba(229,115,115,.08);border-radius:5px;padding:2px 4px;':''}" onclick="window._wfMonth=${i+1}===window._wfMonth?0:${i+1};render()">
+            <div style="width:22px;font-size:11px;font-weight:600;color:${isSelected?'var(--danger)':'var(--ink-muted)'}">${m}</div>
+            <div style="flex:1;height:6px;background:rgba(255,255,255,.06);border-radius:3px"><div style="height:6px;background:var(--danger);border-radius:3px;width:${maxExit?Math.round(v/maxExit*100):0}%;opacity:${isSelected?.95:.7}"></div></div>
+            <div style="font-size:11px;font-weight:700;color:${isSelected?'var(--danger)':'var(--ink)'}">${v}</div>
+          </div>`:'';
+        }).join('')}
       </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><div><div class="card-title">Danh sách NV nghỉ việc</div><div class="card-sub">${total} nhân viên · ${mon>0?'T'+mon+'/':''}${yr}</div></div></div>
       <div class="table-wrap"><table class="data-table">
-        <thead><tr>
-          <th style="width:28px">#</th><th>Họ tên</th><th>Bộ phận</th><th>Chức vụ</th>
-          <th>Ngày vào</th><th>Ngày nghỉ</th><th style="text-align:center">Thâm niên</th><th>Lý do</th>
-        </tr></thead>
+        <thead><tr><th style="width:28px">#</th><th>Họ tên</th><th>Bộ phận</th><th>Chức vụ</th><th>Ngày vào</th><th>Ngày nghỉ</th><th style="text-align:center">Thâm niên</th><th>Lý do</th></tr></thead>
         <tbody>${rows}</tbody>
       </table></div>
     </div>`;
 }
 
-function exportWorkforce(yr){
-  if(typeof XLSX==='undefined'){ toast('SheetJS chưa tải','error'); return; }
-  const wb=XLSX.utils.book_new();
-  const newEmps=DB.employees.filter(e=>e.joined&&new Date(e.joined).getFullYear()===yr).sort((a,b)=>new Date(b.joined)-new Date(a.joined));
-  XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet([
-    ['#','Mã NV','Họ tên','Bộ phận','Chức vụ','Cấp bậc','Ngày vào làm','Loại HĐ'],
-    ...newEmps.map((e,i)=>{const cd=DB.customData[e.id]||{};return[i+1,e.code,e.name,deptName(e.deptId),e.role,e.level,isoToDisp(e.joined),cd.currentContractType||''];})
-  ]),`NV Mới ${yr}`);
-  const exitEmps=DB.employees.filter(e=>{const x=getExitDate(e);return x&&x.getFullYear()===yr;}).sort((a,b)=>getExitDate(b)-getExitDate(a));
-  XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet([
-    ['#','Mã NV','Họ tên','Bộ phận','Chức vụ','Cấp bậc','Ngày vào','Ngày nghỉ','Thâm niên','Lý do nghỉ'],
-    ...exitEmps.map((e,i)=>{
-      const ex=getExitDate(e);const cd=DB.customData[e.id]||{};
-      const d=e.joined&&ex?Math.floor((ex-new Date(e.joined))/864e5):0;
-      const tenure=d<30?d+'ng':d<365?Math.floor(d/30)+'th':Math.floor(d/365)+'n'+Math.floor((d%365)/30)+'th';
-      return[i+1,e.code,e.name,deptName(e.deptId),e.role,e.level,isoToDisp(e.joined),ex?isoToDisp(ex.toISOString().slice(0,10)):'',tenure,cd.exitReason||''];
-    })
-  ]),`Nghỉ Việc ${yr}`);
-  XLSX.writeFile(wb,`BienDongNhanSu_${yr}.xlsx`);
-  toast(`✅ Xuất BienDongNhanSu_${yr}.xlsx`,'success');
+function addWfYear(){
+  const curYr=new Date().getFullYear();
+  openModal(`
+    <div class="modal-head"><div class="modal-title">📅 Thêm năm</div></div>
+    <div class="form-grid">
+      <div class="field full"><label>Năm muốn xem</label>
+        <input type="number" id="wf_new_year" value="${curYr+2}" min="2000" max="2100" style="font-size:18px;font-weight:700;text-align:center">
+      </div>
+      <div class="field full"><label>Gợi ý nhanh</label>
+        <div style="display:flex;flex-wrap:wrap;gap:6px">
+          ${[curYr+2,curYr+3,curYr+4,curYr+5].map(y=>`<button class="btn" onclick="document.getElementById('wf_new_year').value=${y}" style="font-size:13px;font-weight:600">${y}</button>`).join('')}
+        </div>
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeModal()">Huỷ</button>
+      <button class="btn btn-primary" onclick="confirmAddWfYear()">✅ Thêm</button>
+    </div>
+  `);
+}
+function confirmAddWfYear(){
+  const yr=parseInt(document.getElementById('wf_new_year')?.value);
+  if(!yr||yr<2000||yr>2100){ toast('Năm không hợp lệ','error'); return; }
+  if(!DB.wfExtraYears) DB.wfExtraYears=[];
+  if(!DB.wfExtraYears.includes(yr)) DB.wfExtraYears.push(yr);
+  saveData();
+  window._wfYear=yr; window._wfMonth=0;
+  closeModal(); render();
+  toast(`✅ Đã thêm năm ${yr}`,'success');
 }
 
+function exportWorkforce(yr,mon){
+  if(typeof XLSX==='undefined'){ toast('SheetJS chưa tải','error'); return; }
+  const inP=d=>{ if(!d) return false; const dt=new Date(d); return dt.getFullYear()===yr&&(mon===0||dt.getMonth()+1===mon); };
+  const inPD=d=>{ if(!d) return false; return d.getFullYear()===yr&&(mon===0||d.getMonth()+1===mon); };
+  const wb=XLSX.utils.book_new();
+  const newE=DB.employees.filter(e=>inP(e.joined)).sort((a,b)=>new Date(b.joined)-new Date(a.joined));
+  XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet([
+    ['#','Mã NV','Họ tên','Bộ phận','Chức vụ','Cấp bậc','Ngày vào','Loại HĐ'],
+    ...newE.map((e,i)=>{ const cd=DB.customData[e.id]||{}; return[i+1,e.code,e.name,deptName(e.deptId),e.role,e.level,isoToDisp(e.joined),cd.currentContractType||'']; })
+  ]),`NV Mới${mon>0?' T'+mon:''}/${yr}`);
+  const exitE=DB.employees.filter(e=>{ const x=getExitDate(e); return x&&inPD(x); }).sort((a,b)=>getExitDate(b)-getExitDate(a));
+  XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet([
+    ['#','Mã NV','Họ tên','Bộ phận','Chức vụ','Cấp bậc','Ngày vào','Ngày nghỉ','Lý do'],
+    ...exitE.map((e,i)=>{ const x=getExitDate(e); const cd=DB.customData[e.id]||{}; return[i+1,e.code,e.name,deptName(e.deptId),e.role,e.level,isoToDisp(e.joined),x?isoToDisp(x.toISOString().slice(0,10)):'',cd.exitReason||'']; })
+  ]),`Nghỉ Việc${mon>0?' T'+mon:''}/${yr}`);
+  XLSX.writeFile(wb,`BienDongNS${mon>0?'_T'+mon:''}_${yr}.xlsx`);
+  toast(`✅ Xuất xong`,'success');
+}
 
 function renderRecruitment(main){
   if(!window.canDo('recruitment')){
