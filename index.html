@@ -9692,12 +9692,30 @@ function deleteLeaveYear(){
           delete DB.leaveSheet[empId][yr];
         }
       });
-      // Xóa leaveOpening năm đó
+      // Xóa leaveOpening/leavePlan năm đó
       if(DB.leaveOpening && DB.leaveOpening[yr]) delete DB.leaveOpening[yr];
       if(DB.leavePlan && DB.leavePlan[yr]) delete DB.leavePlan[yr];
       // Xóa khỏi leaveExtraYears nếu có
       if(DB.leaveExtraYears) DB.leaveExtraYears = DB.leaveExtraYears.filter(y=>y!==yr);
+      // Xóa leaves thuộc năm đó
+      DB.leaves = (DB.leaves||[]).filter(l=>{
+        if(!l.startDate) return true;
+        return new Date(l.startDate).getFullYear() !== yr;
+      });
       saveData();
+      // ── Xóa Firestore sharded docs của năm đó ──
+      if(window.fbDb && window.currentUser){
+        const docsToDelete = [
+          `leavesheet_${yr}`,
+          `leavemeta_${yr}`,
+          `leaves_${yr}`,
+        ];
+        docsToDelete.forEach(docId=>{
+          window.fbDb.collection('hrdata').doc(docId).delete()
+            .then(()=>console.log('[deleteLeaveYear] Deleted:', docId))
+            .catch(()=>{}); // không sao nếu doc không tồn tại
+        });
+      }
       // Chuyển về năm hiện tại
       if(!window._leaveBal) window._leaveBal = {};
       window._leaveBal.year = curYr;
