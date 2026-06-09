@@ -604,12 +604,12 @@ input:checked + .slider::before{transform:translateX(16px);background:var(--bg)}
       </div>
       <div class="nav-item" data-page="workforce">
         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
-        <span>Biến động NS</span>
+        <span data-i18n="nav_workforce">Biến động NS</span>
         <span class="nav-badge" id="navWorkforceCount"></span>
       </div>
       <div class="nav-item" data-page="training">
         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 14l9-5-9-5-9 5 9 5z"/><path stroke-linecap="round" stroke-linejoin="round" d="M12 14l6.16-3.422a12.083 12.083 0 01.665 6.479A11.952 11.952 0 0012 20.055a11.952 11.952 0 00-6.824-2.998 12.078 12.078 0 01.665-6.479L12 14z"/></svg>
-        <span data-i18n="nav_training2">Đào tạo</span>
+        <span data-i18n="nav_training">Đào tạo</span>
       </div>
       <div class="nav-item" data-page="performance">
         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z"/></svg>
@@ -723,6 +723,7 @@ const I18N = {
     nav_salary: 'Salary',
     nav_casual: 'Casual',
     nav_trainee: 'Thực tập sinh',
+    nav_workforce: 'Biến động NS',
     nav_training: 'Đào tạo',
     nav_recruitment: 'Tuyển dụng',
     nav_performance: 'Đánh giá Performance',
@@ -833,6 +834,7 @@ const I18N = {
     nav_salary: 'Salary',
     nav_casual: 'Casual',
     nav_trainee: 'Trainees',
+    nav_workforce: 'HR Movement',
     nav_training: 'Training',
     nav_recruitment: 'Recruitment',
     nav_performance: 'Performance Review',
@@ -1810,6 +1812,21 @@ const DEFAULT_REWARD_TYPES = [
 
 let DB = loadData();
 loadPhotosFromStorage();
+// ── Init guard: dynamic keys không lưu localStorage → phải đảm bảo không undefined ──
+// Firestore sẽ overwrite sau khi login, nhưng trước đó cần có giá trị mặc định
+if(!DB.leaves)            DB.leaves            = [];
+if(!DB.kpiReviews)        DB.kpiReviews        = [];
+if(!DB.rewardRecords)     DB.rewardRecords      = [];
+if(!DB.casuals)           DB.casuals            = [];
+if(!DB.candidates)        DB.candidates         = [];
+if(!DB.promotions)        DB.promotions         = [];
+if(!DB.disciplineRecords) DB.disciplineRecords  = [];
+if(!DB.leaveSheet)        DB.leaveSheet         = {};
+if(!DB.leaveOpening)      DB.leaveOpening       = {};
+if(!DB.leavePlan)         DB.leavePlan          = {};
+if(!DB.salaryYears)       DB.salaryYears        = {};
+if(!DB.trainingExtraYears)DB.trainingExtraYears = {};
+if(!DB.leaveExtraYears)   DB.leaveExtraYears    = {};
 // Proxy để tự động track key nào bị thay đổi → saveData sẽ chỉ push đúng Firestore doc
 window._dirtyKeys = new Set();
 DB = new Proxy(DB, {
