@@ -10408,28 +10408,62 @@ function renderLeaves(main){
                           : (bal.dept ? allActive.filter(e=>e.deptId===bal.dept) : allActive);
   const isSingle = !!bal.emp;
   const scopeEmp = isSingle ? DB.employees.find(e=>e.id===bal.emp) : null;
+  const scopeIds = new Set(scopeEmps.map(e=>e.id));
 
-  // Cộng dồn theo từng tháng cho cả phạm vi
+  // ── Pre-compute để tránh scan DB.leaves 7000+ lần ──
+  // 1. Lọc leaves 1 lần duy nhất cho năm đang xem + scope emps
+  const leavesThisYear = (DB.leaves||[]).filter(l=>
+    l.status==='approved' && scopeIds.has(l.empId) && l.startDate &&
+    new Date(l.startDate).getFullYear() === bal.year
+  );
+  // 2. Build lookup: empId → month → {al, cl} used days
+  const usedLookup = {}; // usedLookup[empId][month] = {al, cl}
+  leavesThisYear.forEach(l=>{
+    const m = new Date(l.startDate).getMonth()+1;
+    if(!usedLookup[l.empId]) usedLookup[l.empId] = {};
+    if(!usedLookup[l.empId][m]) usedLookup[l.empId][m] = {al:0, cl:0};
+    const isAL = AL_TYPES.includes(l.type);
+    const isCL = CL_TYPES.includes(l.type);
+    if(isAL) usedLookup[l.empId][m].al += (l.days||0);
+    if(isCL) usedLookup[l.empId][m].cl += (l.days||0);
+  });
+  // 3. Cache alRate per emp (thâm niên-based, chỉ tính 1 lần/NV)
+  const alRateCache = {};
+  scopeEmps.forEach(e=>{ alRateCache[e.id] = alAccrualPerMonthForEmp(e.id, bal.year); });
+
+  // 4. Tính balMonths nhanh — không gọi computeLeaveLedger nữa
   const balMonths = [];
   for(let m=1;m<=12;m++){
-    let alAccr=0,alUsed=0,alRun=0,clAccr=0,clUsed=0,clRun=0;
+    let alAccr=0, alUsed=0, alRun=0, clAccr=0, clUsed=0, clRun=0;
     scopeEmps.forEach(e=>{
-      const L = computeLeaveLedger(e.id, m, bal.year);
-      alAccr+=L.alAccr; alUsed+=L.alUsed; alRun+=L.alClose;
-      clAccr+=L.clAccr; clUsed+=L.clUsed; clRun+=L.clClose;
+      const alRate = alRateCache[e.id];
+      const clRate = balRates.cl;
+      const op = (DB.leaveOpening && DB.leaveOpening[e.id]) || {al:0, cl:0};
+      // Tính used từ lookup thay vì scan toàn mảng
+      let alUsedBefore=0, clUsedBefore=0, alUsedM=0, clUsedM=0;
+      for(let mm=1; mm<m; mm++){
+        const u = (usedLookup[e.id]||{})[mm]||{};
+        alUsedBefore += u.al||0; clUsedBefore += u.cl||0;
+      }
+      const uM = (usedLookup[e.id]||{})[m]||{};
+      alUsedM = uM.al||0; clUsedM = uM.cl||0;
+      const alClose = (op.al||0) + alRate*m - alUsedBefore - alUsedM;
+      const clClose = (op.cl||0) + clRate*m - clUsedBefore - clUsedM;
+      alAccr += alRate; alUsed += alUsedM; alRun += alClose;
+      clAccr += clRate; clUsed += clUsedM; clRun += clClose;
     });
     balMonths.push({m, alAccr, alUsed, alRun, clAccr, clUsed, clRun});
   }
   // Tổng cả năm
   let alOpenTot=0, clOpenTot=0;
   scopeEmps.forEach(e=>{ const o=(DB.leaveOpening&&DB.leaveOpening[e.id])||{al:0,cl:0}; alOpenTot+=o.al||0; clOpenTot+=o.cl||0; });
-  const alAccrYear = balRates.al*12*scopeEmps.length;
-  const clAccrYear = balRates.cl*12*scopeEmps.length;
+  const alAccrYear = balMonths.reduce((s,x)=>s+x.alAccr,0);
+  const clAccrYear = balMonths.reduce((s,x)=>s+x.clAccr,0);
   const alUsedYear = balMonths.reduce((s,x)=>s+x.alUsed,0);
   const clUsedYear = balMonths.reduce((s,x)=>s+x.clUsed,0);
-  const alEntitle = alOpenTot + alAccrYear;   // tồn tổng cả năm (đầu năm + phát sinh)
+  const alEntitle = alOpenTot + alAccrYear;
   const clEntitle = clOpenTot + clAccrYear;
-  const alRemain = alEntitle - alUsedYear;     // còn lại = balMonths[11].alRun
+  const alRemain = alEntitle - alUsedYear;
   const clRemain = clEntitle - clUsedYear;
 
   const thisYear = today.getFullYear(), thisMonth = today.getMonth()+1;
