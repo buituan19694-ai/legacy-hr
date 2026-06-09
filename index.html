@@ -1328,14 +1328,9 @@ const DEFAULT_DATA = {
     // --- Nhóm Hợp đồng (mở rộng) ---
     // ===== Hợp đồng HIỆN TẠI (đang có hiệu lực) =====
     {id:'cf_currentContractType', key:'currentContractType', label:'Loại HĐ hiện tại', type:'select', group:(_lang==="en"?"Contract":"Hợp đồng"), placeholder:'', showInTable:true, required:false, options:'HĐ Thử việc,HĐ xác định thời hạn (01 năm),HĐ xác định thời hạn (02 năm),HĐ Không xác định thời hạn (Indefinite Contract),Khoán việc,Học việc'},
-    {id:'cf_currentContractStart', key:'currentContractStart', label:'Ngày bắt đầu HĐ hiện tại', type:'date', group:(_lang==="en"?"Contract":"Hợp đồng"), placeholder:'', showInTable:false, required:false, options:''},
-    {id:'cf_currentContractEnd', key:'currentContractEnd', label:'Ngày kết thúc HĐ hiện tại', type:'date', group:(_lang==="en"?"Contract":"Hợp đồng"), placeholder:'Để trống nếu vô thời hạn', showInTable:false, required:false, options:''},
     {id:'cf_contractStart', key:'contractStart', label:'Ngày bắt đầu HĐ hiện tại', type:'date', group:(_lang==="en"?"Contract":"Hợp đồng"), placeholder:'', showInTable:false, required:false, options:''},
     {id:'cf_contractEnd', key:'contractEnd', label:'Ngày kết thúc HĐ hiện tại', type:'date', group:(_lang==="en"?"Contract":"Hợp đồng"), placeholder:'Để trống nếu vô thời hạn', showInTable:false, required:false, options:''},
     {id:'cf_contractExp', key:'contractExpireMonth', label:'Tháng hết hạn HĐ', type:'text', group:(_lang==="en"?"Contract":"Hợp đồng"), placeholder:'VD: 06/2026', showInTable:false, required:false, options:''},
-    {id:'cf_probStart', key:'probationStart', label:'Ngày thử việc', type:'date', group:(_lang==="en"?"Contract":"Hợp đồng"), placeholder:'', showInTable:false, required:false, options:''},
-    {id:'cf_probEnd', key:'probationEnd', label:'Ngày kết thúc thử việc', type:'date', group:(_lang==="en"?"Contract":"Hợp đồng"), placeholder:'', showInTable:false, required:false, options:''},
-    {id:'cf_probResult', key:'probationResult', label:'Trạng thái thử việc', type:'select', group:(_lang==="en"?"Contract":"Hợp đồng"), placeholder:'', showInTable:false, required:false, options:'Đang thử việc,✅ Đạt,❌ Không Đạt,Đã chuyển chính thức'},
     {id:'cf_c1Start', key:'contract1Start', label:'HĐ lần 1 — Bắt đầu', type:'date', group:(_lang==="en"?"Contract":"Hợp đồng"), placeholder:'1 năm', showInTable:false, required:false, options:''},
     {id:'cf_c1End', key:'contract1End', label:'HĐ lần 1 — Kết thúc', type:'date', group:(_lang==="en"?"Contract":"Hợp đồng"), placeholder:'', showInTable:false, required:false, options:''},
     {id:'cf_c2Start', key:'contract2Start', label:'HĐ lần 2 — Bắt đầu', type:'date', group:(_lang==="en"?"Contract":"Hợp đồng"), placeholder:'2 năm', showInTable:false, required:false, options:''},
@@ -1385,7 +1380,11 @@ function loadData(){
       if(!data.promotions) data.promotions = [];
       if(!data.requiredFieldsConfig) data.requiredFieldsConfig = JSON.parse(JSON.stringify(DEFAULT_REQUIRED_FIELDS));
       if(!data.manualBlacklist) data.manualBlacklist = [];
-      // Migration v29: convert format cũ [empId, empId] → [{empId, reason, addedDate, addedBy}]
+      // Migration: xóa các custom field lỗi thời (đã tự động tính hoặc bị gộp)
+      const OBSOLETE_CF_KEYS = ['currentContractStart','currentContractEnd','probationStart','probationEnd','probationResult'];
+      if(data.customFields){
+        data.customFields = data.customFields.filter(cf => !OBSOLETE_CF_KEYS.includes(cf.key));
+      }
       if(data.manualBlacklist.length > 0 && typeof data.manualBlacklist[0] === 'string'){
         data.manualBlacklist = data.manualBlacklist.map(empId => ({
           empId, reason: '', addedDate: new Date().toISOString().slice(0,10), addedBy: '', exitDate: '', rehireEligible: false
@@ -19297,6 +19296,14 @@ fbAuth.onAuthStateChanged(async user => {
           if(hasCloud){
             if(!DB.customFields) DB.customFields=[];
             if(!DB.customData) DB.customData={};
+            // Migration: xóa custom fields lỗi thời — push lên Firestore ngay
+            const _OBS = ['currentContractStart','currentContractEnd','probationStart','probationEnd','probationResult'];
+            const _beforeLen = DB.customFields.length;
+            DB.customFields = DB.customFields.filter(cf=>!_OBS.includes(cf.key));
+            if(DB.customFields.length !== _beforeLen){
+              console.log('[Migration] Removed obsolete customFields, saving...');
+              setTimeout(()=>saveData(), 500); // push lên Firestore sau khi load xong
+            }
             if(!DB.casuals) DB.casuals=[];
             if(!DB.trainees) DB.trainees=[];
             if(!DB.promotions) DB.promotions=[];
@@ -19459,6 +19466,13 @@ fbAuth.onAuthStateChanged(async user => {
                 (DB.employees||[]).forEach(e=>{ if(e.photo) localPhotos[e.id]=e.photo; });
                 try{ const pm=JSON.parse(localStorage.getItem(STORE_KEY+'_photos')||'{}'); Object.assign(localPhotos,pm); }catch(pe){}
                 FS_DOC_MAP[docId].forEach(key=>{ if(cloudData[key] !== undefined) DB[key] = cloudData[key]; });
+                // Migration: xóa custom fields lỗi thời sau khi sync Firestore
+                if(DB.customFields){
+                  const _OBS2=['currentContractStart','currentContractEnd','probationStart','probationEnd','probationResult'];
+                  const _b2=DB.customFields.length;
+                  DB.customFields=DB.customFields.filter(cf=>!_OBS2.includes(cf.key));
+                  if(DB.customFields.length!==_b2) setTimeout(()=>saveData(),500);
+                }
                 // Ghép ảnh + convert probation→active (defensive)
                 if(DB.employees) DB.employees.forEach(e=>{
                   if(!e.photo && localPhotos[e.id]) e.photo = localPhotos[e.id];
