@@ -5853,9 +5853,9 @@ function editEmployee(id, prefill = null){
       </div>
       <div class="form-group-body">
         <div class="form-grid">
-          <div class="field"><label>Mã NV *</label><input id="f_code" value="${escapeHtml(e.code)}"></div>
-          <div class="field"><label>Họ và tên *</label><input id="f_name" value="${escapeHtml(e.name)}"></div>
-          <div class="field"><label>Email *</label><input id="f_email" type="email" value="${escapeHtml(e.email)}"></div>
+          <div class="field"><label style="color:var(--accent);font-weight:600">Mã NV *</label><input id="f_code" value="${escapeHtml(e.code)}"></div>
+          <div class="field"><label style="color:var(--accent);font-weight:600">Họ và tên *</label><input id="f_name" value="${escapeHtml(e.name)}"></div>
+          <div class="field"><label>Email</label><input id="f_email" type="email" value="${escapeHtml(e.email)}"></div>
           <div class="field"><label>Số điện thoại</label><input id="f_phone" value="${escapeHtml(e.phone)}"></div>
           <div class="field"><label>Ngày sinh</label><input lang="vi" id="f_dob" type="date" value="${dispToIso(e.dob||'')}"></div>
           <div class="field"><label>Giới tính</label><select id="f_gender">
@@ -5863,11 +5863,11 @@ function editEmployee(id, prefill = null){
             <option value="female" ${e.gender==='female'?'selected':''}>Nữ</option>
             <option value="other" ${e.gender==='other'?'selected':''}>Khác</option>
           </select></div>
-          <div class="field"><label>Phòng ban *</label><select id="f_dept">
+          <div class="field"><label style="color:var(--accent);font-weight:600">Phòng ban *</label><select id="f_dept">
             ${DB.departments.map(d=>`<option value="${d.id}" ${e.deptId===d.id?'selected':''}>${d.name}</option>`).join('')}
           </select></div>
-          <div class="field"><label>Ngày vào làm *</label><input lang="vi" id="f_joined" type="date" value="${dispToIso(e.joined||'')}"></div>
-          <div class="field"><label>Chức vụ *</label><input id="f_role" value="${escapeHtml(e.role||customData.position||'')}" placeholder="Vd: Chief Engineering, Front Office Manager..."></div>
+          <div class="field"><label style="color:var(--accent);font-weight:600">Ngày vào làm *</label><input lang="vi" id="f_joined" type="date" value="${dispToIso(e.joined||'')}"></div>
+          <div class="field"><label style="color:var(--accent);font-weight:600">Chức vụ *</label><input id="f_role" value="${escapeHtml(e.role||customData.position||'')}" placeholder="Vd: Chief Engineering, Front Office Manager..."></div>
           <div class="field"><label>Chức vụ (tiếng Việt)</label><input id="f_roleVN" value="${escapeHtml(e.roleVN||customData.jobLocation||'')}"></div>
           <input type="hidden" id="f_level" value="${escapeHtml(e.level||'')}">
           <div class="field"><label>Trạng thái</label><select id="f_status">
@@ -5985,7 +5985,8 @@ function renderCustomFieldInput(cf, value){
   const cls = isFullWidth ? 'field full' : 'field';
   const id = 'cf_' + cf.key;
   const placeholder = escapeHtml(cf.placeholder||'');
-  const label = escapeHtml(cf.label) + req;
+  const reqStyle = req ? ' style="color:var(--accent);font-weight:600"' : '';
+  const label = `<span${reqStyle}>${escapeHtml(cf.label)}${req}</span>`;
   const dataAttr = `data-cf-key="${escapeHtml(cf.key)}"`;
 
 
@@ -6031,7 +6032,7 @@ function saveEmployee(id, isNew){
   const code = $('#f_code').value.trim();
   const email = $('#f_email').value.trim();
   const role = $('#f_role').value.trim();
-  if(!name || !code || !email || !role){ toast('Vui lòng nhập đủ thông tin bắt buộc', 'error'); return; }
+  if(!name || !code || !role){ toast('Vui lòng nhập đủ thông tin bắt buộc (Họ tên, Mã NV, Chức vụ)', 'error'); return; }
 
   // Kiểm tra trùng mã NV
   const dupEmp = DB.employees.find(e => e.code.trim().toLowerCase() === code.toLowerCase() && e.id !== id);
