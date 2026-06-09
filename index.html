@@ -11843,7 +11843,7 @@ function renderWorkforce(main){
 
   // NV mới: theo e.joined (Ngày vào làm trong hồ sơ NV)
   const newEmps = DB.employees.filter(e=>inPeriod(e.joined))
-    .sort((a,b)=>new Date(_toISO2(b.joined)||0)-new Date(_toISO2(a.joined)||0));
+    .sort((a,b)=>(_parseAnyDate(b.joined)||0)-(_parseAnyDate(a.joined)||0));
 
   // NV nghỉ việc: theo status='exit' + exitDate trong customData
   const exitEmps = DB.employees.filter(e=>{
@@ -11854,7 +11854,8 @@ function renderWorkforce(main){
       // Không có exitDate → hiện khi xem cả năm (không biết năm cụ thể)
       return mon === 0;
     }
-    const exitISO = _toISO2(exitRaw);
+    const exitParsed = _parseAnyDate(exitRaw);
+    const exitISO = exitParsed ? exitParsed.toISOString().slice(0,10) : null;
     const x = exitISO ? new Date(exitISO) : null;
     if(!x || isNaN(x)){
       // exitDate không parse được → hiện khi xem cả năm
@@ -11862,7 +11863,7 @@ function renderWorkforce(main){
     }
     return inPeriodDate(x);
   }).sort((a,b)=>{
-    const getCd = e => { const cd=DB.customData[e.id]||{}; const s=_toISO2(cd.exitDate||''); return s?new Date(s):null; };
+    const getCd = e => { const cd=DB.customData[e.id]||{}; return _parseAnyDate(cd.exitDate||''); };
     const xa=getCd(a), xb=getCd(b);
     if(xa&&xb) return xb-xa;
     if(xa) return -1; if(xb) return 1;
@@ -20283,7 +20284,23 @@ fbAuth.onAuthStateChanged(async user => {
                   return;
                 }
 
-                FS_DOC_MAP[docId].forEach(key=>{ if(cloudData[key] !== undefined) DB[key] = cloudData[key]; });
+                FS_DOC_MAP[docId].forEach(key=>{
+                  if(cloudData[key] === undefined) return;
+                  // customFields: merge thông minh — giữ user settings, chỉ thêm field thiếu
+                  if(key === 'customFields'){
+                    const localFields = DB.customFields || [];
+                    const cloudFields = cloudData[key] || [];
+                    const localMap = new Map(localFields.map(cf=>[cf.key, cf]));
+                    // Thêm field từ cloud nếu local chưa có
+                    cloudFields.forEach(cf=>{ if(!localMap.has(cf.key)) localMap.set(cf.key, cf); });
+                    // Giữ thứ tự theo cloud (order), nhưng dùng local values
+                    const cloudOrder = cloudFields.map(cf=>cf.key);
+                    const extra = localFields.filter(cf=>!cloudOrder.includes(cf.key));
+                    DB.customFields = [...cloudOrder.filter(k=>localMap.has(k)).map(k=>localMap.get(k)), ...extra];
+                  } else {
+                    DB[key] = cloudData[key];
+                  }
+                });
                 // Migration: xóa + thêm + reorder field mặc định — tự động
                 if(DB.customFields){
                   const _OBS2=['currentContractStart','currentContractEnd','probationResult','contractExpireMonth'];
