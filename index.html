@@ -1479,7 +1479,7 @@ const FS_DOC_MAP = {
   employees:  ['departments'],
   hr:         ['leaves','contracts','leaveSheet','leaveOpening','leavePlan','salaryYears','trainingExtraYears','leaveExtraYears'],
   recruitment:['candidates','jobs'],
-  workforce:  ['casuals','trainees','traineeSchedules','svcData','courses'],
+  workforce:  ['casuals','trainees','traineeSchedules','svcData','courses','casualExtraYears'],
   performance:['kpiReviews','promotions','rewardRecords','disciplineRecords'],
   config:     ['customFields','rewardTypes','perfReviewTypes','company',
                'dashboardConfig','brandConfig','blacklistConfig','blacklistReasons',
@@ -2507,13 +2507,20 @@ function getExitDate(e){
 }
 const MN = ['T1','T2','T3','T4','T5','T6','T7','T8','T9','T10','T11','T12'];
 // Parse dob/date an toàn: hỗ trợ dd/mm/yyyy và yyyy-mm-dd
-function _parseDob(s){
+function _parseDob(s){ return _parseAnyDate(s); }
+// Universal date parser: handles dd/mm/yyyy AND yyyy-mm-dd
+function _parseAnyDate(s){
   if(!s) return null;
-  if(/^\d{2}\/\d{2}\/\d{4}$/.test(s)){
-    const [d,m,y]=s.split('/'); return new Date(parseInt(y),parseInt(m)-1,parseInt(d));
+  s = s.trim();
+  // dd/mm/yyyy
+  if(/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(s)){
+    const p=s.split('/');
+    const d=new Date(parseInt(p[2]),parseInt(p[1])-1,parseInt(p[0]));
+    return isNaN(d)?null:d;
   }
-  const dt = new Date(s);
-  return isNaN(dt)?null:dt;
+  // yyyy-mm-dd or other ISO
+  const d=new Date(s);
+  return isNaN(d)?null:d;
 }
 
 function renderDashboard(main){
@@ -3414,21 +3421,25 @@ function renderDashboardCharts(){
     }).length;
   });
 
-  // Nhận việc T(n) = joined trong tháng n
+  // Nhận việc T(n) = joined trong tháng n — parse đúng dd/mm/yyyy
   const newHiresData = months.map(m=>{
     if(isFuture(m)) return null;
     return DB.employees.filter(e => {
       if(!e.joined) return false;
-      const d = new Date(e.joined);
+      const d = _parseAnyDate(e.joined);
+      if(!d) return false;
       return d.getFullYear() === m.getFullYear() && d.getMonth() === m.getMonth();
     }).length;
   });
 
-  // Nghỉ việc T(n) = exitDate trong tháng n
+  // Nghỉ việc T(n) = status=exit + exitDate trong tháng n (đồng bộ với Biến động NS)
   const exitsData = months.map(m=>{
     if(isFuture(m)) return null;
     return DB.employees.filter(e => {
-      const exitD = getExitDate(e);
+      if(e.status !== 'exit') return false;
+      const cd = DB.customData[e.id]||{};
+      if(!cd.exitDate) return false;
+      const exitD = _parseAnyDate(cd.exitDate);
       if(!exitD) return false;
       return exitD.getFullYear() === m.getFullYear() && exitD.getMonth() === m.getMonth();
     }).length;
@@ -9497,6 +9508,41 @@ function importLeaveXLSX(){
 }
 
 
+function deleteLeaveYear(){
+  const yr = (window._leaveBal||{}).year || new Date().getFullYear();
+  const curYr = new Date().getFullYear();
+  if(yr === curYr){
+    toast(`Không thể xóa năm hiện tại (${curYr})`, 'error');
+    return;
+  }
+  confirmDialog(
+    `🗑 Xóa bảng nghỉ phép năm ${yr}?`,
+    `<div style="font-size:13px;line-height:1.7;color:var(--danger)">
+      ⚠ Hành động này sẽ xóa <b>toàn bộ dữ liệu nghỉ phép năm ${yr}</b> của tất cả nhân viên.<br>
+      Không thể hoàn tác sau khi xóa.
+    </div>`,
+    ()=>{
+      // Xóa từ leaveSheet của từng NV
+      Object.keys(DB.leaveSheet||{}).forEach(empId=>{
+        if(DB.leaveSheet[empId] && DB.leaveSheet[empId][yr]){
+          delete DB.leaveSheet[empId][yr];
+        }
+      });
+      // Xóa leaveOpening năm đó
+      if(DB.leaveOpening && DB.leaveOpening[yr]) delete DB.leaveOpening[yr];
+      if(DB.leavePlan && DB.leavePlan[yr]) delete DB.leavePlan[yr];
+      // Xóa khỏi leaveExtraYears nếu có
+      if(DB.leaveExtraYears) DB.leaveExtraYears = DB.leaveExtraYears.filter(y=>y!==yr);
+      saveData();
+      // Chuyển về năm hiện tại
+      if(!window._leaveBal) window._leaveBal = {};
+      window._leaveBal.year = curYr;
+      render();
+      toast(`✅ Đã xóa bảng nghỉ phép năm ${yr}`, 'success');
+    }
+  );
+}
+
 function openNewLeaveYear(){
   const currentYear = (window._leaveBal||{}).year || new Date().getFullYear();
   const nextYear = currentYear + 1;
@@ -9764,6 +9810,10 @@ window.toggleLeaveGroup = function(did){
         <button class="btn" onclick="openNewLeaveYear()"
           style="background:rgba(126,198,153,.12);border-color:rgba(126,198,153,.4);color:var(--success)">
           🗓 Mở năm mới
+        </button>
+        <button class="btn" onclick="deleteLeaveYear()" title="Xóa năm đang xem"
+          style="background:rgba(229,115,115,.1);border-color:rgba(229,115,115,.3);color:var(--danger)">
+          🗑 Xóa năm
         </button>
         <button class="btn" onclick="editLeaveOpening()">${ICONS.edit} Tồn đầu năm</button>
         ${bal.emp||bal.dept?`<button class="btn" onclick="setLeaveBal('emp','');setLeaveBal('dept','')">✕ Bỏ lọc</button>`:''}
@@ -11779,16 +11829,9 @@ function renderWorkforce(main){
     MN.map((m,i)=>`<option value="${i+1}" ${mon===i+1?'selected':''}>${m}</option>`).join('');
 
   // Filter helpers
-  const _toISO2 = (s) => {
-    if(!s) return null;
-    if(/^\d{2}\/\d{2}\/\d{4}$/.test(s)) return s.split('/').reverse().join('-');
-    return s;
-  };
   const inPeriod = (dateStr) => {
-    const iso = _toISO2(dateStr);
-    if(!iso) return false;
-    const d = new Date(iso);
-    if(isNaN(d)) return false;
+    const d = _parseAnyDate(dateStr);
+    if(!d||isNaN(d)) return false;
     if(d.getFullYear()!==yr) return false;
     return mon===0 || d.getMonth()+1===mon;
   };
@@ -11803,16 +11846,24 @@ function renderWorkforce(main){
     .sort((a,b)=>new Date(_toISO2(b.joined)||0)-new Date(_toISO2(a.joined)||0));
 
   // NV nghỉ việc: theo status='exit' + exitDate trong customData
-  // Nếu có exitDate → count theo tháng exitDate
-  // Nếu không có exitDate nhưng status='exit' → count vào năm (cả năm), không count tháng cụ thể
   const exitEmps = DB.employees.filter(e=>{
     if(e.status !== 'exit') return false;
-    const x = getExitDate(e);
-    if(x) return inPeriodDate(x); // có exitDate → filter theo tháng
-    // Không có exitDate: chỉ hiện khi xem cả năm (mon===0)
-    return mon === 0;
+    const cd = DB.customData[e.id]||{};
+    const exitRaw = cd.exitDate||'';
+    if(!exitRaw){
+      // Không có exitDate → hiện khi xem cả năm (không biết năm cụ thể)
+      return mon === 0;
+    }
+    const exitISO = _toISO2(exitRaw);
+    const x = exitISO ? new Date(exitISO) : null;
+    if(!x || isNaN(x)){
+      // exitDate không parse được → hiện khi xem cả năm
+      return mon === 0;
+    }
+    return inPeriodDate(x);
   }).sort((a,b)=>{
-    const xa=getExitDate(a), xb=getExitDate(b);
+    const getCd = e => { const cd=DB.customData[e.id]||{}; const s=_toISO2(cd.exitDate||''); return s?new Date(s):null; };
+    const xa=getCd(a), xb=getCd(b);
     if(xa&&xb) return xb-xa;
     if(xa) return -1; if(xb) return 1;
     return 0;
@@ -11820,11 +11871,13 @@ function renderWorkforce(main){
 
   // Monthly data (full year, for overview chart)
   const newByMonth = MN.map((_,mi)=>DB.employees.filter(e=>{
-    const iso=_toISO2(e.joined); if(!iso) return false;
-    const d=new Date(iso); return !isNaN(d)&&d.getFullYear()===yr&&d.getMonth()===mi;
+    const d=_parseAnyDate(e.joined); return d&&!isNaN(d)&&d.getFullYear()===yr&&d.getMonth()===mi;
   }).length);
   const exitByMonth = MN.map((_,mi)=>DB.employees.filter(e=>{
-    const x=getExitDate(e); return x&&!isNaN(x)&&x.getFullYear()===yr&&x.getMonth()===mi;
+    if(e.status!=='exit') return false;
+    const cd=DB.customData[e.id]||{};
+    if(!cd.exitDate) return false;
+    const x=_parseAnyDate(cd.exitDate); return x&&!isNaN(x)&&x.getFullYear()===yr&&x.getMonth()===mi;
   }).length);
 
   // Breakdowns for selected period
@@ -11987,25 +12040,11 @@ function _wfNewTab(emps,byDept,PAL,yr,mon){
     </tr>`;
   }).join('');
 
-  const maxNew=Math.max(...MN.map((_,i)=>DB.employees.filter(e=>e.joined&&new Date(e.joined).getFullYear()===yr&&new Date(e.joined).getMonth()===i).length),0);
-
   return `
     <div class="row row-2-equal" style="margin-bottom:14px">
       <div class="card">
         <div class="card-head"><div><div class="card-title">🏢 Phân bổ theo bộ phận</div><div class="card-sub">${emps.length} NV mới</div></div></div>
         <div style="height:200px">${Object.keys(byDept).length?'<canvas id="chartWfDept"></canvas>':'<div class="empty-state" style="height:100%"><div>Không có dữ liệu</div></div>'}</div>
-      </div>
-      <div class="card" style="padding:18px 20px">
-        <div style="font-size:11px;font-weight:700;color:var(--ink-muted);margin-bottom:12px;letter-spacing:.05em">📅 PHÂN BỔ THEO THÁNG — ${yr}</div>
-        ${MN.map((m,i)=>{
-          const v=DB.employees.filter(e=>e.joined&&new Date(e.joined).getFullYear()===yr&&new Date(e.joined).getMonth()===i).length;
-          const isSelected = mon===i+1;
-          return v>0||isSelected?`<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;${isSelected?'background:rgba(126,198,153,.08);border-radius:5px;padding:2px 4px;':''}" onclick="window._wfMonth=${i+1}===window._wfMonth?0:${i+1};render()" style="cursor:pointer">
-            <div style="width:22px;font-size:11px;font-weight:600;color:${isSelected?'var(--success)':'var(--ink-muted)'}">${m}</div>
-            <div style="flex:1;height:6px;background:rgba(255,255,255,.06);border-radius:3px"><div style="height:6px;background:var(--success);border-radius:3px;width:${maxNew?Math.round(v/maxNew*100):0}%;opacity:${isSelected?.95:.7}"></div></div>
-            <div style="font-size:11px;font-weight:700;color:${isSelected?'var(--success)':'var(--ink)'}">${v}</div>
-          </div>`:'';
-        }).join('')}
       </div>
     </div>
     <div class="card">
@@ -17770,6 +17809,9 @@ function renderSalaryAnalysis(main){
       </div>
     </div>
 
+    <!-- SVC section (đặt lên đầu) -->
+    ${renderSvcInline(F.year, curYear, curMonth)}
+
     <!-- KPI cards -->
     <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px">
       ${[
@@ -17971,7 +18013,6 @@ function renderSalaryAnalysis(main){
       </div>
     </div>
 
-    ${renderSvcInline(F.year, curYear, curMonth)}
 
     `}
   `;
@@ -18357,6 +18398,38 @@ function renderDailyTab(){
     </div>`;
 }
 
+function addCasualYear(){
+  const curYr = new Date().getFullYear();
+  openModal(`
+    <div class="modal-head"><div class="modal-title">📅 Thêm năm — Lao động Casual</div></div>
+    <div class="form-grid">
+      <div class="field full"><label>Năm muốn thêm</label>
+        <input type="number" id="casual_new_year" value="${curYr+2}" min="2000" max="2100" style="font-size:18px;font-weight:700;text-align:center">
+      </div>
+      <div class="field full"><label>Gợi ý nhanh</label>
+        <div style="display:flex;flex-wrap:wrap;gap:6px">
+          ${[curYr+2,curYr+3,curYr+4].map(y=>`<button class="btn" onclick="document.getElementById('casual_new_year').value=${y}" style="font-size:13px;font-weight:600">${y}</button>`).join('')}
+        </div>
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeModal()">Huỷ</button>
+      <button class="btn btn-primary" onclick="confirmAddCasualYear()">✅ Thêm</button>
+    </div>
+  `);
+}
+function confirmAddCasualYear(){
+  const yr = parseInt(document.getElementById('casual_new_year')?.value);
+  if(!yr||yr<2000||yr>2100){ toast('Năm không hợp lệ','error'); return; }
+  if(!DB.casualExtraYears) DB.casualExtraYears=[];
+  if(!DB.casualExtraYears.includes(yr)) DB.casualExtraYears.push(yr);
+  saveData();
+  if(!window._casualFilter) window._casualFilter={};
+  window._casualFilter.year=yr;
+  closeModal(); render();
+  toast(`✅ Đã thêm năm ${yr}`,'success');
+}
+
 function renderCasual(main){
   if(!window.canDo('casual')){
     main.innerHTML='<div class="topbar"><div class="topbar-left"><h1 class="page-title">🔒 Không có quyền</h1><div class="page-sub">Bạn không được cấp quyền truy cập module Lao động Casual</div></div></div>';
@@ -18392,7 +18465,7 @@ function renderCasual(main){
 
   const fmtNum = n => Math.round(n).toLocaleString('vi-VN');
   const mnShort = ['T1','T2','T3','T4','T5','T6','T7','T8','T9','T10','T11','T12'];
-  const years = [...new Set([today.getFullYear()+1, today.getFullYear(), today.getFullYear()-1, ...(DB.casuals||[]).map(r=>r.year)])].sort((a,b)=>b-a);
+  const years = [...new Set([today.getFullYear()+1, today.getFullYear(), today.getFullYear()-1, ...(DB.casuals||[]).map(r=>r.year), ...(DB.casualExtraYears||[])])].sort((a,b)=>b-a);
 
   main.innerHTML = `
     <div class="topbar">
@@ -18421,6 +18494,7 @@ function renderCasual(main){
         <select class="filter-select" onchange="window._casualFilter.year=parseInt(this.value);render()">
           ${years.map(y=>`<option value="${y}" ${cf.year===y?'selected':''}>${y}</option>`).join('')}
         </select>
+        <button class="btn" onclick="addCasualYear()" style="font-size:12px;padding:4px 10px">+ Năm</button>
         <select class="filter-select" onchange="window._casualFilter.month=parseInt(this.value);render()">
           <option value="0" ${!cf.month?'selected':''}>📅 ${_lang==="en"?"All months":"Tất cả tháng"}</option>
           ${mnShort.map((m,i)=>`<option value="${i+1}" ${cf.month===i+1?'selected':''}>${m}</option>`).join('')}
@@ -18974,19 +19048,21 @@ function renderTrainee(main){
     main.innerHTML='<div class="topbar"><div class="topbar-left"><h1 class="page-title">🔒 Không có quyền</h1><div class="page-sub">Bạn không được cấp quyền truy cập module Thực tập sinh</div></div></div>';
     return;
   }
-  if(!DB.trainees) DB.trainees = [];
-  if(!window._traineeView) window._traineeView = 'list';
-  // Column visibility state
-  if(!window._traineeCols) window._traineeCols = {school:false, qty:false, gender:false, dob:false, cccd:false, cccdDate:false, cccdPlace:false, bank:false, notes:false};
-  const TC = window._traineeCols;
-
-  if(window._traineeView === 'schedule') return renderTraineeSchedule(main);
+  if(!window._traineeStatusFilter) window._traineeStatusFilter = 'active';
+  const tsf = window._traineeStatusFilter;
 
   const today = new Date();
-  const active = DB.trainees.filter(t => {
-    if(!t.endDate) return true;
-    return new Date(t.endDate) >= today;
+  const now = today.toISOString().slice(0,10);
+
+  const allTrainees = DB.trainees || [];
+  const filteredTrainees = allTrainees.filter(t => {
+    const isActive = !t.endDate || t.endDate >= now;
+    if(tsf === 'active') return isActive;
+    if(tsf === 'exit') return !isActive;
+    return true; // 'all'
   });
+
+  const active = allTrainees.filter(t => !t.endDate || t.endDate >= now);
 
   // Nav count
   const el = document.getElementById('navTraineeCount');
@@ -18998,8 +19074,12 @@ function renderTrainee(main){
       <button class="rec-tab ${window._traineeView==='schedule'?'active':''}" onclick="window._traineeView='schedule';render()">📅 Lịch & Gantt Chart</button>
     </div>`;
 
-  const now = today.toISOString().slice(0,10);
-  const rows = DB.trainees.map(t => {
+  if(!DB.trainees) DB.trainees = [];
+  if(!window._traineeCols) window._traineeCols = {school:false, qty:false, gender:false, dob:false, cccd:false, cccdDate:false, cccdPlace:false, bank:false, notes:false};
+  const TC = window._traineeCols;
+  if(window._traineeView === 'schedule') return renderTraineeSchedule(main);
+
+  const rows = filteredTrainees.map(t => {
     const isActive = !t.endDate || t.endDate >= now;
     const daysLeft = t.endDate ? Math.ceil((new Date(t.endDate)-today)/864e5) : null;
     return `<tr style="cursor:pointer" onclick="viewTrainee('${t.id}')">
@@ -19047,6 +19127,12 @@ function renderTrainee(main){
         <div class="page-sub">${total} sinh viên · ${totalActive} đang thực tập · ${schools} trường</div>
       </div>
       <div class="topbar-actions">
+        <!-- Filter đang làm/đã nghỉ -->
+        <div style="display:flex;gap:4px;background:var(--bg-elev);border-radius:8px;padding:4px">
+          ${[{v:'active',l:'🟢 Đang TTS'},{v:'exit',l:'🔴 Đã nghỉ'},{v:'all',l:'Tất cả'}].map(s=>`
+            <button onclick="window._traineeStatusFilter='${s.v}';render()"
+              style="border:none;background:${tsf===s.v?'var(--accent)':'transparent'};color:${tsf===s.v?'var(--bg)':'var(--ink-muted)'};padding:5px 12px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:${tsf===s.v?'600':'400'};white-space:nowrap">${s.l}</button>`).join('')}
+        </div>
         <button class="btn" onclick="importTraineeXLSX()">📥 ${t('btn_import')}</button>
         <button class="btn" onclick="exportTraineeXLSX()">${ICONS.download} ${t('btn_export')}</button>
         <button class="btn btn-primary" onclick="editTrainee()">${ICONS.plus} ${t('btn_add_trainee')}</button>
@@ -20009,20 +20095,20 @@ fbAuth.onAuthStateChanged(async user => {
             // Migration: thêm field còn thiếu + reorder theo DEFAULT
             {
               const _defaultOrder = DEFAULT_DATA.customFields.map(cf=>cf.key);
+              // Giữ nguyên user settings — chỉ thêm field thiếu, KHÔNG overwrite field đã có
               const _curMap = new Map(DB.customFields.map(cf=>[cf.key, cf]));
               const _missing = DEFAULT_DATA.customFields.filter(cf=>!_curMap.has(cf.key));
-              // Thêm field còn thiếu
-              _missing.forEach(cf=>_curMap.set(cf.key, cf));
-              // Reorder: field nào có trong DEFAULT thì theo thứ tự DEFAULT, field user tự tạo thêm vào cuối
+              _missing.forEach(cf=>_curMap.set(cf.key, cf)); // chỉ thêm field thiếu
+              // Reorder theo DEFAULT, giữ user extra ở cuối
               const _userExtra = DB.customFields.filter(cf=>!_defaultOrder.includes(cf.key));
               DB.customFields = [
                 ..._defaultOrder.filter(k=>_curMap.has(k)).map(k=>_curMap.get(k)),
                 ..._userExtra
               ];
-              const _changed = DB.customFields.length !== _beforeLen || _missing.length > 0;
-              if(_changed){
-                console.log('[Migration] customFields synced, saving...');
-                setTimeout(()=>saveData(), 500);
+              if(_missing.length > 0){
+                console.log('[Migration] Added missing customFields:', _missing.map(cf=>cf.key));
+                DB._lastSaved = Date.now() + 1000; // đảm bảo migration không bị cloud đè
+                saveData();
               }
             }
             if(!DB.casuals) DB.casuals=[];
