@@ -1483,24 +1483,48 @@ function loadData(){
   return fresh;
 }
 // ── Mapping: DB field → Firestore document ──
+// ── FS_DOC_MAP v3: kiến trúc scale 20 năm / 400+ NV ──
+// Flat docs (tĩnh — không tăng theo thời gian dù bao nhiêu năm):
 const FS_DOC_MAP = {
   employees:  ['departments'],
-  hr:         ['leaves','contracts','leaveSheet','leaveOpening','leavePlan','salaryYears','trainingExtraYears','leaveExtraYears'],
-  recruitment:['candidates','jobs'],
-  workforce:  ['casuals','trainees','traineeSchedules','svcData','courses','casualExtraYears'],
-  performance:['kpiReviews','promotions','rewardRecords','disciplineRecords'],
+  contracts:  ['contracts'],
+  workforce:  ['trainees','traineeSchedules','svcData','courses','casualExtraYears'],
+  jobs:       ['jobs'],
   config:     ['customFields','rewardTypes','perfReviewTypes','company',
                'dashboardConfig','brandConfig','blacklistConfig','blacklistReasons',
                'disciplineSeverityConfig','requiredFieldsConfig','manualBlacklist',
                'contractTemplates','quickFilterPrefs','recReportConfig','perfReportConfig',
                '_rewardTypesV2','_levelReset2026','_removedProbationStatus','_normalizedDates2026'],
 };
+// Dynamic-keyed docs — sharded theo năm/tháng/job, mỗi doc < 300KB mãi mãi @ 400NV:
+// hrdata/leaves_{YYYY}        → DB.leaves (by startDate year)
+// hrdata/kpi_{YYYY}           → DB.kpiReviews (by period year)
+// hrdata/rewards_{YYYY}       → DB.rewardRecords (by date year)
+// hrdata/casuals_{YYYY_MM}    → DB.casuals (by month)
+// hrdata/cand_{jobId}         → DB.candidates (by jobId)
+// hrdata/promos_{YYYY}        → DB.promotions (by effectiveDate/date year)
+// hrdata/discipline_{YYYY}    → DB.disciplineRecords (by date year)
+// hrdata/leavesheet_{YYYY}    → DB.leaveSheet slice by year key
+// hrdata/leavemeta_{YYYY}     → DB.leaveOpening + leavePlan + salaryYears + trainingExtraYears + leaveExtraYears slice by year
+const FS_DYNAMIC_KEYS = ['leaves','kpiReviews','rewardRecords','casuals','candidates',
+                          'promotions','disciplineRecords','leaveSheet','leaveOpening',
+                          'leavePlan','salaryYears','trainingExtraYears','leaveExtraYears'];
+
+// Lấy năm từ 1 record
+function _recYear(r){
+  const d = r.startDate||r.date||r.effectiveDate||r.period||r.appliedDate||r.createdAt||'';
+  if(!d) return new Date().getFullYear();
+  const m = String(d).match(/(\d{4})/); return m ? parseInt(m[1]) : new Date().getFullYear();
+}
+// Lấy YYYY_MM từ casual record
+function _recMonth(r){ const d=r.date||r.month||''; const m=String(d).match(/(\d{4})[_\-](\d{2})/); return m?`${m[1]}_${m[2]}`:`${new Date().getFullYear()}_${String(new Date().getMonth()+1).padStart(2,'0')}`; }
 // emp_profiles: collection riêng, mỗi NV là 1 doc
 // → không bị giới hạn 1MB, scale tới 1000+ NV
 const EMP_COLLECTION = 'emp_profiles';
 
 // Xác định document nào chứa key này
 function _fsDocFor(key){
+  if(FS_DYNAMIC_KEYS.includes(key)) return '_dynamic_'+key;
   for(const [doc, keys] of Object.entries(FS_DOC_MAP)){
     if(keys.includes(key)) return doc;
   }
@@ -1566,19 +1590,117 @@ async function loadEmpProfiles(localPhotos){
   }
 }
 
+// ── Helpers: push dynamic-sharded docs lên Firestore ──
+// v3: tất cả keys tăng theo thời gian đều shard → không doc nào vượt 300KB @ 400NV/20yr
+function _pushDynamicKey(key, meta){
+  if(!window.fbDb || !window.currentUser) return;
+  const thisYear = new Date().getFullYear();
+
+  // ── Nhóm 1: arrays shard theo năm ──
+  const yearArrayMap = {
+    leaves:'leaves', kpiReviews:'kpi', rewardRecords:'rewards',
+    promotions:'promos', disciplineRecords:'discipline',
+  };
+  if(yearArrayMap[key]){
+    const prefix = yearArrayMap[key];
+    const arr = DB[key] || [];
+    const byYear = {};
+    arr.forEach(r=>{ const y=_recYear(r); (byYear[y]=byYear[y]||[]).push(r); });
+    if(!byYear[thisYear]) byYear[thisYear]=[];
+    Object.entries(byYear).forEach(([yr,records])=>{
+      window.fbDb.collection('hrdata').doc(`${prefix}_${yr}`)
+        .set({...meta, [key]:records, _shard:yr}, {merge:false})
+        .catch(err=>console.error(`[saveData] ❌ ${prefix}_${yr}`, err.message));
+    });
+    return;
+  }
+
+  // ── Nhóm 2: casuals — shard theo tháng ──
+  if(key === 'casuals'){
+    const arr = DB.casuals || [];
+    const byMonth = {};
+    arr.forEach(r=>{ const m=_recMonth(r); (byMonth[m]=byMonth[m]||[]).push(r); });
+    const now=new Date(); const thisMo=`${now.getFullYear()}_${String(now.getMonth()+1).padStart(2,'0')}`;
+    if(!byMonth[thisMo]) byMonth[thisMo]=[];
+    Object.entries(byMonth).forEach(([mo,records])=>{
+      window.fbDb.collection('hrdata').doc(`casuals_${mo}`)
+        .set({...meta, casuals:records, _shard:mo}, {merge:false})
+        .catch(err=>console.error(`[saveData] ❌ casuals_${mo}`, err.message));
+    });
+    return;
+  }
+
+  // ── Nhóm 3: candidates — shard theo jobId ──
+  if(key === 'candidates'){
+    const arr = DB.candidates || [];
+    const byJob = {};
+    arr.forEach(r=>{ const j=r.jobId||'_nojob'; (byJob[j]=byJob[j]||[]).push(r); });
+    Object.entries(byJob).forEach(([jid,records])=>{
+      window.fbDb.collection('hrdata').doc(`cand_${jid}`)
+        .set({...meta, candidates:records, _shard:jid}, {merge:false})
+        .catch(err=>console.error(`[saveData] ❌ cand_${jid}`, err.message));
+    });
+    return;
+  }
+
+  // ── Nhóm 4: leaveSheet — {empId:{year:{...}}} shard theo năm ──
+  if(key === 'leaveSheet'){
+    const sheet = DB.leaveSheet || {};
+    const allYears = new Set([thisYear]);
+    Object.values(sheet).forEach(empData=>{ Object.keys(empData).forEach(y=>allYears.add(parseInt(y))); });
+    allYears.forEach(yr=>{
+      const sliced = {};
+      Object.entries(sheet).forEach(([empId,empData])=>{
+        if(empData[yr] !== undefined) sliced[empId]={[yr]:empData[yr]};
+      });
+      window.fbDb.collection('hrdata').doc(`leavesheet_${yr}`)
+        .set({...meta, leaveSheet:sliced, _shard:yr}, {merge:false})
+        .catch(err=>console.error(`[saveData] ❌ leavesheet_${yr}`, err.message));
+    });
+    return;
+  }
+
+  // ── Nhóm 5: leaveOpening/leavePlan/salaryYears/trainingExtraYears/leaveExtraYears ──
+  // shard cùng nhau vào leavemeta_{YYYY}
+  const leaveMetaKeys = ['leaveOpening','leavePlan','salaryYears','trainingExtraYears','leaveExtraYears'];
+  if(leaveMetaKeys.includes(key)){
+    const allYears = new Set([thisYear]);
+    leaveMetaKeys.forEach(k=>{
+      const obj=DB[k]||{}; Object.values(obj).forEach(v=>{ if(typeof v==='object') Object.keys(v).forEach(y=>allYears.add(parseInt(y))); });
+    });
+    allYears.forEach(yr=>{
+      const payload={...meta, _shard:yr};
+      leaveMetaKeys.forEach(k=>{
+        const obj=DB[k]||{}; const sliced={};
+        Object.entries(obj).forEach(([eid,v])=>{
+          if(typeof v==='object'&&v[yr]!==undefined) sliced[eid]={[yr]:v[yr]};
+          else if(typeof v!=='object'&&v!==undefined) sliced[eid]=v;
+        });
+        payload[k]=sliced;
+      });
+      window.fbDb.collection('hrdata').doc(`leavemeta_${yr}`)
+        .set(payload,{merge:false})
+        .catch(err=>console.error(`[saveData] ❌ leavemeta_${yr}`, err.message));
+    });
+    return;
+  }
+}
+
 // saveData: lưu localStorage + push Firestore — Firestore LUÔN chạy dù localStorage lỗi
+// v3: dynamic sharding toàn diện → scale 20 năm / 400+ NV, tất cả docs < 300KB
 function saveData(changedKeys=null){
-  // Đánh dấu thời điểm lưu để tránh cloud cũ đè lên
   DB._lastSaved = Date.now();
+
+  // ── Bước 1: localStorage — bỏ qua dynamic keys để tránh quota ──
   try{
     const dbNoPhoto = JSON.parse(JSON.stringify(DB));
     dbNoPhoto.employees = (dbNoPhoto.employees||[]).map(e=>{ const {photo,...r}=e; return r; });
+    FS_DYNAMIC_KEYS.forEach(k=>{ delete dbNoPhoto[k]; });
     localStorage.setItem(STORE_KEY, JSON.stringify(dbNoPhoto));
     const photoMap = {};
     (DB.employees||[]).forEach(e=>{ if(e.photo) photoMap[e.id]=e.photo; });
     try{ localStorage.setItem(STORE_KEY+'_photos', JSON.stringify(photoMap)); }catch(_){}
   }catch(lsErr){
-    // localStorage lỗi (quota) — chỉ warn, KHÔNG return, vẫn tiếp tục push Firestore
     if(lsErr.name==='QuotaExceededError'||/quota/i.test(lsErr.message)){
       toast('⚠️ Bộ nhớ trình duyệt đầy — dữ liệu vẫn được lưu trên cloud.','warning');
     }else{
@@ -1590,19 +1712,21 @@ function saveData(changedKeys=null){
   if(window.fbDb && window.currentUser){
     const meta = { _syncBy: window.currentUser.uid, _syncAt: Date.now() };
     window._lastSaveAt = meta._syncAt;
-
-    // Xác định docs cần push (không bao gồm employees/customData - đã tách vào collection)
-    const docsToSave = new Set();
     const keys = changedKeys ? (Array.isArray(changedKeys)?changedKeys:[changedKeys]) : null;
+
+    // 2a. Flat docs nhỏ (static per FS_DOC_MAP)
+    const docsToSave = new Set();
     if(!keys){
       Object.keys(FS_DOC_MAP).forEach(d=>docsToSave.add(d));
     } else {
-      keys.forEach(k=>{ const d=_fsDocFor(k); if(d) docsToSave.add(d); });
+      keys.forEach(k=>{
+        if(!FS_DYNAMIC_KEYS.includes(k)){
+          const d=_fsDocFor(k); if(d && !d.startsWith('_dynamic_')) docsToSave.add(d);
+        }
+      });
     }
-
-    // Push các docs nhỏ (hr, config, recruitment, workforce, performance, employees/departments)
     docsToSave.forEach(docId=>{
-      const docKeys = FS_DOC_MAP[docId];
+      const docKeys = FS_DOC_MAP[docId]; if(!docKeys) return;
       const payload = { ...meta };
       docKeys.forEach(k=>{ const val=DB[k]; if(val!==undefined) payload[k]=val; });
       window.fbDb.collection('hrdata').doc(docId).set(payload,{merge:true})
@@ -1613,11 +1737,18 @@ function saveData(changedKeys=null){
         });
     });
 
-    // Push employees + customData → emp_profiles collection (1 doc/NV)
+    // 2b. Dynamic-sharded keys — collapse leavemeta keys thành 1 lần push
+    const dynamicToSave = !keys ? FS_DYNAMIC_KEYS : keys.filter(k=>FS_DYNAMIC_KEYS.includes(k));
+    const leaveMetaKeys = ['leaveOpening','leavePlan','salaryYears','trainingExtraYears','leaveExtraYears'];
+    const seen = new Set();
+    dynamicToSave.forEach(k=>{
+      const canonical = leaveMetaKeys.includes(k) ? 'leaveOpening' : k;
+      if(!seen.has(canonical)){ seen.add(canonical); _pushDynamicKey(canonical, meta); }
+    });
+
+    // 2c. employees + customData → emp_profiles collection
     const needEmpSave = !keys || keys.some(k=>['employees','customData'].includes(k));
-    if(needEmpSave){
-      (DB.employees||[]).forEach(e=>saveEmpProfile(e.id));
-    }
+    if(needEmpSave){ (DB.employees||[]).forEach(e=>saveEmpProfile(e.id)); }
   }
   return true;
 }
@@ -20086,7 +20217,8 @@ fbAuth.onAuthStateChanged(async user => {
           const localPhotos = {};
           (DB.employees||[]).forEach(e=>{ if(e.photo) localPhotos[e.id]=e.photo; });
           try{ const pm=JSON.parse(localStorage.getItem(STORE_KEY+'_photos')||'{}'); Object.assign(localPhotos,pm); }catch(e2){}
-          // Load song song: 6 docs nhỏ + collection emp_profiles
+
+          // ── Bước A: load flat docs + emp_profiles song song ──
           const docIds = Object.keys(FS_DOC_MAP);
           const [snaps, empLoaded] = await Promise.all([
             Promise.all(docIds.map(id=>window.fbDb.collection('hrdata').doc(id).get())),
@@ -20099,7 +20231,91 @@ fbAuth.onAuthStateChanged(async user => {
             const data = snap.data();
             FS_DOC_MAP[docIds[i]].forEach(key=>{ if(data[key] !== undefined) DB[key] = data[key]; });
           });
-          // Ghép ảnh cho employees (nếu load từ collection)
+
+          // ── Bước B: load ALL dynamic-sharded docs (v3: 9 key groups) ──
+          const hrdataSnap = await window.fbDb.collection('hrdata').get();
+          const dynamicAccum = {
+            leaves:[], kpiReviews:[], rewardRecords:[], casuals:[], candidates:[],
+            promotions:[], disciplineRecords:[],
+            leaveSheet:{}, leaveOpening:{}, leavePlan:{}, salaryYears:{},
+            trainingExtraYears:{}, leaveExtraYears:{}
+          };
+          hrdataSnap.forEach(doc=>{
+            const id=doc.id; const d=doc.data();
+            if(id.startsWith('leaves_')      && d.leaves)           dynamicAccum.leaves.push(...d.leaves);
+            else if(id.startsWith('kpi_')    && d.kpiReviews)       dynamicAccum.kpiReviews.push(...d.kpiReviews);
+            else if(id.startsWith('rewards_')&& d.rewardRecords)    dynamicAccum.rewardRecords.push(...d.rewardRecords);
+            else if(id.startsWith('casuals_')&& d.casuals)          dynamicAccum.casuals.push(...d.casuals);
+            else if(id.startsWith('cand_')   && d.candidates)       dynamicAccum.candidates.push(...d.candidates);
+            else if(id.startsWith('promos_') && d.promotions)       dynamicAccum.promotions.push(...d.promotions);
+            else if(id.startsWith('discipline_')&&d.disciplineRecords) dynamicAccum.disciplineRecords.push(...d.disciplineRecords);
+            else if(id.startsWith('leavesheet_')&&d.leaveSheet){
+              // Merge sharded leaveSheet: {empId:{yr:{...}}} → hợp nhất tất cả year-slices
+              Object.entries(d.leaveSheet).forEach(([eid,yrData])=>{
+                if(!dynamicAccum.leaveSheet[eid]) dynamicAccum.leaveSheet[eid]={};
+                Object.assign(dynamicAccum.leaveSheet[eid], yrData);
+              });
+            }
+            else if(id.startsWith('leavemeta_')){
+              const metaKeys=['leaveOpening','leavePlan','salaryYears','trainingExtraYears','leaveExtraYears'];
+              metaKeys.forEach(k=>{
+                if(d[k]) Object.entries(d[k]).forEach(([eid,v])=>{
+                  if(!dynamicAccum[k][eid]) dynamicAccum[k][eid]={};
+                  if(typeof v==='object') Object.assign(dynamicAccum[k][eid], v);
+                  else dynamicAccum[k][eid]=v;
+                });
+              });
+            }
+          });
+          // Merge vào DB
+          const _mergeArr = (key)=>{ if(dynamicAccum[key].length){ DB[key]=dynamicAccum[key]; hasCloud=true; } };
+          const _mergeObj = (key)=>{ if(Object.keys(dynamicAccum[key]).length){ DB[key]=dynamicAccum[key]; hasCloud=true; } };
+          ['leaves','kpiReviews','rewardRecords','casuals','candidates','promotions','disciplineRecords'].forEach(_mergeArr);
+          ['leaveSheet','leaveOpening','leavePlan','salaryYears','trainingExtraYears','leaveExtraYears'].forEach(_mergeObj);
+
+          // ── Migration: data cũ từ hrdata/hr, hrdata/recruitment, hrdata/workforce,
+          //   hrdata/performance, hrdata/leavedata, hrdata/promotions, hrdata/discipline ──
+          const oldDocIds = ['hr','recruitment','workforce','performance','leavedata','promotions','discipline'];
+          const oldSnaps = await Promise.all(oldDocIds.map(id=>window.fbDb.collection('hrdata').doc(id).get()));
+          let needMigrate = false;
+          oldSnaps.forEach((snap,i)=>{
+            if(!snap.exists) return;
+            const d=snap.data(); const oid=oldDocIds[i];
+            const tryMergeArr=(k)=>{ if(d[k]&&!dynamicAccum[k].length){ DB[k]=d[k]; hasCloud=true; needMigrate=true; } };
+            const tryMergeFlat=(k)=>{ if(d[k]!==undefined&&DB[k]===undefined){ DB[k]=d[k]; needMigrate=true; } };
+            if(oid==='hr'){
+              tryMergeArr('leaves');
+              if(d.contracts&&!(DB.contracts||[]).length){ DB.contracts=d.contracts; needMigrate=true; }
+              if(d.leaveSheet&&!Object.keys(DB.leaveSheet||{}).length){ DB.leaveSheet=d.leaveSheet; needMigrate=true; }
+              ['leaveOpening','leavePlan','salaryYears','trainingExtraYears','leaveExtraYears'].forEach(tryMergeFlat);
+            } else if(oid==='recruitment'){
+              tryMergeArr('candidates');
+              if(d.jobs&&!(DB.jobs||[]).length){ DB.jobs=d.jobs; needMigrate=true; }
+            } else if(oid==='workforce'){
+              tryMergeArr('casuals');
+              ['trainees','traineeSchedules','svcData','courses','casualExtraYears'].forEach(tryMergeFlat);
+            } else if(oid==='performance'){
+              tryMergeArr('kpiReviews'); tryMergeArr('rewardRecords');
+              tryMergeArr('promotions'); tryMergeArr('disciplineRecords');
+            } else if(oid==='leavedata'){
+              if(d.leaveSheet&&!Object.keys(DB.leaveSheet||{}).length){ DB.leaveSheet=d.leaveSheet; needMigrate=true; }
+              ['leaveOpening','leavePlan','salaryYears','trainingExtraYears','leaveExtraYears'].forEach(tryMergeFlat);
+            } else if(oid==='promotions'){
+              tryMergeArr('promotions');
+            } else if(oid==='discipline'){
+              tryMergeArr('disciplineRecords');
+            }
+          });
+          if(needMigrate){
+            console.log('[Migration v3] Migrating old flat docs → sharded structure...');
+            saveData();
+            oldDocIds.forEach(oid=>{
+              window.fbDb.collection('hrdata').doc(oid).delete()
+                .then(()=>console.log('[Migration v3] Deleted:', oid)).catch(()=>{});
+            });
+          }
+
+          // Ghép ảnh cho employees
           if(empLoaded) DB.employees.forEach(e=>{ if(localPhotos[e.id]) e.photo=localPhotos[e.id]; });
           if(hasCloud){
             if(!DB.customFields) DB.customFields=[];
