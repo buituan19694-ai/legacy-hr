@@ -2490,6 +2490,13 @@ const DEFAULT_BLACKLIST_CONFIG = {
   reviewPeriodMonths: 12,    // chu kỳ xem xét (tháng)
 };
 
+// Helper global: lấy exitDate thực tế từ customData
+function getExitDate(e){
+  const cd = DB.customData[e.id] || {};
+  if(cd.exitDate) return new Date(cd.exitDate);
+  return null;
+}
+
 function renderDashboard(main){
   const today = new Date();
 
@@ -3367,12 +3374,6 @@ function renderDashboardCharts(){
   };
 
   // Headcount cuối mỗi tháng
-  // Helper: lấy exitDate thực tế từ customData
-  const getExitDate = (e) => {
-    const cd = DB.customData[e.id] || {};
-    if(cd.exitDate) return new Date(cd.exitDate);
-    return null;
-  };
 
   const todaySnap = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
 
@@ -19798,7 +19799,7 @@ fbAuth.onAuthStateChanged(async user => {
           customdata:  ['employees','employee-profile','dashboard','salary','performance'],
           hr:          ['leaves','contracts','dashboard'],
           recruitment: ['recruitment','job-detail','dashboard'],
-          workforce:   ['casual','trainee','training','dashboard'],
+          workforce:   ['casual','trainee','training','dashboard','workforce'],
           performance: ['performance','awards','warnings','employee-profile','dashboard','training'],
           config:      ['settings'],
         };
