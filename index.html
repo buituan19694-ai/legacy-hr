@@ -4052,13 +4052,32 @@ function renderEmployeeProfile(main){
   const now = new Date();
   const joinedISO = _toISO(e.joined);
   const joined = joinedISO ? new Date(joinedISO) : null;
+
+  // Điểm kết thúc: với NV nghỉ → dùng exitDate; với NV đang làm → dùng hôm nay
+  let tenureEnd = now;
+  let isExitEmployee = false;
+  if(e.status === 'exit'){
+    const cd = DB.customData[e.id]||{};
+    const exitISO = _toISO(cd.exitDate);
+    const exitD = exitISO ? new Date(exitISO) : null;
+    if(exitD && !isNaN(exitD)){
+      tenureEnd = exitD;
+      isExitEmployee = true;
+    }
+  }
+
   let tenureStr = '—';
   if(joined && !isNaN(joined)){
-    let years = now.getFullYear() - joined.getFullYear();
-    let months = now.getMonth() - joined.getMonth();
+    let years = tenureEnd.getFullYear() - joined.getFullYear();
+    let months = tenureEnd.getMonth() - joined.getMonth();
     if(months < 0){ years--; months += 12; }
     if(years < 0){ years = 0; months = 0; }
-    tenureStr = years > 0 ? `${years} năm ${months} tháng` : months > 0 ? `${months} tháng` : 'Mới vào';
+    const days = Math.max(0, Math.floor((tenureEnd - joined) / 864e5));
+    if(years > 0) tenureStr = `${years} năm ${months} tháng`;
+    else if(months > 0) tenureStr = `${months} tháng`;
+    else if(days > 0) tenureStr = `${days} ngày`;
+    else tenureStr = 'Mới vào';
+    if(isExitEmployee) tenureStr += ' (đến ngày nghỉ)';
   }
 
   // Tính tuổi — auto theo ngày hiện tại
@@ -7436,7 +7455,9 @@ function renderContracts(main){
 
   // Bổ sung: NV có contractEnd trong customData (nhập tay qua form NV, không qua DB.contracts)
   const _toISOc = s => s&&/^\d{2}\/\d{2}\/\d{4}$/.test(s)?s.split('/').reverse().join('-'):s;
-  const empContractEndList = activeEmpsAll.map(e=>{
+  const empContractEndList = activeEmpsAll
+    .filter(e => e.status !== 'exit') // không tính NV đã nghỉ
+    .map(e=>{
     const cd = DB.customData[e.id]||{};
     const endRaw = cd.contractEnd||cd.currentContractEnd||'';
     if(!endRaw) return null;
@@ -7473,7 +7494,10 @@ function renderContracts(main){
   const expiringInMonth = allContractsForExpiry.filter(c => {
     if(!c.endDate) return false;
     const ed = new Date(c.endDate);
-    return ed.getMonth() + 1 === contractFilter.month && ed.getFullYear() === contractFilter.year;
+    if(ed.getMonth() + 1 !== contractFilter.month || ed.getFullYear() !== contractFilter.year) return false;
+    // Loại NV đã nghỉ việc
+    const emp = empById(c.empId);
+    return emp && emp.status !== 'exit';
   }).sort((a,b) => new Date(a.endDate) - new Date(b.endDate));
 
   // Lấy danh sách năm có HĐ hết hạn
@@ -11983,7 +12007,9 @@ function _wfExitTab(emps,byDept,reasons,PAL,yr,mon){
 
   const rows=emps.map((e,i)=>{
     const ex=getExitDate(e); const cd=DB.customData[e.id]||{};
-    const d=(e.joined&&ex)?Math.floor((ex-new Date(e.joined))/864e5):0;
+    const joinedISO2 = e.joined&&/^\d{2}\/\d{2}\/\d{4}$/.test(e.joined)?e.joined.split('/').reverse().join('-'):e.joined;
+    const joinedD = joinedISO2?new Date(joinedISO2):null;
+    const d=(joinedD&&!isNaN(joinedD)&&ex&&!isNaN(ex))?Math.max(0,Math.floor((ex-joinedD)/864e5)):0;
     const tenure=!d?'—':d<30?d+'ng':d<365?Math.floor(d/30)+'th':Math.floor(d/365)+'n'+Math.floor((d%365)/30)+'th';
     return `<tr onclick="viewEmployee('${e.id}')" style="cursor:pointer">
       <td style="width:28px;text-align:center;color:var(--ink-muted);font-size:11px">${i+1}</td>
