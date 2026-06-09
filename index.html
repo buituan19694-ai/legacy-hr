@@ -11641,7 +11641,6 @@ function renderWorkforce(main){
       <div class="topbar-actions">
         <select class="filter-select" onchange="window._wfYear=parseInt(this.value);window._wfMonth=0;render()">${yearOpts}</select>
         <select class="filter-select" onchange="window._wfMonth=parseInt(this.value);render()">${monOpts}</select>
-        <button class="btn" onclick="addWfTestData()" style="font-size:11px;opacity:.6;border-style:dashed">🧪 Test data</button>
         <button class="btn" onclick="addWfYear()" title="Thêm năm" style="padding:4px 10px;font-size:12px">+ Năm</button>
         <button class="btn" onclick="exportWorkforce(${yr},${mon})">📥 Xuất Excel</button>
       </div>
@@ -11887,31 +11886,6 @@ function addWfYear(){
     </div>
   `);
 }
-
-function addWfTestData(){
-  const depts = DB.departments||[];
-  const reasons = ['Hết hạn HĐ — không ký tiếp','Tự nguyện nghỉ việc','Nghỉ theo thỏa thuận','Vi phạm nội quy','Thôi việc theo nguyện vọng','Lý do cá nhân','Chuyển công tác'];
-  const roles = ['Nhân viên','Tổ trưởng','Giám sát','Thu ngân','Phục vụ','Lễ tân','Bảo vệ','Kế toán'];
-  const names = ['Nguyễn Thị Lan','Trần Văn Bình','Lê Thị Hoa','Phạm Văn Đức','Hoàng Thị Mai','Đặng Văn Long','Vũ Thị Thu','Bùi Văn Hải','Đỗ Thị Ngọc','Ngô Văn Tuấn'];
-  const yr = window._wfYear || new Date().getFullYear();
-  names.forEach((name,i)=>{
-    const deptId = depts[i%depts.length]?.id || '';
-    const joinedMonth = (i%6)+1;
-    const exitMonth = Math.min(joinedMonth+2+(i%3),12);
-    const empId = 'test_exit_'+i;
-    const joined = `${yr-1}-${String(joinedMonth).padStart(2,'0')}-${String(10+i).padStart(2,'0')}`;
-    const exitDate = `${yr}-${String(exitMonth).padStart(2,'0')}-${String(15+i%10).padStart(2,'0')}`;
-    if(!DB.employees.find(e=>e.id===empId)){
-      DB.employees.push({id:empId,code:`MG-TEST${String(i+1).padStart(2,'0')}`,name,deptId,role:roles[i%roles.length],joined,status:'exit',gender:i%2===0?'female':'male'});
-    }
-    if(!DB.customData[empId]) DB.customData[empId]={};
-    DB.customData[empId].exitDate=exitDate;
-    DB.customData[empId].exitReason=reasons[i%reasons.length];
-  });
-  render();
-  toast('✅ Đã thêm 10 NV test — nhớ xoá sau khi test','success');
-}
-
 function confirmAddWfYear(){
   const yr=parseInt(document.getElementById('wf_new_year')?.value);
   if(!yr||yr<2000||yr>2100){ toast('Năm không hợp lệ','error'); return; }
