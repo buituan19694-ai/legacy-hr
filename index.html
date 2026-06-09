@@ -1472,7 +1472,7 @@ function loadData(){
 // ── Mapping: DB field → Firestore document ──
 const FS_DOC_MAP = {
   employees:  ['departments'],
-  hr:         ['leaves','contracts','leaveSheet','leaveOpening','leavePlan'],
+  hr:         ['leaves','contracts','leaveSheet','leaveOpening','leavePlan','salaryYears'],
   recruitment:['candidates','jobs'],
   workforce:  ['casuals','trainees','traineeSchedules','svcData','courses'],
   performance:['kpiReviews','promotions','rewardRecords','disciplineRecords'],
@@ -5892,8 +5892,6 @@ function renderCustomFieldInput(cf, value){
 
   // ── Auto-compute từ DB.contracts ──
   const AUTO_CONTRACT_KEYS = ['currentContractType','contractStart','contractEnd','currentContractStart','currentContractEnd'];
-  const AUTO_PROBATION_KEYS = ['probationStart','probationEnd'];
-
   if(AUTO_CONTRACT_KEYS.includes(cf.key)){
     const empId = document.getElementById('f_empid')?.value || currentEmpId || '';
     const today = new Date(); today.setHours(0,0,0,0);
@@ -5935,26 +5933,12 @@ function renderCustomFieldInput(cf, value){
     }
   }
 
-  // ── Auto-compute probation từ DB.contracts ──
-  if(AUTO_PROBATION_KEYS.includes(cf.key)){
-    const empId = document.getElementById('f_empid')?.value || currentEmpId || '';
-    const empContracts = (DB.contracts||[]).filter(c=>c.empId===empId && c.type==='probation');
-    const probCon = [...empContracts].sort((a,b)=>new Date(b.startDate)-new Date(a.startDate))[0];
-    const roStyle = 'background:var(--bg-elev);color:var(--ink-muted);cursor:not-allowed;border-color:var(--border)';
-    const autoLabel = `${label} <span style="font-size:9px;color:var(--accent)">(tự động)</span>`;
-    if(cf.key === 'probationStart'){
-      const autoVal = probCon?.startDate ? isoToDisp(probCon.startDate) : '';
-      return `<div class="${cls}"><label>${autoLabel}</label>
-        <input id="${id}" ${dataAttr} type="text" value="${autoVal}" readonly style="${roStyle}" placeholder="Chưa có HĐ thử việc">
-      </div>`;
-    }
     if(cf.key === 'probationEnd'){
       const autoVal = probCon?.endDate ? isoToDisp(probCon.endDate) : '';
       return `<div class="${cls}"><label>${autoLabel}</label>
         <input id="${id}" ${dataAttr} type="text" value="${autoVal}" readonly style="${roStyle}" placeholder="Chưa có HĐ thử việc">
       </div>`;
     }
-  }
 
   if(cf.type === 'select'){
     const opts = (cf.options||'').split(',').map(s=>s.trim()).filter(Boolean);
@@ -16875,6 +16859,52 @@ try {
 /* =========================================================
    PHÂN TÍCH LƯƠNG
    ========================================================= */
+function addSalaryYear(){
+  const curYr = new Date().getFullYear();
+  const existing = new Set([curYr+1,curYr,curYr-1,curYr-2,...(DB.salaryYears||[]),...(DB.employees||[]).filter(e=>e.joined).map(e=>new Date(e.joined).getFullYear())]);
+  // Generate suggested years beyond current range
+  const suggestions = [];
+  for(let y = curYr+2; y <= curYr+15; y++){
+    if(!existing.has(y)) suggestions.push(y);
+  }
+
+  openModal(`
+    <div class="modal-head">
+      <div class="modal-title">📅 Thêm năm vào Salary</div>
+      <div class="modal-sub">Chọn hoặc nhập năm muốn thêm vào danh sách</div>
+    </div>
+    <div class="form-grid">
+      <div class="field full">
+        <label>Năm muốn thêm</label>
+        <input type="number" id="sal_new_year" value="${curYr+2}" min="2000" max="2100" style="font-size:18px;font-weight:700;text-align:center">
+      </div>
+      <div class="field full">
+        <label>Gợi ý nhanh</label>
+        <div style="display:flex;flex-wrap:wrap;gap:6px">
+          ${suggestions.slice(0,8).map(y=>`<button class="btn" onclick="document.getElementById('sal_new_year').value=${y}" style="font-size:13px;font-weight:600">${y}</button>`).join('')}
+        </div>
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeModal()">Huỷ</button>
+      <button class="btn btn-primary" onclick="confirmAddSalaryYear()">✅ Thêm năm</button>
+    </div>
+  `);
+}
+
+function confirmAddSalaryYear(){
+  const yr = parseInt(document.getElementById('sal_new_year')?.value);
+  if(!yr || yr < 2000 || yr > 2100){ toast('Năm không hợp lệ','error'); return; }
+  if(!DB.salaryYears) DB.salaryYears = [];
+  if(!DB.salaryYears.includes(yr)) DB.salaryYears.push(yr);
+  saveData();
+  window._salF = window._salF || {};
+  window._salF.year = yr;
+  closeModal();
+  render();
+  toast(`✅ Đã thêm năm ${yr} — chọn trong dropdown để xem`, 'success');
+}
+
 function renderSalaryAnalysis(main){
   if(!window.canDo('salary') && !window.isAdmin()){
     main.innerHTML='<div class="topbar"><div class="topbar-left"><h1 class="page-title">🔒 Không có quyền</h1><div class="page-sub">Bạn không được cấp quyền truy cập module Phân tích Lương</div></div></div>';
@@ -17030,9 +17060,11 @@ function renderSalaryAnalysis(main){
   const mLabel  = F.month>0?`${_lang==="en"?"Month":"Tháng"} ${F.month}/${F.year}`:`Năm ${F.year}`;
   const fixedRatio = kpi.totalFund ? Math.round(kpi.totalBase/kpi.totalFund*100) : 0;
 
-  // ── Năm selector ──
+  // ── Năm selector — bao gồm năm custom đã thêm ──
   const yearsSet=new Set([curYear+1,curYear,curYear-1,curYear-2]);
   DB.employees.forEach(e=>{ if(e.joined) yearsSet.add(new Date(e.joined).getFullYear()); });
+  // Thêm các năm custom user đã thêm
+  (DB.salaryYears||[]).forEach(y=>yearsSet.add(y));
   const yearsList=[...yearsSet].sort((a,b)=>b-a);
   const yearOpts=yearsList.map(y=>`<option value="${y}" ${y===F.year?'selected':''}>${y}</option>`).join('');
   const cmpYearOpts=yearsList.map(y=>`<option value="${y}" ${y===F.cmpYear?'selected':''}>${y}</option>`).join('');
@@ -17073,6 +17105,7 @@ function renderSalaryAnalysis(main){
 
         <!-- Năm -->
         <select class="filter-select" onchange="window._salF.year=parseInt(this.value);render()">${yearOpts}</select>
+        <button class="btn" onclick="addSalaryYear()" title="Thêm năm vào danh sách" style="font-size:12px;padding:4px 10px">+ Năm</button>
 
         <!-- Tháng -->
         <select class="filter-select" onchange="window._salF.month=parseInt(this.value);render()">${monthOpts}</select>
