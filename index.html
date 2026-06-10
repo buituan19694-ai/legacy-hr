@@ -6037,27 +6037,22 @@ function openPhotoCropper(dataUrl){
   openModal(`
     <div class="modal-head">
       <div class="modal-title">✂️ Chọn vùng ảnh đại diện</div>
-      <div class="modal-sub">Kéo khung tròn để chọn đúng khuôn mặt</div>
+      <div class="modal-sub">Kéo khung tròn để chọn đúng khuôn mặt · Cuộn để thu phóng</div>
     </div>
-    <div style="display:flex;flex-direction:column;align-items:center;gap:16px;padding:8px 0">
-      <div id="cropWrap" style="position:relative;overflow:hidden;border-radius:8px;border:1px solid var(--border);cursor:move;user-select:none;touch-action:none">
-        <img id="cropImg" src="${dataUrl}" style="display:block;max-width:480px;max-height:400px">
-        <!-- Circle overlay -->
+    <div style="display:flex;flex-direction:column;align-items:center;gap:10px">
+      <div id="cropWrap" style="position:relative;overflow:hidden;border-radius:8px;border:1px solid var(--border);cursor:move;user-select:none;touch-action:none;max-height:55vh">
+        <img id="cropImg" src="${dataUrl}" style="display:block;max-width:min(480px,70vw);max-height:55vh;object-fit:contain">
         <div id="cropOverlay" style="position:absolute;inset:0;pointer-events:none">
-          <!-- Dark mask outside circle (4 rects) -->
-          <canvas id="cropMaskCanvas" style="position:absolute;inset:0;pointer-events:none"></canvas>
-          <!-- Circle border -->
           <div id="cropCircle" style="position:absolute;border:3px solid #ff9f43;border-radius:50%;box-shadow:0 0 0 9999px rgba(0,0,0,.55);cursor:move;pointer-events:all"></div>
         </div>
       </div>
-      <div style="font-size:12px;color:var(--ink-muted);text-align:center">
-        🖱️ Kéo khung tròn để di chuyển · Cuộn chuột để thu phóng
-      </div>
+      <div style="font-size:11px;color:var(--ink-muted)">🖱️ Kéo vòng để di chuyển · Cuộn chuột để thu phóng</div>
     </div>
-  `,[
-    {label:'Huỷ', action:()=>closeModal()},
-    {label:'✂️ Xác nhận & Upload', primary:true, action:()=>_confirmCrop()}
-  ]);
+    <div class="modal-actions" style="margin-top:12px">
+      <button class="btn" onclick="closeModal()">Huỷ</button>
+      <button class="btn btn-primary" onclick="window._confirmCrop()">✂️ Xác nhận & Upload</button>
+    </div>
+  `, []);
 
   // Init cropper after modal renders
   requestAnimationFrame(()=>{
