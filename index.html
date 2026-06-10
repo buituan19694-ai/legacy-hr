@@ -10222,6 +10222,7 @@ function renderLeavePlan(main){
     return {al: Math.round(al*100)/100, cl: Math.round(cl*100)/100};
   };
   const fnum = v => (Math.round((v||0)*100)/100) || 0;
+  const dc2 = (plan, real) => { const d=plan-real; if(d===0) return {color:'var(--ink-muted)',text:'—'}; return {color:d>0?'var(--success)':'var(--danger)',text:(d>0?'+':'')+Math.round(d*100)/100}; };
 
   // ── Tính tồn AL/CL cuối tháng (mi) theo leaveSheet — link từ bảng Theo dõi ──
   // Tồn cuối tháng mi = opening + accrual(1→mi+1) - used(1→mi+1)
@@ -10318,7 +10319,7 @@ function renderLeavePlan(main){
       });
       totalReal = Math.round(totalReal*100)/100;
       totalPlan = Math.round(totalPlan*100)/100;
-      const delta = dc(totalPlan, totalReal);
+      const delta = dc2(totalPlan, totalReal);
       return `<td style="padding:4px 2px;text-align:center">
         <div style="font-weight:700;color:${color};font-size:11px;font-family:'JetBrains Mono',monospace">${totalReal||'—'}</div>
         <div style="font-size:10px;color:#ff9f43;font-family:'JetBrains Mono',monospace">${totalPlan||'—'}</div>
@@ -10348,7 +10349,7 @@ function renderLeavePlan(main){
         const real = getRealByDept(dept.id, mi);
         const realVal = real[type];
         const planVal = (plan[mi]||{})[type] || 0;
-        const delta = dc(planVal, realVal);
+        const delta = dc2(planVal, realVal);
         const isFuture = (mi+1) > curMonth;
         return `<td style="padding:2px 1px;text-align:center;background:${isFuture?'rgba(255,160,80,.04)':''}">
           <div style="display:flex;flex-direction:column;align-items:center;gap:1px">
@@ -10381,7 +10382,7 @@ function renderLeavePlan(main){
       });
       totalReal = Math.round(totalReal*100)/100;
       totalPlan = Math.round(totalPlan*100)/100;
-      const delta = dc(totalPlan, totalReal);
+      const delta = dc2(totalPlan, totalReal);
       return `<td style="padding:4px 2px;text-align:center">
         <div style="font-weight:700;color:${color};font-size:11px;font-family:'JetBrains Mono',monospace">${totalReal||'—'}</div>
         <div style="font-size:10px;color:#ff9f43;font-family:'JetBrains Mono',monospace">${totalPlan||'—'}</div>
@@ -12649,13 +12650,13 @@ function _wfResignTab(){
     </tr>`;
   };
 
-  return `<div style="display:flex;flex-direction:column;gap:20px">
-    <div style="display:flex;align-items:center;justify-content:space-between">
+  return `<div style="display:flex;flex-direction:column;gap:20px;padding-top:4px">
+    <div class="card" style="padding:16px 20px;display:flex;align-items:center;justify-content:space-between">
       <div>
-        <div style="font-size:15px;font-weight:700">Danh sách đơn nghỉ việc</div>
+        <div style="font-size:15px;font-weight:700">📋 Đơn nghỉ việc</div>
         <div style="font-size:12px;color:var(--ink-muted);margin-top:2px">${pending.length} đang chờ · ${confirmed.length} đã xác nhận · ${cancelled.length} đã huỷ</div>
       </div>
-      <button class="btn btn-primary" onclick="openResignModal()">${ICONS.plus} Thêm đơn</button>
+      <button class="btn btn-primary" onclick="openResignModal()">+ Thêm đơn</button>
     </div>
     ${pending.length?`
     <div class="card" style="padding:0;overflow:hidden">
