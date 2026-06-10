@@ -19055,7 +19055,7 @@ function deleteTrainee(id, fromModal=false){
 function exportTraineeXLSX(){
   if(typeof XLSX==='undefined'){toast((_lang==="en"?"SheetJS not loaded":"SheetJS chưa tải"),'error');return;}
   const HEADER = ['STT','Họ tên *','Mã SV','Ngày sinh (dd/mm/yyyy)',(_lang==="en"?"Phone":"SĐT"),'Tên trường *',(_lang==="en"?"Department":"Bộ phận"),(_lang==="en"?"Quantity":"Số lượng"),'Ngày bắt đầu * (dd/mm/yyyy)','Ngày kết thúc (dd/mm/yyyy)','CCCD','Số TK ngân hàng',(_lang==="en"?"Banking":"Ngân hàng"),(_lang==="en"?"Notes":"Ghi chú")];
-  const rows = (DB.trainees||[]).map((t,i)=>[
+  const rows = (DB.trainees||[]).map((tr,i)=>[
     i+1, tr.name||'', tr.code||'',
     tr.dob ? isoToDisp(tr.dob) : '',
     tr.phone||'', tr.school||'', deptName(tr.deptId), tr.qty||1,
