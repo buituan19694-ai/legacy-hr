@@ -11451,7 +11451,7 @@ function renderWorkforce(main){
         🔴 Nghỉ việc <span style="background:rgba(229,115,115,.2);color:var(--danger);border-radius:10px;padding:1px 8px;font-size:11px;margin-left:4px">${exitEmps.length}</span>
       </button>
       <button class="rec-tab ${tab==='resign'?'active':''}" onclick="window._wfTab='resign';render()">
-        📋 Đơn nghỉ việc <span style="background:rgba(255,160,80,.15);color:var(--warning);border-radius:10px;padding:1px 8px;font-size:11px;margin-left:4px">${(DB.resignations||[]).filter(r=>r.status==='pending').length}</span>
+        📋 Ghi nhận nghỉ việc <span style="background:rgba(255,160,80,.15);color:var(--warning);border-radius:10px;padding:1px 8px;font-size:11px;margin-left:4px">${(DB.resignations||[]).filter(r=>r.status==='pending').length}</span>
       </button>
     </div>
     ${tab==='new' ? _wfNewTab(newEmps,newByDept,PAL,yr,mon) : tab==='resign' ? _wfResignTab() : _wfExitTab(exitEmps,exitByDept,exitReasons,PAL,yr,mon)}
@@ -11694,69 +11694,94 @@ function calcResignEndDate(empId, submitDate){
 }
 
 function openResignModal(rid){
-  const isNew = !rid;
-  const r = isNew ? {id:uid(),empId:'',submitDate:new Date().toISOString().slice(0,10),endDate:'',noticeDays:30,reason:'',status:'pending',note:''} : (DB.resignations||[]).find(x=>x.id===rid)||{};
-  const activeEmps = DB.employees.filter(e=>{
-    if(getEffectiveStatus(e)==='exit') return false;
-    if(!isNew && e.id===r.empId) return true;
-    if((DB.resignations||[]).some(x=>x.empId===e.id&&x.status==='pending')) return false;
-    return true;
-  }).sort((a,b)=>a.name.localeCompare(b.name,'vi'));
-  const empOpts = activeEmps.map(e=>`<option value="${e.id}" ${r.empId===e.id?'selected':''}>${escapeHtml(e.name)} — ${escapeHtml(e.code)}</option>`).join('');
-  const endInfo = r.submitDate && r.empId ? calcResignEndDate(r.empId, r.submitDate) : {endDate:r.endDate||'', noticeDays:r.noticeDays||30};
-  openModal(`${isNew?'➕ Thêm':'✏️ Sửa'} đơn nghỉ việc`,`
-    <div style="display:flex;flex-direction:column;gap:16px;min-width:380px">
+  // Dù rid là gì, modal này = "Ghi nhận NV nghỉ việc" (chuyển exit ngay)
+  const activeEmps = DB.employees
+    .filter(e=>getEffectiveStatus(e)!=='exit')
+    .sort((a,b)=>a.name.localeCompare(b.name,'vi'));
+
+  const exitReasonOptions = [
+    'Hết hạn HĐ — không ký tiếp','Tự nguyện nghỉ việc','Nghỉ theo thỏa thuận',
+    'Vi phạm nội quy','Thôi việc theo nguyện vọng','Lý do cá nhân','Chuyển công tác','Thử việc không đạt'
+  ];
+
+  const empOpts = activeEmps.map(e=>`<option value="${e.id}">${escapeHtml(e.name)} — ${escapeHtml(e.code||'')} (${escapeHtml(deptName(e.deptId))})</option>`).join('');
+  const today = new Date().toISOString().slice(0,10);
+
+  openModal('📋 Ghi nhận nghỉ việc',`
+    <div style="display:flex;flex-direction:column;gap:14px;min-width:400px">
       <div>
         <label style="font-size:12px;color:var(--ink-dim);font-weight:600">NHÂN VIÊN *</label>
-        <select id="rEmp" onchange="window._onResignEmpChange()" style="width:100%;margin-top:6px;padding:9px 10px;background:var(--bg-input);border:1px solid var(--border);border-radius:6px;color:var(--ink);font-size:13px">
+        <select id="rEmp" style="width:100%;margin-top:6px;padding:9px 10px;background:var(--bg-input);border:1px solid var(--border);border-radius:6px;color:var(--ink);font-size:13px">
           <option value="">-- Chọn nhân viên --</option>
           ${empOpts}
         </select>
       </div>
       <div>
-        <label style="font-size:12px;color:var(--ink-dim);font-weight:600">NGÀY NỘP ĐƠN *</label>
-        <input type="date" id="rSubmit" value="${r.submitDate||''}" onchange="window._onResignEmpChange()"
+        <label style="font-size:12px;color:var(--ink-dim);font-weight:600">NGÀY NGHỈ VIỆC THỰC TẾ *</label>
+        <input type="date" id="rExitDate" value="${today}"
           style="width:100%;margin-top:6px;padding:9px 10px;background:var(--bg-input);border:1px solid var(--border);border-radius:6px;color:var(--ink);font-size:13px">
       </div>
-      <div style="background:var(--bg-elev);border-radius:8px;padding:14px 16px;border:1px solid var(--border)">
-        <div style="font-size:11px;color:var(--ink-muted);margin-bottom:6px;font-weight:600;letter-spacing:.04em">NGÀY NGHỈ DỰ KIẾN (tự động)</div>
-        <div id="rEndDisplay" style="font-size:22px;font-weight:800;color:var(--accent);letter-spacing:.02em;font-family:'JetBrains Mono',monospace">${endInfo.endDate||'—'}</div>
-        <div id="rNoticeBadge" style="font-size:11px;color:var(--ink-muted);margin-top:4px">${endInfo.noticeDays?`⏱ Báo trước ${endInfo.noticeDays} ngày`:''}</div>
-        <input type="hidden" id="rEnd" value="${endInfo.endDate||''}">
+      <div>
+        <label style="font-size:12px;color:var(--ink-dim);font-weight:600">LÝ DO NGHỈ VIỆC</label>
+        <select id="rReason" style="width:100%;margin-top:6px;padding:9px 10px;background:var(--bg-input);border:1px solid var(--border);border-radius:6px;color:var(--ink);font-size:13px">
+          <option value="">-- Chọn lý do --</option>
+          ${exitReasonOptions.map(r=>`<option value="${r}">${r}</option>`).join('')}
+          <option value="__other__">Khác (tự nhập)</option>
+        </select>
+      </div>
+      <div id="rReasonOtherWrap" style="display:none">
+        <label style="font-size:12px;color:var(--ink-dim);font-weight:600">LÝ DO CỤ THỂ</label>
+        <input type="text" id="rReasonOther" placeholder="Nhập lý do..." style="width:100%;margin-top:6px;padding:9px 10px;background:var(--bg-input);border:1px solid var(--border);border-radius:6px;color:var(--ink);font-size:13px">
+      </div>
+      <div style="background:rgba(229,115,115,.08);border:1px solid rgba(229,115,115,.3);border-radius:8px;padding:10px 14px;font-size:12px;color:var(--ink-dim)">
+        ⚠️ Thao tác này sẽ chuyển trạng thái NV sang <b style="color:var(--danger)">Đã nghỉ việc</b> ngay lập tức.
       </div>
     </div>
   `,[
     {label:'Huỷ', action:()=>closeModal()},
-    {label:'💾 Lưu', primary:true, action:()=>{
-      const empId=document.getElementById('rEmp').value;
-      const submitDate=document.getElementById('rSubmit').value;
-      const endDate=document.getElementById('rEnd').value;
-      if(!empId||!submitDate){ toast('Vui lòng chọn NV và ngày nộp đơn','error'); return; }
-      const {noticeDays}=calcResignEndDate(empId,submitDate);
+    {label:'✔ Xác nhận nghỉ việc', primary:true, action:()=>{
+      const empId = document.getElementById('rEmp').value;
+      const exitDate = document.getElementById('rExitDate').value;
+      const reasonSel = document.getElementById('rReason').value;
+      const reasonOther = document.getElementById('rReasonOther')?.value.trim();
+      const reason = reasonSel==='__other__' ? (reasonOther||'Lý do khác') : reasonSel;
+
+      if(!empId){ toast('Vui lòng chọn nhân viên','error'); return; }
+      if(!exitDate){ toast('Vui lòng nhập ngày nghỉ việc','error'); return; }
+
+      // Chuyển NV sang exit
+      const eIdx = DB.employees.findIndex(e=>e.id===empId);
+      if(eIdx>=0) DB.employees[eIdx].status = 'exit';
+      if(!DB.customData[empId]) DB.customData[empId]={};
+      DB.customData[empId].exitDate = exitDate;
+      DB.customData[empId].exitReason = reason;
+
+      // Ghi vào resignations để có lịch sử
       if(!DB.resignations) DB.resignations=[];
-      const idx=DB.resignations.findIndex(x=>x.id===r.id);
-      const obj={id:r.id,empId,submitDate,endDate,noticeDays,reason:r.reason||'',note:r.note||'',status:r.status||'pending',createdAt:r.createdAt||new Date().toISOString()};
-      if(idx>=0) DB.resignations[idx]=obj; else DB.resignations.push(obj);
+      DB.resignations.push({
+        id:uid(), empId, submitDate:exitDate, endDate:exitDate,
+        noticeDays:0, reason, note:'', status:'confirmed',
+        confirmedAt:new Date().toISOString(), createdAt:new Date().toISOString()
+      });
+
+      saveEmpProfile(empId);
       saveData(['resignations']);
       closeModal(); render();
-      toast('✅ Đã lưu đơn nghỉ việc','success');
+      const emp = empById(empId);
+      toast(`✅ Đã ghi nhận nghỉ việc: ${emp?.name||''}`, 'success');
     }}
   ]);
-  window._onResignEmpChange=()=>{
-    const empId=document.getElementById('rEmp')?.value;
-    const submitDate=document.getElementById('rSubmit')?.value;
-    if(empId&&submitDate){
-      const {endDate,noticeDays}=calcResignEndDate(empId,submitDate);
-      const ct=((DB.customData||{})[empId]||{}).currentContractType||'';
-      document.getElementById('rEnd').value=endDate;
-      document.getElementById('rEndDisplay').textContent=endDate||'—';
-      document.getElementById('rNoticeBadge').textContent=`⏱ Báo trước ${noticeDays} ngày${ct?' ('+ct+')':''}`;
-    } else {
-      document.getElementById('rEnd').value='';
-      document.getElementById('rEndDisplay').textContent='—';
-      document.getElementById('rNoticeBadge').textContent='';
+
+  // Show/hide "other reason" input
+  setTimeout(()=>{
+    const sel = document.getElementById('rReason');
+    const wrap = document.getElementById('rReasonOtherWrap');
+    if(sel && wrap){
+      sel.onchange = () => {
+        wrap.style.display = sel.value==='__other__' ? '' : 'none';
+      };
     }
-  };
+  }, 50);
 }
 
 function resignAction(rid, action){
@@ -11851,8 +11876,8 @@ function _wfResignTab(){
     ${!pending.length && !confirmed.length && !cancelled.length ? `
     <div class="card" onclick="openResignModal()" style="padding:28px;text-align:center;cursor:pointer;border:2px dashed var(--border);background:transparent;transition:border-color .15s" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
       <div style="font-size:28px;margin-bottom:8px">📋</div>
-      <div style="font-size:13px;color:var(--ink-muted)">Chưa có đơn nghỉ việc nào</div>
-      <div style="font-size:12px;color:var(--accent);margin-top:6px;font-weight:600">＋ Nhấn để thêm đơn đầu tiên</div>
+      <div style="font-size:13px;color:var(--ink-muted)">Chưa có NV nghỉ việc nào được ghi nhận</div>
+      <div style="font-size:12px;color:var(--accent);margin-top:6px;font-weight:600">＋ Nhấn để ghi nhận NV nghỉ việc</div>
     </div>` : ''}
     ${pending.length?`
     <div class="card" style="padding:0;overflow:hidden">
@@ -18687,17 +18712,48 @@ function renderTrainee(main){
     return;
   }
   if(!window._traineeStatusFilter) window._traineeStatusFilter = 'active';
+  if(!window._traineeMonthFilter)  window._traineeMonthFilter  = 0;  // 0 = tất cả
+  if(!window._traineeYearFilter)   window._traineeYearFilter   = 0;  // 0 = tất cả
   const tsf = window._traineeStatusFilter;
+  const tmf = window._traineeMonthFilter;
+  const tyf = window._traineeYearFilter;
 
   const today = new Date();
+  const curYear  = today.getFullYear();
   const now = today.toISOString().slice(0,10);
 
   const allTrainees = DB.trainees || [];
+
+  // Build year options from data
+  const yearsSet = new Set([curYear, curYear-1, curYear+1]);
+  allTrainees.forEach(t => {
+    if(t.startDate) yearsSet.add(new Date(t.startDate).getFullYear());
+    if(t.endDate)   yearsSet.add(new Date(t.endDate).getFullYear());
+  });
+  const yearsList = [...yearsSet].filter(y=>!isNaN(y)).sort((a,b)=>b-a);
+
   const filteredTrainees = allTrainees.filter(t => {
     const isActive = !t.endDate || t.endDate >= now;
-    if(tsf === 'active') return isActive;
-    if(tsf === 'exit') return !isActive;
-    return true; // 'all'
+    if(tsf === 'active' && !isActive) return false;
+    if(tsf === 'exit'   &&  isActive) return false;
+    // Year filter: TTS đang thực tập trong năm đó (startDate <= cuối năm AND (endDate >= đầu năm OR không có endDate))
+    if(tyf !== 0){
+      const sYear = t.startDate ? new Date(t.startDate).getFullYear() : null;
+      const eYear = t.endDate   ? new Date(t.endDate).getFullYear()   : null;
+      const activeInYear = sYear && sYear <= tyf && (!eYear || eYear >= tyf);
+      if(!activeInYear) return false;
+    }
+    // Month filter (chỉ lọc khi đã chọn năm)
+    if(tyf !== 0 && tmf !== 0){
+      const startOfMonth = new Date(tyf, tmf-1, 1);
+      const endOfMonth   = new Date(tyf, tmf,   0);
+      const sDate = t.startDate ? new Date(t.startDate) : null;
+      const eDate = t.endDate   ? new Date(t.endDate)   : null;
+      // TTS đang thực tập trong tháng đó
+      const activeInMonth = sDate && sDate <= endOfMonth && (!eDate || eDate >= startOfMonth);
+      if(!activeInMonth) return false;
+    }
+    return true;
   });
 
   const active = allTrainees.filter(t => !t.endDate || t.endDate >= now);
@@ -18760,9 +18816,18 @@ function renderTrainee(main){
       <div class="topbar-left">
         <div class="crumb">Nhân sự · <span>Trainee</span></div>
         <h1 class="page-title">🎓 Thực tập <em>sinh</em></h1>
-        <div class="page-sub">${total} sinh viên · ${totalActive} đang thực tập · ${schools} trường</div>
+        <div class="page-sub">${total} sinh viên · ${totalActive} đang thực tập · ${schools} trường${tyf?` · <b style="color:var(--accent)">${tmf?'T'+tmf+'/':''}${tyf}</b>`:''}</div>
       </div>
       <div class="topbar-actions">
+        <!-- Filter năm/tháng -->
+        <select class="filter-select" onchange="window._traineeYearFilter=parseInt(this.value);window._traineeMonthFilter=0;render()">
+          <option value="0" ${tyf===0?'selected':''}>Tất cả năm</option>
+          ${yearsList.map(y=>`<option value="${y}" ${tyf===y?'selected':''}>${y}</option>`).join('')}
+        </select>
+        <select class="filter-select" onchange="window._traineeMonthFilter=parseInt(this.value);render()" ${tyf===0?'disabled':''} style="${tyf===0?'opacity:.4;cursor:not-allowed':''}">
+          <option value="0" ${tmf===0?'selected':''}>Tất cả tháng</option>
+          ${['T1','T2','T3','T4','T5','T6','T7','T8','T9','T10','T11','T12'].map((m,i)=>`<option value="${i+1}" ${tmf===i+1?'selected':''}>${m}</option>`).join('')}
+        </select>
         <!-- Filter đang làm/đã nghỉ -->
         <div style="display:flex;gap:4px;background:var(--bg-elev);border-radius:8px;padding:4px">
           ${[{v:'active',l:'🟢 Đang TTS'},{v:'exit',l:'🔴 Đã nghỉ'},{v:'all',l:'Tất cả'}].map(s=>`
