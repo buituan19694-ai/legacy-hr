@@ -4761,6 +4761,16 @@ function applyEmpFilter(){
   if(Object.keys(flags).some(k=>flags[k])){
     r = r.filter(e => matchesQuickFilters(e, flags));
   }
+
+  // Sort: bộ phận → tên (theo thứ tự dept trong DB.departments)
+  const deptOrder = {};
+  (DB.departments||[]).forEach((d,i)=>{ deptOrder[d.id]=i; });
+  r = [...r].sort((a,b)=>{
+    const dA = deptOrder[a.deptId]??999, dB = deptOrder[b.deptId]??999;
+    if(dA!==dB) return dA-dB;
+    return (a.name||'').localeCompare(b.name||'','vi');
+  });
+
   return r;
 }
 
@@ -5033,18 +5043,26 @@ let _empSearchTimer = null;
 function debounceEmpSearch(val){
   empFilter.search = val;
   clearTimeout(_empSearchTimer);
+  // Lưu focus state ngay lập tức
+  const activeId = document.activeElement?.id;
+  const selStart = document.activeElement?.selectionStart;
+  const selEnd   = document.activeElement?.selectionEnd;
   _empSearchTimer = setTimeout(()=>{
     empPage=1;
-    const active = document.activeElement;
-    const activeId = active?.id;
-    const selStart = active?.selectionStart;
-    const selEnd   = active?.selectionEnd;
     render();
-    if(activeId){
-      const el = document.getElementById(activeId);
-      if(el){ el.focus(); try{ el.setSelectionRange(selStart, selEnd); }catch(e){} }
-    }
-  }, 300);
+    // Restore focus sau khi rAF render xong
+    requestAnimationFrame(()=>{
+      requestAnimationFrame(()=>{
+        if(activeId){
+          const el = document.getElementById(activeId);
+          if(el){
+            el.focus();
+            try{ el.setSelectionRange(selStart, selEnd); }catch(e){}
+          }
+        }
+      });
+    });
+  }, 250);
 }
 function clearEmpDateFilter(){ empFilter.joinedFrom=''; empFilter.joinedTo=''; empFilter.joinedMonth=0; empFilter.joinedYear=0; empFilter.dobMonth=0; empFilter.dobYear=0; empPage=1; render(); }
 function setEmpPage(p){ if(p<1) return; empPage=p; render(); }
@@ -5273,6 +5291,9 @@ function handlePhotoUpload(event){
 }
 
 function openPhotoCropper(dataUrl){
+  // Capture empId NGAY tại đây — trước khi mở modal crop (form vẫn còn trong DOM)
+  const empId = ($('#f_empid')?.value) || currentEmpId || '';
+
   openModal(`
     <div class="modal-head">
       <div class="modal-title">✂️ Chọn vùng ảnh đại diện</div>
@@ -5289,121 +5310,133 @@ function openPhotoCropper(dataUrl){
     </div>
     <div class="modal-actions" style="margin-top:12px">
       <button class="btn" onclick="const pi=document.getElementById('photoInput');if(pi)pi.value='';closeModal()">Huỷ</button>
-      <button class="btn btn-primary" onclick="window._confirmCrop()">✂️ Xác nhận & Upload</button>
+      <button class="btn btn-primary" onclick="window._confirmCrop && window._confirmCrop()">✂️ Xác nhận & Upload</button>
     </div>
   `, []);
 
-  requestAnimationFrame(()=>{
-    const img = document.getElementById('cropImg');
+  // State crop — khai báo ngoài để _confirmCrop dùng được
+  let cx=0, cy=0, cSize=0, imgEl=null;
+
+  // _confirmCrop được gán ngay — không phụ thuộc vào img load
+  window._confirmCrop = ()=>{
+    if(!imgEl || !cSize) { toast('Ảnh chưa sẵn sàng, thử lại','warning'); return; }
+    const W = imgEl.offsetWidth || imgEl.width || 300;
+    const H = imgEl.offsetHeight || imgEl.height || 300;
+    const scaleX = imgEl.naturalWidth/W, scaleY = imgEl.naturalHeight/H;
+    const sx = cx*scaleX, sy = cy*scaleY;
+    const sw = cSize*scaleX, sh = cSize*scaleY;
+    const size = 300;
+    const canvas = document.createElement('canvas');
+    canvas.width=size; canvas.height=size;
+    canvas.getContext('2d').drawImage(imgEl, sx, sy, sw, sh, 0, 0, size, size);
+    const croppedUrl = canvas.toDataURL('image/jpeg', 0.88);
+    closeModal();
+    // Set preview
+    const fPhoto = document.getElementById('f_photo');
+    if(fPhoto) fPhoto.value = croppedUrl;
+    const preview = document.getElementById('photoPreview');
+    if(preview) preview.innerHTML = '<img src="'+croppedUrl+'" alt="Avatar">';
+    // Upload Cloudinary
+    canvas.toBlob(blob=>{
+      if(!blob) return;
+      toast('⏳ Đang upload ảnh...','info');
+      const fd = new FormData();
+      fd.append('file', blob, 'avatar.jpg');
+      fd.append('upload_preset', CLOUDINARY_PRESET);
+      fd.append('folder', 'legacy_hr_avatars');
+      fetch('https://api.cloudinary.com/v1_1/'+CLOUDINARY_CLOUD+'/image/upload', {method:'POST',body:fd})
+        .then(r=>r.json())
+        .then(data=>{
+          if(data.secure_url){
+            const url = data.secure_url;
+            const fp = document.getElementById('f_photo');
+            if(fp) fp.value = url;
+            const pv = document.getElementById('photoPreview');
+            if(pv) pv.innerHTML = '<img src="'+url+'" alt="Avatar">';
+            // Reset input để upload lại được
+            const pi = document.getElementById('photoInput');
+            if(pi) pi.value = '';
+            // Hiện nút Xoá
+            const btnWrap = document.getElementById('photoActionBtns');
+            if(btnWrap && !btnWrap.querySelector('.btn-danger')){
+              const delBtn = document.createElement('button');
+              delBtn.className = 'btn btn-danger';
+              delBtn.onclick = removePhoto;
+              delBtn.innerHTML = '🗑 Xoá ảnh';
+              btnWrap.appendChild(delBtn);
+            }
+            toast('✅ Ảnh đã upload!','success');
+            // Dùng empId đã capture từ đầu
+            if(empId && window.fbDb && window.currentUser){
+              const empIdx = (DB.employees||[]).findIndex(e=>e.id===empId);
+              if(empIdx >= 0){
+                DB.employees[empIdx].photo = url;
+                try{
+                  const pm = JSON.parse(localStorage.getItem(STORE_KEY+'_photos')||'{}');
+                  pm[empId] = url;
+                  localStorage.setItem(STORE_KEY+'_photos', JSON.stringify(pm));
+                }catch(_){}
+                saveEmpProfile(empId);
+              }
+            }
+          } else {
+            const errMsg = data.error?.message || JSON.stringify(data);
+            console.warn('Cloudinary error:', errMsg);
+            toast('⚠️ Upload thất bại: '+errMsg,'warning');
+          }
+        })
+        .catch(err=>{ console.warn('Upload err:',err); toast('⚠️ Lỗi upload ảnh','warning'); });
+    }, 'image/jpeg', 0.88);
+  };
+
+  // Init crop circle sau khi modal render và img load xong
+  const initCrop = ()=>{
+    imgEl = document.getElementById('cropImg');
     const wrap = document.getElementById('cropWrap');
     const circle = document.getElementById('cropCircle');
-
-    img.onload = ()=>_initCropCircle();
-    if(img.complete) _initCropCircle();
-
-    function _initCropCircle(){
-      const W = img.offsetWidth, H = img.offsetHeight;
-      wrap.style.width = W+'px'; wrap.style.height = H+'px';
-      let cSize = Math.round(Math.min(W,H)*0.7);
-      let cx = Math.round((W-cSize)/2), cy = Math.round((H-cSize)/2);
-
-      const setCircle = ()=>{
-        circle.style.left = cx+'px'; circle.style.top = cy+'px';
-        circle.style.width = cSize+'px'; circle.style.height = cSize+'px';
-      };
+    if(!imgEl||!wrap||!circle) return;
+    const W = imgEl.offsetWidth, H = imgEl.offsetHeight;
+    if(!W||!H){ setTimeout(initCrop, 50); return; } // chờ paint
+    wrap.style.width = W+'px'; wrap.style.height = H+'px';
+    cSize = Math.round(Math.min(W,H)*0.7);
+    cx = Math.round((W-cSize)/2);
+    cy = Math.round((H-cSize)/2);
+    const setCircle = ()=>{
+      circle.style.left=cx+'px'; circle.style.top=cy+'px';
+      circle.style.width=cSize+'px'; circle.style.height=cSize+'px';
+    };
+    setCircle();
+    // Drag
+    let dragging=false, dragOx=0, dragOy=0;
+    circle.addEventListener('pointerdown', e=>{
+      dragging=true; dragOx=e.clientX-cx; dragOy=e.clientY-cy;
+      circle.setPointerCapture(e.pointerId); e.preventDefault();
+    });
+    circle.addEventListener('pointermove', e=>{
+      if(!dragging) return;
+      cx=Math.max(0,Math.min(W-cSize,e.clientX-dragOx));
+      cy=Math.max(0,Math.min(H-cSize,e.clientY-dragOy));
       setCircle();
+    });
+    circle.addEventListener('pointerup', ()=>{ dragging=false; });
+    // Scroll resize
+    wrap.addEventListener('wheel', e=>{
+      e.preventDefault();
+      cSize=Math.max(60,Math.min(Math.min(W,H),cSize+(e.deltaY<0?12:-12)));
+      cx=Math.max(0,Math.min(W-cSize,cx));
+      cy=Math.max(0,Math.min(H-cSize,cy));
+      setCircle();
+    },{passive:false});
+  };
 
-      let dragging=false, dragOx=0, dragOy=0;
-      circle.addEventListener('pointerdown', e=>{
-        dragging=true; dragOx=e.clientX-cx; dragOy=e.clientY-cy;
-        circle.setPointerCapture(e.pointerId);
-        e.preventDefault();
-      });
-      circle.addEventListener('pointermove', e=>{
-        if(!dragging) return;
-        cx = Math.max(0, Math.min(W-cSize, e.clientX-dragOx));
-        cy = Math.max(0, Math.min(H-cSize, e.clientY-dragOy));
-        setCircle();
-      });
-      circle.addEventListener('pointerup', ()=>{ dragging=false; });
-
-      wrap.addEventListener('wheel', e=>{
-        e.preventDefault();
-        const delta = e.deltaY < 0 ? 12 : -12;
-        cSize = Math.max(60, Math.min(Math.min(W,H), cSize+delta));
-        cx = Math.max(0, Math.min(W-cSize, cx));
-        cy = Math.max(0, Math.min(H-cSize, cy));
-        setCircle();
-      }, {passive:false});
-
-      window._confirmCrop = ()=>{
-        const naturalW = img.naturalWidth, naturalH = img.naturalHeight;
-        const scaleX = naturalW/W, scaleY = naturalH/H;
-        const sx = cx*scaleX, sy = cy*scaleY;
-        const sw = cSize*scaleX, sh = cSize*scaleY;
-        const size = 300;
-        const canvas = document.createElement('canvas');
-        canvas.width=size; canvas.height=size;
-        const ctx = canvas.getContext('2d');
-        ctx.drawImage(img, sx, sy, sw, sh, 0, 0, size, size);
-        const croppedUrl = canvas.toDataURL('image/jpeg', 0.88);
-        // Lấy empId TRƯỚC khi closeModal (closeModal không destroy form, chỉ ẩn modal)
-        const empId = ($('#f_empid')?.value) || currentEmpId || '';
-        closeModal();
-        $('#f_photo').value = croppedUrl;
-        const preview = $('#photoPreview');
-        if(preview) preview.innerHTML = '<img src="'+croppedUrl+'" alt="Avatar">';
-        canvas.toBlob(blob=>{
-          if(!blob) return;
-          toast('⏳ Đang upload ảnh...','info');
-          const fd = new FormData();
-          fd.append('file', blob, 'avatar.jpg');
-          fd.append('upload_preset', CLOUDINARY_PRESET);
-          fd.append('folder', 'legacy_hr_avatars');
-          fetch('https://api.cloudinary.com/v1_1/'+CLOUDINARY_CLOUD+'/image/upload', {method:'POST',body:fd})
-            .then(r=>r.json())
-            .then(data=>{
-              if(data.secure_url){
-                const url = data.secure_url;
-                $('#f_photo').value = url;
-                if(preview) preview.innerHTML = '<img src="'+url+'" alt="Avatar">';
-                // Reset file input để có thể upload lại
-                const pi=document.getElementById('photoInput'); if(pi) pi.value='';
-                // Hiện nút Xoá ảnh nếu chưa có
-                const btnWrap=document.getElementById('photoActionBtns');
-                if(btnWrap && !btnWrap.querySelector('.btn-danger')){
-                  const delBtn=document.createElement('button');
-                  delBtn.className='btn btn-danger';
-                  delBtn.onclick=removePhoto;
-                  delBtn.innerHTML=(typeof ICONS!=='undefined'?ICONS.trash:'🗑')+' Xoá ảnh';
-                  btnWrap.appendChild(delBtn);
-                }
-                toast('✅ Ảnh đã upload!','success');
-                if(empId && window.fbDb && window.currentUser){
-                  const empIdx = (DB.employees||[]).findIndex(e=>e.id===empId);
-                  if(empIdx >= 0){
-                    DB.employees[empIdx].photo = url;
-                    try{
-                      const pm = JSON.parse(localStorage.getItem(STORE_KEY+'_photos')||'{}');
-                      pm[empId] = url;
-                      localStorage.setItem(STORE_KEY+'_photos', JSON.stringify(pm));
-                    }catch(_){}
-                    saveEmpProfile(empId);
-                  }
-                }
-              } else {
-                const errMsg = data.error?.message || JSON.stringify(data);
-                console.warn('Cloudinary error:', errMsg);
-                if(errMsg.includes('unsigned')||errMsg.includes('whitelisted')||errMsg.includes('preset')){
-                  toast('⚠️ Cloudinary preset chưa set Unsigned','error');
-                } else {
-                  toast('⚠️ Upload thất bại: '+errMsg,'warning');
-                }
-              }
-            })
-            .catch(err=>{ console.warn('Upload err:',err); toast('⚠️ Lỗi upload ảnh','warning'); });
-        }, 'image/jpeg', 0.88);
-      };
+  // Đợi img load xong rồi mới init
+  requestAnimationFrame(()=>{
+    const img = document.getElementById('cropImg');
+    if(!img) return;
+    if(img.complete && img.naturalWidth>0){
+      setTimeout(initCrop, 30); // đợi modal paint
+    } else {
+      img.onload = ()=>setTimeout(initCrop, 30);
     }
   });
 }
