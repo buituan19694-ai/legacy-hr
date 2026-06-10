@@ -5215,13 +5215,48 @@ function editEmployee(id, prefill = null){
 }
 
 function removePhoto(){
+  const empId = $('#f_empid')?.value || currentEmpId || '';
+  const empName = $('#f_name')?.value || '?';
+
+  // Xóa photoUrl trên Firestore (set photoUrl = null)
+  if(empId && window.fbDb && window.currentUser){
+    const empIdx = (DB.employees||[]).findIndex(e=>e.id===empId);
+    if(empIdx>=0){
+      DB.employees[empIdx].photo = '';
+      // Xóa photoUrl field trên Firestore
+      window.fbDb.collection(EMP_COLLECTION).doc(empId)
+        .update({photoUrl: firebase.firestore.FieldValue.delete()})
+        .catch(()=>{
+          // Fallback: set empty string nếu delete không được
+          window.fbDb.collection(EMP_COLLECTION).doc(empId).set({photoUrl:''},{merge:true});
+        });
+      // Xóa localStorage photo
+      try{
+        const pm=JSON.parse(localStorage.getItem(STORE_KEY+'_photos')||'{}');
+        delete pm[empId];
+        localStorage.setItem(STORE_KEY+'_photos', JSON.stringify(pm));
+      }catch(_){}
+    }
+  }
+
+  // Reset UI
   $('#f_photo').value = '';
-  const name = $('#f_name')?.value || '?';
-  $('#photoPreview').innerHTML = `<div class="photo-placeholder" style="background:var(--accent-dim)">${initials(name)}</div>`;
-  const dangerBtn = document.querySelector('.photo-actions .btn-danger');
-  if(dangerBtn) dangerBtn.remove();
-  const input = $('#photoInput');
-  if(input) input.value = '';
+  $('#photoPreview').innerHTML = `<div class="photo-placeholder" style="background:var(--accent-dim)">${initials(empName)}</div>`;
+
+  // Rebuild photo-actions: show upload button + hide delete button
+  const actions = document.querySelector('.photo-actions');
+  if(actions){
+    actions.innerHTML = `
+      <div style="font-size:13.5px;font-weight:500;color:var(--ink);margin-bottom:4px">Ảnh đại diện</div>
+      <div style="font-size:11.5px;color:var(--ink-muted);margin-bottom:10px">JPG, PNG, WebP · tối đa 2MB · sẽ là avatar trên toàn hệ thống</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <label class="btn" style="cursor:pointer">
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" width="14" height="14"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
+          Tải ảnh lên
+          <input type="file" id="photoInput" accept="image/*" style="display:none" onchange="handlePhotoUpload(event)">
+        </label>
+      </div>`;
+  }
 }
 
 const CLOUDINARY_CLOUD = 'dmsb6wbg6';
@@ -5257,7 +5292,7 @@ function openPhotoCropper(dataUrl){
       <div style="font-size:11px;color:var(--ink-muted)">🖱️ Kéo vòng để di chuyển · Cuộn chuột để thu phóng</div>
     </div>
     <div class="modal-actions" style="margin-top:12px">
-      <button class="btn" onclick="closeModal()">Huỷ</button>
+      <button class="btn" onclick="const pi=document.getElementById('photoInput');if(pi)pi.value='';closeModal()">Huỷ</button>
       <button class="btn btn-primary" onclick="window._confirmCrop()">✂️ Xác nhận & Upload</button>
     </div>
   `, []);
@@ -5334,6 +5369,20 @@ function openPhotoCropper(dataUrl){
                 const url = data.secure_url;
                 $('#f_photo').value = url;
                 if(preview) preview.innerHTML = '<img src="'+url+'" alt="Avatar">';
+                // Reset file input để có thể upload lại
+                const pi=document.getElementById('photoInput'); if(pi) pi.value='';
+                // Hiện nút Xoá ảnh nếu chưa có
+                const actions=document.querySelector('.photo-actions');
+                if(actions && !actions.querySelector('.btn-danger')){
+                  const uploadBtn=actions.querySelector('label.btn');
+                  if(uploadBtn){
+                    const delBtn=document.createElement('button');
+                    delBtn.className='btn btn-danger';
+                    delBtn.onclick=removePhoto;
+                    delBtn.innerHTML=(typeof ICONS!=='undefined'?ICONS.trash:'🗑')+' Xoá ảnh';
+                    uploadBtn.parentNode.insertBefore(delBtn, uploadBtn.nextSibling);
+                  }
+                }
                 toast('✅ Ảnh đã upload!','success');
                 const empId = ($('#f_empid')?.value) || currentEmpId || '';
                 if(empId && window.fbDb && window.currentUser){
