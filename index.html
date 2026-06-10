@@ -2091,11 +2091,12 @@ function _parseAnyDate(s){
 function renderDashboard(main){
   const today = new Date();
 
-  if(!window._dashPeriod) window._dashPeriod = {
-    month: today.getMonth() + 1,
-    year: today.getFullYear(),
-    status: '', // '', 'active', 'probation', 'exit'
-  };
+  if(!window._dashPeriod){
+    const _dsaved = sessionStorage.getItem('_dashPeriod');
+    window._dashPeriod = _dsaved ? JSON.parse(_dsaved) : {
+      month: today.getMonth()+1, year: today.getFullYear(), status:''
+    };
+  }
   const p = window._dashPeriod;
   const periodMonthEnd = new Date(p.year, p.month, 0); // cuối tháng đang chọn
 
@@ -4455,7 +4456,7 @@ function saveDiscipline(id, isNew){
   if(!reason){ toast('Vui lòng nhập lý do vi phạm','error'); return; }
   const data = {
     id, empId:$s('d_emp'),
-    date:$sd('d_date'), level:$s('d_level'),
+    date:$sd('d_date')||new Date().toISOString().slice(0,10), level:$s('d_level'),
     reason, decidedBy:$('#d_decided').value.trim(),
     notes:$('#d_notes').value.trim(),
     penalty:$('#d_penalty').value.trim(),
@@ -5900,7 +5901,7 @@ function saveCustomField(id, isNew){
   }
 
   const data = {id, key, label, type, group, placeholder, required, showInTable, options};
-  if(isNew) DB.customFields.push(data);
+  if(isNew) DB.customFields.push(_sanitizeForFirebase(data));
   else{
     const i = DB.customFields.findIndex(x=>x.id===id);
     if(i>=0) DB.customFields[i] = data;
@@ -6934,7 +6935,7 @@ function saveDepartment(id, isNew){
   const name = $('#f_name').value.trim();
   if(!name){ toast('Vui lòng nhập tên phòng ban','error'); return; }
   const data = {id, name, head:$s('f_head'), color:$s('f_color'), desc:$('#f_desc').value.trim()};
-  if(isNew) DB.departments.push(data);
+  if(isNew) DB.departments.push(_sanitizeForFirebase(data));
   else{ const i = DB.departments.findIndex(x=>x.id===id); DB.departments[i] = data; }
   saveData(['departments']); closeModal(); toast(isNew?'Đã thêm phòng ban':(_lang==="en"?"Updated":"Đã cập nhật")); render();
 }
@@ -7355,7 +7356,7 @@ function confirmRenewContract(oldContractId, empId, nextType, nextEndDate){
     notes,
   };
   if(!DB.contracts) DB.contracts = [];
-  DB.contracts.push(newContract);
+  DB.contracts.push(_sanitizeForFirebase(newContract));
 
   if(!DB.customData[empId]) DB.customData[empId] = {};
   const typeLabel = {
@@ -7948,7 +7949,7 @@ function doGenerateContract(){
       signedDate: new Date().toISOString().slice(0,10),
       notes: `Gia hạn từ HĐ ${ctLabel(oldC.type)} (hết hạn ${fmtDate(oldC.endDate)||'—'})`,
     };
-    DB.contracts.push(newContract);
+    DB.contracts.push(_sanitizeForFirebase(newContract));
     if(!DB.customData[emp.id]) DB.customData[emp.id] = {};
     DB.customData[emp.id].currentContractType = ({
       'probation': 'HĐ Thử việc',
@@ -9676,7 +9677,7 @@ function renderLeaves(main){
     main.innerHTML='<div class="topbar"><div class="topbar-left"><h1 class="page-title">🔒 Không có quyền</h1><div class="page-sub">Bạn không được cấp quyền truy cập module Nghỉ phép</div></div></div>';
     return;
   }
-  if(!window._leaveView) window._leaveView = 'tracking';
+  if(!window._leaveView) window._leaveView = sessionStorage.getItem('_leaveView')||'tracking';
   if(window._leaveView === 'tracking') return renderLeaveReports(main);
   if(window._leaveView === 'plan') return renderLeavePlan(main);
   const today = new Date(); today.setHours(0,0,0,0);
@@ -10510,10 +10511,12 @@ function getJobHired(jobId){
 /* ---------- View + period state ---------- */
 function setRecView(view){
   window._recView = view;
+  sessionStorage.setItem('_recView', view);
   render();
 }
 function setRecPeriod(p){
   window._recPeriod = p;
+  sessionStorage.setItem('_recPeriod', p);
   render();
 }
 
@@ -10623,7 +10626,14 @@ function getPeriodBounds(periodKey){
 }
 function inRange(dateStr, from, to){
   if(!dateStr) return false;
-  const d = new Date(dateStr);
+  // Normalize dd/MM/yyyy → yyyy-MM-dd before parsing
+  let s = dateStr;
+  if(/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(s)){
+    const p = s.split('/');
+    s = `${p[2]}-${p[1].padStart(2,'0')}-${p[0].padStart(2,'0')}`;
+  }
+  const d = new Date(s);
+  if(isNaN(d)) return false;
   return d >= from && d <= to;
 }
 function deltaBadge(curr, prev){
@@ -10782,7 +10792,7 @@ function recTabsHTML(active){
    RECRUITMENT REPORTS — báo cáo & phân tích
    ========================================================= */
 function renderRecruitmentReports(main){
-  if(!window._recPeriod) window._recPeriod = 'this_month';
+  if(!window._recPeriod) window._recPeriod = sessionStorage.getItem('_recPeriod') || 'this_month';
   const periodKey = window._recPeriod;
   const {from, to, prevFrom, prevTo, label: periodLabel} = getPeriodBounds(periodKey);
   const today = new Date();
@@ -11274,9 +11284,9 @@ function renderWorkforce(main){
   const today = new Date();
   const curYear = today.getFullYear();
   const curMonth = today.getMonth()+1;
-  if(!window._wfTab)  window._wfTab  = 'new';
-  if(!window._wfYear) window._wfYear = curYear;
-  if(!window._wfMonth) window._wfMonth = 0; // 0 = cả năm
+  if(!window._wfTab)  window._wfTab  = sessionStorage.getItem('_wfTab')||'new';
+  if(!window._wfYear) window._wfYear = parseInt(sessionStorage.getItem('_wfYear'))||curYear;
+  if(!window._wfMonth) window._wfMonth = parseInt(sessionStorage.getItem('_wfMonth'))||0; // 0 = cả năm
   const tab  = window._wfTab;
   const yr   = window._wfYear;
   const mon  = window._wfMonth; // 0=all, 1-12=month
@@ -11407,8 +11417,8 @@ function renderWorkforce(main){
         <div class="page-sub">${periodLabel} · ${newEmps.length} gia nhập · ${exitEmps.length} rời đi · Turnover ${turnover==='—'?'—':turnover+'%'}</div>
       </div>
       <div class="topbar-actions">
-        <select class="filter-select" onchange="window._wfYear=parseInt(this.value);window._wfMonth=0;render()">${yearOpts}</select>
-        <select class="filter-select" onchange="window._wfMonth=parseInt(this.value);render()">${monOpts}</select>
+        <select class="filter-select" onchange="window._wfYear=parseInt(this.value);sessionStorage.setItem('_wfYear',this.value);window._wfMonth=0;sessionStorage.setItem('_wfMonth','0');render()">${yearOpts}</select>
+        <select class="filter-select" onchange="window._wfMonth=parseInt(this.value);sessionStorage.setItem('_wfMonth',this.value);render()">${monOpts}</select>
         <button class="btn" onclick="addWfTestData()" style="font-size:11px;opacity:.6;border-style:dashed">🧪 Test data</button>
         <button class="btn" onclick="addWfYear()" title="Thêm năm" style="padding:4px 10px;font-size:12px">+ Năm</button>
         <button class="btn" onclick="exportWorkforce(${yr},${mon})">📥 Xuất Excel</button>
@@ -11444,13 +11454,13 @@ function renderWorkforce(main){
 
     <!-- Tabs -->
     <div style="display:flex;gap:6px;margin-bottom:14px">
-      <button class="rec-tab ${tab==='new'?'active':''}" onclick="window._wfTab='new';render()">
+      <button class="rec-tab ${tab==='new'?'active':''}" onclick="window._wfTab='new';sessionStorage.setItem('_wfTab','new');render()">
         🟢 NV Mới <span style="background:rgba(126,198,153,.2);color:var(--success);border-radius:10px;padding:1px 8px;font-size:11px;margin-left:4px">${newEmps.length}</span>
       </button>
-      <button class="rec-tab ${tab==='exit'?'active':''}" onclick="window._wfTab='exit';render()">
+      <button class="rec-tab ${tab==='exit'?'active':''}" onclick="window._wfTab='exit';sessionStorage.setItem('_wfTab','exit');render()">
         🔴 Nghỉ việc <span style="background:rgba(229,115,115,.2);color:var(--danger);border-radius:10px;padding:1px 8px;font-size:11px;margin-left:4px">${exitEmps.length}</span>
       </button>
-      <button class="rec-tab ${tab==='resign'?'active':''}" onclick="window._wfTab='resign';render()">
+      <button class="rec-tab ${tab==='resign'?'active':''}" onclick="window._wfTab='resign';sessionStorage.setItem('_wfTab','resign');render()">
         📋 Ghi nhận nghỉ việc <span style="background:rgba(255,160,80,.15);color:var(--warning);border-radius:10px;padding:1px 8px;font-size:11px;margin-left:4px">${(DB.resignations||[]).filter(r=>r.status==='pending').length}</span>
       </button>
     </div>
@@ -11480,7 +11490,7 @@ function renderWorkforce(main){
             tooltip:{callbacks:{afterTitle:items=>mon>0&&items[0].dataIndex===mon-1?'◀ Đang chọn':''}}},
           scales:{x:{grid:{display:false}},y:{grid:{color:'#1f2630'},beginAtZero:true,ticks:{stepSize:1}}},
           onClick:(e,els)=>{
-            if(els.length){const m=els[0].index+1;window._wfMonth=window._wfMonth===m?0:m;render();}
+            if(els.length){const m=els[0].index+1;window._wfMonth=window._wfMonth===m?0:m;sessionStorage.setItem('_wfMonth',window._wfMonth);render();}
           }
         }
       });
@@ -11608,7 +11618,7 @@ function _wfExitTab(emps,byDept,reasons,PAL,yr,mon){
         ${MN.map((m,i)=>{
           const v=DB.employees.filter(e=>{ const x=getExitDate(e); return x&&x.getFullYear()===yr&&x.getMonth()===i; }).length;
           const isSelected=mon===i+1;
-          return v>0||isSelected?`<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;${isSelected?'background:rgba(229,115,115,.08);border-radius:5px;padding:2px 4px;':''}" onclick="window._wfMonth=${i+1}===window._wfMonth?0:${i+1};render()">
+          return v>0||isSelected?`<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;${isSelected?'background:rgba(229,115,115,.08);border-radius:5px;padding:2px 4px;':''}" onclick="window._wfMonth=${i+1}===window._wfMonth?0:${i+1};sessionStorage.setItem('_wfMonth',window._wfMonth);render()">
             <div style="width:22px;font-size:11px;font-weight:600;color:${isSelected?'var(--danger)':'var(--ink-muted)'}">${m}</div>
             <div style="flex:1;height:6px;background:rgba(255,255,255,.06);border-radius:3px"><div style="height:6px;background:var(--danger);border-radius:3px;width:${maxExit?Math.round(v/maxExit*100):0}%;opacity:${isSelected?.95:.7}"></div></div>
             <div style="font-size:11px;font-weight:700;color:${isSelected?'var(--danger)':'var(--ink)'}">${v}</div>
@@ -11677,7 +11687,7 @@ function confirmAddWfYear(){
   if(!DB.wfExtraYears) DB.wfExtraYears=[];
   if(!DB.wfExtraYears.includes(yr)) DB.wfExtraYears.push(yr);
   saveData();
-  window._wfYear=yr; window._wfMonth=0;
+  window._wfYear=yr; window._wfMonth=0; sessionStorage.setItem('_wfYear',yr); sessionStorage.setItem('_wfMonth','0');
   closeModal(); render();
   toast(`✅ Đã thêm năm ${yr}`,'success');
 }
@@ -11758,11 +11768,11 @@ function openResignModal(rid){
 
       // Ghi vào resignations để có lịch sử
       if(!DB.resignations) DB.resignations=[];
-      DB.resignations.push({
+      DB.resignations.push(_sanitizeForFirebase({
         id:uid(), empId, submitDate:exitDate, endDate:exitDate,
         noticeDays:0, reason, note:'', status:'confirmed',
         confirmedAt:new Date().toISOString(), createdAt:new Date().toISOString()
-      });
+      }));
 
       saveEmpProfile(empId);
       saveData(['resignations']);
@@ -11928,7 +11938,7 @@ function renderRecruitment(main){
     main.innerHTML='<div class="topbar"><div class="topbar-left"><h1 class="page-title">🔒 Không có quyền</h1><div class="page-sub">Bạn không được cấp quyền truy cập module Tuyển dụng</div></div></div>';
     return;
   }
-  if(!window._recView) window._recView = 'operations';
+  if(!window._recView) window._recView = sessionStorage.getItem('_recView')||'operations';
   if(window._recView === 'reports') return renderRecruitmentReports(main);
 
   const today = new Date();
@@ -12909,7 +12919,7 @@ function saveCandidate(id, jobId, isNew){
 
   if(!DB.candidates) DB.candidates = [];
   if(isNew){
-    DB.candidates.push(data);
+    DB.candidates.push(_sanitizeForFirebase(data));
     const j = DB.jobs.find(j=>j.id===jobId);
     if(j) j.applicants = (j.applicants||0) + 1;
   } else {
@@ -13128,7 +13138,7 @@ function confirmAddTrainingYear(){
   if(!DB.trainingExtraYears) DB.trainingExtraYears=[];
   if(!DB.trainingExtraYears.includes(yr)) DB.trainingExtraYears.push(yr);
   saveData();
-  if(!window._trainingPeriod) window._trainingPeriod={mode:'year',year:yr,month:new Date().getMonth()+1};
+  if(!window._trainingPeriod){ const _ttp=sessionStorage.getItem('_trainingPeriod'); window._trainingPeriod=_ttp?JSON.parse(_ttp):{mode:'year',year:new Date().getFullYear(),month:new Date().getMonth()+1}; }
   window._trainingPeriod.year=yr;
   closeModal(); render();
   toast(`✅ Đã thêm năm ${yr}`,'success');
@@ -13141,11 +13151,7 @@ function renderTraining(main){
   }
   const today = new Date();
 
-  if(!window._trnPeriod) window._trnPeriod = {
-    mode: 'month',  // 'month' | 'year' | 'all'
-    month: today.getMonth() + 1,
-    year: today.getFullYear(),
-  };
+  if(!window._trnPeriod){ const _tsp=sessionStorage.getItem('_trnPeriod'); window._trnPeriod=_tsp?JSON.parse(_tsp):{mode:'month',month:today.getMonth()+1,year:today.getFullYear()}; }
   const p = window._trnPeriod;
 
   function courseInPeriod(c, mode, month, year){
@@ -13666,11 +13672,13 @@ function renderTraining(main){
 function setTrnPeriod(key, val){
   if(!window._trnPeriod) window._trnPeriod = {mode:'month', month:new Date().getMonth()+1, year:new Date().getFullYear()};
   window._trnPeriod[key] = val;
+  sessionStorage.setItem('_trnPeriod', JSON.stringify(window._trnPeriod));
   render();
 }
 function setTrnPeriodNow(){
   const now = new Date();
   window._trnPeriod = {mode:'month', month: now.getMonth()+1, year: now.getFullYear()};
+  sessionStorage.setItem('_trnPeriod', JSON.stringify(window._trnPeriod));
   render();
 }
 
@@ -13974,8 +13982,8 @@ function deleteCourse(id, fromModal=false){
 /* =========================================================
    PERFORMANCE — TAB STATE & ANALYTICS REPORT
    ========================================================= */
-function setPerfView(view){ window._perfView = view; render(); }
-function setPerfPeriod(p){ window._perfPeriod = p; render(); }
+function setPerfView(view){ window._perfView=view; sessionStorage.setItem('_perfView',view); render(); }
+function setPerfPeriod(p){ window._perfPeriod = p; sessionStorage.setItem('_perfPeriod', p); render(); }
 
 function perfTabsHTML(active){
   return `
@@ -13988,7 +13996,7 @@ function perfTabsHTML(active){
 
 /* ---- Performance Reports ---- */
 function renderPerformanceReports(main){
-  if(!window._perfPeriod) window._perfPeriod = 'this_year';
+  if(!window._perfPeriod) window._perfPeriod = sessionStorage.getItem('_perfPeriod') || 'year_'+new Date().getFullYear();
   const periodKey = window._perfPeriod;
   const {from, to, prevFrom, prevTo, label: periodLabel} = getPeriodBounds(periodKey);
   const today = new Date();
@@ -14235,7 +14243,7 @@ function renderPerformance(main){
     main.innerHTML='<div class="topbar"><div class="topbar-left"><h1 class="page-title">🔒 Không có quyền</h1><div class="page-sub">Bạn không được cấp quyền truy cập module Đánh giá KPI</div></div></div>';
     return;
   }
-  if(!window._perfView) window._perfView = 'list';
+  if(!window._perfView) window._perfView = sessionStorage.getItem('_perfView')||'list';
   if(window._perfView === 'reports') return renderPerformanceReports(main);
   const scoredEmps = DB.employees.filter(e=>e.kpi>0);
   const avgKPI = scoredEmps.length ? (scoredEmps.reduce((s,e)=>s+e.kpi,0)/scoredEmps.length).toFixed(1) : '—';
@@ -15031,10 +15039,10 @@ function rejectPromotion(id){
 /* =========================================================
    AWARDS — Trang khen thưởng
    ========================================================= */
-let _awardPeriod = 'year_'+new Date().getFullYear();
+let _awardPeriod = sessionStorage.getItem('_awardPeriod') || 'year_'+new Date().getFullYear();
 let awardsFilter = {search:'', type:''};
 
-function setAwardPeriod(p){ _awardPeriod = p; render(); }
+function setAwardPeriod(p){ _awardPeriod = p; sessionStorage.setItem('_awardPeriod', p); render(); }
 function setAwardsFilter(key, val){ awardsFilter[key] = val; render(); }
 
 function renderAwards(main){
@@ -15295,9 +15303,9 @@ function deleteAwardRecord(recordId){
 /* =========================================================
    WARNINGS / DISCIPLINE — Cảnh cáo và Kỷ luật
    ========================================================= */
-let _warnPeriod = 'this_year';
+let _warnPeriod = sessionStorage.getItem('_warnPeriod') || 'year_'+new Date().getFullYear();
 let warnFilter = {search:'', severity:''};
-function setWarnPeriod(p){ _warnPeriod = p; render(); }
+function setWarnPeriod(p){ _warnPeriod = p; sessionStorage.setItem('_warnPeriod', p); render(); }
 
 function renderWarnings(main){
   if(!window.canDo('warnings')){
@@ -15364,6 +15372,7 @@ function renderWarnings(main){
   allRecords.forEach(r => { if(r.date) yearsSet.add(new Date(r.date).getFullYear()); });
   const yearsList = [...yearsSet].sort((a,b)=>b-a);
 
+  if(!_warnPeriod || _warnPeriod==='this_year') _warnPeriod = sessionStorage.getItem('_warnPeriod') || 'year_'+new Date().getFullYear();
   const {from, to, prevFrom, prevTo, label: periodLabel} = getPeriodBounds(_warnPeriod);
   const inPeriod = allRecords.filter(r => inRange(r.date, from, to));
   const inPrev   = allRecords.filter(r => inRange(r.date, prevFrom, prevTo));
@@ -17236,7 +17245,7 @@ try {
     const salIdx = DB.customFields.findIndex(cf=>cf.key==='baseSalary');
     const newCf = {id:'cf_bonusSalary', key:'bonusSalary', label:'Khoản bổ sung theo KQCV (VNĐ)', type:'number', group:(_lang==="en"?"Recruitment":"Tuyển dụng"), placeholder:'', showInTable:false, required:false, options:''};
     if(salIdx >= 0) DB.customFields.splice(salIdx+1, 0, newCf);
-    else DB.customFields.push(newCf);
+    else DB.customFields.push(_sanitizeForFirebase(newCf));
     saveData(['customFields']);
   }
 } catch(e){ console.warn('Migration bonusSalary error', e); }
@@ -17316,7 +17325,7 @@ function renderSalaryAnalysis(main){
     dailyShowCmp: false,
   };
   const F = window._salF;
-  if(!window._salSort) window._salSort = {key:'total', dir:-1};
+  if(!window._salSort){ const _ss=sessionStorage.getItem('_salSort'); window._salSort=_ss?JSON.parse(_ss):{key:'total',dir:-1}; }
   const ss = window._salSort;
 
   function getPool(yr, m, st){
@@ -18105,7 +18114,7 @@ function confirmAddCasualYear(){
   if(!DB.casualExtraYears) DB.casualExtraYears=[];
   if(!DB.casualExtraYears.includes(yr)) DB.casualExtraYears.push(yr);
   saveData();
-  if(!window._casualFilter) window._casualFilter={};
+  if(!window._casualFilter){ const _csf=sessionStorage.getItem('_casualFilter'); window._casualFilter=_csf?JSON.parse(_csf):{}; }
   window._casualFilter.year=yr;
   closeModal(); render();
   toast(`✅ Đã thêm năm ${yr}`,'success');
@@ -18161,26 +18170,26 @@ function renderCasual(main){
     <!-- Tab bar -->
     <div style="display:flex;gap:4px;background:var(--bg-elev);border-radius:8px;padding:4px;margin-bottom:14px;width:fit-content">
       ${[{id:'list',label:t('tab_list')},{id:'analysis',label:t('tab_analysis')}].map(t=>`
-        <button onclick="window._casualFilter.tab='${t.id}';render()" style="border:none;background:${cf.tab===t.id?'var(--accent)':'transparent'};color:${cf.tab===t.id?'var(--bg)':'var(--ink-muted)'};padding:6px 16px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:${cf.tab===t.id?'600':'400'}">${t.label}</button>`).join('')}
+        <button onclick="window._casualFilter.tab='${t.id}';sessionStorage.setItem('_casualFilter',JSON.stringify(window._casualFilter));render()" style="border:none;background:${cf.tab===t.id?'var(--accent)':'transparent'};color:${cf.tab===t.id?'var(--bg)':'var(--ink-muted)'};padding:6px 16px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:${cf.tab===t.id?'600':'400'}">${t.label}</button>`).join('')}
     </div>
 
     ${cf.tab==='analysis'?renderCasualAnalysis():`
     <!-- Filters -->
     <div class="card" style="padding:12px 16px;margin-bottom:14px">
       <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-        <select class="filter-select" onchange="window._casualFilter.year=parseInt(this.value);render()">
+        <select class="filter-select" onchange="window._casualFilter.year=parseInt(this.value);sessionStorage.setItem('_casualFilter',JSON.stringify(window._casualFilter));render()">
           ${years.map(y=>`<option value="${y}" ${cf.year===y?'selected':''}>${y}</option>`).join('')}
         </select>
         <button class="btn" onclick="addCasualYear()" style="font-size:12px;padding:4px 10px">+ Năm</button>
-        <select class="filter-select" onchange="window._casualFilter.month=parseInt(this.value);render()">
+        <select class="filter-select" onchange="window._casualFilter.month=parseInt(this.value);sessionStorage.setItem('_casualFilter',JSON.stringify(window._casualFilter));render()">
           <option value="0" ${!cf.month?'selected':''}>📅 ${_lang==="en"?"All months":"Tất cả tháng"}</option>
           ${mnShort.map((m,i)=>`<option value="${i+1}" ${cf.month===i+1?'selected':''}>${m}</option>`).join('')}
         </select>
-        <select class="filter-select" onchange="window._casualFilter.dept=this.value;render()">
+        <select class="filter-select" onchange="window._casualFilter.dept=this.value;sessionStorage.setItem('_casualFilter',JSON.stringify(window._casualFilter));render()">
           <option value="">${t('filter_all_dept')}</option>
           ${DB.departments.map(d=>`<option value="${d.id}" ${cf.dept===d.id?'selected':''}>${escapeHtml(d.name)}</option>`).join('')}
         </select>
-        ${cf.month||cf.dept?`<button class="btn" onclick="window._casualFilter.month=0;window._casualFilter.dept='';render()">✕ Bỏ lọc</button>`:''}
+        ${cf.month||cf.dept?`<button class="btn" onclick="window._casualFilter.month=0;window._casualFilter.dept='';sessionStorage.setItem('_casualFilter',JSON.stringify(window._casualFilter));render()">✕ Bỏ lọc</button>`:''}
       </div>
     </div>
 
@@ -18431,12 +18440,12 @@ function renderCasualAnalysis(){
     <!-- Analysis filter bar -->
     <div class="card" style="padding:12px 16px;margin-bottom:14px">
       <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-        <select class="filter-select" onchange="window._casualFilter.year=parseInt(this.value);render()">
+        <select class="filter-select" onchange="window._casualFilter.year=parseInt(this.value);sessionStorage.setItem('_casualFilter',JSON.stringify(window._casualFilter));render()">
           ${years.map(y=>`<option value="${y}" ${yr===y?'selected':''}>${y}</option>`).join('')}
         </select>
-        <button onclick="window._casualFilter.showCmp=!window._casualFilter.showCmp;render()" class="btn ${showCmp?'btn-primary':''}" style="font-size:12px">${showCmp?'✓':''} ${t('compare_period')}</button>
+        <button onclick="window._casualFilter.showCmp=!window._casualFilter.showCmp;sessionStorage.setItem('_casualFilter',JSON.stringify(window._casualFilter));render()" class="btn ${showCmp?'btn-primary':''}" style="font-size:12px">${showCmp?'✓':''} ${t('compare_period')}</button>
         ${showCmp?`<span style="color:var(--ink-muted);font-size:12px">vs</span>
-        <select class="filter-select" onchange="window._casualFilter.cmpYear=parseInt(this.value);render()">
+        <select class="filter-select" onchange="window._casualFilter.cmpYear=parseInt(this.value);sessionStorage.setItem('_casualFilter',JSON.stringify(window._casualFilter));render()">
           ${years.map(y=>`<option value="${y}" ${cyr===y?'selected':''}>${y}</option>`).join('')}
         </select>`:''}
       </div>
@@ -18592,7 +18601,7 @@ function saveCasual(id, isNew){
     notes: $('#c_notes').value.trim(),
   };
   if(!DB.casuals) DB.casuals=[];
-  if(isNew) DB.casuals.push(data);
+  if(isNew) DB.casuals.push(_sanitizeForFirebase(data));
   else { const i=(DB.casuals||[]).findIndex(x=>x.id===id); if(i>=0) DB.casuals[i]=data; }
   saveData(['casuals']); closeModal();
   toast(isNew?'Đã thêm bản ghi casual':(_lang==="en"?"Updated":"Đã cập nhật"));
@@ -18684,7 +18693,7 @@ function importCasualXLSX(){
           notes: colNotes ? (row[colNotes]||'').toString() : '',
         };
         if(!DB.casuals) DB.casuals = [];
-        DB.casuals.push(rec);
+        DB.casuals.push(_sanitizeForFirebase(rec));
         added++;
       } catch(err) {
         errors.push('Dòng '+(i+2)+': '+err.message);
@@ -18711,9 +18720,9 @@ function renderTrainee(main){
     main.innerHTML='<div class="topbar"><div class="topbar-left"><h1 class="page-title">🔒 Không có quyền</h1><div class="page-sub">Bạn không được cấp quyền truy cập module Thực tập sinh</div></div></div>';
     return;
   }
-  if(!window._traineeStatusFilter) window._traineeStatusFilter = 'active';
-  if(!window._traineeMonthFilter)  window._traineeMonthFilter  = 0;  // 0 = tất cả
-  if(!window._traineeYearFilter)   window._traineeYearFilter   = 0;  // 0 = tất cả
+  if(!window._traineeStatusFilter) window._traineeStatusFilter = sessionStorage.getItem('_traineeStatus') || 'active';
+  if(window._traineeMonthFilter===undefined)  window._traineeMonthFilter  = parseInt(sessionStorage.getItem('_traineeMonth'))||0;
+  if(window._traineeYearFilter===undefined)   window._traineeYearFilter   = parseInt(sessionStorage.getItem('_traineeYear'))||0;
   const tsf = window._traineeStatusFilter;
   const tmf = window._traineeMonthFilter;
   const tyf = window._traineeYearFilter;
@@ -18816,18 +18825,18 @@ function renderTrainee(main){
       </div>
       <div class="topbar-actions">
         <!-- Filter năm/tháng -->
-        <select class="filter-select" onchange="window._traineeYearFilter=parseInt(this.value);window._traineeMonthFilter=0;render()">
+        <select class="filter-select" onchange="window._traineeYearFilter=parseInt(this.value);sessionStorage.setItem('_traineeYear',this.value);window._traineeMonthFilter=0;sessionStorage.setItem('_traineeMonth','0');render()">
           <option value="0" ${tyf===0?'selected':''}>Tất cả năm</option>
           ${yearsList.map(y=>`<option value="${y}" ${tyf===y?'selected':''}>${y}</option>`).join('')}
         </select>
-        <select class="filter-select" onchange="window._traineeMonthFilter=parseInt(this.value);if(!window._traineeYearFilter||window._traineeYearFilter===0){window._traineeYearFilter=new Date().getFullYear();}render()">
+        <select class="filter-select" onchange="window._traineeMonthFilter=parseInt(this.value);sessionStorage.setItem('_traineeMonth',this.value);if(!window._traineeYearFilter||window._traineeYearFilter===0){window._traineeYearFilter=new Date().getFullYear();sessionStorage.setItem('_traineeYear',window._traineeYearFilter);}render()">
           <option value="0" ${tmf===0?'selected':''}>Tất cả tháng</option>
           ${['T1','T2','T3','T4','T5','T6','T7','T8','T9','T10','T11','T12'].map((m,i)=>`<option value="${i+1}" ${tmf===i+1?'selected':''}>${m}</option>`).join('')}
         </select>
         <!-- Filter đang làm/đã nghỉ -->
         <div style="display:flex;gap:4px;background:var(--bg-elev);border-radius:8px;padding:4px">
           ${[{v:'active',l:'🟢 Đang TTS'},{v:'exit',l:'🔴 Đã nghỉ'},{v:'all',l:'Tất cả'}].map(s=>`
-            <button onclick="window._traineeStatusFilter='${s.v}';render()"
+            <button onclick="window._traineeStatusFilter='${s.v}';sessionStorage.setItem('_traineeStatus','${s.v}');render()"
               style="border:none;background:${tsf===s.v?'var(--accent)':'transparent'};color:${tsf===s.v?'var(--bg)':'var(--ink-muted)'};padding:5px 12px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:${tsf===s.v?'600':'400'};white-space:nowrap">${s.l}</button>`).join('')}
         </div>
         <button class="btn" onclick="importTraineeXLSX()">📥 ${t('btn_import')}</button>
@@ -18908,7 +18917,7 @@ function renderTraineeSchedule(main){
   if(!DB.traineeSchedules) DB.traineeSchedules = [];
   const today = new Date();
   const todayStr = today.toISOString().slice(0,10);
-  if(!window._ganttView) window._ganttView = 'timeline'; // 'timeline' | 'table'
+  if(!window._ganttView) window._ganttView = sessionStorage.getItem('_ganttView')||'timeline';
 
   const tabsHTML = `
     <div class="rec-tabs">
@@ -19122,10 +19131,10 @@ function renderTraineeSchedule(main){
       </div>
       <div class="topbar-actions">
         <div style="display:flex;gap:2px;background:var(--bg-elev);border-radius:8px;padding:3px">
-          <button onclick="window._ganttView='timeline';render()" style="padding:5px 12px;border-radius:6px;border:none;cursor:pointer;font-size:12px;font-family:inherit;background:${window._ganttView==='timeline'?'var(--accent)':'transparent'};color:${window._ganttView==='timeline'?'#1a1a1a':'var(--ink-muted)'}">
+          <button onclick="window._ganttView='timeline';sessionStorage.setItem('_ganttView','timeline');render()" style="padding:5px 12px;border-radius:6px;border:none;cursor:pointer;font-size:12px;font-family:inherit;background:${window._ganttView==='timeline'?'var(--accent)':'transparent'};color:${window._ganttView==='timeline'?'#1a1a1a':'var(--ink-muted)'}">
             📊 Timeline
           </button>
-          <button onclick="window._ganttView='table';render()" style="padding:5px 12px;border-radius:6px;border:none;cursor:pointer;font-size:12px;font-family:inherit;background:${window._ganttView==='table'?'var(--accent)':'transparent'};color:${window._ganttView==='table'?'#1a1a1a':'var(--ink-muted)'}">
+          <button onclick="window._ganttView='table';sessionStorage.setItem('_ganttView','table');render()" style="padding:5px 12px;border-radius:6px;border:none;cursor:pointer;font-size:12px;font-family:inherit;background:${window._ganttView==='table'?'var(--accent)':'transparent'};color:${window._ganttView==='table'?'#1a1a1a':'var(--ink-muted)'}">
             🗂 Bảng tháng
           </button>
         </div>
@@ -19613,7 +19622,7 @@ window.confirmTraineeImport = function(){
   data.forEach(t=>{
     const dup = DB.trainees.find(x=>x.name===t.name&&x.school===t.school&&x.startDate===t.startDate);
     if(dup){ skipped++; return; }
-    DB.trainees.push(t);
+    DB.trainees.push(_sanitizeForFirebase(t));
     added++;
   });
 
