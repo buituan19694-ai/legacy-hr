@@ -18743,15 +18743,11 @@ function renderTrainee(main){
       const activeInYear = sYear && sYear <= tyf && (!eYear || eYear >= tyf);
       if(!activeInYear) return false;
     }
-    // Month filter (chỉ lọc khi đã chọn năm)
-    if(tyf !== 0 && tmf !== 0){
-      const startOfMonth = new Date(tyf, tmf-1, 1);
-      const endOfMonth   = new Date(tyf, tmf,   0);
+    // Month filter — theo tháng/năm của startDate
+    if(tmf !== 0){
+      const yr = tyf !== 0 ? tyf : new Date().getFullYear();
       const sDate = t.startDate ? new Date(t.startDate) : null;
-      const eDate = t.endDate   ? new Date(t.endDate)   : null;
-      // TTS đang thực tập trong tháng đó
-      const activeInMonth = sDate && sDate <= endOfMonth && (!eDate || eDate >= startOfMonth);
-      if(!activeInMonth) return false;
+      if(!sDate || sDate.getMonth()+1 !== tmf || sDate.getFullYear() !== yr) return false;
     }
     return true;
   });
@@ -18824,7 +18820,7 @@ function renderTrainee(main){
           <option value="0" ${tyf===0?'selected':''}>Tất cả năm</option>
           ${yearsList.map(y=>`<option value="${y}" ${tyf===y?'selected':''}>${y}</option>`).join('')}
         </select>
-        <select class="filter-select" onchange="window._traineeMonthFilter=parseInt(this.value);render()" ${tyf===0?'disabled':''} style="${tyf===0?'opacity:.4;cursor:not-allowed':''}">
+        <select class="filter-select" onchange="window._traineeMonthFilter=parseInt(this.value);if(!window._traineeYearFilter||window._traineeYearFilter===0){window._traineeYearFilter=new Date().getFullYear();}render()">
           <option value="0" ${tmf===0?'selected':''}>Tất cả tháng</option>
           ${['T1','T2','T3','T4','T5','T6','T7','T8','T9','T10','T11','T12'].map((m,i)=>`<option value="${i+1}" ${tmf===i+1?'selected':''}>${m}</option>`).join('')}
         </select>
