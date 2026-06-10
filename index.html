@@ -11469,39 +11469,33 @@ function calcResignEndDate(empId, submitDate){
 function openResignModal(rid){
   const isNew = !rid;
   const r = isNew ? {id:uid(),empId:'',submitDate:new Date().toISOString().slice(0,10),endDate:'',noticeDays:30,reason:'',status:'pending',note:''} : (DB.resignations||[]).find(x=>x.id===rid)||{};
-  const activeEmps = DB.employees.filter(e=>getEffectiveStatus(e)!=='exit').sort((a,b)=>a.name.localeCompare(b.name,'vi'));
-  const empOpts = activeEmps.map(e=>`<option value="${e.id}" ${r.empId===e.id?'selected':''} >${escapeHtml(e.name)} — ${escapeHtml(e.code)}</option>`).join('');
+  const activeEmps = DB.employees.filter(e=>{
+    if(getEffectiveStatus(e)==='exit') return false;
+    if(!isNew && e.id===r.empId) return true;
+    if((DB.resignations||[]).some(x=>x.empId===e.id&&x.status==='pending')) return false;
+    return true;
+  }).sort((a,b)=>a.name.localeCompare(b.name,'vi'));
+  const empOpts = activeEmps.map(e=>`<option value="${e.id}" ${r.empId===e.id?'selected':''}>${escapeHtml(e.name)} — ${escapeHtml(e.code)}</option>`).join('');
   const endInfo = r.submitDate && r.empId ? calcResignEndDate(r.empId, r.submitDate) : {endDate:r.endDate||'', noticeDays:r.noticeDays||30};
   openModal(`${isNew?'➕ Thêm':'✏️ Sửa'} đơn nghỉ việc`,`
-    <div style="display:flex;flex-direction:column;gap:14px;min-width:420px">
+    <div style="display:flex;flex-direction:column;gap:16px;min-width:380px">
       <div>
         <label style="font-size:12px;color:var(--ink-dim);font-weight:600">NHÂN VIÊN *</label>
-        <select id="rEmp" onchange="window._onResignEmpChange()" style="width:100%;margin-top:4px;padding:8px;background:var(--bg-input);border:1px solid var(--border);border-radius:6px;color:var(--ink)">
+        <select id="rEmp" onchange="window._onResignEmpChange()" style="width:100%;margin-top:6px;padding:9px 10px;background:var(--bg-input);border:1px solid var(--border);border-radius:6px;color:var(--ink);font-size:13px">
           <option value="">-- Chọn nhân viên --</option>
           ${empOpts}
         </select>
       </div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-        <div>
-          <label style="font-size:12px;color:var(--ink-dim);font-weight:600">NGÀY NỘP ĐƠN *</label>
-          <input type="date" id="rSubmit" value="${r.submitDate||''}" onchange="window._onResignEmpChange()"
-            style="width:100%;margin-top:4px;padding:8px;background:var(--bg-input);border:1px solid var(--border);border-radius:6px;color:var(--ink)">
-        </div>
-        <div>
-          <label style="font-size:12px;color:var(--ink-dim);font-weight:600">NGÀY KẾT THÚC (auto)</label>
-          <input type="date" id="rEnd" value="${endInfo.endDate||''}" readonly
-            style="width:100%;margin-top:4px;padding:8px;background:var(--bg-elev);border:1px solid var(--border);border-radius:6px;color:var(--accent);font-weight:600">
-          <div id="rNoticeBadge" style="font-size:11px;color:var(--ink-muted);margin-top:3px">${endInfo.noticeDays?`⏱ Báo trước ${endInfo.noticeDays} ngày`:''}</div>
-        </div>
-      </div>
       <div>
-        <label style="font-size:12px;color:var(--ink-dim);font-weight:600">LÝ DO NGHỈ</label>
-        <input type="text" id="rReason" value="${escapeHtml(r.reason||'')} " placeholder="Lý do nghỉ việc..."
-          style="width:100%;margin-top:4px;padding:8px;background:var(--bg-input);border:1px solid var(--border);border-radius:6px;color:var(--ink)">
+        <label style="font-size:12px;color:var(--ink-dim);font-weight:600">NGÀY NỘP ĐƠN *</label>
+        <input type="date" id="rSubmit" value="${r.submitDate||''}" onchange="window._onResignEmpChange()"
+          style="width:100%;margin-top:6px;padding:9px 10px;background:var(--bg-input);border:1px solid var(--border);border-radius:6px;color:var(--ink);font-size:13px">
       </div>
-      <div>
-        <label style="font-size:12px;color:var(--ink-dim);font-weight:600">GHI CHÚ</label>
-        <textarea id="rNote" rows="2" style="width:100%;margin-top:4px;padding:8px;background:var(--bg-input);border:1px solid var(--border);border-radius:6px;color:var(--ink);resize:vertical">${escapeHtml(r.note||'')}</textarea>
+      <div style="background:var(--bg-elev);border-radius:8px;padding:14px 16px;border:1px solid var(--border)">
+        <div style="font-size:11px;color:var(--ink-muted);margin-bottom:6px;font-weight:600;letter-spacing:.04em">NGÀY NGHỈ DỰ KIẾN (tự động)</div>
+        <div id="rEndDisplay" style="font-size:22px;font-weight:800;color:var(--accent);letter-spacing:.02em;font-family:'JetBrains Mono',monospace">${endInfo.endDate||'—'}</div>
+        <div id="rNoticeBadge" style="font-size:11px;color:var(--ink-muted);margin-top:4px">${endInfo.noticeDays?`⏱ Báo trước ${endInfo.noticeDays} ngày`:''}</div>
+        <input type="hidden" id="rEnd" value="${endInfo.endDate||''}">
       </div>
     </div>
   `,[
@@ -11510,13 +11504,11 @@ function openResignModal(rid){
       const empId=document.getElementById('rEmp').value;
       const submitDate=document.getElementById('rSubmit').value;
       const endDate=document.getElementById('rEnd').value;
-      const reason=document.getElementById('rReason').value.trim();
-      const note=document.getElementById('rNote').value.trim();
       if(!empId||!submitDate){ toast('Vui lòng chọn NV và ngày nộp đơn','error'); return; }
       const {noticeDays}=calcResignEndDate(empId,submitDate);
       if(!DB.resignations) DB.resignations=[];
       const idx=DB.resignations.findIndex(x=>x.id===r.id);
-      const obj={id:r.id,empId,submitDate,endDate,noticeDays,reason,note,status:r.status||'pending',createdAt:r.createdAt||new Date().toISOString()};
+      const obj={id:r.id,empId,submitDate,endDate,noticeDays,reason:r.reason||'',note:r.note||'',status:r.status||'pending',createdAt:r.createdAt||new Date().toISOString()};
       if(idx>=0) DB.resignations[idx]=obj; else DB.resignations.push(obj);
       saveData(['resignations']);
       closeModal(); render();
@@ -11530,7 +11522,12 @@ function openResignModal(rid){
       const {endDate,noticeDays}=calcResignEndDate(empId,submitDate);
       const ct=((DB.customData||{})[empId]||{}).currentContractType||'';
       document.getElementById('rEnd').value=endDate;
-      document.getElementById('rNoticeBadge').textContent=`⏱ Báo trước ${noticeDays} ngày (${ct||'HĐ lao động'})`;
+      document.getElementById('rEndDisplay').textContent=endDate||'—';
+      document.getElementById('rNoticeBadge').textContent=`⏱ Báo trước ${noticeDays} ngày${ct?' ('+ct+')':''}`;
+    } else {
+      document.getElementById('rEnd').value='';
+      document.getElementById('rEndDisplay').textContent='—';
+      document.getElementById('rNoticeBadge').textContent='';
     }
   };
 }
@@ -11541,34 +11538,26 @@ function resignAction(rid, action){
   if(idx<0) return;
   const r=DB.resignations[idx];
   if(action==='confirm'){
-    confirmDialog('✅ Xác nhận cho nghỉ việc?',
-      `<div style="font-size:13px">Nhân viên <b>${escapeHtml(empById(r.empId)?.name||r.empId)}</b> sẽ chuyển sang <b>Đã nghỉ việc</b>.<br>Ngày nghỉ: <b>${r.endDate||r.submitDate}</b></div>`,
-      ()=>{
-        const eIdx=DB.employees.findIndex(e=>e.id===r.empId);
-        if(eIdx>=0) DB.employees[eIdx].status='exit';
-        if(!DB.customData) DB.customData={};
-        if(!DB.customData[r.empId]) DB.customData[r.empId]={};
-        DB.customData[r.empId].exitDate=r.endDate||r.submitDate;
-        DB.customData[r.empId].exitReason=r.reason||'';
-        DB.resignations[idx].status='confirmed';
-        DB.resignations[idx].confirmedAt=new Date().toISOString();
-        saveEmpProfile(r.empId);
-        saveData(['resignations']);
-        render();
-        toast(`✅ Đã xác nhận nghỉ việc: ${empById(r.empId)?.name||''}`,'success');
-      }
-    );
+    // Duyệt ngay, không hỏi lại
+    const eIdx=DB.employees.findIndex(e=>e.id===r.empId);
+    if(eIdx>=0) DB.employees[eIdx].status='exit';
+    if(!DB.customData) DB.customData={};
+    if(!DB.customData[r.empId]) DB.customData[r.empId]={};
+    DB.customData[r.empId].exitDate=r.endDate||r.submitDate;
+    DB.customData[r.empId].exitReason=r.reason||'Theo đơn nghỉ việc';
+    DB.resignations[idx].status='confirmed';
+    DB.resignations[idx].confirmedAt=new Date().toISOString();
+    saveEmpProfile(r.empId);
+    saveData(['resignations']);
+    render();
+    toast(`✅ Đã duyệt nghỉ việc: ${empById(r.empId)?.name||''}`,'success');
   } else if(action==='cancel'){
-    confirmDialog('❌ Huỷ đơn nghỉ việc?',
-      `<div style="font-size:13px">Nhân viên <b>${escapeHtml(empById(r.empId)?.name||r.empId)}</b> sẽ không nghỉ — đơn bị huỷ.</div>`,
-      ()=>{
-        DB.resignations[idx].status='cancelled';
-        DB.resignations[idx].cancelledAt=new Date().toISOString();
-        saveData(['resignations']);
-        render();
-        toast('Đã huỷ đơn nghỉ việc','success');
-      }
-    );
+    // Xoá đơn khỏi list, NV về bình thường
+    const empName = empById(r.empId)?.name||r.empId;
+    DB.resignations.splice(idx, 1);
+    saveData(['resignations']);
+    render();
+    toast(`Đã huỷ đơn — ${empName} về trạng thái bình thường`,'success');
   }
 }
 
@@ -11611,13 +11600,11 @@ function _wfResignTab(){
       <td style="padding:8px;font-size:12px;color:var(--ink-dim);max-width:160px">${escapeHtml(r.reason||'—')}</td>
       <td style="padding:8px;text-align:center">
         ${isPending?`
-          <div style="display:flex;gap:6px;justify-content:center;flex-wrap:wrap">
-            <button onclick="resignAction('${r.id}','confirm')" title="Xác nhận cho nghỉ việc"
-              style="padding:5px 10px;background:rgba(229,115,115,.15);border:1px solid var(--danger);border-radius:6px;color:var(--danger);font-size:12px;font-weight:700;cursor:pointer">✔ Cho nghỉ</button>
-            <button onclick="resignAction('${r.id}','cancel')" title="Huỷ đơn"
-              style="padding:5px 10px;background:rgba(255,255,255,.05);border:1px solid var(--border);border-radius:6px;color:var(--ink-dim);font-size:12px;cursor:pointer">✘ Huỷ</button>
-            <button onclick="openResignModal('${r.id}')" title="Sửa"
-              style="padding:5px 8px;background:transparent;border:1px solid var(--border);border-radius:6px;color:var(--ink-dim);font-size:12px;cursor:pointer">✏️</button>
+          <div style="display:flex;gap:6px;justify-content:center">
+            <button onclick="resignAction('${r.id}','confirm')" title="Duyệt nghỉ việc — chuyển sang Đã nghỉ ngay"
+              style="padding:6px 14px;background:rgba(229,115,115,.18);border:1px solid var(--danger);border-radius:6px;color:var(--danger);font-size:13px;font-weight:800;cursor:pointer;letter-spacing:.02em">✔</button>
+            <button onclick="resignAction('${r.id}','cancel')" title="Huỷ đơn — xoá khỏi danh sách"
+              style="padding:6px 14px;background:rgba(255,255,255,.05);border:1px solid var(--border);border-radius:6px;color:var(--ink-muted);font-size:13px;font-weight:800;cursor:pointer">✘</button>
           </div>
         `:`<span class="badge ${r.status==='confirmed'?'exit':'leave'}" style="font-size:11px">${r.status==='confirmed'?'✔ Đã nghỉ':'✘ Đã huỷ'}</span>`}
       </td>
