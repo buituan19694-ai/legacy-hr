@@ -1045,8 +1045,18 @@ function _pushDynamicKey(key, meta){
 
   if(key === 'candidates'){
     const arr = DB.candidates || [];
+    // Sanitize: loại bỏ undefined/NaN trước khi đẩy Firebase
+    const sanitize = (obj) => {
+      const out = {};
+      Object.keys(obj).forEach(k=>{
+        const v = obj[k];
+        if(v === undefined || (typeof v === 'number' && isNaN(v))) out[k] = '';
+        else out[k] = v;
+      });
+      return out;
+    };
     const byJob = {};
-    arr.forEach(r=>{ const j=r.jobId||'_nojob'; (byJob[j]=byJob[j]||[]).push(r); });
+    arr.forEach(r=>{ const j=r.jobId||'_nojob'; (byJob[j]=byJob[j]||[]).push(sanitize(r)); });
     Object.entries(byJob).forEach(([jid,records])=>{
       window.fbDb.collection('hrdata').doc(`cand_${jid}`)
         .set({...meta, candidates:records, _shard:jid}, {merge:false})
@@ -12809,11 +12819,11 @@ function saveCandidate(id, jobId, isNew){
       const j = DB.jobs.find(j=>j.id===jobId);
       if(j) j.hired = (j.hired||0) + 1;
     } else if(oldStatus === 'hired' && data.status !== 'hired'){
-      delete DB.candidates[i].hiredDate;
+      DB.candidates[i].hiredDate = '';
       const j = DB.jobs.find(j=>j.id===jobId);
       if(j) j.hired = Math.max(0, (j.hired||0) - 1);
     } else if(data.status === 'hired'){
-      DB.candidates[i].hiredDate = oldHiredDate || data.hiredDate;
+      DB.candidates[i].hiredDate = oldHiredDate || data.hiredDate || '';
     }
   }
   saveData(['candidates','jobs']); closeModal(); toast(isNew?'Đã thêm ứng viên':(_lang==="en"?"Updated":"Đã cập nhật")); render();
