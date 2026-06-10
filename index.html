@@ -555,6 +555,8 @@ const STATUS_LABEL = new Proxy({},{get(_,k){const m={active:t('status_active'),l
 const LEAVE_TYPE = {annual:(_lang==="en"?"Annual leave":"Phép năm"), comp:(_lang==="en"?"Compensatory":"Phép bù"), sick:(_lang==="en"?"Sick leave":"Nghỉ ốm"), personal:(_lang==="en"?"Personal":"Việc riêng"), maternity:(_lang==="en"?"Maternity":"Thai sản"), unpaid:(_lang==="en"?"Unpaid":"Không lương")};
 const LEAVE_STATUS = {pending:'Chờ duyệt', approved:(_lang==="en"?"Approved":"Đã duyệt"), rejected:(_lang==="en"?"Rejected":"Từ chối")};
 const CONTRACT_TYPE = {indefinite:(_lang==="en"?"Indefinite":"Vô thời hạn"), term24:'Xác định 24 tháng', term12:'Xác định 12 tháng', probation:(_lang==="en"?"Probation":"Thử việc"), contractor:'Khoán việc'};
+// Safe contract type display: nếu type là free-text (từ customData) thì dùng trực tiếp
+const ctLabel = (type) => type ? (CONTRACT_TYPE[type] || type) : '—';
 const JOB_STATUS = {open:(_lang==="en"?"Open":"Đang tuyển"), paused:(_lang==="en"?"On hold":"Tạm hoãn"), filled:(_lang==="en"?"Filled":"Đã đủ"), closed:(_lang==="en"?"Closed":"Đã đóng")};
 const CANDIDATE_STATUS = {
   new: (_lang==="en"?"Applied":"Mới nộp"),
@@ -1345,6 +1347,12 @@ function fmtRewardPeriod(periodType, period){
 /* Helpers */
 const uid = ()=> Math.random().toString(36).slice(2,9);
 const $ = (sel)=>document.querySelector(sel);
+// Safe DOM helpers — return '' / 0 / false instead of crashing when element is null
+const $s  = (id) => { const e=document.getElementById(id); return e ? e.value.trim()        : ''; };
+const $si = (id) => { const e=document.getElementById(id); return e ? (parseInt(e.value)||0) : 0;  };
+const $sf = (id) => { const e=document.getElementById(id); return e ? (parseFloat(e.value)||0): 0; };
+const $sb = (id) => { const e=document.getElementById(id); return e ? e.checked              : false; };
+const $sd = (id) => { try{ const e=document.getElementById(id); if(!e) return ''; const v=e.getAttribute('data-iso')||dispToIso(e.value||'')||e.value||''; return v; }catch(_){ return ''; } };
 const initials = (name)=>{ const p = name.trim().split(/\s+/); return ((p[0]?.[0]||'')+(p[p.length-1]?.[0]||'')).toUpperCase(); };
 const avatarHTML = (emp, size='34px', extraStyle='')=>{
   if(emp.photo){
@@ -4265,7 +4273,7 @@ function saveReward(id, isNew){
     reason, awardedBy: (()=>{ const v=$('#r_awarded').value.trim(); const e=(DB.employees||[]).find(x=>x.id===v); return e?e.name:v; })(),
     notes:$('#r_notes').value.trim(),
     amount: $si('r_amount'),
-    period: $('#r_period').value || '',
+    period: $s('r_period'),
   };
   if(!DB.rewardRecords) DB.rewardRecords = [];
   if(isNew) DB.rewardRecords.push(_sanitizeForFirebase(data));
@@ -5657,10 +5665,10 @@ function saveEmployee(id, isNew){
     deptId: $s('f_dept'),
     role,
     roleVN: $('#f_roleVN')?.value.trim() || '',
-    level: $('#f_level').value || (DB.customData[id]||{}).levelNum || '',
+    level: $s('f_level') || (DB.customData[id]||{}).levelNum || '',
     joined: dispToIso($('#f_joined')?.value||''),
     status: $s('f_status'),
-    kpi: parseFloat($('#f_kpi').value) || 0,
+    kpi: $sf('f_kpi'),
     photo: $('#f_photo')?.value || '',
     manualRole: true,   // đánh dấu role đã được sửa thủ công → không bị sync promotion đè lên
     updatedAt: Date.now(),
@@ -5862,17 +5870,17 @@ function editCustomField(id){
 }
 
 function toggleCFOptions(){
-  const t = $('#cf_type').value;
+  const t = $s('cf_type');
   $('#cf_options_wrap').style.display = (t==='select') ? 'block' : 'none';
 }
 
 function saveCustomField(id, isNew){
   const label = $('#cf_label').value.trim();
   let key = $('#cf_key').value.trim();
-  const type = $('#cf_type').value;
+  const type = $s('cf_type');
   const group = $('#cf_group').value.trim() || (_lang==="en"?"Other":"Khác");
   const placeholder = $('#cf_placeholder').value.trim();
-  const required = $('#cf_required').value === 'true';
+  const required = $s('cf_required') === 'true';
   const showInTable = $('#cf_showInTable').checked;
   const options = type==='select' ? $('#cf_options').value.trim() : '';
 
@@ -6600,7 +6608,7 @@ function exportCSV(type){
       const c = stillValid || sorted[0];
       const days = c.endDate ? Math.ceil((new Date(c.endDate)-today)/86400000) : '';
       const status = !c.endDate ? (_lang==="en"?"Indefinite":"Vô thời hạn") : (days < 0 ? (_lang==="en"?"Overdue":"Đã quá hạn") : days <= 7 ? 'Cấp bách' : days <= 60 ? 'Sắp hết hạn' : 'Còn hiệu lực');
-      rows.push([emp.code, emp.name, deptName(emp.deptId), emp.role, CONTRACT_TYPE[c.type], isoToDisp(c.startDate||''), c.endDate?isoToDisp(c.endDate):'', days, status, c.notes||'']);
+      rows.push([emp.code, emp.name, deptName(emp.deptId), emp.role, ctLabel(c.type), isoToDisp(c.startDate||''), c.endDate?isoToDisp(c.endDate):'', days, status, c.notes||'']);
     });
     filename = 'contracts.csv';
   } else if(type==='jobs'){
@@ -6950,6 +6958,65 @@ let contractFilter = {
   year: new Date().getFullYear(),
 };
 
+
+function exportContractExcel(){
+  if(typeof XLSX === 'undefined'){ toast('SheetJS chưa tải','error'); return; }
+  const today = new Date();
+  const wb = XLSX.utils.book_new();
+
+  // Sheet 1: HĐ hiện tại (NV đang làm)
+  const activeEmps = DB.employees.filter(e => e.status !== 'exit');
+  const rows1 = [];
+  rows1.push(['Mã NV','Họ tên','Phòng ban','Chức vụ','Loại HĐ','Ngày bắt đầu','Ngày kết thúc','Còn lại (ngày)','Trạng thái','Ghi chú']);
+  activeEmps.forEach(emp => {
+    const list = (DB.contracts||[]).filter(c => c.empId === emp.id);
+    const cd = DB.customData[emp.id]||{};
+    if(list.length === 0){
+      // Lấy từ customData nếu không có trong contracts
+      const endRaw = cd.contractEnd||cd.currentContractEnd||'';
+      const endISO = endRaw&&/^\d{2}\/\d{2}\/\d{4}$/.test(endRaw)?endRaw.split('/').reverse().join('-'):endRaw;
+      const type = cd.currentContractType||'';
+      const days = endISO ? Math.ceil((new Date(endISO)-today)/86400000) : '';
+      const status = !endISO?'Vô thời hạn':days<0?'Quá hạn':days<=7?'Cấp bách':days<=60?'Sắp hết hạn':'Còn hiệu lực';
+      rows1.push([emp.code,emp.name,deptName(emp.deptId),emp.role,type,'',endISO?isoToDisp(endISO):'',days===''?'Vô thời hạn':days,status,'']);
+      return;
+    }
+    const sorted = [...list].sort((a,b)=>new Date(b.startDate)-new Date(a.startDate));
+    const current = sorted.find(c=>!c.endDate||new Date(c.endDate)>=today)||sorted[0];
+    const days = current.endDate?Math.ceil((new Date(current.endDate)-today)/86400000):'';
+    const status = !current.endDate?'Vô thời hạn':days<0?'Quá hạn':days<=7?'Cấp bách':days<=60?'Sắp hết hạn':'Còn hiệu lực';
+    rows1.push([emp.code,emp.name,deptName(emp.deptId),emp.role,ctLabel(current.type),isoToDisp(current.startDate||''),current.endDate?isoToDisp(current.endDate):'',days===''?'Vô thời hạn':days,status,current.notes||'']);
+  });
+  const ws1 = XLSX.utils.aoa_to_sheet(rows1);
+  ws1['!cols'] = [{wch:10},{wch:22},{wch:16},{wch:22},{wch:28},{wch:14},{wch:14},{wch:14},{wch:14},{wch:24}];
+  XLSX.utils.book_append_sheet(wb, ws1, 'HĐ Hiện tại');
+
+  // Sheet 2: Sắp hết hạn 60 ngày
+  const rows2 = [['Mã NV','Họ tên','Phòng ban','Chức vụ','Loại HĐ','Ngày hết hạn','Còn lại (ngày)']];
+  rows1.slice(1).forEach(r => {
+    const days = r[7];
+    if(typeof days === 'number' && days >= 0 && days <= 60)
+      rows2.push([r[0],r[1],r[2],r[3],r[4],r[6],days]);
+  });
+  const ws2 = XLSX.utils.aoa_to_sheet(rows2);
+  ws2['!cols'] = [{wch:10},{wch:22},{wch:16},{wch:22},{wch:28},{wch:14},{wch:12}];
+  XLSX.utils.book_append_sheet(wb, ws2, 'Sắp hết hạn (60 ngày)');
+
+  // Sheet 3: Toàn bộ lịch sử HĐ
+  const rows3 = [['Mã NV','Họ tên','Phòng ban','Loại HĐ','Ngày bắt đầu','Ngày kết thúc','Ghi chú']];
+  (DB.contracts||[]).forEach(c => {
+    const emp = empById(c.empId);
+    if(!emp) return;
+    rows3.push([emp.code,emp.name,deptName(emp.deptId),ctLabel(c.type),isoToDisp(c.startDate||''),c.endDate?isoToDisp(c.endDate):'',c.notes||'']);
+  });
+  const ws3 = XLSX.utils.aoa_to_sheet(rows3);
+  ws3['!cols'] = [{wch:10},{wch:22},{wch:16},{wch:28},{wch:14},{wch:14},{wch:30}];
+  XLSX.utils.book_append_sheet(wb, ws3, 'Lịch sử HĐ');
+
+  const fname = `HopDong_LegacyYenTu_${today.getFullYear()}${String(today.getMonth()+1).padStart(2,'0')}${String(today.getDate()).padStart(2,'0')}.xlsx`;
+  XLSX.writeFile(wb, fname);
+  toast('✅ Đã xuất Excel: '+fname, 'success');
+}
 function renderContracts(main){
   const today = new Date();
   const activeEmpsAll = DB.employees.filter(e => e.status !== 'exit');
@@ -7032,7 +7099,7 @@ function renderContracts(main){
         <div class="page-sub">Quản lý HĐ của ${totalActive} CBNV đang làm · Tổng ${DB.contracts.length} bản ghi (kể cả lịch sử)</div>
       </div>
       <div class="topbar-actions">
-        <button class="btn" onclick="exportCSV('contracts')">${ICONS.download} Xuất CSV</button>
+        <button class="btn" onclick="exportContractExcel()">${ICONS.download} Xuất Excel</button>
         <button class="btn btn-primary" onclick="editContract()">${ICONS.plus} ${_lang==="en"?"Add Contract":"Thêm hợp đồng"}</button>
       </div>
     </div>
@@ -7104,7 +7171,7 @@ function renderContracts(main){
                 </div></td>
                 <td>${escapeHtml(deptName(emp.deptId))}</td>
                 <td style="color:var(--ink-dim);font-size:12px">${escapeHtml(emp.role||'—')}</td>
-                <td><span class="badge ${c.type==='probation'?'probation':c.type==='indefinite'?'active':'contract'}">${CONTRACT_TYPE[c.type]}</span></td>
+                <td><span class="badge ${c.type==='probation'?'probation':c.type==='indefinite'?'active':'contract'}">${ctLabel(c.type)}</span></td>
                 <td style="font-family:'JetBrains Mono',monospace;color:${isUrgent?'var(--danger)':isWarning?'var(--warning)':'var(--ink)'}">${fmtDate(c.endDate)}</td>
                 <td style="font-family:'JetBrains Mono',monospace;font-weight:600;color:${isUrgent?'var(--danger)':isWarning?'var(--warning)':'var(--success)'}">${days >= 0 ? days+' ngày' : (_lang==="en"?"Overdue":"Đã quá hạn")}</td>
                 <td><div class="row-actions">
@@ -7174,7 +7241,7 @@ function renderContracts(main){
       const days = daysBetween(today, c.endDate);
       return `<div class="list-item">
         <div class="list-bullet" style="background:${days<=7?'var(--danger)':days<=30?'var(--warning)':'var(--info)'}"></div>
-        <div class="list-main"><div class="list-title">${escapeHtml(emp.name)}</div><div class="list-meta">${deptName(emp.deptId)} · ${CONTRACT_TYPE[c.type]} · còn ${days} ngày</div></div>
+        <div class="list-main"><div class="list-title">${escapeHtml(emp.name)}</div><div class="list-meta">${deptName(emp.deptId)} · ${ctLabel(c.type)} · còn ${days} ngày</div></div>
         <div class="list-actions">
           <button class="btn btn-icon" onclick="generateContract('${c.id}')" title="Tạo HĐ mới" style="color:var(--accent)">📄</button>
           <button class="btn btn-icon" onclick="editContract('${c.id}')">${ICONS.edit}</button>
@@ -7236,7 +7303,7 @@ function renewContract(contractId, empId){
     </div>
     <div style="background:rgba(126,198,153,.08);border:1px solid rgba(126,198,153,.3);border-radius:8px;padding:14px 18px;margin-bottom:16px">
       <div style="font-size:12px;color:var(--ink-muted);margin-bottom:8px">HĐ hiện tại</div>
-      <div style="font-weight:600">${CONTRACT_TYPE[c.type]||c.type} — hết hạn ${fmtDate(c.endDate)}</div>
+      <div style="font-weight:600">${ctLabel(c.type)||c.type} — hết hạn ${fmtDate(c.endDate)}</div>
     </div>
     <div style="background:rgba(212,165,116,.08);border:1px solid rgba(212,165,116,.3);border-radius:8px;padding:14px 18px;margin-bottom:16px">
       <div style="font-size:12px;color:var(--ink-muted);margin-bottom:8px">HĐ mới sẽ tạo</div>
@@ -7429,7 +7496,7 @@ function renderGenerateContractModal(){
   return `
     <div class="modal-head">
       <div class="modal-title">📄 Tạo <em>hợp đồng mới</em></div>
-      <div class="modal-sub">Cho ${escapeHtml(emp.name)} — HĐ hiện tại: ${CONTRACT_TYPE[c.type]} (hết hạn ${fmtDate(c.endDate)||'—'})</div>
+      <div class="modal-sub">Cho ${escapeHtml(emp.name)} — HĐ hiện tại: ${ctLabel(c.type)} (hết hạn ${fmtDate(c.endDate)||'—'})</div>
     </div>
 
     <div class="tab-bar">
@@ -7879,7 +7946,7 @@ function doGenerateContract(){
       startDate: newStart,
       endDate: endDate,
       signedDate: new Date().toISOString().slice(0,10),
-      notes: `Gia hạn từ HĐ ${CONTRACT_TYPE[oldC.type]} (hết hạn ${fmtDate(oldC.endDate)||'—'})`,
+      notes: `Gia hạn từ HĐ ${ctLabel(oldC.type)} (hết hạn ${fmtDate(oldC.endDate)||'—'})`,
     };
     DB.contracts.push(newContract);
     if(!DB.customData[emp.id]) DB.customData[emp.id] = {};
@@ -10405,7 +10472,7 @@ function saveLeave(id, isNew){
   const data = {
     id, empId:$s('f_emp'), type:$s('f_type'),
     startDate:dispToIso($('#f_start')?.value||''), endDate:dispToIso($('#f_end')?.value||''),
-    days: parseFloat($('#f_days').value)||1, reason:$('#f_reason').value.trim(),
+    days: $sf('f_days')||1, reason:$s('f_reason'),
     status:$s('f_status'),
   };
   if(!data.empId || !data.startDate || !data.endDate){ toast((_lang==="en"?"Please fill in all required fields":"Vui lòng nhập đủ thông tin"),'error'); return; }
@@ -12767,53 +12834,50 @@ function saveCandidate(id, jobId, isNew){
   if(!name){ toast('Vui lòng nhập tên ứng viên','error'); return; }
   const phone = $('#ca_phone').value.trim();
   if(!phone){ toast('Vui lòng nhập SĐT','error'); return; }
-  const applied = getDateIso('ca_applied');
+  const applied = $sd('ca_applied');
   if(!applied){ toast('Vui lòng chọn ngày ứng tuyển','error'); return; }
 
   // Helper: get field value safely, returns '' instead of undefined
-  const $v  = (id) => { const el=$('#'+id); return el ? el.value.trim() : ''; };
-  const $vi = (id) => { const el=$('#'+id); return el ? (parseInt(el.value)||0) : 0; };
-  const $vb = (id) => { const el=$('#'+id); return el ? el.checked : false; };
-  const $vd = (id) => { try{ return getDateIso(id)||''; }catch(e){ return ''; } };
+  // Using global helpers: $s $si $sf $sb $sd
 
   // Tính tuổi từ ngày sinh
-  const dobVal = $v('ca_dob');
+  const dobVal = $s('ca_dob');
   const dobYear = dobVal ? new Date(dobVal).getFullYear() : 0;
   const ageCalc = dobYear ? (new Date().getFullYear() - dobYear) : 0;
 
   const data = {
     id, jobId: jobId,
     name, phone,
-    email: $v('ca_email'),
-    appliedDate: $vd('ca_applied'),
-    status: $v('ca_status'),
-    source: $v('ca_source'),
-    cvLink: $v('ca_cvLink'),
-    cvFile: $v('ca_cvFile'),
+    email: $s('ca_email'),
+    appliedDate: $sd('ca_applied'),
+    status: $s('ca_status'),
+    source: $s('ca_source'),
+    cvLink: $s('ca_cvLink'),
+    cvFile: $s('ca_cvFile'),
     dob: dobVal || '',
     age: ageCalc || '',
-    experience: $v('ca_exp'),
-    expectedSalary: $vi('ca_salary'),
-    rating: $vi('ca_rating'),
-    notes: $v('ca_notes'),
-    screeningBy: $v('ca_screeningBy'),
-    screeningDate: $vd('ca_screeningDate'),
-    hrInterviewBy: $v('ca_hrInterviewBy'),
-    hrInterviewDate: $vd('ca_hrInterviewDate'),
-    deptInterviewBy: $v('ca_deptInterviewBy'),
-    deptInterviewDate: $vd('ca_deptInterviewDate'),
-    gmInterviewRequired: $vb('ca_gmInterviewRequired'),
-    gmInterviewBy: $vb('ca_gmInterviewRequired') ? $v('ca_gmInterviewBy') : '',
-    gmInterviewDate: $vb('ca_gmInterviewRequired') ? $vd('ca_gmInterviewDate') : '',
-    corpInterviewRequired: $vb('ca_corpInterviewRequired'),
-    corpInterviewBy: $vb('ca_corpInterviewRequired') ? $v('ca_corpInterviewBy') : '',
-    corpInterviewDate: $vb('ca_corpInterviewRequired') ? $vd('ca_corpInterviewDate') : '',
-    refName: $v('ca_refName'),
-    refPhone: $v('ca_refPhone'),
-    refPosition: $v('ca_refPosition'),
-    refCheckBy: $v('ca_refCheckBy'),
-    refCheckDate: $vd('ca_refCheckDate'),
-    refResult: $v('ca_refResult'),
+    experience: $s('ca_exp'),
+    expectedSalary: $si('ca_salary'),
+    rating: $si('ca_rating'),
+    notes: $s('ca_notes'),
+    screeningBy: $s('ca_screeningBy'),
+    screeningDate: $sd('ca_screeningDate'),
+    hrInterviewBy: $s('ca_hrInterviewBy'),
+    hrInterviewDate: $sd('ca_hrInterviewDate'),
+    deptInterviewBy: $s('ca_deptInterviewBy'),
+    deptInterviewDate: $sd('ca_deptInterviewDate'),
+    gmInterviewRequired: $sb('ca_gmInterviewRequired'),
+    gmInterviewBy: $sb('ca_gmInterviewRequired') ? $s('ca_gmInterviewBy') : '',
+    gmInterviewDate: $sb('ca_gmInterviewRequired') ? $sd('ca_gmInterviewDate') : '',
+    corpInterviewRequired: $sb('ca_corpInterviewRequired'),
+    corpInterviewBy: $sb('ca_corpInterviewRequired') ? $s('ca_corpInterviewBy') : '',
+    corpInterviewDate: $sb('ca_corpInterviewRequired') ? $sd('ca_corpInterviewDate') : '',
+    refName: $s('ca_refName'),
+    refPhone: $s('ca_refPhone'),
+    refPosition: $s('ca_refPosition'),
+    refCheckBy: $s('ca_refCheckBy'),
+    refCheckDate: $sd('ca_refCheckDate'),
+    refResult: $s('ca_refResult'),
   };
   // Loại bỏ mọi field undefined trước khi gửi Firebase
   Object.keys(data).forEach(k=>{ if(data[k]===undefined) data[k]=''; });
@@ -13854,8 +13918,8 @@ function saveCourse(id, isNew){
     location: $('#f_location').value.trim(),
     description: $('#f_description').value.trim(),
     targetAudience: $('#f_audience').value.trim(),
-    deptIds: ($('#f_deptIds').value || '').split(',').filter(Boolean),
-    attendeeIds: ($('#f_attendeeIds').value || '').split(',').filter(Boolean),
+    deptIds: ($s('f_deptIds')).split(',').filter(Boolean),
+    attendeeIds: ($s('f_attendeeIds')).split(',').filter(Boolean),
     materials: $('#f_materials').value.trim(),
     notes: $('#f_notes').value.trim(),
   };
@@ -14468,7 +14532,7 @@ function saveReview(id, isNew){
   const data = {
     id, empId:$s('f_emp'), period:dispToIso($('#f_period')?.value||'').trim(),
     reviewType:$('#f_reviewType')?.value||'',
-    score: parseFloat($('#f_score').value)||0,
+    score: $sf('f_score'),
     reviewer: reviewerEmp ? reviewerEmp.name : reviewerVal,
     notes:$('#f_notes').value.trim(),
   };
@@ -14768,7 +14832,7 @@ function editPromotion(id, presetEmpId){
 }
 
 function prAutoFillOld(){
-  const empId = $('#pr_emp').value;
+  const empId = $s('pr_emp');
   const emp = empById(empId);
   if(!emp) return;
   const cd = DB.customData[emp.id] || {};
@@ -14818,9 +14882,9 @@ function prCalcDelta(){
 }
 
 function savePromotion(id, isNew){
-  const empId = $('#pr_emp').value;
+  const empId = $s('pr_emp');
   if(!empId){ toast('Vui lòng chọn nhân viên','error'); return; }
-  const reason = $('#pr_reason').value.trim();
+  const reason = $s('pr_reason');
   if(!reason){ toast('Vui lòng nhập lý do đề xuất','error'); return; }
 
   const data = {
@@ -14835,7 +14899,7 @@ function savePromotion(id, isNew){
     newRoleVN: $('#pr_newRoleVN')?.value.trim() || '',
     oldLevel: $('#pr_oldLevel')?.value || '',
     newLevel: $('#pr_newLevel')?.value || '',
-    oldDeptId: empById($('#pr_emp').value)?.deptId || '',
+    oldDeptId: empById($s('pr_emp'))?.deptId || '',
     newDeptId: $('#pr_newDeptId')?.value || '',
     oldSalary: parseInt(($('#pr_oldSalary')?.value||'').replace(/[^0-9]/g,''))||0,
     oldBonus: parseInt(($('#pr_oldBonus')?.value||'').replace(/[^0-9]/g,''))||0,
@@ -15186,7 +15250,7 @@ function addAwardFromList(){
   `);
 }
 function proceedAddAward(){
-  const empId = $('#aw_emp').value;
+  const empId = $s('aw_emp');
   if(!empId){ toast('Vui lòng chọn nhân viên','error'); return; }
   closeModal();
   editReward(null, empId);
@@ -15549,7 +15613,7 @@ function addWarningFromList(){
   `);
 }
 function proceedAddWarning(){
-  const empId = $('#wn_emp').value;
+  const empId = $s('wn_emp');
   if(!empId){ toast('Vui lòng chọn nhân viên','error'); return; }
   closeModal();
   editDiscipline(null, empId);
@@ -16314,7 +16378,7 @@ function saveBlacklistEntry(isNew){
     reasons,        // mảng các lý do được chọn
     notes,          // ghi chú đặc biệt (text tự do)
     reason: reasonSummary, // backward compat
-    addedDate: getDateIso('mbl_addedDate') || new Date().toISOString().slice(0,10),
+    addedDate: $sd('mbl_addedDate') || new Date().toISOString().slice(0,10),
     addedBy: document.getElementById('mbl_addedBy').value.trim(),
     exitDate: $sd('mbl_exitDate'),
     rehireEligible: document.getElementById('mbl_rehireEligible').checked,
@@ -16323,13 +16387,13 @@ function saveBlacklistEntry(isNew){
   if(!DB.manualBlacklist) DB.manualBlacklist = [];
 
   if(isNew){
-    DB.manualBlacklist.push(entry);
+    DB.manualBlacklist.push(_sanitizeForFirebase(entry));
   } else {
     const idx = DB.manualBlacklist.findIndex(x =>
       (typeof x === 'string' ? x : x.empId) === empId
     );
-    if(idx >= 0) DB.manualBlacklist[idx] = entry;
-    else DB.manualBlacklist.push(entry);
+    if(idx >= 0) DB.manualBlacklist[idx] = _sanitizeForFirebase(entry);
+    else DB.manualBlacklist.push(_sanitizeForFirebase(entry));
   }
 
   saveData(['manualBlacklist']);
@@ -17116,7 +17180,7 @@ function saveSettings(){
   DB.company.address = $('#s_address').value.trim();
   DB.company.annualLeaveDays = $si('s_leaveDays')||12;
   DB.company.probationMonths = $si('s_probation')||2;
-  DB.company.workHours = parseFloat($('#s_workHours').value)||8;
+  DB.company.workHours = $sf('s_workHours')||8;
   saveData(); toast('Đã lưu cấu hình');
 }
 
@@ -18488,7 +18552,7 @@ function calcCasualTotal(){
 }
 
 function saveCasual(id, isNew){
-  const deptId=$('#c_dept').value;
+  const deptId=$s('c_dept');
   if(!deptId){toast('Chọn phòng ban','error');return;}
   const data={
     id: isNew?uid():id,
@@ -18496,10 +18560,10 @@ function saveCasual(id, isNew){
     year: $si('c_year')||new Date().getFullYear(),
     deptId,
     desc:  $('#c_desc').value.trim(),
-    qty:   parseFloat($('#c_qty').value)||0,
-    hours: parseFloat($('#c_hours').value)||0,
+    qty:   $sf('c_qty'),
+    hours: $sf('c_hours'),
     rate:  0,
-    total: parseFloat($('#c_total').value)||0,
+    total: $sf('c_total'),
     notes: $('#c_notes').value.trim(),
   };
   if(!DB.casuals) DB.casuals=[];
@@ -19272,7 +19336,7 @@ function editTrainee(id){
 function saveTrainee(id, isNew){
   const name = $('#tr_name').value.trim();
   const school = $('#tr_school').value.trim();
-  const deptId = $('#tr_dept').value;
+  const deptId = $s('tr_dept');
   const startDate = dispToIso($('#tr_start')?.value||'');
   if(!name){toast('Nhập họ tên','error');return;}
   if(!school){toast('Nhập tên trường','error');return;}
@@ -19297,8 +19361,8 @@ function saveTrainee(id, isNew){
     cccdPlace:$('#tr_cccdPlace').value.trim(),
     bank:     $('#tr_bank').value.trim(),
     bankName: $('#tr_bankName').value.trim(),
-    salary:   parseFloat($('#tr_salary').value)||0,
-    workDays: parseFloat($('#tr_workDays').value)||0,
+    salary:   $sf('tr_salary'),
+    workDays: $sf('tr_workDays'),
     notes:    $('#tr_notes').value.trim(),
   };
   if(!DB.trainees) DB.trainees = [];
