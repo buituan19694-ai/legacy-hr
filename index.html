@@ -1542,12 +1542,15 @@ function saveEmpProfile(empId){
   const cd = DB.customData[empId] || {};
   const {photo, ...empNoPhoto} = emp;
   const _syncAt = Date.now();
-  window._lastSaveAt = _syncAt; // track để listener self-skip
+  window._lastSaveAt = _syncAt;
   const doc = {...empNoPhoto, ...cd, _empId: empId,
                _syncBy: window.currentUser.uid, _syncAt};
-  // Chỉ lưu photoUrl nếu là URL thật (Cloudinary) — không lưu base64 vào Firestore
-  if(photo && photo.startsWith('http')) doc.photoUrl = photo;
-  window.fbDb.collection(EMP_COLLECTION).doc(empId).set(doc)
+  // Chỉ set photoUrl nếu có Cloudinary URL — không xóa photoUrl cũ nếu không có photo mới
+  if(photo && photo.startsWith('http')){
+    doc.photoUrl = photo;
+  }
+  // Dùng set với merge:true để không xóa photoUrl đã có trên Firestore
+  window.fbDb.collection(EMP_COLLECTION).doc(empId).set(doc, {merge: true})
     .then(()=>{ console.log('[EMP] saved:', empId, emp.name); })
     .catch(err=>{ 
       console.error('[EMP] FAILED:', empId, err.message);
@@ -1847,7 +1850,7 @@ window.saveData = function(changedKeys=null){
 
 function getPerfReviewTypes(){
   if(!DB.perfReviewTypes || !Array.isArray(DB.perfReviewTypes) || DB.perfReviewTypes.length===0)
-    DB.perfReviewTypes = JSON.parse(JSON.stringify(DEFAULT_PERF_REVIEW_TYPES));
+    DB.perfReviewTypes = JSON.parse(JSON.stringify(DEFAULT_PERF_REVIEW_TYPES)); saveData(['perfReviewTypes']);
   return DB.perfReviewTypes;
 }
 function openPerfReviewTypeManager(){
@@ -1874,8 +1877,8 @@ function openPerfReviewTypeManager(){
       </button>
     </div>
     <div class="modal-actions">
-      <button class="btn" onclick="DB.perfReviewTypes=JSON.parse(JSON.stringify(DEFAULT_PERF_REVIEW_TYPES));closeModal();toast((_lang==="en"?"Reset to default":"Đã khôi phục mặc định"))">↺ Mặc định</button>
-      <button class="btn btn-primary" onclick="DB.perfReviewTypes=getPerfReviewTypes();saveData();closeModal();toast('Đã lưu hình thức đánh giá')">Lưu</button>
+      <button class="btn" onclick="DB.perfReviewTypes=JSON.parse(JSON.stringify(DEFAULT_PERF_REVIEW_TYPES));saveData(['perfReviewTypes']);closeModal();toast((_lang==="en"?"Reset to default":"Đã khôi phục mặc định"))">↺ Mặc định</button>
+      <button class="btn btn-primary" onclick="DB.perfReviewTypes=getPerfReviewTypes();saveData(['perfReviewTypes']);closeModal();toast('Đã lưu hình thức đánh giá')">Lưu</button>
     </div>
   `);
 }
@@ -1883,7 +1886,7 @@ function openPerfReviewTypeManager(){
 // Helpers cho hình thức khen thưởng — đặt SAU 'DB' vì chúng reference DB.rewardTypes
 function getRewardTypes(){
   if(!DB.rewardTypes || !Array.isArray(DB.rewardTypes) || DB.rewardTypes.length === 0){
-    DB.rewardTypes = JSON.parse(JSON.stringify(DEFAULT_REWARD_TYPES));
+    DB.rewardTypes = JSON.parse(JSON.stringify(DEFAULT_REWARD_TYPES)); saveData(['rewardTypes']);
   }
   return DB.rewardTypes;
 }
@@ -2387,7 +2390,7 @@ function getBlacklistReasons(){
 }
 
 function renderBrand(){
-  if(!DB.brandConfig) DB.brandConfig = JSON.parse(JSON.stringify(DEFAULT_BRAND_CONFIG));
+  if(!DB.brandConfig) DB.brandConfig = JSON.parse(JSON.stringify(DEFAULT_BRAND_CONFIG)); saveData(['brandConfig']);
   const b = DB.brandConfig;
 
   // Render logo mark
@@ -2541,7 +2544,7 @@ function setBrandLogoType(type){
 
   // Cập nhật DB.brandConfig tạm để openBrandEditor() render lại đúng
   const savedDB = DB.brandConfig;
-  DB.brandConfig = {...window._brandTemp};
+  DB.brandConfig = {...window._brandTemp}; saveData(['brandConfig']);
   openBrandEditor();
   // Sau khi open lại, _brandTemp đã reset; restore lại
   window._brandTemp = {...DB.brandConfig};
@@ -2609,7 +2612,7 @@ function saveBrandConfig(){
   window._brandTemp.logoText = (window._brandTemp.logoText||'L').trim();
   window._brandTemp.logoEmoji = (window._brandTemp.logoEmoji||'🏨').trim();
 
-  DB.brandConfig = window._brandTemp;
+  DB.brandConfig = window._brandTemp; saveData(['brandConfig']);
   window._brandTemp = null;
   saveData();
   if(window._pendingRender) delete window._pendingRender[currentPage];
@@ -3515,7 +3518,7 @@ function saveDashConfig(){
     hiddenCharts: [...(window._dashHiddenTemp || new Set((DB.dashboardConfig||{}).hiddenCharts||[]))],
   };
   window._dashHiddenTemp = null;
-  saveData();
+  saveData(['dashboardConfig'])
   if(window._pendingRender) delete window._pendingRender[currentPage];
   closeModal();
   toast(`Đã lưu ${sorted.length} KPI lên dashboard`);
@@ -4531,57 +4534,6 @@ function renderEmployeeProfile(main){
       </div>
     `}
 
-    <!-- Hợp đồng & Nghỉ phép -->
-    <div class="row row-2-equal" style="margin-top:16px">
-      <div class="card">
-        <div class="card-head"><div>
-          <div class="card-title">Lịch sử <em>hợp đồng</em></div>
-          <div class="card-sub">${contracts.length} hợp đồng đã ký · ${cd.currentContractType ? 'HĐ hiện tại: '+escapeHtml(cd.currentContractType) : ''}</div>
-        </div></div>
-        ${contracts.length===0 ? '<div class="empty-state" style="padding:30px 10px"><p>Chưa có hợp đồng nào</p></div>' : `
-          <div class="list">
-            ${[...contracts].sort((a,b)=>new Date(a.startDate)-new Date(b.startDate)).map(c=>{
-              const days = c.endDate ? daysBetween(new Date(), c.endDate) : null;
-              const isCurrent = !c.endDate || days > 0; // HĐ đang còn hiệu lực
-              const isPast = c.endDate && days < 0;
-              const color = !c.endDate ? 'var(--success)' : isPast ? 'var(--ink-muted)' : days <= 30 ? 'var(--danger)' : days <= 60 ? 'var(--warning)' : 'var(--info)';
-              const tag = !c.endDate ? '✓ Đang có hiệu lực' : isPast ? 'Đã hết hạn' : `Còn ${days} ngày`;
-              return `<div class="list-item" style="${isCurrent && !isPast ? 'background:rgba(126,198,153,.04)':''}">
-                <div class="list-bullet" style="background:${color}"></div>
-                <div class="list-main">
-                  <div class="list-title">${CONTRACT_TYPE[c.type]} ${isCurrent && !isPast?'<span style="font-size:10px;background:rgba(126,198,153,.15);color:var(--success);padding:2px 7px;border-radius:4px;margin-left:6px;letter-spacing:.05em;font-weight:600">HIỆN TẠI</span>':''}</div>
-                  <div class="list-meta">${fmtDate(c.startDate)} → ${c.endDate?fmtDate(c.endDate):(_lang==="en"?"Indefinite":"Vô thời hạn")} · ${tag}</div>
-                  ${c.notes ? `<div style="font-size:11px;color:var(--ink-muted);margin-top:3px;font-style:italic">${escapeHtml(c.notes)}</div>`:''}
-                </div>
-                <button class="btn btn-icon" onclick="editContract('${c.id}')">${ICONS.edit}</button>
-              </div>`;
-            }).join('')}
-          </div>
-        `}
-      </div>
-
-      <div class="card">
-        <div class="card-head"><div>
-          <div class="card-title">Lịch sử <em>nghỉ phép</em></div>
-          <div class="card-sub">${leaves.length} đơn</div>
-        </div></div>
-        ${leaves.length===0 ? '<div class="empty-state" style="padding:30px 10px"><p>Chưa có đơn nghỉ nào</p></div>' : `
-          <div class="list">
-            ${leaves.slice(0,6).map(l=>`
-              <div class="list-item">
-                <div class="list-bullet" style="background:${l.status==='approved'?'var(--success)':l.status==='pending'?'var(--warning)':'var(--danger)'}"></div>
-                <div class="list-main">
-                  <div class="list-title">${LEAVE_TYPE[l.type]} · ${l.days} ngày</div>
-                  <div class="list-meta">${fmtDate(l.startDate)} → ${fmtDate(l.endDate)}${l.reason?' · '+escapeHtml(l.reason):''}</div>
-                </div>
-                <span class="badge ${l.status}" style="font-size:10px">${LEAVE_STATUS[l.status]}</span>
-              </div>
-            `).join('')}
-          </div>
-        `}
-      </div>
-    </div>
-
     ${reviews.length>0 ? `
       <div class="card" style="margin-top:16px">
         <div class="card-head"><div>
@@ -4680,7 +4632,9 @@ function renderEmployeeProfile(main){
             ${promotions.map(p=>{
               const statusColor = p.status==='completed'?'var(--success)':p.status==='approved'?'var(--info)':p.status==='rejected'?'var(--danger)':p.status==='reviewing'?'var(--warning)':'var(--ink-muted)';
               const statusIcon = p.status==='completed'?'🎉':p.status==='approved'?'✓':p.status==='rejected'?'✗':p.status==='reviewing'?'⏳':'📝';
-              const salaryDelta = (p.newSalary||0) - (p.oldSalary||0);
+              const oldTotal = (p.oldSalary||0) + (p.oldBonus||0);
+              const newTotal = (p.newSalary||0) + (p.newBonus||0);
+              const salaryDelta = newTotal - oldTotal;
               return `<tr>
                 <td style="color:var(--ink-dim);font-family:'JetBrains Mono',monospace;font-size:12px">
                   ${fmtDate(p.date)}
@@ -4694,10 +4648,11 @@ function renderEmployeeProfile(main){
                   ` : `<div>${escapeHtml(p.newRole||p.oldRole||'—')}</div>`}
                 </td>
                 <td style="font-family:'JetBrains Mono',monospace;font-size:12px">
-                  ${p.newSalary ? `
-                    ${p.oldSalary ? `<div style="color:var(--ink-muted);text-decoration:line-through;font-size:11px">${fmtMoney(p.oldSalary)}</div>` : ''}
-                    <div style="color:var(--success);font-weight:600">${fmtMoney(p.newSalary)}</div>
-                    ${salaryDelta > 0 ? `<div style="font-size:10px;color:var(--success)">+${Math.round(salaryDelta/p.oldSalary*100)}%</div>` : ''}
+                  ${newTotal > 0 ? `
+                    ${oldTotal > 0 ? `<div style="color:var(--ink-muted);text-decoration:line-through;font-size:11px">${fmtMoney(oldTotal)}</div>` : ''}
+                    <div style="color:var(--success);font-weight:600">${fmtMoney(newTotal)}</div>
+                    ${salaryDelta > 0 && oldTotal > 0 ? `<div style="font-size:10px;color:var(--success)">+${fmtMoney(salaryDelta)} (+${Math.round(salaryDelta/oldTotal*100)}%)</div>` : ''}
+                    ${p.oldBonus||p.newBonus ? `<div style="font-size:9px;color:var(--ink-muted)">CB: ${fmtMoney(p.newSalary||0)} · BT: ${fmtMoney(p.newBonus||0)}</div>` : ''}
                   ` : '<span style="color:var(--ink-muted)">—</span>'}
                 </td>
                 <td style="font-size:11.5px;color:var(--ink-dim);max-width:200px;font-style:italic">${escapeHtml((p.reason||'').slice(0,60))}${(p.reason||'').length>60?'…':''}</td>
@@ -4868,9 +4823,7 @@ function editReward(id, empId){
       </div>
     </div>
     <div class="form-grid">
-      ${isNew ? `<div class="field full"><label>Nhân viên</label><select id="r_emp">
-        ${DB.employees.map(emp=>`<option value="${emp.id}" ${r.empId===emp.id?'selected':''}>${escapeHtml(emp.name)} — ${emp.code}</option>`).join('')}
-      </select></div>` : `<input type="hidden" id="r_emp" value="${r.empId}">`}
+      ${isNew ? `<div class="field full"><label>Nhân viên</label>${renderEmpPickerField('r_emp', r.empId||'', 'Tìm nhân viên...')}</div>` : `<input type="hidden" id="r_emp" value="${r.empId}">`}
       <div class="field"><label>Ngày *</label><input lang="vi" type="date" id="r_date" value="${dispToIso(r.date||'')}"></div>
       <div class="field"><label>Hình thức *</label><select id="r_type" onchange="onRewardTypeChange()">
         ${rewardTypes.map(t=>`<option value="${escapeHtml(t.label)}" data-period-type="${t.periodType}" ${r.type===t.label?'selected':''}>${t.icon||''} ${escapeHtml(t.label)}</option>`).join('')}
@@ -4888,10 +4841,7 @@ function editReward(id, empId){
       </div>
 
       <div class="field"><label>Người đánh giá</label>
-        <select id="r_awarded" style="width:100%">
-          <option value="">— Chọn nhân viên —</option>
-          ${DB.employees.filter(e=>e.status!=='exit').map(e=>`<option value="${escapeHtml(e.code+' — '+e.name)}" ${(r.awardedBy||'').includes(e.name)?'selected':''}>${escapeHtml(e.code)} — ${escapeHtml(e.name)}${e.role?' ('+escapeHtml(e.role)+')':''}</option>`).join('')}
-        </select>
+        ${renderEmpPickerField('r_awarded', (()=>{ const e=(DB.employees||[]).find(x=>r.awardedBy&&r.awardedBy.includes(x.name)); return e?e.id:''; })(), 'Tìm nhân viên...')}
       </div>
       <div class="field"><label>Giá trị (VNĐ)</label><input type="number" id="r_amount" value="${r.amount||0}" min="0" step="100000"></div>
       <div class="field full"><label>Lý do *</label><textarea id="r_reason" placeholder="Thành tích cụ thể">${escapeHtml(r.reason)}</textarea></div>
@@ -5016,7 +4966,7 @@ function saveReward(id, isNew){
   const data = {
     id, empId:$('#r_emp').value,
     date:dispToIso($('#r_date')?.value||''), type:$('#r_type').value,
-    reason, awardedBy:$('#r_awarded').value.trim(),
+    reason, awardedBy: (()=>{ const v=$('#r_awarded').value.trim(); const e=(DB.employees||[]).find(x=>x.id===v); return e?e.name:v; })(),
     notes:$('#r_notes').value.trim(),
     amount: parseInt($('#r_amount').value)||0,
     period: $('#r_period').value || '',
@@ -5024,14 +4974,14 @@ function saveReward(id, isNew){
   if(!DB.rewardRecords) DB.rewardRecords = [];
   if(isNew) DB.rewardRecords.push(data);
   else{ const i = (DB.rewardRecords||[]).findIndex(x=>x.id===id); DB.rewardRecords[i] = data; }
-  saveData(); closeModal(); toast(isNew?'Đã ghi nhận khen thưởng':(_lang==="en"?"Updated":"Đã cập nhật")); render();
+  saveData(['rewardRecords','employees']); closeModal(); toast(isNew?'Đã ghi nhận khen thưởng':(_lang==="en"?"Updated":"Đã cập nhật")); render();
 }
 
 function deleteReward(id, fromModal=false){
   if(fromModal) closeModal();
   confirmDialog('Xoá ghi nhận khen thưởng?', (_lang==="en"?"This action cannot be undone.":"Hành động này không thể hoàn tác."), ()=>{
     DB.rewardRecords = (DB.rewardRecords||[]).filter(x=>x.id!==id);
-    saveData(); toast((_lang==="en"?"Deleted":"Đã xoá")); render();
+    saveData(['rewardRecords']); toast((_lang==="en"?"Deleted":"Đã xoá")); render();
   });
 }
 
@@ -5142,7 +5092,7 @@ function saveRewardTypes(){
   if(newTypes.length === 0){
     toast('Cần có ít nhất 1 hình thức','error'); return;
   }
-  DB.rewardTypes = newTypes;
+  DB.rewardTypes = newTypes; saveData(['rewardTypes']);
   saveData();
   if(window._pendingRender) delete window._pendingRender[currentPage];
   closeModal();
@@ -5171,9 +5121,7 @@ function editDiscipline(id, empId){
       <div class="modal-sub">Tài liệu này có giá trị pháp lý — vui lòng nhập chính xác</div>
     </div>
     <div class="form-grid">
-      ${isNew ? `<div class="field full"><label>Nhân viên *</label><select id="d_emp">
-        ${DB.employees.filter(e=>e.status!=='exit').map(emp=>`<option value="${emp.id}" ${d.empId===emp.id?'selected':''}>${escapeHtml(emp.name)} — ${emp.code} (${deptName(emp.deptId)})</option>`).join('')}
-      </select></div>` : `<input type="hidden" id="d_emp" value="${d.empId}">`}
+      ${isNew ? `<div class="field full"><label>Nhân viên *</label>${renderEmpPickerField('d_emp', d.empId||'', 'Tìm nhân viên...')}</div>` : `<input type="hidden" id="d_emp" value="${d.empId}">`}
       <div class="field"><label>Ngày *</label><input lang="vi" type="date" id="d_date" value="${dispToIso(d.date||'')}"></div>
       <div class="field"><label>Mức kỷ luật *</label><select id="d_severity" onchange="onSeverityChange()">
         ${sevLevels.map(s=>`<option value="${s.key}" ${d.severity===s.key?'selected':''}>${s.icon} ${escapeHtml(s.label)}</option>`).join('')}
@@ -5214,14 +5162,14 @@ function saveDiscipline(id, isNew){
   if(!DB.disciplineRecords) DB.disciplineRecords = [];
   if(isNew) DB.disciplineRecords.push(data);
   else{ const i = (DB.disciplineRecords||[]).findIndex(x=>x.id===id); DB.disciplineRecords[i] = data; }
-  saveData(); closeModal(); toast(isNew?'Đã ghi nhận kỷ luật':(_lang==="en"?"Updated":"Đã cập nhật")); render();
+  saveData(['disciplineRecords','employees']); closeModal(); toast(isNew?'Đã ghi nhận kỷ luật':(_lang==="en"?"Updated":"Đã cập nhật")); render();
 }
 
 function deleteDiscipline(id, fromModal=false){
   if(fromModal) closeModal();
   confirmDialog((_lang==="en"?"Delete discipline record?":"Xoá bản ghi kỷ luật?"), 'Đây là tài liệu có giá trị pháp lý. Bạn có chắc muốn xoá?', ()=>{
     DB.disciplineRecords = (DB.disciplineRecords||[]).filter(x=>x.id!==id);
-    saveData(); toast((_lang==="en"?"Deleted":"Đã xoá")); render();
+    saveData(['disciplineRecords']); toast((_lang==="en"?"Deleted":"Đã xoá")); render();
   });
 }
 
@@ -5838,7 +5786,7 @@ function saveFilterPrefs(){
   const prefs = [...(window._filterPrefsTemp || new Set())];
   // Sắp xếp theo thứ tự định nghĩa trong ALL_QUICK_FILTERS
   const sorted = ALL_QUICK_FILTERS.filter(c=>prefs.includes(c.k)).map(c=>c.k);
-  DB.quickFilterPrefs = sorted;
+  DB.quickFilterPrefs = sorted; saveData(['quickFilterPrefs']);
   saveData();
   if(window._pendingRender) delete window._pendingRender[currentPage];
   closeModal();
@@ -6078,65 +6026,147 @@ function handlePhotoUpload(event){
 
   const reader = new FileReader();
   reader.onload = ev => {
-    const img = new Image();
-    img.onload = () => {
-      const size = 200;
-      const canvas = document.createElement('canvas');
-      canvas.width = size; canvas.height = size;
-      const ctx = canvas.getContext('2d');
-      const minDim = Math.min(img.width, img.height);
-      const sx = (img.width-minDim)/2, sy = (img.height-minDim)/2;
-      ctx.drawImage(img, sx, sy, minDim, minDim, 0, 0, size, size);
-
-      const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
-      $('#f_photo').value = dataUrl;
-      const preview = $('#photoPreview');
-      preview.innerHTML = '<img src="'+dataUrl+'" alt="Avatar">';
-
-      // Upload lên Cloudinary
-      canvas.toBlob(blob => {
-        if(!blob) return;
-        toast('⏳ Đang upload ảnh...','info');
-        const fd = new FormData();
-        fd.append('file', blob, 'avatar.jpg');
-        fd.append('upload_preset', CLOUDINARY_PRESET);
-        fd.append('folder', 'legacy_hr_avatars');
-        fetch('https://api.cloudinary.com/v1_1/'+CLOUDINARY_CLOUD+'/image/upload', {method:'POST',body:fd})
-          .then(r=>r.json())
-          .then(data=>{
-            if(data.secure_url){
-              const url = data.secure_url;
-              $('#f_photo').value = url;
-              preview.innerHTML = '<img src="'+url+'" alt="Avatar">';
-              toast('✅ Ảnh đã upload!','success');
-              // Lưu URL vào DB + Firestore ngay (không đợi user bấm Lưu)
-              // Lấy empId từ URL đang xem (currentEmpId) hoặc từ form
-              const empId = ($('#f_empid')?.value) || currentEmpId || '';
-              if(empId && window.fbDb && window.currentUser){
-                const empIdx = (DB.employees||[]).findIndex(e=>e.id===empId);
-                if(empIdx >= 0){
-                  DB.employees[empIdx].photo = url;
-                  // Lưu localStorage photos
-                  try{
-                    const pm = JSON.parse(localStorage.getItem(STORE_KEY+'_photos')||'{}');
-                    pm[empId] = url;
-                    localStorage.setItem(STORE_KEY+'_photos', JSON.stringify(pm));
-                  }catch(_){}
-                  // Push Firestore ngay với photoUrl đúng
-                  saveEmpProfile(empId);
-                }
-              }
-            } else {
-              console.warn('Cloudinary error:',data);
-              toast('⚠️ Upload ảnh thất bại, lưu tạm trên máy','warning');
-            }
-          })
-          .catch(err=>{ console.warn('Upload err:',err); toast('⚠️ Lưu ảnh tạm trong máy','warning'); });
-      }, 'image/jpeg', 0.85);
-    };
-    img.src = ev.target.result;
+    const dataUrl = ev.target.result;
+    openPhotoCropper(dataUrl);
   };
   reader.readAsDataURL(file);
+}
+
+function openPhotoCropper(dataUrl){
+  // Build crop modal
+  openModal(`
+    <div class="modal-head">
+      <div class="modal-title">✂️ Chọn vùng ảnh đại diện</div>
+      <div class="modal-sub">Kéo khung tròn để chọn đúng khuôn mặt</div>
+    </div>
+    <div style="display:flex;flex-direction:column;align-items:center;gap:16px;padding:8px 0">
+      <div id="cropWrap" style="position:relative;overflow:hidden;border-radius:8px;border:1px solid var(--border);cursor:move;user-select:none;touch-action:none">
+        <img id="cropImg" src="${dataUrl}" style="display:block;max-width:480px;max-height:400px">
+        <!-- Circle overlay -->
+        <div id="cropOverlay" style="position:absolute;inset:0;pointer-events:none">
+          <!-- Dark mask outside circle (4 rects) -->
+          <canvas id="cropMaskCanvas" style="position:absolute;inset:0;pointer-events:none"></canvas>
+          <!-- Circle border -->
+          <div id="cropCircle" style="position:absolute;border:3px solid #ff9f43;border-radius:50%;box-shadow:0 0 0 9999px rgba(0,0,0,.55);cursor:move;pointer-events:all"></div>
+        </div>
+      </div>
+      <div style="font-size:12px;color:var(--ink-muted);text-align:center">
+        🖱️ Kéo khung tròn để di chuyển · Cuộn chuột để thu phóng
+      </div>
+    </div>
+  `,[
+    {label:'Huỷ', action:()=>closeModal()},
+    {label:'✂️ Xác nhận & Upload', primary:true, action:()=>_confirmCrop()}
+  ]);
+
+  // Init cropper after modal renders
+  requestAnimationFrame(()=>{
+    const img = document.getElementById('cropImg');
+    const wrap = document.getElementById('cropWrap');
+    const circle = document.getElementById('cropCircle');
+
+    img.onload = ()=>_initCropCircle();
+    if(img.complete) _initCropCircle();
+
+    function _initCropCircle(){
+      const W = img.offsetWidth, H = img.offsetHeight;
+      wrap.style.width = W+'px'; wrap.style.height = H+'px';
+      // Circle size = 70% of smaller dimension
+      let cSize = Math.round(Math.min(W,H)*0.7);
+      let cx = Math.round((W-cSize)/2), cy = Math.round((H-cSize)/2);
+
+      const setCircle = ()=>{
+        circle.style.left = cx+'px'; circle.style.top = cy+'px';
+        circle.style.width = cSize+'px'; circle.style.height = cSize+'px';
+      };
+      setCircle();
+
+      // Drag
+      let dragging=false, dragOx=0, dragOy=0;
+      circle.addEventListener('pointerdown', e=>{
+        dragging=true; dragOx=e.clientX-cx; dragOy=e.clientY-cy;
+        circle.setPointerCapture(e.pointerId);
+        e.preventDefault();
+      });
+      circle.addEventListener('pointermove', e=>{
+        if(!dragging) return;
+        cx = Math.max(0, Math.min(W-cSize, e.clientX-dragOx));
+        cy = Math.max(0, Math.min(H-cSize, e.clientY-dragOy));
+        setCircle();
+      });
+      circle.addEventListener('pointerup', ()=>{ dragging=false; });
+
+      // Scroll to resize circle
+      wrap.addEventListener('wheel', e=>{
+        e.preventDefault();
+        const delta = e.deltaY < 0 ? 12 : -12;
+        cSize = Math.max(60, Math.min(Math.min(W,H), cSize+delta));
+        cx = Math.max(0, Math.min(W-cSize, cx));
+        cy = Math.max(0, Math.min(H-cSize, cy));
+        setCircle();
+      }, {passive:false});
+
+      // Confirm crop
+      window._confirmCrop = ()=>{
+        const naturalW = img.naturalWidth, naturalH = img.naturalHeight;
+        const scaleX = naturalW/W, scaleY = naturalH/H;
+        const sx = cx*scaleX, sy = cy*scaleY;
+        const sw = cSize*scaleX, sh = cSize*scaleY;
+        const size = 300;
+        const canvas = document.createElement('canvas');
+        canvas.width=size; canvas.height=size;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, sx, sy, sw, sh, 0, 0, size, size);
+        const croppedUrl = canvas.toDataURL('image/jpeg', 0.88);
+        closeModal();
+        // Set preview ngay
+        $('#f_photo').value = croppedUrl;
+        const preview = $('#photoPreview');
+        if(preview) preview.innerHTML = '<img src="'+croppedUrl+'" alt="Avatar">';
+        // Upload Cloudinary
+        canvas.toBlob(blob=>{
+          if(!blob) return;
+          toast('⏳ Đang upload ảnh...','info');
+          const fd = new FormData();
+          fd.append('file', blob, 'avatar.jpg');
+          fd.append('upload_preset', CLOUDINARY_PRESET);
+          fd.append('folder', 'legacy_hr_avatars');
+          fetch('https://api.cloudinary.com/v1_1/'+CLOUDINARY_CLOUD+'/image/upload', {method:'POST',body:fd})
+            .then(r=>r.json())
+            .then(data=>{
+              if(data.secure_url){
+                const url = data.secure_url;
+                $('#f_photo').value = url;
+                if(preview) preview.innerHTML = '<img src="'+url+'" alt="Avatar">';
+                toast('✅ Ảnh đã upload!','success');
+                const empId = ($('#f_empid')?.value) || currentEmpId || '';
+                if(empId && window.fbDb && window.currentUser){
+                  const empIdx = (DB.employees||[]).findIndex(e=>e.id===empId);
+                  if(empIdx >= 0){
+                    DB.employees[empIdx].photo = url;
+                    try{
+                      const pm = JSON.parse(localStorage.getItem(STORE_KEY+'_photos')||'{}');
+                      pm[empId] = url;
+                      localStorage.setItem(STORE_KEY+'_photos', JSON.stringify(pm));
+                    }catch(_){}
+                    saveEmpProfile(empId);
+                  }
+                }
+              } else {
+                const errMsg = data.error?.message || JSON.stringify(data);
+                console.warn('Cloudinary error:', errMsg);
+                if(errMsg.includes('unsigned')||errMsg.includes('whitelisted')||errMsg.includes('preset')){
+                  toast('⚠️ Cloudinary preset chưa set Unsigned','error');
+                } else {
+                  toast('⚠️ Upload thất bại: '+errMsg,'warning');
+                }
+              }
+            })
+            .catch(err=>{ console.warn('Upload err:',err); toast('⚠️ Lỗi upload ảnh','warning'); });
+        }, 'image/jpeg', 0.88);
+      };
+    }
+  });
 }
 
 function toggleFormGroup(name){
@@ -6317,7 +6347,7 @@ function deleteEmployee(id, fromModal=false){
       window.fbDb.collection(EMP_COLLECTION).doc(id).delete()
         .catch(err=>console.warn('[EMP] delete error:', err.message));
     }
-    saveData(['contracts','leaves','kpiReviews']);
+    saveData(['employees','contracts','leaves','kpiReviews','rewardRecords','disciplineRecords','promotions','customData']);
     toast('Đã xoá nhân viên');
     render();
   });
@@ -6496,7 +6526,7 @@ function saveCustomField(id, isNew){
     const i = DB.customFields.findIndex(x=>x.id===id);
     if(i>=0) DB.customFields[i] = data;
   }
-  saveData();
+  saveData(['customFields']);
   toast(isNew?'Đã thêm trường mới':(_lang==="en"?"Updated":"Đã cập nhật"));
   manageCustomFields(); // quay lại danh sách
 }
@@ -6518,7 +6548,7 @@ function deleteCustomField(id, fromEdit=false){
     Object.keys(DB.customData).forEach(empId=>{
       if(DB.customData[empId]) delete DB.customData[empId][cf.key];
     });
-    saveData();
+    saveData(['customFields']);
     toast('Đã xoá trường tuỳ chỉnh');
     if(fromEdit) manageCustomFields(); // nếu xoá từ form edit thì quay về list
     else manageCustomFields();
@@ -7045,7 +7075,7 @@ function confirmImportEmployees(){
   });
 
   window._importRows = null;
-  saveData();
+  saveData(["employees","customData","contracts"]);
   if(window._pendingRender) delete window._pendingRender[currentPage];
   closeModal();
   toast('Nhập thành công: +'+added+' mới, ↻'+updated+' cập nhật');
@@ -7598,7 +7628,7 @@ function saveDepartment(id, isNew){
   const data = {id, name, head:$('#f_head').value.trim(), color:$('#f_color').value, desc:$('#f_desc').value.trim()};
   if(isNew) DB.departments.push(data);
   else{ const i = DB.departments.findIndex(x=>x.id===id); DB.departments[i] = data; }
-  saveData(); closeModal(); toast(isNew?'Đã thêm phòng ban':(_lang==="en"?"Updated":"Đã cập nhật")); render();
+  saveData(['departments']); closeModal(); toast(isNew?'Đã thêm phòng ban':(_lang==="en"?"Updated":"Đã cập nhật")); render();
 }
 
 function deleteDepartment(id, fromModal=false){
@@ -7608,7 +7638,7 @@ function deleteDepartment(id, fromModal=false){
   if(fromModal) closeModal();
   confirmDialog('Xoá phòng ban?', `Sẽ xoá phòng ban <b>${escapeHtml(d.name)}</b>. Hành động này không thể hoàn tác.`, ()=>{
     DB.departments = DB.departments.filter(x=>x.id!==id);
-    saveData(); toast('Đã xoá phòng ban'); render();
+    saveData(['departments']); toast('Đã xoá phòng ban'); render();
   });
 }
 
@@ -8006,7 +8036,7 @@ function confirmRenewContract(oldContractId, empId, nextType, nextEndDate){
   if(window.fbDb && window.currentUser){
     saveEmpProfile(empId);   // sync hồ sơ NV lên emp_profiles
   }
-  saveData();                 // sync DB.contracts + customData lên hrdata
+  saveData(['contracts','customData']);                 // sync DB.contracts + customData lên hrdata
 
   closeModal();
   toast(`✅ Đã gia hạn HĐ ${nextType === 'indefinite' ? 'vô thời hạn' : typeLabel} thành công`, 'success');
@@ -8508,7 +8538,7 @@ function saveGcTemplate(key){
   if(!ta) return;
   if(!DB.contractTemplates) DB.contractTemplates = {};
   DB.contractTemplates[key] = ta.value;
-  saveData();
+  saveData(['contractTemplates']);
   toast(`Đã lưu mẫu ${key === 'probation' ? (_lang==="en"?"Probation":"Thử việc") : 'Lao động'}`);
 }
 
@@ -9245,9 +9275,9 @@ function editContract(id){
       <div class="modal-title">${isNew?(_lang==="en"?"Add":"Thêm"):(_lang==="en"?"Edit":"Sửa")} <em>hợp đồng</em></div>
     </div>
     <div class="form-grid">
-      <div class="field full"><label>Nhân viên *</label><select id="f_emp">
-        ${DB.employees.map(e=>`<option value="${e.id}" ${c.empId===e.id?'selected':''}>${escapeHtml(e.name)} — ${e.code}</option>`).join('')}
-      </select></div>
+      <div class="field full"><label>Nhân viên *</label>
+        ${renderEmpPickerField('f_emp', c.empId||'', 'Tìm nhân viên...')}
+      </div>
       <div class="field"><label>Loại HĐ *</label><select id="f_type">
         ${Object.entries(CONTRACT_TYPE).map(([k,v])=>`<option value="${k}" ${c.type===k?'selected':''}>${v}</option>`).join('')}
       </select></div>
@@ -9277,14 +9307,14 @@ function saveContract(id, isNew){
   if(!data.empId || !data.startDate){ toast('Vui lòng chọn nhân viên và ngày bắt đầu','error'); return; }
   if(isNew) DB.contracts.push(data);
   else{ const i = DB.contracts.findIndex(x=>x.id===id); DB.contracts[i] = data; }
-  saveData(); closeModal(); toast(isNew?'Đã thêm hợp đồng':(_lang==="en"?"Updated":"Đã cập nhật")); render();
+  saveData(['contracts']); closeModal(); toast(isNew?'Đã thêm hợp đồng':(_lang==="en"?"Updated":"Đã cập nhật")); render();
 }
 
 function deleteContract(id, fromModal=false){
   if(fromModal) closeModal();
   confirmDialog('Xoá hợp đồng?', (_lang==="en"?"This action cannot be undone.":"Hành động này không thể hoàn tác."), ()=>{
     DB.contracts = (DB.contracts||[]).filter(x=>x.id!==id);
-    saveData(); toast('Đã xoá hợp đồng'); render();
+    saveData(['contracts']); toast('Đã xoá hợp đồng'); render();
   });
 }
 
@@ -9662,7 +9692,7 @@ function importLeaveXLSX(){
           updated++;
         }
 
-        saveData();
+        saveData(['leaveSheet']);
         toast((_lang==="en"?"Import successful: ":"Import thành công: ")+updated+' dòng · Bỏ qua: '+skipped+' (không tìm thấy mã NV)');
         render();
       }catch(err){
@@ -9710,7 +9740,7 @@ function deleteLeaveYear(){
         if(!l.startDate) return true;
         return new Date(l.startDate).getFullYear() !== yr;
       });
-      saveData();
+      saveData(['leaves','leaveSheet','leaveOpening','leavePlan','leaveExtraYears']);
       // ── Xóa Firestore sharded docs của năm đó ──
       if(window.fbDb && window.currentUser){
         [`leavesheet_${yr}`, `leavemeta_${yr}`, `leaves_${yr}`].forEach(docId=>{
@@ -9893,7 +9923,7 @@ function renderLeaveReports(main){
     if(!DB.leaveSheet[empId]) DB.leaveSheet[empId]={};
     if(!DB.leaveSheet[empId][bal.year]) DB.leaveSheet[empId][bal.year]={};
     DB.leaveSheet[empId][bal.year][leaveType]=sh;
-    saveData();
+    saveData(['leaveSheet']);
     // Recalc totals
     const totalUsed=sh.taken.reduce((a,b)=>a+b,0);
     const totalEntitle=sh.carry+sh.entitle.reduce((a,b)=>a+b,0);
@@ -10186,7 +10216,7 @@ function confirmAddLeavePlanYear(){
   if(!DB.leaveExtraYears.includes(yr)) DB.leaveExtraYears.push(yr);
   if(!DB.leavePlan) DB.leavePlan={};
   if(!DB.leavePlan[yr]) DB.leavePlan[yr]={};
-  saveData();
+  saveData(["leaveExtraYears","leavePlan","leaveSheet"]);
   if(!window._leaveBal) window._leaveBal={};
   window._leaveBal.year=yr;
   window._leaveView='plan';
@@ -10661,7 +10691,7 @@ function renderLeaves(main){
     if(!DB.leaveSheet) DB.leaveSheet = {};
     if(!DB.leaveSheet[empId]) DB.leaveSheet[empId] = {};
     DB.leaveSheet[empId][bal.year] = sh;
-    saveData();
+    saveData(['leaveSheet']);
     // Recalc totals for this row without full re-render
     const totalUsed = sh.taken.reduce((s,x)=>s+x,0);
     const totalEntitle = sh.carry + sh.entitle.reduce((s,x)=>s+x,0);
@@ -10715,7 +10745,7 @@ function renderLeaves(main){
     const sh = getTraineeSheet(tid);
     sh.taken[month] = parseFloat(val)||0;
     DB.leaveSheet[key][bal.year] = sh;
-    saveData();
+    saveData(['leaveSheet']);
     const totalUsed = sh.taken.reduce((s,x)=>s+x,0);
     const el = document.getElementById('tr_'+tid+'_total');
     if(el) el.textContent = totalUsed===0?'—':fnum(totalUsed);
@@ -11258,7 +11288,7 @@ function saveLeaveOpening(){
       DB.leaveOpening[e.id] = {al: parseFloat(al && al.value)||0, cl: parseFloat(cl && cl.value)||0};
     }
   });
-  saveData(); closeModal(); toast('Đã lưu tồn phép đầu năm'); render();
+  saveData(['leaveOpening']); closeModal(); toast('Đã lưu tồn phép đầu năm'); render();
 }
 
 function editLeave(id){
@@ -11270,9 +11300,9 @@ function editLeave(id){
       <div class="modal-title">${isNew?(_lang==="en"?"Add":"Thêm"):(_lang==="en"?"Edit":"Sửa")} <em>đơn nghỉ</em></div>
     </div>
     <div class="form-grid">
-      <div class="field full"><label>Nhân viên *</label><select id="f_emp">
-        ${DB.employees.map(e=>`<option value="${e.id}" ${l.empId===e.id?'selected':''}>${escapeHtml(e.name)} — ${e.code}</option>`).join('')}
-      </select></div>
+      <div class="field full"><label>Nhân viên *</label>
+        ${renderEmpPickerField('f_emp', l.empId||'', 'Tìm nhân viên...')}
+      </div>
       <div class="field"><label>Loại nghỉ *</label><select id="f_type">
         ${Object.entries(LEAVE_TYPE).map(([k,v])=>`<option value="${k}" ${l.type===k?'selected':''}>${v}</option>`).join('')}
       </select></div>
@@ -11307,20 +11337,20 @@ function saveLeave(id, isNew){
   if(!data.empId || !data.startDate || !data.endDate){ toast((_lang==="en"?"Please fill in all required fields":"Vui lòng nhập đủ thông tin"),'error'); return; }
   if(isNew) DB.leaves.push(data);
   else{ const i = (DB.leaves||[]).findIndex(x=>x.id===id); DB.leaves[i] = data; }
-  saveData(); closeModal(); toast(isNew?'Đã tạo đơn':(_lang==="en"?"Updated":"Đã cập nhật")); render();
+  saveData(['leaves']); closeModal(); toast(isNew?'Đã tạo đơn':(_lang==="en"?"Updated":"Đã cập nhật")); render();
 }
 
 function approveLeave(id, approve){
   const l = (DB.leaves||[]).find(x=>x.id===id); if(!l) return;
   l.status = approve ? 'approved' : 'rejected';
-  saveData(); toast(approve?'Đã duyệt đơn':'Đã từ chối đơn'); render();
+  saveData(['leaves']); toast(approve?'Đã duyệt đơn':'Đã từ chối đơn'); render();
 }
 
 function deleteLeave(id, fromModal=false){
   if(fromModal) closeModal();
   confirmDialog('Xoá đơn nghỉ?', (_lang==="en"?"This action cannot be undone.":"Hành động này không thể hoàn tác."), ()=>{
     DB.leaves = (DB.leaves||[]).filter(x=>x.id!==id);
-    saveData(); toast((_lang==="en"?"Deleted":"Đã xoá")); render();
+    saveData(['leaves']); toast((_lang==="en"?"Deleted":"Đã xoá")); render();
   });
 }
 
@@ -13401,7 +13431,7 @@ function acceptOffer(id){
       }
     }
   }
-  saveData();
+  saveData(['candidates','jobs']);
   toast('✓ ' + a.name + ' đã chính thức nhận việc!', 'success');
   render();
   // Hỏi tạo hồ sơ NV + hợp đồng
@@ -13724,7 +13754,7 @@ function saveCandidate(id, jobId, isNew){
       DB.candidates[i].hiredDate = oldHiredDate || data.hiredDate;
     }
   }
-  saveData(); closeModal(); toast(isNew?'Đã thêm ứng viên':(_lang==="en"?"Updated":"Đã cập nhật")); render();
+  saveData(['candidates','jobs']); closeModal(); toast(isNew?'Đã thêm ứng viên':(_lang==="en"?"Updated":"Đã cập nhật")); render();
 }
 
 function deleteCandidate(id, fromModal=false){
@@ -13739,7 +13769,7 @@ function deleteCandidate(id, fromModal=false){
       j.applicants = Math.max(0, (j.applicants||0) - 1);
       if(a.status === 'hired') j.hired = Math.max(0, (j.hired||0) - 1);
     }
-    saveData(); toast('Đã xoá ứng viên'); render();
+    saveData(['candidates','jobs']); toast('Đã xoá ứng viên'); render();
   });
 }
 
@@ -13870,14 +13900,14 @@ function saveJob(id, isNew){
   }
   if(isNew) DB.jobs.push(data);
   else{ const i = DB.jobs.findIndex(x=>x.id===id); DB.jobs[i] = data; }
-  saveData(); closeModal(); toast(isNew?'Đã mở vị trí':(_lang==="en"?"Updated":"Đã cập nhật")); render();
+  saveData(['jobs']); closeModal(); toast(isNew?'Đã mở vị trí':(_lang==="en"?"Updated":"Đã cập nhật")); render();
 }
 
 function deleteJob(id, fromModal=false){
   if(fromModal) closeModal();
   confirmDialog('Xoá vị trí?', 'Vị trí tuyển dụng sẽ bị xoá hoàn toàn. Hành động này không thể hoàn tác.', ()=>{
     DB.jobs = DB.jobs.filter(x=>x.id!==id);
-    saveData(); toast('Đã xoá vị trí'); render();
+    saveData(['jobs']); toast('Đã xoá vị trí'); render();
   });
 }
 
@@ -14793,14 +14823,14 @@ function saveCourse(id, isNew){
 
   if(isNew) DB.courses.push(data);
   else{ const i = DB.courses.findIndex(x=>x.id===id); DB.courses[i] = data; }
-  saveData(); closeModal(); toast(isNew?'Đã thêm khoá học':(_lang==="en"?"Updated":"Đã cập nhật")); render();
+  saveData(['courses']); closeModal(); toast(isNew?'Đã thêm khoá học':(_lang==="en"?"Updated":"Đã cập nhật")); render();
 }
 
 function deleteCourse(id, fromModal=false){
   if(fromModal) closeModal();
   confirmDialog('Xoá khoá học?', (_lang==="en"?"This action cannot be undone.":"Hành động này không thể hoàn tác."), ()=>{
     DB.courses = DB.courses.filter(x=>x.id!==id);
-    saveData(); toast((_lang==="en"?"Deleted":"Đã xoá")); render();
+    saveData(['courses']); toast((_lang==="en"?"Deleted":"Đã xoá")); render();
   });
 }
 
@@ -15190,7 +15220,9 @@ function renderPerformance(main){
               const emp = empById(p.empId); if(!emp) return '';
               const statusColor = p.status==='completed'?'var(--success)':p.status==='approved'?'var(--info)':p.status==='rejected'?'var(--danger)':p.status==='reviewing'?'var(--warning)':'var(--ink-muted)';
               const statusIcon = p.status==='completed'?'✓':p.status==='approved'?'✓':p.status==='rejected'?'✗':p.status==='reviewing'?'⏳':'📝';
-              const salaryDelta = (p.newSalary||0) - (p.oldSalary||0);
+              const oldTotal = (p.oldSalary||0) + (p.oldBonus||0);
+              const newTotal = (p.newSalary||0) + (p.newBonus||0);
+              const salaryDelta = newTotal - oldTotal;
               return `<tr style="cursor:pointer" onclick="viewEmployee('${p.empId}')">
                 <td><div class="cell-emp">
                   ${avatarHTML(emp)}
@@ -15209,10 +15241,11 @@ function renderPerformance(main){
                   ${p.oldLevel && p.newLevel && p.oldLevel !== p.newLevel ? `<div style="font-size:10.5px;color:var(--ink-dim)">${p.oldLevel} → ${p.newLevel}</div>` : ''}
                 </td>
                 <td style="font-family:'JetBrains Mono',monospace;font-size:12px">
-                  ${p.newSalary ? `
-                    ${p.oldSalary ? `<div style="color:var(--ink-muted);text-decoration:line-through;font-size:11px">${fmtMoney(p.oldSalary)}</div>` : ''}
-                    <div style="color:var(--success);font-weight:600">${fmtMoney(p.newSalary)}</div>
-                    ${salaryDelta > 0 ? `<div style="font-size:10px;color:var(--success)">+${fmtMoney(salaryDelta)} (+${Math.round(salaryDelta/p.oldSalary*100)}%)</div>` : ''}
+                  ${newTotal > 0 ? `
+                    ${oldTotal > 0 ? `<div style="color:var(--ink-muted);text-decoration:line-through;font-size:11px">${fmtMoney(oldTotal)}</div>` : ''}
+                    <div style="color:var(--success);font-weight:600">${fmtMoney(newTotal)}</div>
+                    ${salaryDelta > 0 && oldTotal > 0 ? `<div style="font-size:10px;color:var(--success)">+${fmtMoney(salaryDelta)} (+${Math.round(salaryDelta/oldTotal*100)}%)</div>` : ''}
+                    ${p.oldBonus||p.newBonus ? `<div style="font-size:9px;color:var(--ink-muted)">CB: ${fmtMoney(p.newSalary||0)} · BT: ${fmtMoney(p.newBonus||0)}</div>` : ''}
                   ` : '<span style="color:var(--ink-muted)">—</span>'}
                 </td>
                 <td style="font-size:11.5px;color:var(--ink-dim);max-width:240px;font-style:italic">${escapeHtml((p.reason||'').slice(0,80))}${(p.reason||'').length>80?'…':''}</td>
@@ -15301,9 +15334,9 @@ function editReview(id){
       <button class="btn" onclick="openPerfReviewTypeManager()" style="margin-left:auto;font-size:12px">⚙️ Quản lý hình thức</button>
     </div>
     <div class="form-grid">
-      <div class="field full"><label>Nhân viên *</label><select id="f_emp">
-        ${DB.employees.map(e=>`<option value="${e.id}" ${k.empId===e.id?'selected':''}>${escapeHtml(e.name)} — ${e.code}</option>`).join('')}
-      </select></div>
+      <div class="field full"><label>Nhân viên *</label>
+        ${renderEmpPickerField('f_emp', k.empId||'', 'Tìm nhân viên...')}
+      </div>
       <div class="field"><label>Kỳ đánh giá *</label><input id="f_period" value="${escapeHtml(k.period)}" placeholder="VD: Q1/2026, Q3/2026"></div>
       <div class="field"><label>Hình thức đánh giá</label>
         <select id="f_reviewType">
@@ -15312,10 +15345,7 @@ function editReview(id){
         </select>
       </div>
       <div class="field"><label>Người đánh giá</label>
-        <select id="f_reviewer">
-          <option value="">— Chọn nhân viên —</option>
-          ${DB.employees.filter(e=>e.status!=='exit').map(e=>`<option value="${escapeHtml(e.code+' — '+e.name)}" ${(k.reviewer||'').includes(e.name)?'selected':''}>${escapeHtml(e.code)} — ${escapeHtml(e.name)}${e.role?' ('+escapeHtml(e.role)+')':''}</option>`).join('')}
-        </select>
+        ${renderEmpPickerField('f_reviewer', (()=>{ const e=(DB.employees||[]).find(x=>k.reviewer&&k.reviewer.includes(x.name)); return e?e.id:''; })(), 'Tìm người đánh giá...')}
       </div>
       <div class="field full"><label>Điểm Performance *</label><input type="number" id="f_score" value="${k.score}" min="0" max="100" step="0.1"></div>
       <div class="field full"><label>Nhận xét</label><textarea id="f_notes">${escapeHtml(k.notes)}</textarea></div>
@@ -15329,18 +15359,21 @@ function editReview(id){
 }
 
 function saveReview(id, isNew){
+  const reviewerVal = $('#f_reviewer').value.trim();
+  const reviewerEmp = reviewerVal ? (DB.employees||[]).find(e=>e.id===reviewerVal) : null;
   const data = {
     id, empId:$('#f_emp').value, period:dispToIso($('#f_period')?.value||'').trim(),
     reviewType:$('#f_reviewType')?.value||'',
     score: parseFloat($('#f_score').value)||0,
-    reviewer:$('#f_reviewer').value.trim(), notes:$('#f_notes').value.trim(),
+    reviewer: reviewerEmp ? reviewerEmp.name : reviewerVal,
+    notes:$('#f_notes').value.trim(),
   };
   if(!data.empId || !data.period){ toast((_lang==="en"?"Please fill in all required fields":"Vui lòng nhập đủ thông tin"),'error'); return; }
-  if(isNew) DB.kpiReviews.push(data);
-  else{ const i = (DB.kpiReviews||[]).findIndex(x=>x.id===id); DB.kpiReviews[i] = data; }
+  if(isNew) (DB.kpiReviews||[]).push(data);
+  else{ const i = (DB.kpiReviews||[]).findIndex(x=>x.id===id); if(i>=0) DB.kpiReviews[i] = data; }
   // Đồng bộ điểm KPI hiện tại của nhân viên (lấy review mới nhất)
   syncEmployeeKPI(data.empId);
-  saveData(); closeModal(); toast(isNew?'Đã tạo đánh giá':(_lang==="en"?"Updated":"Đã cập nhật")); render();
+  saveData(['kpiReviews','employees']); closeModal(); toast(isNew?'Đã tạo đánh giá':(_lang==="en"?"Updated":"Đã cập nhật")); render();
 }
 
 function deleteReview(id, fromModal=false){
@@ -15349,9 +15382,8 @@ function deleteReview(id, fromModal=false){
     const review = (DB.kpiReviews||[]).find(x=>x.id===id);
     const empId = review?.empId;
     DB.kpiReviews = (DB.kpiReviews||[]).filter(x=>x.id!==id);
-    // Đồng bộ KPI sau khi xoá
     if(empId) syncEmployeeKPI(empId);
-    saveData(); toast((_lang==="en"?"Deleted":"Đã xoá")); render();
+    saveData(['kpiReviews','employees']); toast((_lang==="en"?"Deleted":"Đã xoá")); render();
   });
 }
 
@@ -15405,6 +15437,7 @@ function applyPromotionToEmployee(p){
   emp.manualRole = false;
   emp.updatedAt = new Date(p.effectiveDate||p.date||Date.now()).getTime();
   return true;
+  // customData salary changes saved via saveEmpProfile in savePromotion caller
 }
 
 // Đồng bộ role/level/salary từ promotion completed mới nhất — chạy mỗi lần load
@@ -15740,7 +15773,7 @@ function savePromotion(id, isNew){
     const i = (DB.promotions||[]).findIndex(x => x.id === id);
     DB.promotions[i] = data;
   }
-  saveData();
+  saveData(['promotions','employees']);
   if(window._pendingRender) delete window._pendingRender[currentPage];
   closeModal();
   toast(isNew?'Đã tạo đề xuất':(_lang==="en"?"Updated":"Đã cập nhật"));
@@ -15755,7 +15788,7 @@ function deletePromotion(id, fromModal=false){
     DB.promotions = (DB.promotions||[]).filter(x => x.id !== id);
     // Re-sync NV (có thể đã apply promotion này)
     if(empId) syncEmployeeFromPromotions(empId);
-    saveData();
+    saveData(['promotions','employees']);
     toast((_lang==="en"?"Deleted":"Đã xoá"));
     render();
   });
@@ -16063,7 +16096,7 @@ function editAwardRecord(recordId, empId){
 function deleteAwardRecord(recordId){
   confirmDialog('Xoá khen thưởng này?', (_lang==="en"?"Cannot be undone.":"Không thể hoàn tác."), ()=>{
     DB.rewardRecords = (DB.rewardRecords||[]).filter(r=>r.id!==recordId);
-    saveData();
+    saveData(['rewardRecords']);
     toast((_lang==="en"?"Deleted":"Đã xoá"));
     render();
   });
@@ -16086,7 +16119,7 @@ function renderWarnings(main){
   const sevLevels = getSeverityLevels();
   const sevByKey = {};
   sevLevels.forEach(s => sevByKey[s.key] = s);
-  if(!DB.blacklistConfig) DB.blacklistConfig = JSON.parse(JSON.stringify(DEFAULT_BLACKLIST_CONFIG));
+  if(!DB.blacklistConfig) DB.blacklistConfig = JSON.parse(JSON.stringify(DEFAULT_BLACKLIST_CONFIG)); saveData(['blacklistConfig']);
   const blCfg = DB.blacklistConfig;
 
   const allRecords = [];
@@ -16442,7 +16475,7 @@ function editWarnRecord(recordId, empId){
 function deleteWarnRecord(recordId){
   confirmDialog((_lang==="en"?"Delete discipline record?":"Xoá bản ghi kỷ luật?"), (_lang==="en"?"Cannot be undone.":"Không thể hoàn tác."), ()=>{
     DB.disciplineRecords = (DB.disciplineRecords||[]).filter(r=>r.id!==recordId);
-    saveData();
+    saveData(['disciplineRecords']);
     toast((_lang==="en"?"Deleted":"Đã xoá"));
     render();
   });
@@ -16596,7 +16629,7 @@ function saveSevConfig(){
     if(keys.has(s.key)){ toast(`Key "${s.key}" bị trùng`,'error'); return; }
     keys.add(s.key);
   }
-  DB.disciplineSeverityConfig = window._sevTemp;
+  DB.disciplineSeverityConfig = window._sevTemp; saveData(['disciplineSeverityConfig']);
   window._sevTemp = null;
   saveData();
   if(window._pendingRender) delete window._pendingRender[currentPage];
@@ -17170,7 +17203,7 @@ function saveBlacklistEntry(isNew){
     else DB.manualBlacklist.push(entry);
   }
 
-  saveData();
+  saveData(['manualBlacklist']);
   if(window._pendingRender) delete window._pendingRender[currentPage];
   closeModal();
   const emp = empById(empId);
@@ -17187,7 +17220,7 @@ function removeFromBlacklistManual(empId, fromModal=false){
       const id = typeof x === 'string' ? x : x.empId;
       return id !== empId;
     });
-    saveData();
+    saveData(['manualBlacklist']);
     toast('Đã bỏ khỏi blacklist thủ công');
     render();
   });
@@ -17221,14 +17254,14 @@ const DEFAULT_REQUIRED_FIELDS = [
 
 // Lấy danh sách trường cần check từ DB config (user customizable)
 function getRequiredFields(){
-  if(!DB.requiredFieldsConfig) DB.requiredFieldsConfig = JSON.parse(JSON.stringify(DEFAULT_REQUIRED_FIELDS));
+  if(!DB.requiredFieldsConfig) DB.requiredFieldsConfig = JSON.parse(JSON.stringify(DEFAULT_REQUIRED_FIELDS)); saveData(['requiredFieldsConfig']);
   return DB.requiredFieldsConfig;
 }
 
 // Lấy danh sách mức kỷ luật từ DB
 function getSeverityLevels(){
   if(!DB.disciplineSeverityConfig || DB.disciplineSeverityConfig.length === 0){
-    DB.disciplineSeverityConfig = JSON.parse(JSON.stringify(DEFAULT_SEVERITY_LEVELS));
+    DB.disciplineSeverityConfig = JSON.parse(JSON.stringify(DEFAULT_SEVERITY_LEVELS)); saveData(['disciplineSeverityConfig']);
   }
   return DB.disciplineSeverityConfig;
 }
@@ -17635,7 +17668,7 @@ function saveRfConfig(){
   if(window._rfTemp.length === 0){
     if(!confirm('Bạn chưa chọn trường nào để kiểm tra. Tiếp tục lưu (trang Hồ sơ chưa đủ sẽ trống)?')) return;
   }
-  DB.requiredFieldsConfig = window._rfTemp;
+  DB.requiredFieldsConfig = window._rfTemp; saveData(['requiredFieldsConfig']);
   window._rfTemp = null;
   saveData();
   if(window._pendingRender) delete window._pendingRender[currentPage];
@@ -18024,6 +18057,7 @@ try {
     const newCf = {id:'cf_bonusSalary', key:'bonusSalary', label:'Khoản bổ sung theo KQCV (VNĐ)', type:'number', group:(_lang==="en"?"Recruitment":"Tuyển dụng"), placeholder:'', showInTable:false, required:false, options:''};
     if(salIdx >= 0) DB.customFields.splice(salIdx+1, 0, newCf);
     else DB.customFields.push(newCf);
+    saveData(['customFields']);
   }
 } catch(e){ console.warn('Migration bonusSalary error', e); }
 /* =========================================================
@@ -18070,7 +18104,7 @@ function confirmAddSalaryYear(){
   if(!yr || yr < 2000 || yr > 2100){ toast('Năm không hợp lệ','error'); return; }
   if(!DB.salaryYears) DB.salaryYears = [];
   if(!DB.salaryYears.includes(yr)) DB.salaryYears.push(yr);
-  saveData();
+  saveData(['salaryYears']);
   window._salF = window._salF || {};
   window._salF.year = yr;
   closeModal();
@@ -18524,7 +18558,7 @@ function renderSvcInline(svcYr, curYear, curMonth){
     if(!DB.svcData) DB.svcData={};
     if(!DB.svcData[yr]) DB.svcData[yr]=Array(12).fill(0);
     DB.svcData[yr][m] = parseFloat(String(val).replace(/[^0-9.]/g,''))||0;
-    saveData();
+    saveData(['svcData']);
     // Update chart without full re-render
     const el = document.getElementById('chartSvcInline_'+yr);
     if(el && el._chart){ el._chart.data.datasets[0].data[m]=DB.svcData[yr][m]; el._chart.update(); }
@@ -18645,7 +18679,7 @@ function renderSvcTab(){
     if(!DB.svcData) DB.svcData = {};
     if(!DB.svcData[yr]) DB.svcData[yr] = Array(12).fill(0);
     DB.svcData[yr][m] = parseFloat(val.replace(/[^0-9.]/g,''))||0;
-    saveData();
+    saveData(['svcData']);
   };
 
   const chartId = 'chartSvc_'+yr+(showCmp?'_'+cyr:'');
@@ -19415,7 +19449,7 @@ function saveCasual(id, isNew){
   if(!DB.casuals) DB.casuals=[];
   if(isNew) DB.casuals.push(data);
   else { const i=(DB.casuals||[]).findIndex(x=>x.id===id); if(i>=0) DB.casuals[i]=data; }
-  saveData(); closeModal();
+  saveData(['casuals']); closeModal();
   toast(isNew?'Đã thêm bản ghi casual':(_lang==="en"?"Updated":"Đã cập nhật"));
   render();
 }
@@ -19423,7 +19457,7 @@ function saveCasual(id, isNew){
 function deleteCasual(id, fromModal=false){
   confirmDialog('Xoá bản ghi?',(_lang==="en"?"This action cannot be undone.":"Hành động này không thể hoàn tác."),()=>{
     DB.casuals=(DB.casuals||[]).filter(x=>x.id!==id);
-    saveData(); if(fromModal) closeModal();
+    saveData(['casuals']); if(fromModal) closeModal();
     toast((_lang==="en"?"Deleted":"Đã xoá")); render();
   });
 }
@@ -19515,7 +19549,7 @@ function importCasualXLSX(){
       }
     });
 
-    saveData();
+    saveData(['casuals']);
     render();
 
     let msg = (_lang==="en"?"Import successful: ":"Import thành công: ") + added + ' ${_lang==="en"?"records":"bản ghi"}';
@@ -20071,7 +20105,7 @@ function saveSchedule(id, isNew){
   if(!DB.traineeSchedules) DB.traineeSchedules=[];
   if(isNew) DB.traineeSchedules.push(data);
   else { const i=DB.traineeSchedules.findIndex(x=>x.id===id); if(i>=0) DB.traineeSchedules[i]=data; }
-  saveData(); closeModal();
+  saveData(['traineeSchedules']); closeModal();
   toast(isNew?'Đã thêm lịch trường':(_lang==="en"?"Updated":"Đã cập nhật"));
   render();
 }
@@ -20234,7 +20268,7 @@ function saveTrainee(id, isNew){
   if(!DB.trainees) DB.trainees = [];
   if(isNew) DB.trainees.push(data);
   else { const i=DB.trainees.findIndex(x=>x.id===id); if(i>=0) DB.trainees[i]=data; }
-  saveData(); closeModal();
+  saveData(['trainees']); closeModal();
   toast(isNew?'Đã thêm thực tập sinh':(_lang==="en"?"Updated":"Đã cập nhật"));
   render();
 }
@@ -20428,7 +20462,7 @@ window.confirmTraineeImport = function(){
     added++;
   });
 
-  saveData();
+  saveData(['trainees']);
   if(window._pendingRender) delete window._pendingRender[currentPage];
   closeModal();
   toast((_lang==="en"?"Import successful: ":"Import thành công: ")+added+' sinh viên'+(skipped?' · Bỏ qua '+skipped+' trùng lặp':''));
@@ -20654,8 +20688,38 @@ fbAuth.onAuthStateChanged(async user => {
             });
           }
 
-          // Ghép ảnh cho employees
-          if(empLoaded) DB.employees.forEach(e=>{ if(localPhotos[e.id]) e.photo=localPhotos[e.id]; });
+          // Ghép ảnh cho employees — Cloudinary URL từ Firestore luôn được ưu tiên
+          if(empLoaded) DB.employees.forEach(e=>{
+            // Chỉ dùng localStorage photo làm fallback khi chưa có Cloudinary URL
+            if(!e.photo && localPhotos[e.id]) e.photo = localPhotos[e.id];
+          });
+          // Sync localStorage photos với Cloudinary URLs hiện tại (xóa stale cache)
+          try{
+            const pm = JSON.parse(localStorage.getItem(STORE_KEY+'_photos')||'{}');
+            let pmChanged = false;
+            DB.employees.forEach(e=>{
+              if(e.photo && e.photo.startsWith('http') && pm[e.id] !== e.photo){
+                pm[e.id] = e.photo; pmChanged = true;
+              }
+            });
+            if(pmChanged) localStorage.setItem(STORE_KEY+'_photos', JSON.stringify(pm));
+          }catch(_){}
+          // ── Auto-repair: NV có ảnh trong localStorage nhưng Firestore mất photoUrl (bug cũ) ──
+          // Re-save lại để restore photoUrl lên Firestore — chỉ chạy 1 lần/session
+          if(window.fbDb && window.currentUser && !window._photoRepairDone){
+            window._photoRepairDone = true;
+            DB.employees.forEach(e=>{
+              if(e.photo && e.photo.startsWith('http')){
+                // Check xem Firestore doc có photoUrl chưa — nếu chưa thì re-save
+                window.fbDb.collection(EMP_COLLECTION).doc(e.id).get().then(doc=>{
+                  if(doc.exists && !doc.data().photoUrl){
+                    console.log('[PhotoRepair] Restoring photoUrl for', e.name);
+                    saveEmpProfile(e.id);
+                  }
+                }).catch(()=>{});
+              }
+            });
+          }
           if(hasCloud){
             if(!DB.customFields) DB.customFields=[];
             if(!DB.customData) DB.customData={};
@@ -20781,7 +20845,7 @@ fbAuth.onAuthStateChanged(async user => {
                   const doc = {...empNoPhoto, ...cd, _empId: e.id,
                     _syncBy: window.currentUser.uid, _syncAt: Date.now()};
                   if(photoUrl) doc.photoUrl = photoUrl;
-                  batch.set(ref, doc);
+                  batch.set(ref, doc, {merge: true});
                 });
                 await batch.commit();
                 console.log('[MIGRATION] batch done:', b, '-', Math.min(b+batchSize, migrateEmps.length));
@@ -20857,6 +20921,8 @@ fbAuth.onAuthStateChanged(async user => {
 
                 FS_DOC_MAP[docId].forEach(key=>{
                   if(cloudData[key] === undefined) return;
+                  // employees trong hrdata chỉ có departments — không overwrite DB.employees
+                  if(key === 'employees') return; // emp_profiles collection là source of truth
                   // customFields: merge thông minh — giữ user settings, chỉ thêm field thiếu
                   if(key === 'customFields'){
                     const localFields = DB.customFields || [];
@@ -20885,7 +20951,9 @@ fbAuth.onAuthStateChanged(async user => {
                   if(DB.customFields.length!==_b2) setTimeout(()=>saveData(),500);
                 }
                 // Ghép ảnh + convert probation→active (defensive)
+                // Photo từ emp_profiles (Cloudinary URL) phải được preserve qua mọi merge
                 if(DB.employees) DB.employees.forEach(e=>{
+                  // Ưu tiên: photo đã có trong memory > localPhotos localStorage
                   if(!e.photo && localPhotos[e.id]) e.photo = localPhotos[e.id];
                   if(e.status==='probation') e.status='active';
                 });
@@ -20971,10 +21039,17 @@ fbAuth.onAuthStateChanged(async user => {
               const empId = d._empId || change.doc.id;
               const cloudSyncBy = d._syncBy || '';
               const cloudSyncAt = d._syncAt || 0;
-              // Skip nếu mình vừa save (5 giây)
+              // Skip nếu mình vừa save (5 giây) — nhưng LUÔN apply photoUrl
               const isSelf = cloudSyncBy === window.currentUser.uid;
               const isRecent = (Date.now()-cloudSyncAt) < 5000;
-              if(isSelf && isRecent) return;
+              if(isSelf && isRecent){
+                // Vẫn apply photoUrl nếu có (cross-device sync ảnh)
+                if(d.photoUrl){
+                  const empIdx = (DB.employees||[]).findIndex(e=>e.id===empId);
+                  if(empIdx>=0 && !DB.employees[empIdx].photo) DB.employees[empIdx].photo = d.photoUrl;
+                }
+                return;
+              }
               if(change.type === 'removed'){
                 DB.employees = DB.employees.filter(e=>e.id!==empId);
                 delete DB.customData[empId];
