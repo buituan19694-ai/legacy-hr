@@ -4459,7 +4459,7 @@ function renderEmployees(main){
       <div class="topbar-left">
         <div class="crumb">Nhân sự · <span>Danh sách</span></div>
         <h1 class="page-title">Nhân <em>viên</em></h1>
-        <div class="page-sub">${DB.employees.length} nhân viên tổng cộng · ${filtered.length} kết quả lọc</div>
+        <div class="page-sub" id="empListSub">${DB.employees.length} nhân viên tổng cộng · ${filtered.length} kết quả lọc</div>
       </div>
       <div class="topbar-actions">
         <button class="btn" onclick="manageCustomFields()" title="Quản lý các cột thông tin">${ICONS.settings} Trường tuỳ chỉnh</button>
@@ -4718,7 +4718,7 @@ function renderEmployees(main){
             ${(DB.customFields||[]).filter(cf=>!['baseSalary','bonusSalary'].includes(cf.key)&&EC['cf_'+cf.key]).map(()=>'<td></td>').join('')}
           </tr>
           </thead>
-          <tbody>${tableRows}</tbody>
+          <tbody id="empTableBody">${tableRows}</tbody>
         </table>
         </div>
         <div class="pager">
@@ -5071,26 +5071,80 @@ let _empSearchTimer = null;
 function debounceEmpSearch(val){
   empFilter.search = val;
   clearTimeout(_empSearchTimer);
-  // Lưu focus state ngay lập tức
+  // Lưu cursor position ngay lập tức trước khi mất
   const activeId = document.activeElement?.id;
-  const selStart = document.activeElement?.selectionStart;
-  const selEnd   = document.activeElement?.selectionEnd;
+  const selStart = document.activeElement?.selectionStart ?? val.length;
+  const selEnd   = document.activeElement?.selectionEnd   ?? val.length;
   _empSearchTimer = setTimeout(()=>{
     empPage=1;
-    render();
-    // Restore focus sau khi rAF render xong
+    // Chỉ re-render phần list/table, không re-render cả trang nếu đang có focus
+    const focusedEl = document.getElementById(activeId);
+    if(activeId && focusedEl && (activeId==='empSearchInput'||activeId==='empColSearch')){
+      // Render chỉ phần tbody + pager
+      _renderEmpTableOnly();
+    } else {
+      render();
+    }
+    // Luôn restore focus và cursor
     requestAnimationFrame(()=>{
-      requestAnimationFrame(()=>{
-        if(activeId){
-          const el = document.getElementById(activeId);
-          if(el){
-            el.focus();
-            try{ el.setSelectionRange(selStart, selEnd); }catch(e){}
-          }
-        }
-      });
+      const el = document.getElementById(activeId);
+      if(el && el.tagName==='INPUT'){
+        el.focus();
+        el.value = val; // đảm bảo value đúng
+        try{ el.setSelectionRange(selStart, selEnd); }catch(e){}
+      }
     });
-  }, 250);
+  }, 180);
+}
+
+function _renderEmpTableOnly(){
+  const filtered = applyEmpFilter();
+  const perPage = empPerPage === 'all' ? filtered.length || 1 : empPerPage;
+  const totalPages = Math.max(1, Math.ceil(filtered.length / perPage));
+  if(empPage > totalPages) empPage = 1;
+  const start = (empPage-1) * perPage;
+  const pageItems = empPerPage === 'all' ? filtered : filtered.slice(start, start + perPage);
+
+  // Cập nhật tbody nếu tồn tại
+  const tbody = document.getElementById('empTableBody');
+  if(!tbody){ render(); return; }
+
+  const EC = window._empCols || {};
+  // Build rows (copy logic từ renderEmployees)
+  tbody.innerHTML = pageItems.length===0
+    ? `<tr><td colspan="20" style="text-align:center;padding:40px;color:var(--ink-muted)">Không tìm thấy nhân viên nào</td></tr>`
+    : pageItems.map(e=>{
+        const cd = DB.customData[e.id]||{};
+        const dept = DB.departments.find(d=>d.id===e.deptId);
+        const eff = getEffectiveStatus(e);
+        const statusColors = {active:'var(--success)',probation:'var(--warning)',exit:'var(--danger)',leave:'var(--info)'};
+        const sc = statusColors[eff]||'var(--ink-muted)';
+        return `<tr style="cursor:pointer" onclick="viewEmployee('${e.id}')">
+          <td><div class="cell-emp">${avatarHTML(e)}<div>
+            <div class="cell-emp-name">${escapeHtml(e.name||'')}</div>
+            <div class="cell-emp-meta">${escapeHtml(e.role||'')}${e.level?' · Cấp '+e.level:''}</div>
+          </div></div></td>
+          <td class="cell-mono">${escapeHtml(e.code||'')}</td>
+          <td>${escapeHtml(dept?.name||'')}</td>
+          ${EC.gender?`<td style="font-size:12px">${e.gender==='male'?'Nam':'Nữ'}</td>`:''}
+          ${EC.dob?`<td class="cell-mono" style="font-size:12px">${fmtDate(e.dob)||'—'}</td>`:''}
+          <td><div style="font-size:12px;color:var(--ink-dim)">${escapeHtml(e.email||'')}</div><div style="font-size:11px;color:var(--ink-muted)">${escapeHtml(e.phone||'')}</div></td>
+          ${EC.phone2?`<td style="font-size:12px;color:var(--ink-dim)">${escapeHtml(cd.phone2||'')}</td>`:''}
+          ${EC.cccd?`<td class="cell-mono" style="font-size:12px">${escapeHtml(cd.cccd||'')}</td>`:''}
+          ${EC.joined?`<td class="cell-mono" style="font-size:12px">${fmtDate(e.joined)||'—'}</td>`:''}
+          ${EC.email?`<td style="font-size:12px">${escapeHtml(e.email||'')}</td>`:''}
+          <td>${fmtDate(e.joined)||'—'}</td>
+          <td><span class="badge ${eff}" style="font-size:11px">${STATUS_LABEL[eff]||eff}</span></td>
+          <td onclick="event.stopPropagation()"><div class="row-actions">
+            <button class="btn btn-icon" onclick="editEmployee('${e.id}')" title="Sửa">${ICONS.edit}</button>
+            <button class="btn btn-icon btn-danger" onclick="deleteEmployee('${e.id}')" title="Xoá">${ICONS.trash}</button>
+          </div></td>
+        </tr>`;
+      }).join('');
+
+  // Cập nhật sub-title count
+  const subEl = document.getElementById('empListSub');
+  if(subEl) subEl.textContent = `${filtered.length} nhân viên tổng cộng · ${filtered.length} kết quả lọc`;
 }
 function clearEmpDateFilter(){ empFilter.joinedFrom=''; empFilter.joinedTo=''; empFilter.joinedMonth=0; empFilter.joinedYear=0; empFilter.dobMonth=0; empFilter.dobYear=0; empPage=1; render(); }
 function setEmpPage(p){ if(p<1) return; empPage=p; render(); }
@@ -10579,6 +10633,37 @@ function periodSelectorHTML(periodKey, setFn, module, yearsOnly=false){
   `;
 }
 
+/* ---------- Period selector with month row ---------- */
+function periodSelectorWithMonths(periodKey, setFn, module){
+  const yearPeriods = getDataYears(module || 'all');
+  const chipBtn = (key, label, active) =>
+    `<button class="period-chip${active?' active':''}" data-period="${key}" data-fn="${setFn}" onclick="window[this.dataset.fn](this.dataset.period)">${label}</button>`;
+  const activeYear = periodKey.startsWith('year_') ? parseInt(periodKey.slice(5))
+                   : periodKey.startsWith('month_') ? parseInt(periodKey.split('_')[2])
+                   : new Date().getFullYear();
+  const monthRow = ['T1','T2','T3','T4','T5','T6','T7','T8','T9','T10','T11','T12']
+    .map((m,i)=>chipBtn(`month_${i+1}_${activeYear}`, m, periodKey===`month_${i+1}_${activeYear}`)).join('');
+  return `
+    <div class="card" style="padding:14px 18px;margin-bottom:16px">
+      <div style="display:flex;align-items:flex-start;gap:14px;flex-wrap:wrap">
+        <div style="font-size:11px;color:var(--ink-muted);letter-spacing:.15em;text-transform:uppercase;font-weight:600;padding-top:6px;flex-shrink:0">Kỳ báo cáo</div>
+        <div style="display:flex;flex-direction:column;gap:8px;flex:1">
+          <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+            <div style="font-size:10.5px;color:var(--ink-muted);font-weight:600;text-transform:uppercase;letter-spacing:.12em;margin-right:2px;white-space:nowrap">📅 Theo năm:</div>
+            ${yearPeriods.length===0
+              ? '<span style="font-size:12px;color:var(--ink-muted);font-style:italic">Chưa có dữ liệu</span>'
+              : yearPeriods.map(yp=>chipBtn(yp.key,yp.label,periodKey===yp.key)).join('')}
+            <button onclick="addPeriodYear('${setFn}', ${JSON.stringify(yearPeriods.map(y=>parseInt(y.key.replace('year_',''))))})" style="padding:3px 10px;border-radius:12px;border:1px dashed var(--border);background:transparent;color:var(--ink-muted);font-size:11px;cursor:pointer;white-space:nowrap">+ Năm</button>
+          </div>
+          <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+            <div style="font-size:10.5px;color:var(--ink-muted);font-weight:600;text-transform:uppercase;letter-spacing:.12em;margin-right:2px;white-space:nowrap">📆 Theo tháng (${activeYear}):</div>
+            ${monthRow}
+          </div>
+        </div>
+      </div>
+    </div>`;
+}
+
 /* ---------- Tab toggle UI (dùng chung cho cả 2 view) ---------- */
 function recTabsHTML(active){
   return `
@@ -13861,7 +13946,7 @@ function renderPerformanceReports(main){
       </div>
     </div>
     ${perfTabsHTML('reports')}
-    ${periodSelectorHTML(periodKey,'setPerfPeriod','perf')}
+    ${periodSelectorWithMonths(periodKey,'setPerfPeriod','perf')}
     <div class="kpi-grid">
       ${(()=>{ const am=getPerfMetrics(); return [
         showMetric(am,'kpi_avg')   ? `<div class="kpi"><div class="kpi-head"><div class="kpi-label">Điểm TB trong kỳ</div><div class="kpi-icon success"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg></div></div><div class="kpi-value">${avgScore!==null?avgScore.toFixed(1):'—'}</div><div class="kpi-meta">${deltaBadgeScore(avgScore,avgScorePrev)} <span>kỳ trước ${avgScorePrev!==null?avgScorePrev.toFixed(1):'—'}</span></div></div>` : '',
@@ -15187,7 +15272,7 @@ function renderWarnings(main){
       </div>
     </div>
 
-    ${periodSelectorHTML(_warnPeriod,'setWarnPeriod','warn')}
+    ${periodSelectorWithMonths(_warnPeriod,'setWarnPeriod','warn')}
 
     <div class="kpi-grid">
       <div class="kpi">
