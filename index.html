@@ -2103,18 +2103,24 @@ function renderDashboard(main){
   if(!DB.dashboardConfig) DB.dashboardConfig = {kpis: [...DEFAULT_DASHBOARD_KPIS]};
   const cfg = DB.dashboardConfig;
 
-  const empPool = DB.employees.filter(e => {
-    const st = getEffectiveStatus(e);
-    if(p.status === 'exit') return st === 'exit';
-    if(p.status === 'active') return ['active','leave'].includes(st);
-    return true;
-  });
-  let filteredPool = empPool; // status already filtered in empPool
+  // empPool: dùng toàn bộ NV, tính KPI từ đây
+  // Không filter pool theo status — chỉ dùng status filter để highlight/context
+  const allActive   = DB.employees.filter(e => ['active','leave'].includes(getEffectiveStatus(e)));
+  const allProbation= DB.employees.filter(e => getEffectiveStatus(e) === 'probation');
+  const allExit     = DB.employees.filter(e => getEffectiveStatus(e) === 'exit');
+  const allWorking  = DB.employees.filter(e => getEffectiveStatus(e) !== 'exit'); // active+probation+leave
 
-  const totalEmp = filteredPool.length;
-  const activeEmp = filteredPool.filter(e => ['active','leave'].includes(getEffectiveStatus(e))).length;
-  const probationEmp = filteredPool.filter(e => getEffectiveStatus(e) === 'probation').length;
-  const exitEmp = filteredPool.filter(e => getEffectiveStatus(e) === 'exit').length;
+  // filteredPool theo status dropdown
+  let filteredPool;
+  if(p.status === 'exit')   filteredPool = allExit;
+  else if(p.status === 'active') filteredPool = allWorking; // đang làm = active+probation+leave
+  else                      filteredPool = DB.employees;
+
+  // KPI cố định (luôn tính từ toàn bộ)
+  const totalEmp    = allWorking.length;   // Tổng NV = đang làm + thử việc (không tính đã nghỉ)
+  const activeEmp   = allActive.length;    // Đang làm (active + leave)
+  const probationEmp= allProbation.length; // Thử việc
+  const exitEmp     = allExit.length;      // Đã nghỉ
 
   const newHires = DB.employees.filter(e => {
     if(!e.joined) return false;
@@ -2177,9 +2183,9 @@ function renderDashboard(main){
   const runningCourses = DB.courses.filter(c => c.status === 'running').length;
 
   const kpiValues = {
-    totalEmp: {value: totalEmp, meta: `Cuối tháng ${p.month}/${p.year}`, color:''},
-    activeEmp: {value: activeEmp, meta: 'Đang làm ('+activeEmp+'/'+totalEmp+')', color:'success'},
-    probationEmp: {value: probationEmp, meta: 'Đang theo dõi', color:'warning'},
+    totalEmp: {value: totalEmp, meta: `${activeEmp} đang làm + ${probationEmp} thử việc`, color:''},
+    activeEmp: {value: activeEmp, meta: 'Active + Nghỉ phép · không tính thử việc', color:'success'},
+    probationEmp: {value: probationEmp, meta: `${probationEmp} NV · ${totalEmp} tổng đang làm`, color:'warning'},
     exitEmp: {value: exitEmp, meta: 'Tổng cộng', color:'danger'},
     newHires: {value: newHires, meta: `${_lang==="en"?"Month":"Tháng"} ${p.month}/${p.year}`, color:'success'},
     exits: {value: exits, meta: `${_lang==="en"?"Month":"Tháng"} ${p.month}/${p.year}`, color:'danger'},
@@ -2250,7 +2256,7 @@ function renderDashboard(main){
           </select>
           <select class="filter-select" onchange="setDashPeriod('status', this.value)">
             <option value="" ${!p.status?'selected':''}>Tất cả</option>
-            <option value="active" ${p.status==='active'?'selected':''}>🟢 Đang làm</option>
+            <option value="active" ${p.status==='active'?'selected':''}>🟢 Đang làm (+ Thử việc)</option>
 
             <option value="exit" ${p.status==='exit'?'selected':''}>🔴 Đã nghỉ việc</option>
           </select>
