@@ -1097,7 +1097,7 @@ if(typeof Chart !== 'undefined'){
   Chart.register(valueLabelPlugin);
 }
 
-const STATUS_LABEL = new Proxy({},{get(_,k){const m={active:t('status_active'),leave:t('status_leave'),exit:t('status_exit')};return m[k]||k;}});
+const STATUS_LABEL = new Proxy({},{get(_,k){const m={active:t('status_active'),leave:t('status_leave'),exit:t('status_exit'),probation:t('status_probation')};return m[k]||k;}});
 const LEAVE_TYPE = {annual:(_lang==="en"?"Annual leave":"Phép năm"), comp:(_lang==="en"?"Compensatory":"Phép bù"), sick:(_lang==="en"?"Sick leave":"Nghỉ ốm"), personal:(_lang==="en"?"Personal":"Việc riêng"), maternity:(_lang==="en"?"Maternity":"Thai sản"), unpaid:(_lang==="en"?"Unpaid":"Không lương")};
 const LEAVE_STATUS = {pending:'Chờ duyệt', approved:(_lang==="en"?"Approved":"Đã duyệt"), rejected:(_lang==="en"?"Rejected":"Từ chối")};
 const CONTRACT_TYPE = {indefinite:(_lang==="en"?"Indefinite":"Vô thời hạn"), term24:'Xác định 24 tháng', term12:'Xác định 12 tháng', probation:(_lang==="en"?"Probation":"Thử việc"), contractor:'Khoán việc'};
@@ -2709,7 +2709,7 @@ function renderDashboard(main){
 
   const totalEmp = filteredPool.length;
   const activeEmp = filteredPool.filter(e => ['active','leave'].includes(getEffectiveStatus(e))).length;
-  const probationEmp = 0; // merged into activeEmp
+  const probationEmp = filteredPool.filter(e => getEffectiveStatus(e) === 'probation').length;
   const exitEmp = filteredPool.filter(e => getEffectiveStatus(e) === 'exit').length;
 
   // Tuyển mới trong tháng
@@ -5305,11 +5305,13 @@ function renderEmployees(main){
           const counts = {
             '': DB.employees.length,
             'active': DB.employees.filter(e=>['active','leave'].includes(getEffectiveStatus(e))).length,
+            'probation': DB.employees.filter(e=>getEffectiveStatus(e)==='probation').length,
             'exit': DB.employees.filter(e=>getEffectiveStatus(e)==='exit').length,
           };
           const chips = [
             {v:'', label:(_lang==="en"?"All":"Tất cả"), color:'var(--accent)', icon:''},
             {v:'active', label:(_lang==="en"?"Active":"Đang làm"), color:'var(--success)', icon:'🟢'},
+            {v:'probation', label:(_lang==="en"?"Probation":"Thử việc"), color:'var(--warning)', icon:'🟡'},
             {v:'exit', label:(_lang==="en"?"Resigned":"Đã nghỉ việc"), color:'var(--danger)', icon:'🔴'},
           ];
           return chips.map(c=>`
