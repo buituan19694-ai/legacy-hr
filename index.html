@@ -10553,7 +10553,7 @@ function resetReportConfig(type){
 }
 
 /* ---------- Period selector HTML helper (shared) ---------- */
-function periodSelectorHTML(periodKey, setFn, module){
+function periodSelectorHTML(periodKey, setFn, module, yearsOnly=false){
   const yearPeriods = getDataYears(module || 'all');
   const chipBtn = (key, label, active) =>
     `<button class="period-chip${active?' active':''}" data-period="${key}" data-fn="${setFn}" onclick="window[this.dataset.fn](this.dataset.period)">${label}</button>`;
@@ -10562,9 +10562,9 @@ function periodSelectorHTML(periodKey, setFn, module){
       <div style="display:flex;align-items:flex-start;gap:14px;flex-wrap:wrap">
         <div style="font-size:11px;color:var(--ink-muted);letter-spacing:.15em;text-transform:uppercase;font-weight:600;padding-top:6px;flex-shrink:0">Kỳ báo cáo</div>
         <div style="display:flex;flex-direction:column;gap:8px;flex:1">
-          <div class="period-chips">
+          ${yearsOnly ? '' : `<div class="period-chips">
             ${Object.entries(PERIOD_LABELS).map(([k,v])=>chipBtn(k,v,periodKey===k)).join('')}
-          </div>
+          </div>`}
           <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
             <div style="font-size:10.5px;color:var(--ink-muted);font-weight:600;text-transform:uppercase;letter-spacing:.12em;margin-right:2px;white-space:nowrap">📅 Theo năm:</div>
             ${yearPeriods.length === 0
@@ -14142,11 +14142,10 @@ function renderPerformance(main){
     </div>
 
     ${(()=>{
-      // Top NV thăng chức nhiều nhất (đã completed/approved)
-      const donePromos = allPromotions.filter(p=>p.status==='completed'||p.status==='approved');
-      if(!donePromos.length) return '';
+      // Top NV thăng chức nhiều nhất — tất cả record
+      if(!allPromotions.length) return '';
       const countMap = {};
-      donePromos.forEach(p=>{ countMap[p.empId]=(countMap[p.empId]||0)+1; });
+      allPromotions.forEach(p=>{ countMap[p.empId]=(countMap[p.empId]||0)+1; });
       const topList = Object.entries(countMap)
         .sort((a,b)=>b[1]-a[1]).slice(0,5)
         .map(([empId,count])=>({emp:empById(empId),count}))
@@ -14157,7 +14156,7 @@ function renderPerformance(main){
           <div class="card">
             <div class="card-head"><div>
               <div class="card-title">⭐ Top NV <em>thăng chức nhiều nhất</em></div>
-              <div class="card-sub">Tính trên tất cả các năm · đã duyệt/hoàn thành</div>
+              <div class="card-sub">Tất cả đề xuất · tính trên tất cả các năm</div>
             </div></div>
             <div style="display:flex;flex-direction:column;gap:8px;padding:4px 0">
               ${topList.map((x,i)=>{
@@ -14182,12 +14181,12 @@ function renderPerformance(main){
           <div class="card">
             <div class="card-head"><div>
               <div class="card-title">📊 Thăng chức <em>theo năm</em></div>
-              <div class="card-sub">Số lượt đã duyệt/hoàn thành theo năm</div>
+              <div class="card-sub">Số đề xuất theo năm</div>
             </div></div>
             <div style="display:flex;flex-direction:column;gap:6px;padding:4px 0">
               ${(()=>{
                 const byYear = {};
-                donePromos.forEach(p=>{
+                allPromotions.forEach(p=>{
                   const y = p.date ? new Date(p.date).getFullYear() : 'N/A';
                   byYear[y] = (byYear[y]||0)+1;
                 });
@@ -14774,7 +14773,7 @@ function rejectPromotion(id){
 /* =========================================================
    AWARDS — Trang khen thưởng
    ========================================================= */
-let _awardPeriod = 'this_year'; // period key
+let _awardPeriod = 'year_'+new Date().getFullYear();
 let awardsFilter = {search:'', type:''};
 
 function setAwardPeriod(p){ _awardPeriod = p; render(); }
@@ -14840,7 +14839,7 @@ function renderAwards(main){
       </div>
     </div>
 
-    ${periodSelectorHTML(_awardPeriod, 'setAwardPeriod', 'award')}
+    ${periodSelectorHTML(_awardPeriod, 'setAwardPeriod', 'award', true)}
 
     <div class="kpi-grid">
       <div class="kpi">
