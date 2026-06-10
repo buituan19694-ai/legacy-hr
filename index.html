@@ -964,21 +964,40 @@ async function loadEmpProfiles(localPhotos){
     const EMP_KEYS = new Set(['id','code','name','email','phone','phone2','dob','gender',
       'deptId','role','roleVN','level','joined','status','kpi','manualRole','updatedAt',
       '_empId','_syncBy','_syncAt']);
+    const photoUpdates = {}; // track changes để update localStorage 1 lần
     snap.forEach(doc=>{
       const d = doc.data();
       const empId = d._empId || doc.id;
       const empObj = {id: empId};
       const cdObj = {};
       Object.entries(d).forEach(([k,v])=>{
-        if(k.startsWith('_')) return; // skip meta
-        if(k === 'photoUrl') return;  // xử lý riêng
+        if(k.startsWith('_')) return;
+        if(k === 'photoUrl') return;
         if(EMP_KEYS.has(k)) empObj[k] = v;
         else cdObj[k] = v;
       });
-      empObj.photo = d.photoUrl || localPhotos[empId] || '';
+      if(d.photoUrl){
+        // Có Cloudinary URL → dùng luôn
+        empObj.photo = d.photoUrl;
+        if(localPhotos[empId] !== d.photoUrl) photoUpdates[empId] = d.photoUrl;
+      } else {
+        // Không có photoUrl trên Firestore → xóa cache, không fallback
+        empObj.photo = '';
+        if(localPhotos[empId]) photoUpdates[empId] = null; // null = cần xóa
+      }
       employees.push(empObj);
       if(Object.keys(cdObj).length > 0) customData[empId] = cdObj;
     });
+    // Update localStorage 1 lần
+    if(Object.keys(photoUpdates).length){
+      try{
+        const pm = JSON.parse(localStorage.getItem(STORE_KEY+'_photos')||'{}');
+        Object.entries(photoUpdates).forEach(([id,url])=>{
+          if(url) pm[id]=url; else delete pm[id];
+        });
+        localStorage.setItem(STORE_KEY+'_photos', JSON.stringify(pm));
+      }catch(_){}
+    }
     DB.employees = employees;
     DB.customData = customData;
     return true;
@@ -10339,6 +10358,18 @@ const PERIOD_LABELS = {
   last_6m: '6 tháng gần',
   this_year: 'Năm nay',
 };
+function addPeriodYear(setFn, existingYears){
+  const cur = new Date().getFullYear();
+  const existing = new Set(existingYears||[]);
+  const suggested = existing.has(cur+1) ? cur+2 : cur+1;
+  const input = prompt('Nhập năm muốn thêm:', suggested);
+  if(!input) return;
+  const yr = parseInt(input);
+  if(!yr||isNaN(yr)||yr<2000||yr>2100){ toast('Năm không hợp lệ','error'); return; }
+  if(existing.has(yr)){ toast('Năm '+yr+' đã có','warning'); return; }
+  if(window[setFn]) window[setFn]('year_'+yr);
+}
+
 function getDataYears(module){
   const yearSet = new Set();
   const cur = new Date().getFullYear();
@@ -10519,6 +10550,7 @@ function periodSelectorHTML(periodKey, setFn, module){
               ? '<span style="font-size:12px;color:var(--ink-muted);font-style:italic">Chưa có dữ liệu</span>'
               : yearPeriods.map(yp=>chipBtn(yp.key,yp.label,periodKey===yp.key)).join('')
             }
+            <button onclick="addPeriodYear('${setFn}', ${JSON.stringify(yearPeriods.map(y=>parseInt(y.key.replace('year_',''))))})" style="padding:3px 10px;border-radius:12px;border:1px dashed var(--border);background:transparent;color:var(--ink-muted);font-size:11px;cursor:pointer;white-space:nowrap">+ Năm</button>
           </div>
         </div>
       </div>
@@ -19631,7 +19663,21 @@ fbAuth.onAuthStateChanged(async user => {
                 });
                 const localPhotos = {};
                 try{ Object.assign(localPhotos, JSON.parse(localStorage.getItem(STORE_KEY+'_photos')||'{}')); }catch(_){}
-                empObj.photo = d.photoUrl || localPhotos[empId] || '';
+                if(d.photoUrl){
+                  // Có Cloudinary URL → dùng luôn + update localStorage
+                  empObj.photo = d.photoUrl;
+                  if(localPhotos[empId] !== d.photoUrl){
+                    localPhotos[empId] = d.photoUrl;
+                    try{ localStorage.setItem(STORE_KEY+'_photos', JSON.stringify(localPhotos)); }catch(_){}
+                  }
+                } else {
+                  // photoUrl bị xóa → xóa localStorage cache, không fallback
+                  empObj.photo = '';
+                  if(localPhotos[empId]){
+                    delete localPhotos[empId];
+                    try{ localStorage.setItem(STORE_KEY+'_photos', JSON.stringify(localPhotos)); }catch(_){}
+                  }
+                }
                 const idx = DB.employees.findIndex(e=>e.id===empId);
                 if(idx>=0) DB.employees[idx] = empObj;
                 else DB.employees.push(empObj);
