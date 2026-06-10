@@ -137,21 +137,21 @@
     <div class="sidebar-footer" style="position:relative">
       <div id="userMenuPopup" style="display:none;position:absolute;bottom:72px;left:0;right:0;background:var(--bg-elev);border:1px solid var(--border);border-radius:10px;overflow:hidden;z-index:999;box-shadow:0 4px 24px rgba(0,0,0,.35)">
         <div style="padding:8px 12px 6px;font-size:11px;color:var(--ink-muted);letter-spacing:.08em;text-transform:uppercase;border-bottom:1px solid var(--border)">Tài khoản</div>
-        <div onclick="toggleTheme()" id="themeMenuItem" style="padding:10px 14px;display:flex;align-items:center;gap:10px;cursor:pointer;font-size:13px;color:var(--ink)" onmouseover="this.style.background='var(--bg-card-hover)'" onmouseout="this.style.background=''">
+        <div onclick="toggleTheme()" id="themeMenuItem" style="padding:10px 14px;display:flex;align-items:center;gap:10px;cursor:pointer;font-size:13px;color:var(--ink)" onmouseover="this.style.background=\'var(--bg-card-hover)\'" onmouseout="this.style.background=\'\'">
           <span id="themeMenuIcon" style="font-size:15px">☀️</span>
           <span id="themeMenuLabel">Chế độ sáng</span>
         </div>
-        <div onclick="toggleLang()" id="langMenuItem" style="padding:10px 14px;display:flex;align-items:center;gap:10px;cursor:pointer;font-size:13px;color:var(--ink)" onmouseover="this.style.background='var(--bg-card-hover)'" onmouseout="this.style.background=''">
+        <div onclick="toggleLang()" id="langMenuItem" style="padding:10px 14px;display:flex;align-items:center;gap:10px;cursor:pointer;font-size:13px;color:var(--ink)" onmouseover="this.style.background=\'var(--bg-card-hover)\'" onmouseout="this.style.background=\'\'">
           <span style="font-size:15px">🌐</span>
           <span id="langMenuLabel">Switch to English</span>
         </div>
         <div style="height:1px;background:var(--border)"></div>
-        <div onclick="doChangePassword()" style="padding:10px 14px;display:flex;align-items:center;gap:10px;cursor:pointer;font-size:13px;color:var(--ink)" onmouseover="this.style.background='var(--bg-card-hover)'" onmouseout="this.style.background=''">
+        <div onclick="doChangePassword()" style="padding:10px 14px;display:flex;align-items:center;gap:10px;cursor:pointer;font-size:13px;color:var(--ink)" onmouseover="this.style.background=\'var(--bg-card-hover)\'" onmouseout="this.style.background=\'\'">
           <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" style="width:15px;height:15px;flex-shrink:0"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"/></svg>
           Đổi mật khẩu
         </div>
         <div style="height:1px;background:var(--border)"></div>
-        <div onclick="doLogout()" style="padding:10px 14px;display:flex;align-items:center;gap:10px;cursor:pointer;font-size:13px;color:var(--danger)" onmouseover="this.style.background='var(--bg-card-hover)'" onmouseout="this.style.background=''">
+        <div onclick="doLogout()" style="padding:10px 14px;display:flex;align-items:center;gap:10px;cursor:pointer;font-size:13px;color:var(--danger)" onmouseover="this.style.background=\'var(--bg-card-hover)\'" onmouseout="this.style.background=\'\'">
           <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" style="width:15px;height:15px;flex-shrink:0"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/></svg>
           Đăng xuất
         </div>
@@ -937,8 +937,10 @@ function saveEmpProfile(empId){
   const {photo, ...empNoPhoto} = emp;
   const _syncAt = Date.now();
   window._lastSaveAt = _syncAt;
-  const doc = {...empNoPhoto, ...cd, _empId: empId,
+  let doc = {...empNoPhoto, ...cd, _empId: empId,
                _syncBy: window.currentUser.uid, _syncAt};
+  // Sanitize trước khi push Firebase
+  Object.keys(doc).forEach(k=>{ if(doc[k]===undefined) doc[k]=''; });
   if(photo && photo.startsWith('http')){
     // Có Cloudinary URL → lưu photoUrl
     doc.photoUrl = photo;
@@ -1152,7 +1154,7 @@ function saveData(changedKeys=null){
     docsToSave.forEach(docId=>{
       const docKeys = FS_DOC_MAP[docId]; if(!docKeys) return;
       const payload = { ...meta };
-      docKeys.forEach(k=>{ const val=DB[k]; if(val!==undefined) payload[k]=val; });
+      docKeys.forEach(k=>{ const val=DB[k]; if(val!==undefined && !(typeof val==='number'&&isNaN(val))) payload[k]=val; });
       window.fbDb.collection('hrdata').doc(docId).set(payload,{merge:true})
         .catch(err=>{
           console.error('[saveData] ❌', docId, err.code, err.message);
@@ -1184,6 +1186,18 @@ function saveData(changedKeys=null){
   return true;
 }
 
+
+// Sanitize object trước khi lưu Firebase: đổi undefined/NaN thành ''
+function _sanitizeForFirebase(obj){
+  const out = {};
+  Object.keys(obj).forEach(k=>{
+    const v = obj[k];
+    if(v === undefined) out[k] = '';
+    else if(typeof v === 'number' && isNaN(v)) out[k] = 0;
+    else out[k] = v;
+  });
+  return out;
+}
 function loadPhotosFromStorage(){
   try{
     const raw = localStorage.getItem(STORE_KEY+'_photos');
@@ -4246,16 +4260,16 @@ function saveReward(id, isNew){
   const reason = $('#r_reason').value.trim();
   if(!reason){ toast('Vui lòng nhập lý do','error'); return; }
   const data = {
-    id, empId:$('#r_emp').value,
-    date:dispToIso($('#r_date')?.value||''), type:$('#r_type').value,
+    id, empId:$s('r_emp'),
+    date:dispToIso($('#r_date')?.value||''), type:$s('r_type'),
     reason, awardedBy: (()=>{ const v=$('#r_awarded').value.trim(); const e=(DB.employees||[]).find(x=>x.id===v); return e?e.name:v; })(),
     notes:$('#r_notes').value.trim(),
-    amount: parseInt($('#r_amount').value)||0,
+    amount: $si('r_amount'),
     period: $('#r_period').value || '',
   };
   if(!DB.rewardRecords) DB.rewardRecords = [];
-  if(isNew) DB.rewardRecords.push(data);
-  else{ const i = (DB.rewardRecords||[]).findIndex(x=>x.id===id); DB.rewardRecords[i] = data; }
+  if(isNew) DB.rewardRecords.push(_sanitizeForFirebase(data));
+  else{ const i = (DB.rewardRecords||[]).findIndex(x=>x.id===id); DB.rewardRecords[i] = _sanitizeForFirebase(data); }
   saveData(['rewardRecords']); closeModal(); toast(isNew?'Đã ghi nhận khen thưởng':(_lang==="en"?"Updated":"Đã cập nhật")); render();
 }
 
@@ -4432,15 +4446,15 @@ function saveDiscipline(id, isNew){
   const reason = $('#d_reason').value.trim();
   if(!reason){ toast('Vui lòng nhập lý do vi phạm','error'); return; }
   const data = {
-    id, empId:$('#d_emp').value,
-    date:getDateIso('d_date'), level:$('#d_level').value,
+    id, empId:$s('d_emp'),
+    date:$sd('d_date'), level:$s('d_level'),
     reason, decidedBy:$('#d_decided').value.trim(),
     notes:$('#d_notes').value.trim(),
     penalty:$('#d_penalty').value.trim(),
   };
   if(!DB.disciplineRecords) DB.disciplineRecords = [];
-  if(isNew) DB.disciplineRecords.push(data);
-  else{ const i = (DB.disciplineRecords||[]).findIndex(x=>x.id===id); DB.disciplineRecords[i] = data; }
+  if(isNew) DB.disciplineRecords.push(_sanitizeForFirebase(data));
+  else{ const i = (DB.disciplineRecords||[]).findIndex(x=>x.id===id); DB.disciplineRecords[i] = _sanitizeForFirebase(data); }
   saveData(['disciplineRecords']); closeModal(); toast(isNew?'Đã ghi nhận kỷ luật':(_lang==="en"?"Updated":"Đã cập nhật")); render();
 }
 
@@ -5639,13 +5653,13 @@ function saveEmployee(id, isNew){
     id, code, name, email,
     phone: $('#f_phone').value.trim(),
     dob: dispToIso($('#f_dob')?.value||''),
-    gender: $('#f_gender').value,
-    deptId: $('#f_dept').value,
+    gender: $s('f_gender'),
+    deptId: $s('f_dept'),
     role,
     roleVN: $('#f_roleVN')?.value.trim() || '',
     level: $('#f_level').value || (DB.customData[id]||{}).levelNum || '',
     joined: dispToIso($('#f_joined')?.value||''),
-    status: $('#f_status').value,
+    status: $s('f_status'),
     kpi: parseFloat($('#f_kpi').value) || 0,
     photo: $('#f_photo')?.value || '',
     manualRole: true,   // đánh dấu role đã được sửa thủ công → không bị sync promotion đè lên
@@ -6911,7 +6925,7 @@ function editDepartment(id){
 function saveDepartment(id, isNew){
   const name = $('#f_name').value.trim();
   if(!name){ toast('Vui lòng nhập tên phòng ban','error'); return; }
-  const data = {id, name, head:$('#f_head').value.trim(), color:$('#f_color').value, desc:$('#f_desc').value.trim()};
+  const data = {id, name, head:$s('f_head'), color:$s('f_color'), desc:$('#f_desc').value.trim()};
   if(isNew) DB.departments.push(data);
   else{ const i = DB.departments.findIndex(x=>x.id===id); DB.departments[i] = data; }
   saveData(['departments']); closeModal(); toast(isNew?'Đã thêm phòng ban':(_lang==="en"?"Updated":"Đã cập nhật")); render();
@@ -8487,16 +8501,16 @@ function editContract(id){
 function saveContract(id, isNew){
   const data = {
     id,
-    empId: $('#f_emp').value,
-    type: $('#f_type').value,
+    empId: $s('f_emp'),
+    type: $s('f_type'),
     startDate: dispToIso($('#f_start')?.value||''),
     endDate: dispToIso($('#f_end')?.value||''),
-    signedDate: getDateIso('f_signed'),
+    signedDate: $sd('f_signed'),
     notes: $('#f_notes').value.trim(),
   };
   if(!data.empId || !data.startDate){ toast('Vui lòng chọn nhân viên và ngày bắt đầu','error'); return; }
-  if(isNew) DB.contracts.push(data);
-  else{ const i = DB.contracts.findIndex(x=>x.id===id); DB.contracts[i] = data; }
+  if(isNew) DB.contracts.push(_sanitizeForFirebase(data));
+  else{ const i = DB.contracts.findIndex(x=>x.id===id); DB.contracts[i] = _sanitizeForFirebase(data); }
   saveData(['contracts']); closeModal(); toast(isNew?'Đã thêm hợp đồng':(_lang==="en"?"Updated":"Đã cập nhật")); render();
 }
 
@@ -10389,14 +10403,14 @@ function recalcDays(){
 
 function saveLeave(id, isNew){
   const data = {
-    id, empId:$('#f_emp').value, type:$('#f_type').value,
+    id, empId:$s('f_emp'), type:$s('f_type'),
     startDate:dispToIso($('#f_start')?.value||''), endDate:dispToIso($('#f_end')?.value||''),
     days: parseFloat($('#f_days').value)||1, reason:$('#f_reason').value.trim(),
-    status:$('#f_status').value,
+    status:$s('f_status'),
   };
   if(!data.empId || !data.startDate || !data.endDate){ toast((_lang==="en"?"Please fill in all required fields":"Vui lòng nhập đủ thông tin"),'error'); return; }
-  if(isNew) DB.leaves.push(data);
-  else{ const i = (DB.leaves||[]).findIndex(x=>x.id===id); DB.leaves[i] = data; }
+  if(isNew) DB.leaves.push(_sanitizeForFirebase(data));
+  else{ const i = (DB.leaves||[]).findIndex(x=>x.id===id); DB.leaves[i] = _sanitizeForFirebase(data); }
   saveData(['leaves']); closeModal(); toast(isNew?'Đã tạo đơn':(_lang==="en"?"Updated":"Đã cập nhật")); render();
 }
 
@@ -12943,31 +12957,31 @@ function editJob(id){
 function saveJob(id, isNew){
   const title = $('#f_title').value.trim();
   if(!title){ toast('Vui lòng nhập tên vị trí','error'); return; }
-  const startDate = getDateIso('f_startDate');
+  const startDate = $sd('f_startDate');
   if(!startDate){ toast('Vui lòng chọn ngày bắt đầu tuyển','error'); return; }
 
   const data = {
     id, title,
-    deptId: $('#f_dept').value,
-    level: $('#f_level').value,
-    positions: parseInt($('#f_positions').value)||1,
-    hired: parseInt($('#f_hired').value)||0,
-    applicants: parseInt($('#f_applicants').value)||0,
-    baseSalary: parseInt($('#f_baseSalary').value)||0,
-    bonusSalary: parseInt($('#f_bonusSalary').value)||0,
-    salary: parseInt($('#f_baseSalary').value)||0, // backward compat
+    deptId: $s('f_dept'),
+    level: $s('f_level'),
+    positions: $si('f_positions')||1,
+    hired: $si('f_hired'),
+    applicants: $si('f_applicants'),
+    baseSalary: $si('f_baseSalary'),
+    bonusSalary: $si('f_bonusSalary'),
+    salary: $si('f_baseSalary'), // backward compat
     startDate: startDate,
-    deadline: $('#f_deadline').value,
-    priority: $('#f_priority').value,
-    status: $('#f_status').value,
+    deadline: $s('f_deadline'),
+    priority: $s('f_priority'),
+    status: $s('f_status'),
     hiringManager: $('#f_manager').value.trim(),
     notes: $('#f_notes').value.trim(),
   };
   if((data.status === 'filled' || data.status === 'closed') && !data.closedDate){
     data.closedDate = new Date().toISOString().slice(0,10);
   }
-  if(isNew) DB.jobs.push(data);
-  else{ const i = DB.jobs.findIndex(x=>x.id===id); DB.jobs[i] = data; }
+  if(isNew) DB.jobs.push(_sanitizeForFirebase(data));
+  else{ const i = DB.jobs.findIndex(x=>x.id===id); DB.jobs[i] = _sanitizeForFirebase(data); }
   saveData(['jobs']); closeModal(); toast(isNew?'Đã mở vị trí':(_lang==="en"?"Updated":"Đã cập nhật")); render();
 }
 
@@ -13827,12 +13841,12 @@ function saveCourse(id, isNew){
 
   const data = {
     id, name,
-    category: $('#f_cat').value,
-    status: $('#f_status').value,
-    format: $('#f_format').value,
-    hours: parseInt($('#f_hours').value)||0,
-    attendees: parseInt($('#f_attendees').value)||0,
-    cost: parseInt($('#f_cost').value)||0,
+    category: $s('f_cat'),
+    status: $s('f_status'),
+    format: $s('f_format'),
+    hours: $si('f_hours'),
+    attendees: $si('f_attendees'),
+    cost: $si('f_cost'),
     startDate: startDate,
     endDate: dispToIso($('#f_end')?.value||''),
     trainer: $('#f_trainer').value.trim(),
@@ -13855,8 +13869,8 @@ function saveCourse(id, isNew){
     return;
   }
 
-  if(isNew) DB.courses.push(data);
-  else{ const i = DB.courses.findIndex(x=>x.id===id); DB.courses[i] = data; }
+  if(isNew) DB.courses.push(_sanitizeForFirebase(data));
+  else{ const i = DB.courses.findIndex(x=>x.id===id); DB.courses[i] = _sanitizeForFirebase(data); }
   saveData(['courses']); closeModal(); toast(isNew?'Đã thêm khoá học':(_lang==="en"?"Updated":"Đã cập nhật")); render();
 }
 
@@ -14452,7 +14466,7 @@ function saveReview(id, isNew){
   const reviewerVal = $('#f_reviewer').value.trim();
   const reviewerEmp = reviewerVal ? (DB.employees||[]).find(e=>e.id===reviewerVal) : null;
   const data = {
-    id, empId:$('#f_emp').value, period:dispToIso($('#f_period')?.value||'').trim(),
+    id, empId:$s('f_emp'), period:dispToIso($('#f_period')?.value||'').trim(),
     reviewType:$('#f_reviewType')?.value||'',
     score: parseFloat($('#f_score').value)||0,
     reviewer: reviewerEmp ? reviewerEmp.name : reviewerVal,
@@ -14460,7 +14474,7 @@ function saveReview(id, isNew){
   };
   if(!data.empId || !data.period){ toast((_lang==="en"?"Please fill in all required fields":"Vui lòng nhập đủ thông tin"),'error'); return; }
   if(isNew) (DB.kpiReviews||[]).push(data);
-  else{ const i = (DB.kpiReviews||[]).findIndex(x=>x.id===id); if(i>=0) DB.kpiReviews[i] = data; }
+  else{ const i = (DB.kpiReviews||[]).findIndex(x=>x.id===id); if(i>=0) DB.kpiReviews[i] = _sanitizeForFirebase(data); }
   syncEmployeeKPI(data.empId);
   saveEmpProfile(data.empId);
   saveData(['kpiReviews']); closeModal(); toast(isNew?'Đã tạo đánh giá':(_lang==="en"?"Updated":"Đã cập nhật")); render();
@@ -14813,8 +14827,8 @@ function savePromotion(id, isNew){
     id, empId,
     date: dispToIso($('#pr_date')?.value||''),
     effectiveDate: dispToIso($('#pr_effDate')?.value||''),
-    type: $('#pr_type').value,
-    status: $('#pr_status').value,
+    type: $s('pr_type'),
+    status: $s('pr_status'),
     oldRole:   $('#pr_oldRole')?.value.trim()   || '',
     oldRoleVN: $('#pr_oldRoleVN')?.value.trim() || '',
     newRole:   $('#pr_newRole')?.value.trim()   || '',
@@ -14823,10 +14837,10 @@ function savePromotion(id, isNew){
     newLevel: $('#pr_newLevel')?.value || '',
     oldDeptId: empById($('#pr_emp').value)?.deptId || '',
     newDeptId: $('#pr_newDeptId')?.value || '',
-    oldSalary: parseInt(($('#pr_oldSalary')?.value||'').replace(/[^0-9]/g,'')) || 0,
-    oldBonus:  parseInt(($('#pr_oldBonus')?.value||'').replace(/[^0-9]/g,''))  || 0,
-    newSalary: parseInt($('#pr_newSalary').value) || 0,
-    newBonus:  parseInt($('#pr_newBonus').value)  || 0,
+    oldSalary: parseInt(($('#pr_oldSalary')?.value||'').replace(/[^0-9]/g,''))||0,
+    oldBonus: parseInt(($('#pr_oldBonus')?.value||'').replace(/[^0-9]/g,''))||0,
+    newSalary: $si('pr_newSalary'),
+    newBonus: $si('pr_newBonus'),
     proposedBy: $('#pr_proposedBy').value.trim(),
     hrBy:       $('#pr_hrBy')?.value.trim() || '',
     approvedBy: $('#pr_approvedBy').value.trim(),
@@ -14840,10 +14854,10 @@ function savePromotion(id, isNew){
     applyPromotionToEmployee(data);
   }
 
-  if(isNew) DB.promotions.push(data);
+  if(isNew) DB.promotions.push(_sanitizeForFirebase(data));
   else{
     const i = (DB.promotions||[]).findIndex(x => x.id === id);
-    DB.promotions[i] = data;
+    DB.promotions[i] = _sanitizeForFirebase(data);
   }
   saveEmpProfile(empId);
   saveData(['promotions']);
@@ -15835,6 +15849,61 @@ function editManualBlacklist(empId){
   openManualBlacklistForm(item, null);
 }
 
+
+// ── Blacklist employee search functions (global) ──
+window._blEmpAll = [];
+window._blEmpFilter = function(q){
+  q = (q||'').toLowerCase();
+  const list = (window._blEmpAll||[]).filter(e=>
+    e.name.toLowerCase().includes(q) ||
+    e.code.toLowerCase().includes(q) ||
+    e.dept.toLowerCase().includes(q) ||
+    e.role.toLowerCase().includes(q)
+  );
+  window._blEmpRenderList(list);
+};
+window._blEmpShowList = function(){
+  const q = document.getElementById('mbl_emp_search')?.value||'';
+  window._blEmpFilter(q);
+  const l = document.getElementById('mbl_emp_list');
+  if(l) l.style.display='block';
+};
+window._blEmpHideList = function(){
+  const l = document.getElementById('mbl_emp_list');
+  if(l) l.style.display='none';
+};
+window._blEmpRenderList = function(list){
+  const el = document.getElementById('mbl_emp_list');
+  if(!el) return;
+  if(!list.length){
+    el.innerHTML='<div style="padding:12px 14px;color:var(--ink-muted);font-size:13px">Không tìm thấy</div>';
+    el.style.display='block'; return;
+  }
+  el.innerHTML = list.slice(0,50).map(e=>{
+    const name = escapeHtml(e.name||'');
+    const code = escapeHtml(e.code||'');
+    const dept = escapeHtml(e.dept||'');
+    const id   = e.id;
+    return '<div onclick="_blEmpSelect(\'' + id + '\',\'' + name.replace(/'/g,"\\'") + '\',\'' + code + '\',\'' + dept.replace(/'/g,"\\'") + '\')"'
+      + ' style="padding:9px 12px;cursor:pointer;display:flex;align-items:center;gap:10px;border-bottom:1px solid var(--border)"'
+      + ' onmouseover="this.style.background=\'var(--bg-card-hover)\'" onmouseout="this.style.background=\'\'">'
+      + '<div style="flex:1;min-width:0">'
+      + '<div style="font-size:13px;font-weight:600">' + name + (e.exit?' <span style="color:var(--danger);font-size:10px">⛔</span>':'') + '</div>'
+      + '<div style="font-size:11px;color:var(--ink-muted)">' + code + ' · ' + dept + '</div>'
+      + '</div></div>';
+  }).join('');
+  el.style.display='block';
+};
+window._blEmpSelect = function(id, name, code, dept){
+  const hidEl = document.getElementById('mbl_emp');
+  const srEl  = document.getElementById('mbl_emp_search');
+  const lstEl = document.getElementById('mbl_emp_list');
+  if(hidEl) hidEl.value = id;
+  if(srEl)  srEl.value  = code + ' — ' + name + ' (' + dept + ')';
+  if(lstEl) lstEl.style.display = 'none';
+  if(typeof updateBlacklistEmpInfo === 'function') updateBlacklistEmpInfo();
+};
+
 function openManualBlacklistForm(existing, candidates){
   const isNew = !existing;
   const today = new Date().toISOString().slice(0,10);
@@ -15863,6 +15932,14 @@ function openManualBlacklistForm(existing, candidates){
   const COMMON_REASONS = getBlacklistReasons();
   const selectedSet = new Set(data.reasons);
 
+  // Set global data for searchable employee picker
+  if(isNew && candidates){
+    window._blEmpAll = candidates.map(e=>({
+      id:e.id, code:e.code||'', name:e.name||'',
+      dept:deptName(e.deptId), role:e.role||'',
+      exit:e.status==='exit'
+    }));
+  }
   openModalWide(`
     <div class="modal-head">
       <div class="modal-title">${isNew?'📌 Thêm NV vào':'✏️ Sửa lý do'} <em>Blacklist</em></div>
@@ -15876,14 +15953,19 @@ function openManualBlacklistForm(existing, candidates){
     <div class="form-grid">
       ${isNew ? `
         <div class="field full"><label>Nhân viên *</label>
-          <select id="mbl_emp" onchange="updateBlacklistEmpInfo()">
-            ${candidates.map(e=>{
-              const isExit = e.status === 'exit';
-              return `<option value="${e.id}">${escapeHtml(e.code)} — ${escapeHtml(e.name)} (${deptName(e.deptId)})${isExit?' · ⛔ Đã nghỉ':''}</option>`;
-            }).join('')}
-          </select>
+          <div style="position:relative">
+            <input type="text" id="mbl_emp_search" placeholder="🔍 Tìm tên, mã NV, phòng ban..."
+              autocomplete="off"
+              style="width:100%;padding:9px 12px;background:var(--bg-card);border:1px solid var(--border);border-radius:7px;color:var(--ink);font-family:inherit;font-size:13px"
+              oninput="_blEmpFilter(this.value)"
+              onfocus="_blEmpShowList()"
+              onblur="setTimeout(_blEmpHideList,200)">
+            <div id="mbl_emp_list" style="display:none;position:absolute;top:100%;left:0;right:0;z-index:999;background:var(--bg-card);border:1px solid var(--border);border-radius:7px;max-height:240px;overflow-y:auto;margin-top:3px;box-shadow:0 8px 24px rgba(0,0,0,.4)"></div>
+          </div>
+          <input type="hidden" id="mbl_emp">
           <div id="mbl_emp_info" style="margin-top:6px;font-size:11.5px;color:var(--ink-muted)"></div>
         </div>
+                <div id="_blEmpData" style="display:none" data-init="1"></div>
       ` : `
         <div class="field full">
           <label>Nhân viên</label>
@@ -16234,7 +16316,7 @@ function saveBlacklistEntry(isNew){
     reason: reasonSummary, // backward compat
     addedDate: getDateIso('mbl_addedDate') || new Date().toISOString().slice(0,10),
     addedBy: document.getElementById('mbl_addedBy').value.trim(),
-    exitDate: getDateIso('mbl_exitDate'),
+    exitDate: $sd('mbl_exitDate'),
     rehireEligible: document.getElementById('mbl_rehireEligible').checked,
   };
 
@@ -17032,8 +17114,8 @@ function saveSettings(){
   DB.company.name = $('#s_name').value.trim();
   DB.company.taxId = $('#s_taxId').value.trim();
   DB.company.address = $('#s_address').value.trim();
-  DB.company.annualLeaveDays = parseInt($('#s_leaveDays').value)||12;
-  DB.company.probationMonths = parseInt($('#s_probation').value)||2;
+  DB.company.annualLeaveDays = $si('s_leaveDays')||12;
+  DB.company.probationMonths = $si('s_probation')||2;
   DB.company.workHours = parseFloat($('#s_workHours').value)||8;
   saveData(); toast('Đã lưu cấu hình');
 }
@@ -18410,8 +18492,8 @@ function saveCasual(id, isNew){
   if(!deptId){toast('Chọn phòng ban','error');return;}
   const data={
     id: isNew?uid():id,
-    month: parseInt($('#c_month').value)||1,
-    year:  parseInt($('#c_year').value)||new Date().getFullYear(),
+    month: $si('c_month')||1,
+    year: $si('c_year')||new Date().getFullYear(),
     deptId,
     desc:  $('#c_desc').value.trim(),
     qty:   parseFloat($('#c_qty').value)||0,
@@ -19059,7 +19141,7 @@ function saveSchedule(id, isNew){
     notes:   $('#sc_notes')?.value.trim()||'',
   };
   if(!DB.traineeSchedules) DB.traineeSchedules=[];
-  if(isNew) DB.traineeSchedules.push(data);
+  if(isNew) DB.traineeSchedules.push(_sanitizeForFirebase(data));
   else { const i=DB.traineeSchedules.findIndex(x=>x.id===id); if(i>=0) DB.traineeSchedules[i]=data; }
   saveData(['traineeSchedules']); closeModal();
   toast(isNew?'Đã thêm lịch trường':(_lang==="en"?"Updated":"Đã cập nhật"));
@@ -19206,10 +19288,10 @@ function saveTrainee(id, isNew){
     name, school, deptId, startDate,
     code:     $('#tr_code').value.trim(),
     dob:      dispToIso($('#tr_dob')?.value||''),
-    gender:   $('#tr_gender').value,
+    gender: $s('tr_gender'),
     phone:    $('#tr_phone').value.trim(),
     endDate:  dispToIso($('#tr_end')?.value||''),
-    qty:      parseInt($('#tr_qty').value)||1,
+    qty: $si('tr_qty')||1,
     cccd:     $('#tr_cccd').value.trim(),
     cccdDate: dispToIso($('#tr_cccdDate')?.value||''),
     cccdPlace:$('#tr_cccdPlace').value.trim(),
@@ -19220,7 +19302,7 @@ function saveTrainee(id, isNew){
     notes:    $('#tr_notes').value.trim(),
   };
   if(!DB.trainees) DB.trainees = [];
-  if(isNew) DB.trainees.push(data);
+  if(isNew) DB.trainees.push(_sanitizeForFirebase(data));
   else { const i=DB.trainees.findIndex(x=>x.id===id); if(i>=0) DB.trainees[i]=data; }
   saveData(['trainees']); closeModal();
   toast(isNew?'Đã thêm thực tập sinh':(_lang==="en"?"Updated":"Đã cập nhật"));
