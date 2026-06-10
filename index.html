@@ -1159,8 +1159,17 @@ function saveData(changedKeys=null){
       if(!seen.has(canonical)){ seen.add(canonical); _pushDynamicKey(canonical, meta); }
     });
 
-    const needEmpSave = !keys || keys.some(k=>['employees','customData'].includes(k));
-    if(needEmpSave){ (DB.employees||[]).forEach(e=>saveEmpProfile(e.id)); }
+    // Chỉ save employees khi có key employees/customData VÀ biết empId cụ thể
+    // Tránh bulk-save 153 NV mỗi lần saveData()
+    const needEmpSave = keys && keys.some(k=>['employees','customData'].includes(k));
+    const specificEmpIds = keys ? keys.filter(k=>k.startsWith('emp_')).map(k=>k.slice(4)) : [];
+    if(specificEmpIds.length){
+      specificEmpIds.forEach(id=>saveEmpProfile(id));
+    } else if(needEmpSave && keys && keys.includes('employees')){
+      // Chỉ save khi có key 'employees' explicit — nhưng batch tối đa 10 NV gần nhất
+      const recent = (DB.employees||[]).filter(e=>e._dirty).slice(0,10);
+      recent.forEach(e=>{ saveEmpProfile(e.id); delete e._dirty; });
+    }
   }
   return true;
 }
@@ -4237,7 +4246,7 @@ function saveReward(id, isNew){
   if(!DB.rewardRecords) DB.rewardRecords = [];
   if(isNew) DB.rewardRecords.push(data);
   else{ const i = (DB.rewardRecords||[]).findIndex(x=>x.id===id); DB.rewardRecords[i] = data; }
-  saveData(['rewardRecords','employees']); closeModal(); toast(isNew?'Đã ghi nhận khen thưởng':(_lang==="en"?"Updated":"Đã cập nhật")); render();
+  saveData(['rewardRecords']); closeModal(); toast(isNew?'Đã ghi nhận khen thưởng':(_lang==="en"?"Updated":"Đã cập nhật")); render();
 }
 
 function deleteReward(id, fromModal=false){
@@ -4422,7 +4431,7 @@ function saveDiscipline(id, isNew){
   if(!DB.disciplineRecords) DB.disciplineRecords = [];
   if(isNew) DB.disciplineRecords.push(data);
   else{ const i = (DB.disciplineRecords||[]).findIndex(x=>x.id===id); DB.disciplineRecords[i] = data; }
-  saveData(['disciplineRecords','employees']); closeModal(); toast(isNew?'Đã ghi nhận kỷ luật':(_lang==="en"?"Updated":"Đã cập nhật")); render();
+  saveData(['disciplineRecords']); closeModal(); toast(isNew?'Đã ghi nhận kỷ luật':(_lang==="en"?"Updated":"Đã cập nhật")); render();
 }
 
 function deleteDiscipline(id, fromModal=false){
@@ -6302,7 +6311,8 @@ function confirmImportEmployees(){
   });
 
   window._importRows = null;
-  saveData(["employees","customData","contracts"]);
+  // saveEmpProfile called per-employee above in loop
+  saveData(["contracts"]);
   if(window._pendingRender) delete window._pendingRender[currentPage];
   closeModal();
   toast('Nhập thành công: +'+added+' mới, ↻'+updated+' cập nhật');
@@ -10413,6 +10423,17 @@ function getPeriodBounds(periodKey){
     const prevTo   = new Date(y-1, 11, 31); prevTo.setHours(23,59,59,999);
     return {from, to, prevFrom, prevTo, label:`Năm ${y}`};
   }
+  if(periodKey && periodKey.startsWith('month_')){
+    const parts = periodKey.split('_'); // month_M_YYYY
+    const m = parseInt(parts[1])-1; // 0-indexed
+    const y = parseInt(parts[2]);
+    from = new Date(y, m, 1); from.setHours(0,0,0,0);
+    to   = new Date(y, m+1, 0); to.setHours(23,59,59,999);
+    const prevM = m===0?11:m-1, prevY = m===0?y-1:y;
+    const prevFrom = new Date(prevY, prevM, 1);
+    const prevTo   = new Date(prevY, prevM+1, 0); prevTo.setHours(23,59,59,999);
+    return {from, to, prevFrom, prevTo, label:`Tháng ${m+1}/${y}`};
+  }
   if(periodKey === 'this_week'){
     const day = now.getDay() || 7;
     from = new Date(now); from.setDate(now.getDate() - (day - 1)); from.setHours(0,0,0,0);
@@ -11531,7 +11552,8 @@ function resignAction(rid, action){
         DB.customData[r.empId].exitReason=r.reason||'';
         DB.resignations[idx].status='confirmed';
         DB.resignations[idx].confirmedAt=new Date().toISOString();
-        saveData(['resignations','employees','customData']);
+        saveEmpProfile(r.empId);
+        saveData(['resignations']);
         render();
         toast(`✅ Đã xác nhận nghỉ việc: ${empById(r.empId)?.name||''}`,'success');
       }
@@ -14119,6 +14141,72 @@ function renderPerformance(main){
       `}
     </div>
 
+    ${(()=>{
+      // Top NV thăng chức nhiều nhất (đã completed/approved)
+      const donePromos = allPromotions.filter(p=>p.status==='completed'||p.status==='approved');
+      if(!donePromos.length) return '';
+      const countMap = {};
+      donePromos.forEach(p=>{ countMap[p.empId]=(countMap[p.empId]||0)+1; });
+      const topList = Object.entries(countMap)
+        .sort((a,b)=>b[1]-a[1]).slice(0,5)
+        .map(([empId,count])=>({emp:empById(empId),count}))
+        .filter(x=>x.emp);
+      if(!topList.length) return '';
+      return `
+        <div class="row row-2" style="margin-top:16px">
+          <div class="card">
+            <div class="card-head"><div>
+              <div class="card-title">⭐ Top NV <em>thăng chức nhiều nhất</em></div>
+              <div class="card-sub">Tính trên tất cả các năm · đã duyệt/hoàn thành</div>
+            </div></div>
+            <div style="display:flex;flex-direction:column;gap:8px;padding:4px 0">
+              ${topList.map((x,i)=>{
+                const medal = i===0?'🥇':i===1?'🥈':i===2?'🥉':'';
+                const barW = Math.round(x.count/topList[0].count*100);
+                return `<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;border-radius:6px;background:var(--bg-elev)">
+                  <div style="font-size:18px;width:28px;text-align:center">${medal||('#'+(i+1))}</div>
+                  ${avatarHTML(x.emp,36)}
+                  <div style="flex:1;min-width:0">
+                    <div style="font-size:12.5px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(x.emp.name)}</div>
+                    <div style="font-size:11px;color:var(--ink-muted)">${deptName(x.emp.deptId)}</div>
+                    <div style="margin-top:4px;height:4px;border-radius:2px;background:var(--border);overflow:hidden">
+                      <div style="height:100%;width:${barW}%;background:var(--accent);border-radius:2px;transition:width .4s"></div>
+                    </div>
+                  </div>
+                  <div style="font-size:20px;font-weight:700;color:var(--accent);font-family:'JetBrains Mono',monospace;min-width:28px;text-align:right">${x.count}</div>
+                  <div style="font-size:11px;color:var(--ink-muted)">lần</div>
+                </div>`;
+              }).join('')}
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-head"><div>
+              <div class="card-title">📊 Thăng chức <em>theo năm</em></div>
+              <div class="card-sub">Số lượt đã duyệt/hoàn thành theo năm</div>
+            </div></div>
+            <div style="display:flex;flex-direction:column;gap:6px;padding:4px 0">
+              ${(()=>{
+                const byYear = {};
+                donePromos.forEach(p=>{
+                  const y = p.date ? new Date(p.date).getFullYear() : 'N/A';
+                  byYear[y] = (byYear[y]||0)+1;
+                });
+                const years = Object.entries(byYear).sort((a,b)=>b[0]-a[0]);
+                const maxVal = Math.max(...years.map(([,v])=>v));
+                return years.map(([yr,cnt])=>`
+                  <div style="display:flex;align-items:center;gap:10px;padding:6px 12px">
+                    <div style="font-size:12px;font-weight:600;color:var(--ink-muted);min-width:40px">${yr}</div>
+                    <div style="flex:1;height:6px;border-radius:3px;background:var(--border);overflow:hidden">
+                      <div style="height:100%;width:${Math.round(cnt/maxVal*100)}%;background:var(--accent);border-radius:3px"></div>
+                    </div>
+                    <div style="font-size:13px;font-weight:700;color:var(--accent);min-width:24px;text-align:right">${cnt}</div>
+                  </div>`).join('');
+              })()}
+            </div>
+          </div>
+        </div>`;
+    })()}
+
     <div class="card" style="margin-top:16px">
       <div class="card-head"><div><div class="card-title">Lịch sử <em>đánh giá</em></div><div class="card-sub">${(DB.kpiReviews||[]).length} bản ghi</div></div></div>
       ${(DB.kpiReviews||[]).length===0 ? `<div class="empty-state"><h3>Chưa có đánh giá nào</h3><button class="btn btn-primary" onclick="editReview()">${ICONS.plus} Tạo đánh giá</button></div>` : `
@@ -14220,7 +14308,8 @@ function saveReview(id, isNew){
   if(isNew) (DB.kpiReviews||[]).push(data);
   else{ const i = (DB.kpiReviews||[]).findIndex(x=>x.id===id); if(i>=0) DB.kpiReviews[i] = data; }
   syncEmployeeKPI(data.empId);
-  saveData(['kpiReviews','employees']); closeModal(); toast(isNew?'Đã tạo đánh giá':(_lang==="en"?"Updated":"Đã cập nhật")); render();
+  saveEmpProfile(data.empId);
+  saveData(['kpiReviews']); closeModal(); toast(isNew?'Đã tạo đánh giá':(_lang==="en"?"Updated":"Đã cập nhật")); render();
 }
 
 function deleteReview(id, fromModal=false){
@@ -14229,8 +14318,8 @@ function deleteReview(id, fromModal=false){
     const review = (DB.kpiReviews||[]).find(x=>x.id===id);
     const empId = review?.empId;
     DB.kpiReviews = (DB.kpiReviews||[]).filter(x=>x.id!==id);
-    if(empId) syncEmployeeKPI(empId);
-    saveData(['kpiReviews','employees']); toast((_lang==="en"?"Deleted":"Đã xoá")); render();
+    if(empId){ syncEmployeeKPI(empId); saveEmpProfile(empId); }
+    saveData(['kpiReviews']); toast((_lang==="en"?"Deleted":"Đã xoá")); render();
   });
 }
 
@@ -14602,7 +14691,8 @@ function savePromotion(id, isNew){
     const i = (DB.promotions||[]).findIndex(x => x.id === id);
     DB.promotions[i] = data;
   }
-  saveData(['promotions','employees']);
+  saveEmpProfile(empId);
+  saveData(['promotions']);
   if(window._pendingRender) delete window._pendingRender[currentPage];
   closeModal();
   toast(isNew?'Đã tạo đề xuất':(_lang==="en"?"Updated":"Đã cập nhật"));
@@ -14616,7 +14706,8 @@ function deletePromotion(id, fromModal=false){
     const empId = promo?.empId;
     DB.promotions = (DB.promotions||[]).filter(x => x.id !== id);
     if(empId) syncEmployeeFromPromotions(empId);
-    saveData(['promotions','employees']);
+    if(empId) saveEmpProfile(empId);
+    saveData(['promotions']);
     toast((_lang==="en"?"Deleted":"Đã xoá"));
     render();
   });
@@ -14889,9 +14980,7 @@ function addAwardFromList(){
     </div>
     <div class="form-grid">
       <div class="field full"><label>Nhân viên *</label>
-        <select id="aw_emp">
-          ${DB.employees.filter(e=>e.status!=='exit').map(e=>`<option value="${e.id}">${escapeHtml(e.code)} — ${escapeHtml(e.name)} (${deptName(e.deptId)})</option>`).join('')}
-        </select>
+        ${renderEmpPickerField('aw_emp', '', 'Tìm nhân viên...')}
       </div>
     </div>
     <div class="modal-actions">
@@ -14902,6 +14991,7 @@ function addAwardFromList(){
 }
 function proceedAddAward(){
   const empId = $('#aw_emp').value;
+  if(!empId){ toast('Vui lòng chọn nhân viên','error'); return; }
   closeModal();
   editReward(null, empId);
 }
@@ -15253,9 +15343,7 @@ function addWarningFromList(){
     </div>
     <div class="form-grid">
       <div class="field full"><label>Nhân viên *</label>
-        <select id="wn_emp">
-          ${DB.employees.filter(e=>e.status!=='exit').map(e=>`<option value="${e.id}">${escapeHtml(e.code)} — ${escapeHtml(e.name)} (${deptName(e.deptId)})</option>`).join('')}
-        </select>
+        ${renderEmpPickerField('wn_emp', '', 'Tìm nhân viên...')}
       </div>
     </div>
     <div class="modal-actions">
@@ -15266,6 +15354,7 @@ function addWarningFromList(){
 }
 function proceedAddWarning(){
   const empId = $('#wn_emp').value;
+  if(!empId){ toast('Vui lòng chọn nhân viên','error'); return; }
   closeModal();
   editDiscipline(null, empId);
 }
@@ -19354,19 +19443,6 @@ fbAuth.onAuthStateChanged(async user => {
             });
             if(pmChanged) localStorage.setItem(STORE_KEY+'_photos', JSON.stringify(pm));
           }catch(_){}
-          if(window.fbDb && window.currentUser && !window._photoRepairDone){
-            window._photoRepairDone = true;
-            DB.employees.forEach(e=>{
-              if(e.photo && e.photo.startsWith('http')){
-                window.fbDb.collection(EMP_COLLECTION).doc(e.id).get().then(doc=>{
-                  if(doc.exists && !doc.data().photoUrl){
-                    console.log('[PhotoRepair] Restoring photoUrl for', e.name);
-                    saveEmpProfile(e.id);
-                  }
-                }).catch(()=>{});
-              }
-            });
-          }
           if(hasCloud){
             if(!DB.customFields) DB.customFields=[];
             if(!DB.customData) DB.customData={};
@@ -19626,6 +19702,67 @@ fbAuth.onAuthStateChanged(async user => {
             }, err=>{ console.warn('FS listener error ['+docId+']:',err.message); });
           window._hrListeners.push(unsub);
         });
+
+        // ── Listener cho dynamic sharded docs (rewards_, leaves_, kpi_, etc.) ──
+        // Dùng collectionGroup query thay vì listen từng doc
+        const DYNAMIC_PREFIXES = {
+          'rewards_':    'rewardRecords',
+          'leaves_':     'leaves',
+          'kpi_':        'kpiReviews',
+          'promos_':     'promotions',
+          'discipline_': 'disciplineRecords',
+          'casuals_':    'casuals',
+        };
+        const dynamicUnsub = window.fbDb.collection('hrdata')
+          .onSnapshot(snap=>{
+            if(!window.currentUser) return;
+            let changed = false;
+            snap.docChanges().forEach(change=>{
+              const docId = change.doc.id;
+              const prefix = Object.keys(DYNAMIC_PREFIXES).find(p=>docId.startsWith(p));
+              if(!prefix) return;
+              const key = DYNAMIC_PREFIXES[prefix];
+              const d = change.doc.data();
+              const cloudSyncBy = d._syncBy||'';
+              const cloudSyncAt = d._syncAt||0;
+              const isSelf = cloudSyncBy === window.currentUser.uid;
+              const isRecent = (Date.now()-cloudSyncAt) < 5000;
+              if(isSelf && isRecent) return; // chính mình vừa save
+              if(change.type === 'removed') return;
+              if(d[key] && Array.isArray(d[key])){
+                const shardId = d._shard; // e.g. "2026" or "2026_06"
+                const isMonthShard = String(shardId).includes('_');
+                if(isMonthShard){
+                  // casuals: sharded by YYYY_MM — filter by month
+                  DB[key] = [
+                    ...(DB[key]||[]).filter(r=>_recMonth(r)!==String(shardId)),
+                    ...d[key]
+                  ];
+                } else {
+                  // year-sharded: filter by year
+                  DB[key] = [
+                    ...(DB[key]||[]).filter(r=>_recYear(r)!==parseInt(shardId)),
+                    ...d[key]
+                  ];
+                }
+                changed = true;
+              }
+            });
+            if(!changed) return;
+            clearTimeout(window._dynamicDebounce);
+            window._dynamicDebounce = setTimeout(()=>{
+              const pages = ['awards','warnings','performance','leaves','recruitment','dashboard'];
+              const modalOpen = document.getElementById('modal')?.classList.contains('open');
+              if(modalOpen){
+                if(!window._pendingRender) window._pendingRender={};
+                pages.forEach(p=>window._pendingRender[p]=true);
+              } else if(pages.includes(currentPage)){
+                render();
+              }
+              updateBadges();
+            }, 600);
+          }, err=>{ console.warn('Dynamic listener error:', err.message); });
+        window._hrListeners.push(dynamicUnsub);
 
         const empUnsub = window.fbDb.collection(EMP_COLLECTION)
           .onSnapshot(snapshot=>{
