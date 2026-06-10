@@ -1490,7 +1490,7 @@ function loadData(){
 const FS_DOC_MAP = {
   employees:  ['departments'],
   contracts:  ['contracts'],
-  workforce:  ['trainees','traineeSchedules','svcData','courses','casualExtraYears','salaryYears','trainingExtraYears','leaveExtraYears'],
+  workforce:  ['trainees','traineeSchedules','svcData','courses','casualExtraYears','salaryYears','trainingExtraYears','leaveExtraYears','resignations'],
   jobs:       ['jobs'],
   config:     ['customFields','rewardTypes','perfReviewTypes','company',
                'dashboardConfig','brandConfig','blacklistConfig','blacklistReasons',
@@ -1824,6 +1824,7 @@ if(!Array.isArray(DB.disciplineRecords))  DB.disciplineRecords  = [];
 if(!Array.isArray(DB.salaryYears))        DB.salaryYears        = [];
 if(!Array.isArray(DB.trainingExtraYears)) DB.trainingExtraYears = [];
 if(!Array.isArray(DB.leaveExtraYears))    DB.leaveExtraYears    = [];
+if(!Array.isArray(DB.resignations))       DB.resignations       = [];
 if(!DB.leaveSheet   || Array.isArray(DB.leaveSheet))   DB.leaveSheet   = {};
 if(!DB.leaveOpening || Array.isArray(DB.leaveOpening)) DB.leaveOpening = {};
 if(!DB.leavePlan    || Array.isArray(DB.leavePlan))    DB.leavePlan    = {};
@@ -7518,6 +7519,7 @@ function setDeptDetailFilter(key, val){
 
 
 function renderDepartments(main){
+  if(!window.canDo('departments')){ main.innerHTML='<div class="topbar"><div class="topbar-left"><h1 class="page-title">Không có quyền truy cập</h1></div></div>'; return; }
   main.innerHTML = `
     <div class="topbar">
       <div class="topbar-left">
@@ -10220,31 +10222,36 @@ function renderLeavePlan(main){
     return {al: Math.round(al*100)/100, cl: Math.round(cl*100)/100};
   };
   const fnum = v => (Math.round((v||0)*100)/100) || 0;
-  const dc = (plan, real) => {
-    const d = plan - real;
-    if(d === 0) return {color:'var(--ink-muted)', text:'—'};
-    return {color: d > 0 ? 'var(--success)' : 'var(--danger)', text: (d>0?'+':'')+Math.round(d*100)/100};
-  };
-  const balRates = leaveAccrualRates();
-  // Tính tồn AL đầu tháng mi (cộng dồn toàn dept) = opening + accrual tới tháng mi - đã nghỉ trước tháng mi
-  const getALBalByDept = (deptId, mi) => {
+
+  // ── Tính tồn AL/CL cuối tháng (mi) theo leaveSheet — link từ bảng Theo dõi ──
+  // Tồn cuối tháng mi = opening + accrual(1→mi+1) - used(1→mi+1)
+  // Dùng cho cột KH: Tồn T(X-1) - KH = Dự kiến còn
+  const getBalByDept = (deptId, mi, type) => {
     const emps = activeEmps.filter(e => e.deptId === deptId);
     let bal = 0;
     emps.forEach(e => {
-      const alRate = alAccrualPerMonthForEmp(e.id, curYear);
-      const op = (DB.leaveOpening && DB.leaveOpening[e.id]) || {};
-      const alOpen = op.al || 0;
-      // Tổng accrual tới cuối tháng mi (1-indexed)
-      const accrued = alRate * (mi + 1);
-      // Tổng đã nghỉ AL từ T1 đến hết tháng mi
       const yr = (DB.leaveSheet[e.id]||{})[curYear]||{};
-      let usedSoFar = 0;
-      for(let m=0; m<=mi; m++) usedSoFar += parseFloat((yr.al?.taken||[])[m]||0);
-      bal += alOpen + accrued - usedSoFar;
+      const op = (DB.leaveOpening && DB.leaveOpening[e.id]) || {};
+      if(type === 'al'){
+        const alRate = alAccrualPerMonthForEmp(e.id, curYear);
+        const alOpen = parseFloat(op.al)||0;
+        const accrued = alRate * (mi + 1); // accrual T1→T(mi+1)
+        let used = 0;
+        for(let m=0; m<=mi; m++) used += parseFloat((yr.al?.taken||[])[m]||0);
+        bal += alOpen + accrued - used;
+      } else {
+        const rates = leaveAccrualRates();
+        const clOpen = parseFloat(op.cl)||0;
+        const accrued = rates.cl * (mi + 1);
+        let used = 0;
+        for(let m=0; m<=mi; m++) used += parseFloat((yr.cl?.taken||[])[m]||0);
+        bal += clOpen + accrued - used;
+      }
     });
-    return Math.round(bal*100)/100;
+    return Math.round(bal*10)/10;
   };
-  const inpStyle = (color) => `width:38px;padding:2px 3px;background:transparent;border:1px solid ${color};border-radius:3px;color:${color};font-family:'JetBrains Mono',monospace;font-size:11px;text-align:center`;
+
+  const inpStyle = (color) => `width:42px;padding:2px 3px;background:transparent;border:1px solid ${color};border-radius:3px;color:${color};font-family:'JetBrains Mono',monospace;font-size:11px;text-align:center`;
   const thS = `style="padding:6px 4px;text-align:center;font-size:10.5px;white-space:nowrap;border:1px solid var(--border)"`;
   const tableRows = depts.map(dept => {
     const plan = DB.leavePlan[curYear][dept.id] || {};
@@ -10256,23 +10263,39 @@ function renderLeavePlan(main){
         const real = getRealByDept(dept.id, mi);
         const realVal = real[type];
         const planVal = (plan[mi]||{})[type] || 0;
-        const delta = dc(planVal, realVal);
         const isFuture = (mi+1) > curMonth;
-        // Dòng số dư còn lại nếu nghỉ theo KH (chỉ AL, chỉ khi có nhập KH)
-        let balLine = '';
-        if(isAL && planVal > 0){
-          const balAfter = getALBalByDept(dept.id, mi) - planVal;
-          const balColor = balAfter >= 0 ? 'var(--success)' : 'var(--danger)';
-          balLine = `<span style="font-size:8.5px;color:${balColor};font-family:'JetBrains Mono',monospace;opacity:.9" title="Tồn AL sau khi nghỉ KH">→${Math.round(balAfter*10)/10}</span>`;
-        }
-        return `<td style="padding:2px 1px;text-align:center;background:${isFuture?'rgba(255,160,80,.04)':''}">
-          <div style="display:flex;flex-direction:column;align-items:center;gap:1px">
-            <span style="font-size:10px;font-weight:600;color:${color};font-family:'JetBrains Mono',monospace">${realVal||'—'}</span>
-            <input type="number" min="0" step="0.5" value="${planVal||''}" placeholder="0"
+        const isPast   = (mi+1) < curMonth;
+
+        // Tồn cuối tháng TRƯỚC (= đầu tháng này) — link từ leaveSheet
+        // mi=0 → tồn đầu T1 = leaveOpening
+        // mi>0 → tồn cuối T(mi-1) = getBalByDept(deptId, mi-1)
+        const tonDauThang = mi === 0
+          ? activeEmps.filter(e=>e.deptId===dept.id).reduce((s,e)=>{
+              const op=(DB.leaveOpening&&DB.leaveOpening[e.id])||{};
+              return s + (parseFloat(isAL?op.al:op.cl)||0);
+            }, 0)
+          : getBalByDept(dept.id, mi-1, type);
+        const tonRounded = Math.round(tonDauThang*10)/10;
+
+        // Dự kiến còn = Tồn đầu tháng - KH
+        const duKienCon = planVal > 0 ? Math.round((tonDauThang - planVal)*10)/10 : null;
+        const duKienColor = duKienCon !== null ? (duKienCon >= 0 ? 'var(--success)' : 'var(--danger)') : '';
+
+        // So sánh thực tế vs KH (cuối tháng đã qua)
+        const vsKH = (isPast && planVal > 0 && realVal > 0)
+          ? Math.round((realVal - planVal)*10)/10 : null;
+        const vsKHColor = vsKH !== null ? (vsKH <= 0 ? 'var(--success)' : 'var(--danger)') : '';
+        const vsKHText  = vsKH !== null ? (vsKH > 0 ? '+'+vsKH : String(vsKH)) : '';
+
+        return `<td style="padding:2px 1px;text-align:center;background:${isFuture?'rgba(255,160,80,.04)':isPast?'rgba(255,255,255,.015)':'rgba(255,160,80,.08)'}">
+          <div style="display:flex;flex-direction:column;align-items:center;gap:2px;padding:2px 0">
+            ${planVal > 0 || tonRounded > 0 ? `<span style="font-size:8px;color:var(--ink-muted);font-family:'JetBrains Mono',monospace" title="Tồn đầu tháng ${mi+1}">Tồn: ${tonRounded}</span>` : ''}
+            <input type="number" min="0" step="0.5" value="${planVal||''}" placeholder="KH"
               oninput="window._saveLeavePlan('${dept.id}',${mi},'${type}',this.value)"
-              style="${inpStyle(planColor)}">
-            <span style="font-size:9px;font-weight:700;color:${delta.color}">${delta.text}</span>
-            ${balLine}
+              style="${inpStyle(planColor)}" title="Kế hoạch nghỉ tháng ${mi+1}">
+            ${duKienCon !== null ? `<span style="font-size:8.5px;font-weight:700;color:${duKienColor};font-family:'JetBrains Mono',monospace" title="Dự kiến còn sau KH">→${duKienCon}</span>` : '<span style="font-size:8px;color:var(--ink-muted)">—</span>'}
+            ${realVal ? `<span style="font-size:9px;font-weight:600;color:${color};font-family:'JetBrains Mono',monospace" title="Thực tế đã nghỉ">✓${realVal}</span>` : ''}
+            ${vsKH !== null ? `<span style="font-size:8.5px;font-weight:700;color:${vsKHColor}" title="Thực tế so với KH">${vsKHText}</span>` : ''}
           </div>
         </td>`;
       }).join('');
@@ -10413,7 +10436,7 @@ function renderLeavePlan(main){
             ${!showAL?'<span style="margin-left:8px;font-size:11px;background:rgba(126,198,153,.1);color:var(--success);padding:2px 7px;border-radius:4px">AL ẩn</span>':''}
             ${!showCL?'<span style="margin-left:4px;font-size:11px;background:rgba(126,182,232,.1);color:var(--info);padding:2px 7px;border-radius:4px">CL ẩn</span>':''}
           </div>
-          <div class="card-sub">Số trên: <span style="color:var(--success)">Thực tế AL</span> / <span style="color:var(--info)">Thực tế CL</span> · Ô nhập: <span style="color:#ff9f43">Kế hoạch (điền tay)</span> · Số nhỏ: Δ KH−Thực</div>
+          <div class="card-sub">Ô nhập: <span style="color:#ff9f43">KH (kế hoạch)</span> · <span style="color:var(--ink-muted)">Tồn: số dư đầu tháng (link từ bảng Theo dõi)</span> · <span style="color:var(--success)">→ dự kiến còn</span> · <span style="color:var(--success)">✓ thực tế</span> · số cuối: thực tế vs KH</div>
         </div>
       </div>
       <div style="overflow-x:auto">
@@ -12220,8 +12243,11 @@ function renderWorkforce(main){
       <button class="rec-tab ${tab==='exit'?'active':''}" onclick="window._wfTab='exit';render()">
         🔴 Nghỉ việc <span style="background:rgba(229,115,115,.2);color:var(--danger);border-radius:10px;padding:1px 8px;font-size:11px;margin-left:4px">${exitEmps.length}</span>
       </button>
+      <button class="rec-tab ${tab==='resign'?'active':''}" onclick="window._wfTab='resign';render()">
+        📋 Đơn nghỉ việc <span style="background:rgba(255,160,80,.15);color:var(--warning);border-radius:10px;padding:1px 8px;font-size:11px;margin-left:4px">${(DB.resignations||[]).filter(r=>r.status==='pending').length}</span>
+      </button>
     </div>
-    ${tab==='new' ? _wfNewTab(newEmps,newByDept,PAL,yr,mon) : _wfExitTab(exitEmps,exitByDept,exitReasons,PAL,yr,mon)}
+    ${tab==='new' ? _wfNewTab(newEmps,newByDept,PAL,yr,mon) : tab==='resign' ? _wfResignTab() : _wfExitTab(exitEmps,exitByDept,exitReasons,PAL,yr,mon)}
   `;
 
   setTimeout(()=>{
@@ -12450,6 +12476,210 @@ function confirmAddWfYear(){
   window._wfYear=yr; window._wfMonth=0;
   closeModal(); render();
   toast(`✅ Đã thêm năm ${yr}`,'success');
+}
+
+// ══════════════════════════════════════════════════════════
+// MODULE: ĐƠN NGHỈ VIỆC (Resignation Tracker)
+// ══════════════════════════════════════════════════════════
+function calcResignEndDate(empId, submitDate){
+  const cd = (DB.customData||{})[empId]||{};
+  const ct = (cd.currentContractType||'').toLowerCase();
+  let days = 30;
+  if(ct.includes('thử việc')||ct.includes('probation')) days = 3;
+  else if(ct.includes('vô thời hạn')||ct.includes('indefinite')||ct.includes('không xác định')) days = 45;
+  const d = new Date(submitDate);
+  d.setDate(d.getDate() + days);
+  return {endDate: d.toISOString().slice(0,10), noticeDays: days};
+}
+
+function openResignModal(rid){
+  const isNew = !rid;
+  const r = isNew ? {id:uid(),empId:'',submitDate:new Date().toISOString().slice(0,10),endDate:'',noticeDays:30,reason:'',status:'pending',note:''} : (DB.resignations||[]).find(x=>x.id===rid)||{};
+  const activeEmps = DB.employees.filter(e=>getEffectiveStatus(e)!=='exit').sort((a,b)=>a.name.localeCompare(b.name,'vi'));
+  const empOpts = activeEmps.map(e=>`<option value="${e.id}" ${r.empId===e.id?'selected':''} >${escapeHtml(e.name)} — ${escapeHtml(e.code)}</option>`).join('');
+  const endInfo = r.submitDate && r.empId ? calcResignEndDate(r.empId, r.submitDate) : {endDate:r.endDate||'', noticeDays:r.noticeDays||30};
+  openModal(`${isNew?'➕ Thêm':'✏️ Sửa'} đơn nghỉ việc`,`
+    <div style="display:flex;flex-direction:column;gap:14px;min-width:420px">
+      <div>
+        <label style="font-size:12px;color:var(--ink-dim);font-weight:600">NHÂN VIÊN *</label>
+        <select id="rEmp" onchange="window._onResignEmpChange()" style="width:100%;margin-top:4px;padding:8px;background:var(--bg-input);border:1px solid var(--border);border-radius:6px;color:var(--ink)">
+          <option value="">-- Chọn nhân viên --</option>
+          ${empOpts}
+        </select>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        <div>
+          <label style="font-size:12px;color:var(--ink-dim);font-weight:600">NGÀY NỘP ĐƠN *</label>
+          <input type="date" id="rSubmit" value="${r.submitDate||''}" onchange="window._onResignEmpChange()"
+            style="width:100%;margin-top:4px;padding:8px;background:var(--bg-input);border:1px solid var(--border);border-radius:6px;color:var(--ink)">
+        </div>
+        <div>
+          <label style="font-size:12px;color:var(--ink-dim);font-weight:600">NGÀY KẾT THÚC (auto)</label>
+          <input type="date" id="rEnd" value="${endInfo.endDate||''}" readonly
+            style="width:100%;margin-top:4px;padding:8px;background:var(--bg-elev);border:1px solid var(--border);border-radius:6px;color:var(--accent);font-weight:600">
+          <div id="rNoticeBadge" style="font-size:11px;color:var(--ink-muted);margin-top:3px">${endInfo.noticeDays?`⏱ Báo trước ${endInfo.noticeDays} ngày`:''}</div>
+        </div>
+      </div>
+      <div>
+        <label style="font-size:12px;color:var(--ink-dim);font-weight:600">LÝ DO NGHỈ</label>
+        <input type="text" id="rReason" value="${escapeHtml(r.reason||'')} " placeholder="Lý do nghỉ việc..."
+          style="width:100%;margin-top:4px;padding:8px;background:var(--bg-input);border:1px solid var(--border);border-radius:6px;color:var(--ink)">
+      </div>
+      <div>
+        <label style="font-size:12px;color:var(--ink-dim);font-weight:600">GHI CHÚ</label>
+        <textarea id="rNote" rows="2" style="width:100%;margin-top:4px;padding:8px;background:var(--bg-input);border:1px solid var(--border);border-radius:6px;color:var(--ink);resize:vertical">${escapeHtml(r.note||'')}</textarea>
+      </div>
+    </div>
+  `,[
+    {label:'Huỷ', action:()=>closeModal()},
+    {label:'💾 Lưu', primary:true, action:()=>{
+      const empId=document.getElementById('rEmp').value;
+      const submitDate=document.getElementById('rSubmit').value;
+      const endDate=document.getElementById('rEnd').value;
+      const reason=document.getElementById('rReason').value.trim();
+      const note=document.getElementById('rNote').value.trim();
+      if(!empId||!submitDate){ toast('Vui lòng chọn NV và ngày nộp đơn','error'); return; }
+      const {noticeDays}=calcResignEndDate(empId,submitDate);
+      if(!DB.resignations) DB.resignations=[];
+      const idx=DB.resignations.findIndex(x=>x.id===r.id);
+      const obj={id:r.id,empId,submitDate,endDate,noticeDays,reason,note,status:r.status||'pending',createdAt:r.createdAt||new Date().toISOString()};
+      if(idx>=0) DB.resignations[idx]=obj; else DB.resignations.push(obj);
+      saveData(['resignations']);
+      closeModal(); render();
+      toast('✅ Đã lưu đơn nghỉ việc','success');
+    }}
+  ]);
+  window._onResignEmpChange=()=>{
+    const empId=document.getElementById('rEmp')?.value;
+    const submitDate=document.getElementById('rSubmit')?.value;
+    if(empId&&submitDate){
+      const {endDate,noticeDays}=calcResignEndDate(empId,submitDate);
+      const ct=((DB.customData||{})[empId]||{}).currentContractType||'';
+      document.getElementById('rEnd').value=endDate;
+      document.getElementById('rNoticeBadge').textContent=`⏱ Báo trước ${noticeDays} ngày (${ct||'HĐ lao động'})`;
+    }
+  };
+}
+
+function resignAction(rid, action){
+  if(!DB.resignations) return;
+  const idx=DB.resignations.findIndex(r=>r.id===rid);
+  if(idx<0) return;
+  const r=DB.resignations[idx];
+  if(action==='confirm'){
+    confirmDialog('✅ Xác nhận cho nghỉ việc?',
+      `<div style="font-size:13px">Nhân viên <b>${escapeHtml(empById(r.empId)?.name||r.empId)}</b> sẽ chuyển sang <b>Đã nghỉ việc</b>.<br>Ngày nghỉ: <b>${r.endDate||r.submitDate}</b></div>`,
+      ()=>{
+        const eIdx=DB.employees.findIndex(e=>e.id===r.empId);
+        if(eIdx>=0) DB.employees[eIdx].status='exit';
+        if(!DB.customData) DB.customData={};
+        if(!DB.customData[r.empId]) DB.customData[r.empId]={};
+        DB.customData[r.empId].exitDate=r.endDate||r.submitDate;
+        DB.customData[r.empId].exitReason=r.reason||'';
+        DB.resignations[idx].status='confirmed';
+        DB.resignations[idx].confirmedAt=new Date().toISOString();
+        saveData(['resignations','employees','customData']);
+        render();
+        toast(`✅ Đã xác nhận nghỉ việc: ${empById(r.empId)?.name||''}`,'success');
+      }
+    );
+  } else if(action==='cancel'){
+    confirmDialog('❌ Huỷ đơn nghỉ việc?',
+      `<div style="font-size:13px">Nhân viên <b>${escapeHtml(empById(r.empId)?.name||r.empId)}</b> sẽ không nghỉ — đơn bị huỷ.</div>`,
+      ()=>{
+        DB.resignations[idx].status='cancelled';
+        DB.resignations[idx].cancelledAt=new Date().toISOString();
+        saveData(['resignations']);
+        render();
+        toast('Đã huỷ đơn nghỉ việc','success');
+      }
+    );
+  }
+}
+
+function _wfResignTab(){
+  if(!DB.resignations) DB.resignations=[];
+  const today=new Date().toISOString().slice(0,10);
+  const all=[...DB.resignations].sort((a,b)=>b.submitDate.localeCompare(a.submitDate));
+  const pending=all.filter(r=>r.status==='pending');
+  const confirmed=all.filter(r=>r.status==='confirmed');
+  const cancelled=all.filter(r=>r.status==='cancelled');
+
+  const tableHead=`<thead><tr style="background:var(--bg-elev)">
+    <th style="padding:8px 10px;text-align:left;font-size:11px;font-weight:700;color:var(--ink-muted)">NHÂN VIÊN</th>
+    <th style="padding:8px;font-size:11px;font-weight:700;color:var(--ink-muted)">LOẠI HĐ</th>
+    <th style="padding:8px;font-size:11px;font-weight:700;color:var(--ink-muted);text-align:center">NGÀY NỘP</th>
+    <th style="padding:8px;font-size:11px;font-weight:700;color:var(--ink-muted);text-align:center">NGÀY KẾT THÚC</th>
+    <th style="padding:8px;font-size:11px;font-weight:700;color:var(--ink-muted)">LÝ DO</th>
+    <th style="padding:8px;font-size:11px;font-weight:700;color:var(--ink-muted);text-align:center">HÀNH ĐỘNG</th>
+  </tr></thead>`;
+
+  const rowHtml=(r,isPending)=>{
+    const emp=empById(r.empId);
+    const dept=DB.departments.find(d=>d.id===emp?.deptId);
+    const cd=(DB.customData||{})[r.empId]||{};
+    const ct=cd.currentContractType||'—';
+    const isOverdue=isPending&&r.endDate&&r.endDate<today;
+    const daysLeft=isPending&&r.endDate?Math.ceil((new Date(r.endDate)-new Date(today))/86400000):null;
+    return `<tr style="${isOverdue?'background:rgba(229,115,115,.06)':''} ">
+      <td style="padding:8px 10px">
+        <div style="font-weight:600;font-size:13px">${escapeHtml(emp?.name||r.empId)}</div>
+        <div style="font-size:11px;color:var(--ink-muted)">${escapeHtml(emp?.code||'')} · ${escapeHtml(dept?.name||'')} </div>
+      </td>
+      <td style="padding:8px;font-size:12px;color:var(--ink-dim)">${escapeHtml(ct)}</td>
+      <td style="padding:8px;font-size:12px;font-family:'JetBrains Mono',monospace;text-align:center">${r.submitDate||'—'}</td>
+      <td style="padding:8px;text-align:center">
+        <span style="font-size:12px;font-family:'JetBrains Mono',monospace;font-weight:600;color:${isOverdue?'var(--danger)':'var(--accent)'}">${r.endDate||'—'}</span>
+        ${r.noticeDays?`<div style="font-size:10px;color:var(--ink-muted)">⏱ ${r.noticeDays} ngày</div>`:''}
+        ${daysLeft!==null?`<div style="font-size:10px;color:${daysLeft<=3?'var(--danger)':daysLeft<=7?'var(--warning)':'var(--ink-muted)'}">${daysLeft>0?`còn ${daysLeft} ngày`:daysLeft===0?'hôm nay':'quá hạn'}</div>`:''}
+      </td>
+      <td style="padding:8px;font-size:12px;color:var(--ink-dim);max-width:160px">${escapeHtml(r.reason||'—')}</td>
+      <td style="padding:8px;text-align:center">
+        ${isPending?`
+          <div style="display:flex;gap:6px;justify-content:center;flex-wrap:wrap">
+            <button onclick="resignAction('${r.id}','confirm')" title="Xác nhận cho nghỉ việc"
+              style="padding:5px 10px;background:rgba(229,115,115,.15);border:1px solid var(--danger);border-radius:6px;color:var(--danger);font-size:12px;font-weight:700;cursor:pointer">✔ Cho nghỉ</button>
+            <button onclick="resignAction('${r.id}','cancel')" title="Huỷ đơn"
+              style="padding:5px 10px;background:rgba(255,255,255,.05);border:1px solid var(--border);border-radius:6px;color:var(--ink-dim);font-size:12px;cursor:pointer">✘ Huỷ</button>
+            <button onclick="openResignModal('${r.id}')" title="Sửa"
+              style="padding:5px 8px;background:transparent;border:1px solid var(--border);border-radius:6px;color:var(--ink-dim);font-size:12px;cursor:pointer">✏️</button>
+          </div>
+        `:`<span class="badge ${r.status==='confirmed'?'exit':'leave'}" style="font-size:11px">${r.status==='confirmed'?'✔ Đã nghỉ':'✘ Đã huỷ'}</span>`}
+      </td>
+    </tr>`;
+  };
+
+  return `<div style="display:flex;flex-direction:column;gap:20px">
+    <div style="display:flex;align-items:center;justify-content:space-between">
+      <div>
+        <div style="font-size:15px;font-weight:700">Danh sách đơn nghỉ việc</div>
+        <div style="font-size:12px;color:var(--ink-muted);margin-top:2px">${pending.length} đang chờ · ${confirmed.length} đã xác nhận · ${cancelled.length} đã huỷ</div>
+      </div>
+      <button class="btn btn-primary" onclick="openResignModal()">${ICONS.plus} Thêm đơn</button>
+    </div>
+    ${pending.length?`
+    <div class="card" style="padding:0;overflow:hidden">
+      <div style="padding:12px 16px;background:rgba(229,115,115,.08);border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px">
+        <span style="font-size:13px;font-weight:700;color:var(--danger)">🕐 Đang chờ xử lý</span>
+        <span style="background:rgba(229,115,115,.2);color:var(--danger);border-radius:10px;padding:1px 8px;font-size:11px">${pending.length}</span>
+      </div>
+      <table style="width:100%;border-collapse:collapse">${tableHead}<tbody>${pending.map(r=>rowHtml(r,true)).join('')}</tbody></table>
+    </div>`:`<div class="card" style="text-align:center;padding:32px;color:var(--ink-muted)">✅ Không có đơn nào đang chờ xử lý</div>`}
+    ${confirmed.length?`
+    <div class="card" style="padding:0;overflow:hidden">
+      <div style="padding:12px 16px;border-bottom:1px solid var(--border)">
+        <span style="font-size:13px;font-weight:700;color:var(--ink-dim)">✔ Đã xác nhận nghỉ việc (${confirmed.length})</span>
+      </div>
+      <table style="width:100%;border-collapse:collapse">${tableHead}<tbody>${confirmed.map(r=>rowHtml(r,false)).join('')}</tbody></table>
+    </div>`:''}
+    ${cancelled.length?`
+    <div class="card" style="padding:0;overflow:hidden">
+      <div style="padding:12px 16px;border-bottom:1px solid var(--border)">
+        <span style="font-size:13px;font-weight:700;color:var(--ink-muted)">✘ Đã huỷ đơn (${cancelled.length})</span>
+      </div>
+      <table style="width:100%;border-collapse:collapse">${tableHead}<tbody>${cancelled.map(r=>rowHtml(r,false)).join('')}</tbody></table>
+    </div>`:''}
+  </div>`;
 }
 
 function exportWorkforce(yr,mon){
@@ -17434,20 +17664,22 @@ window.ADMIN_EMAIL = 'buituan19694@gmail.com';
 const ADMIN_EMAIL = window.ADMIN_EMAIL;
 
 const MODULE_LIST = [
-  {key:'employees',  label:(_lang==="en"?"Employee":"Nhân viên")},
-  {key:'contracts',  label:(_lang==="en"?"Contract":"Hợp đồng")},
-  {key:'birthdays',  label:(_lang==="en"?"Birthdays":"Sinh nhật")},
-  {key:'leaves',     label:(_lang==="en"?"Leave":"Nghỉ phép")},
-  {key:'recruitment',label:(_lang==="en"?"Recruitment":"Tuyển dụng")},
-  {key:'workforce',  label:'Biến động nhân sự'},
-  {key:'casual',     label:'Lao động Casual'},
-  {key:'trainee',    label:(_lang==="en"?"Trainees":"Thực tập sinh")},
-  {key:'training',   label:(_lang==="en"?"Training":"Đào tạo")},
-  {key:'performance',label:'Đánh giá KPI'},
-  {key:'awards',     label:'Khen thưởng'},
-  {key:'warnings',   label:'Kỷ luật / Cảnh cáo'},
-  {key:'tasks',      label:'Thông báo / Hồ sơ chưa đủ'},
-  {key:'settings',   label:'Cấu hình'},
+  {key:'employees',   label:(_lang==="en"?"Employee":"Nhân viên")},
+  {key:'departments', label:(_lang==="en"?"Departments":"Phòng ban")},
+  {key:'contracts',   label:(_lang==="en"?"Contract":"Hợp đồng")},
+  {key:'birthdays',   label:(_lang==="en"?"Birthdays":"Sinh nhật")},
+  {key:'leaves',      label:(_lang==="en"?"Leave":"Nghỉ phép")},
+  {key:'recruitment', label:(_lang==="en"?"Recruitment":"Tuyển dụng")},
+  {key:'workforce',   label:'Biến động nhân sự'},
+  {key:'casual',      label:'Lao động Casual'},
+  {key:'trainee',     label:(_lang==="en"?"Trainees":"Thực tập sinh")},
+  {key:'training',    label:(_lang==="en"?"Training":"Đào tạo")},
+  {key:'performance', label:'Đánh giá KPI'},
+  {key:'awards',      label:'Khen thưởng'},
+  {key:'warnings',    label:'Kỷ luật / Cảnh cáo'},
+  {key:'tasks',       label:'Thông báo / Hồ sơ chưa đủ'},
+  {key:'settings',    label:'Cấu hình'},
+  {key:'salary',      label:'Phân tích Lương'},
 ];
 const PERM_LEVELS = ['none','view','edit','full'];
 const PERM_LABELS = {none:(_lang==="en"?"🚫 No access":"🚫 Không xem"), view:(_lang==="en"?"👁 View only":"👁 Chỉ xem"), edit:(_lang==="en"?"✏️ View & Edit":"✏️ Xem & Sửa"), full:(_lang==="en"?"⭐ Full access":"⭐ Toàn quyền")};
