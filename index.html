@@ -5154,7 +5154,7 @@ function editEmployee(id, prefill = null){
       <div class="photo-actions">
         <div style="font-size:13.5px;font-weight:500;color:var(--ink);margin-bottom:4px">Ảnh đại diện</div>
         <div style="font-size:11.5px;color:var(--ink-muted);margin-bottom:10px">JPG, PNG, WebP · tối đa 2MB · sẽ là avatar trên toàn hệ thống</div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <div id="photoActionBtns" style="display:flex;gap:8px;flex-wrap:wrap">
           <label class="btn" style="cursor:pointer">
             <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" width="14" height="14"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
             Tải ảnh lên
@@ -5162,10 +5162,11 @@ function editEmployee(id, prefill = null){
           </label>
           ${e.photo ? `<button class="btn btn-danger" onclick="removePhoto()">${ICONS.trash} Xoá ảnh</button>` : ''}
         </div>
-        <input type="hidden" id="f_photo" value="${e.photo||''}">
-        <input type="hidden" id="f_empid" value="${e.id||''}">
       </div>
     </div>
+    <!-- Hidden inputs nằm ngoài photo-actions để không bị xóa khi rebuild -->
+    <input type="hidden" id="f_photo" value="${e.photo||''}">
+    <input type="hidden" id="f_empid" value="${e.id||''}">
 
     <div class="form-group expanded" data-group="standard">
       <div class="form-group-head" onclick="toggleFormGroup('standard')">
@@ -5243,19 +5244,15 @@ function removePhoto(){
   $('#f_photo').value = '';
   $('#photoPreview').innerHTML = `<div class="photo-placeholder" style="background:var(--accent-dim)">${initials(empName)}</div>`;
 
-  // Rebuild photo-actions: show upload button + hide delete button
-  const actions = document.querySelector('.photo-actions');
-  if(actions){
-    actions.innerHTML = `
-      <div style="font-size:13.5px;font-weight:500;color:var(--ink);margin-bottom:4px">Ảnh đại diện</div>
-      <div style="font-size:11.5px;color:var(--ink-muted);margin-bottom:10px">JPG, PNG, WebP · tối đa 2MB · sẽ là avatar trên toàn hệ thống</div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap">
-        <label class="btn" style="cursor:pointer">
-          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" width="14" height="14"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
-          Tải ảnh lên
-          <input type="file" id="photoInput" accept="image/*" style="display:none" onchange="handlePhotoUpload(event)">
-        </label>
-      </div>`;
+  // Chỉ rebuild phần buttons — f_photo và f_empid nằm ngoài, không bị ảnh hưởng
+  const btnWrap = document.getElementById('photoActionBtns');
+  if(btnWrap){
+    btnWrap.innerHTML = `
+      <label class="btn" style="cursor:pointer">
+        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" width="14" height="14"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
+        Tải ảnh lên
+        <input type="file" id="photoInput" accept="image/*" style="display:none" onchange="handlePhotoUpload(event)">
+      </label>`;
   }
 }
 
@@ -5372,16 +5369,13 @@ function openPhotoCropper(dataUrl){
                 // Reset file input để có thể upload lại
                 const pi=document.getElementById('photoInput'); if(pi) pi.value='';
                 // Hiện nút Xoá ảnh nếu chưa có
-                const actions=document.querySelector('.photo-actions');
-                if(actions && !actions.querySelector('.btn-danger')){
-                  const uploadBtn=actions.querySelector('label.btn');
-                  if(uploadBtn){
-                    const delBtn=document.createElement('button');
-                    delBtn.className='btn btn-danger';
-                    delBtn.onclick=removePhoto;
-                    delBtn.innerHTML=(typeof ICONS!=='undefined'?ICONS.trash:'🗑')+' Xoá ảnh';
-                    uploadBtn.parentNode.insertBefore(delBtn, uploadBtn.nextSibling);
-                  }
+                const btnWrap=document.getElementById('photoActionBtns');
+                if(btnWrap && !btnWrap.querySelector('.btn-danger')){
+                  const delBtn=document.createElement('button');
+                  delBtn.className='btn btn-danger';
+                  delBtn.onclick=removePhoto;
+                  delBtn.innerHTML=(typeof ICONS!=='undefined'?ICONS.trash:'🗑')+' Xoá ảnh';
+                  btnWrap.appendChild(delBtn);
                 }
                 toast('✅ Ảnh đã upload!','success');
                 const empId = ($('#f_empid')?.value) || currentEmpId || '';
