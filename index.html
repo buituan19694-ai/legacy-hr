@@ -10203,8 +10203,8 @@ function renderLeavePlan(main){
   if(!DB.leaveSheet) DB.leaveSheet={};
   if(!DB.leavePlan)  DB.leavePlan={};
   if(!DB.leavePlan[curYear]) DB.leavePlan[curYear]={};
-  if(!window._lpShowAL) window._lpShowAL = true;
-  if(!window._lpShowCL) window._lpShowCL = true;
+  if(window._lpShowAL === undefined) window._lpShowAL = true;
+  if(window._lpShowCL === undefined) window._lpShowCL = true;
   const showAL = window._lpShowAL;
   const showCL = window._lpShowCL;
 
