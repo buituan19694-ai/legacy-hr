@@ -10218,7 +10218,8 @@ function renderLeavePlan(main){
   })();
   if(!window._leaveBal) window._leaveBal={};
   if(!window._leaveBal.year) window._leaveBal.year = today.getFullYear();
-
+  if(!(window._lpSelMonths instanceof Set) || window._lpSelMonths.size===0)
+    window._lpSelMonths = new Set([curMonth]);
   const selMonths = window._lpSelMonths;
   const activeEmps = DB.employees.filter(e=>getEffectiveStatus(e)!=='exit');
   const depts = DB.departments;
@@ -11223,7 +11224,7 @@ function editLeaveOpening(){
   if(!DB.leaveOpening) DB.leaveOpening = {};
   const emps = DB.employees.filter(e=> getEffectiveStatus(e)!=='exit');
   const rows = emps.map(e=>{
-    const o = DB.leaveOpening[e.id] || {al:0, cl:0};
+    const o = (DB.leaveOpening && DB.leaveOpening[e.id]) || {al:0, cl:0};
     const key = (e.name+' '+e.code).toLowerCase();
     return `<div data-oprow data-name="${escapeHtml(key)}" style="display:grid;grid-template-columns:1fr 90px 90px;gap:10px;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
       <div style="font-size:13px"><div style="font-weight:500">${escapeHtml(e.name)}</div><div style="color:var(--ink-muted);font-size:11px">${escapeHtml(e.code)} · ${deptName(e.deptId)}</div></div>
