@@ -5057,94 +5057,107 @@ function saveFilterPrefs(){
 function setEmpFilter(key, val){
   empFilter[key]=val;
   empPage=1;
-  const active = document.activeElement;
-  const activeId = active?.id;
-  const selStart = active?.selectionStart;
-  const selEnd   = active?.selectionEnd;
-  render();
-  if(activeId){
-    const el = document.getElementById(activeId);
-    if(el && el.tagName==='INPUT'){ el.focus(); try{ el.setSelectionRange(selStart, selEnd); }catch(e){} }
+  // Text input filters: partial render để không mất focus
+  const textInputFilters = ['colCode','colContact','search'];
+  if(textInputFilters.includes(key)){
+    const saved = _saveFocus();
+    _empPartialRender();
+    _restoreFocus(saved);
+  } else {
+    render();
   }
 }
 let _empSearchTimer = null;
+
+// Lưu focus để restore sau render
+function _saveFocus(){
+  const el = document.activeElement;
+  if(!el || !el.id) return null;
+  return {id: el.id, start: el.selectionStart??el.value?.length??0, end: el.selectionEnd??el.value?.length??0, val: el.value};
+}
+function _restoreFocus(saved){
+  if(!saved) return;
+  requestAnimationFrame(()=>{
+    const el = document.getElementById(saved.id);
+    if(!el || el.tagName!=='INPUT') return;
+    el.focus();
+    if(el.value !== saved.val) el.value = saved.val;
+    try{ el.setSelectionRange(saved.start, saved.end); }catch(_){}
+  });
+}
+
 function debounceEmpSearch(val){
   empFilter.search = val;
   clearTimeout(_empSearchTimer);
-  // Lưu cursor position ngay lập tức trước khi mất
-  const activeId = document.activeElement?.id;
-  const selStart = document.activeElement?.selectionStart ?? val.length;
-  const selEnd   = document.activeElement?.selectionEnd   ?? val.length;
+  const saved = _saveFocus();
   _empSearchTimer = setTimeout(()=>{
     empPage=1;
-    // Chỉ re-render phần list/table, không re-render cả trang nếu đang có focus
-    const focusedEl = document.getElementById(activeId);
-    if(activeId && focusedEl && (activeId==='empSearchInput'||activeId==='empColSearch')){
-      // Render chỉ phần tbody + pager
-      _renderEmpTableOnly();
-    } else {
-      render();
-    }
-    // Luôn restore focus và cursor
-    requestAnimationFrame(()=>{
-      const el = document.getElementById(activeId);
-      if(el && el.tagName==='INPUT'){
-        el.focus();
-        el.value = val; // đảm bảo value đúng
-        try{ el.setSelectionRange(selStart, selEnd); }catch(e){}
-      }
-    });
-  }, 180);
+    _empPartialRender();
+    _restoreFocus(saved);
+  }, 160);
 }
 
-function _renderEmpTableOnly(){
-  const filtered = applyEmpFilter();
-  const perPage = empPerPage === 'all' ? filtered.length || 1 : empPerPage;
-  const totalPages = Math.max(1, Math.ceil(filtered.length / perPage));
-  if(empPage > totalPages) empPage = 1;
-  const start = (empPage-1) * perPage;
-  const pageItems = empPerPage === 'all' ? filtered : filtered.slice(start, start + perPage);
-
-  // Cập nhật tbody nếu tồn tại
+// Partial render: chỉ update tbody — dùng đúng logic gốc từ renderEmployees
+function _empPartialRender(){
   const tbody = document.getElementById('empTableBody');
   if(!tbody){ render(); return; }
 
   const EC = window._empCols || {};
-  // Build rows (copy logic từ renderEmployees)
+  const filtered = applyEmpFilter();
+  const perPage = empPerPage === 'all' ? filtered.length || 1 : empPerPage;
+  const totalPages = Math.max(1, Math.ceil(filtered.length / perPage));
+  if(empPage > totalPages) empPage = 1;
+  const start = (empPage-1)*perPage;
+  const pageItems = empPerPage==='all' ? filtered : filtered.slice(start, start+perPage);
+  const customCols = (DB.customFields||[]).filter(cf=>cf.showInTable);
+
   tbody.innerHTML = pageItems.length===0
     ? `<tr><td colspan="20" style="text-align:center;padding:40px;color:var(--ink-muted)">Không tìm thấy nhân viên nào</td></tr>`
     : pageItems.map(e=>{
         const cd = DB.customData[e.id]||{};
-        const dept = DB.departments.find(d=>d.id===e.deptId);
+        const bl = getBlacklistInfo(e.id);
         const eff = getEffectiveStatus(e);
-        const statusColors = {active:'var(--success)',probation:'var(--warning)',exit:'var(--danger)',leave:'var(--info)'};
-        const sc = statusColors[eff]||'var(--ink-muted)';
-        return `<tr style="cursor:pointer" onclick="viewEmployee('${e.id}')">
+        const extraCells = customCols.map(cf=>{
+          let raw=cd[cf.key]||'', v;
+          if(cf.type==='date'&&raw) v=fmtDate(raw);
+          else if(cf.type==='url'&&raw) v=`<a href="${escapeHtml(raw)}" target="_blank" style="color:var(--accent)">↗</a>`;
+          else v=escapeHtml(raw);
+          return `<td style="color:var(--ink-dim);max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${v||'—'}</td>`;
+        }).join('');
+        return `<tr style="cursor:pointer${bl.blacklisted?';background:rgba(229,115,115,.07);box-shadow:inset 3px 0 0 var(--danger)':''}" onclick="viewEmployee('${e.id}')">
           <td><div class="cell-emp">${avatarHTML(e)}<div>
-            <div class="cell-emp-name">${escapeHtml(e.name||'')}</div>
-            <div class="cell-emp-meta">${escapeHtml(e.role||'')}${e.level?' · Cấp '+e.level:''}</div>
+            <div class="cell-emp-name">${escapeHtml(e.name)}${bl.blacklisted?` <span style="background:rgba(229,115,115,.15);color:var(--danger);font-size:9.5px;font-weight:700;padding:1px 6px;border-radius:10px;vertical-align:middle;margin-left:4px">🚫 BLACKLIST</span>`:''}</div>
+            <div class="cell-emp-meta">${escapeHtml(e.role||'')}</div>
           </div></div></td>
           <td class="cell-mono">${escapeHtml(e.code||'')}</td>
-          <td>${escapeHtml(dept?.name||'')}</td>
-          ${EC.gender?`<td style="font-size:12px">${e.gender==='male'?'Nam':'Nữ'}</td>`:''}
-          ${EC.dob?`<td class="cell-mono" style="font-size:12px">${fmtDate(e.dob)||'—'}</td>`:''}
-          <td><div style="font-size:12px;color:var(--ink-dim)">${escapeHtml(e.email||'')}</div><div style="font-size:11px;color:var(--ink-muted)">${escapeHtml(e.phone||'')}</div></td>
-          ${EC.phone2?`<td style="font-size:12px;color:var(--ink-dim)">${escapeHtml(cd.phone2||'')}</td>`:''}
-          ${EC.cccd?`<td class="cell-mono" style="font-size:12px">${escapeHtml(cd.cccd||'')}</td>`:''}
-          ${EC.joined?`<td class="cell-mono" style="font-size:12px">${fmtDate(e.joined)||'—'}</td>`:''}
-          ${EC.email?`<td style="font-size:12px">${escapeHtml(e.email||'')}</td>`:''}
-          <td>${fmtDate(e.joined)||'—'}</td>
-          <td><span class="badge ${eff}" style="font-size:11px">${STATUS_LABEL[eff]||eff}</span></td>
+          <td>${escapeHtml(deptName(e.deptId))}</td>
+          <td>${cd.levelNum||e.level||'—'}</td>
+          <td style="color:var(--ink-dim);font-size:12px">
+            <div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:180px">${escapeHtml(e.email)||'—'}</div>
+            <div style="color:var(--ink-muted);font-family:'JetBrains Mono',monospace;font-size:11px">${escapeHtml(e.phone)||'—'}</div>
+          </td>
+          <td style="color:var(--ink-dim)">${fmtDate(e.joined)||'—'}</td>
+          <td style="font-family:'JetBrains Mono',monospace;font-weight:600;color:${e.kpi>=90?'var(--success)':e.kpi>=75?'var(--accent)':e.kpi>0?'var(--warning)':'var(--ink-muted)'}">${e.kpi>0?e.kpi.toFixed(1):'—'}</td>
+          ${extraCells}
+          ${EC.dob?(()=>{if(!e.dob)return'<td>—</td>';const d=_parseDob(e.dob);const today=new Date();let age=today.getFullYear()-d.getFullYear();if(today.getMonth()<d.getMonth()||(today.getMonth()===d.getMonth()&&today.getDate()<d.getDate()))age--;return`<td style="font-size:12px;color:var(--ink-dim)"><div>${fmtDate(e.dob)}</div><div style="font-size:11px;color:var(--ink-muted)">${age} tuổi</div></td>`;})():''}
+          ${EC.gender?`<td style="font-size:12px">${e.gender==='male'?t('male'):e.gender==='female'?t('female'):'—'}</td>`:''}
+          ${EC.email?`<td style="font-size:12px;color:var(--ink-dim);max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(e.email)||'—'}</td>`:''}
+          ${EC.phone2?`<td style="font-size:12px;font-family:'JetBrains Mono',monospace;color:var(--ink-dim)">${escapeHtml(e.phone)||'—'}</td>`:''}
+          ${EC.cccd?`<td style="font-size:12px;font-family:'JetBrains Mono',monospace;color:var(--ink-dim)">${escapeHtml(cd.cccd||'—')}</td>`:''}
+          ${EC.joined?`<td style="font-size:12px;color:var(--ink-dim)">${fmtDate(e.joined)||'—'}</td>`:''}
+          ${(DB.customFields||[]).filter(cf=>!['baseSalary','bonusSalary'].includes(cf.key)&&EC['cf_'+cf.key]).map(cf=>{const raw=cd[cf.key]||'';const v=cf.type==='date'&&raw?fmtDate(raw):escapeHtml(raw);return`<td style="font-size:12px;color:var(--ink-dim);max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${v||'—'}</td>`;}).join('')}
+          <td><span class="badge ${eff}">${STATUS_LABEL[eff]||eff}</span></td>
           <td onclick="event.stopPropagation()"><div class="row-actions">
+            <button class="btn btn-icon" onclick="viewEmployee('${e.id}')" title="Xem">${ICONS.eye}</button>
             <button class="btn btn-icon" onclick="editEmployee('${e.id}')" title="Sửa">${ICONS.edit}</button>
             <button class="btn btn-icon btn-danger" onclick="deleteEmployee('${e.id}')" title="Xoá">${ICONS.trash}</button>
           </div></td>
         </tr>`;
       }).join('');
 
-  // Cập nhật sub-title count
+  // Update subtitle count
   const subEl = document.getElementById('empListSub');
-  if(subEl) subEl.textContent = `${filtered.length} nhân viên tổng cộng · ${filtered.length} kết quả lọc`;
+  if(subEl) subEl.textContent = `${DB.employees.length} nhân viên tổng cộng · ${filtered.length} kết quả lọc`;
 }
 function clearEmpDateFilter(){ empFilter.joinedFrom=''; empFilter.joinedTo=''; empFilter.joinedMonth=0; empFilter.joinedYear=0; empFilter.dobMonth=0; empFilter.dobYear=0; empPage=1; render(); }
 function setEmpPage(p){ if(p<1) return; empPage=p; render(); }
@@ -11317,7 +11330,7 @@ function renderWorkforce(main){
         {label:'NV MỚI', val:newEmps.length, color:'var(--success)', icon:'🟢', sub:'gia nhập · '+periodLabel},
         {label:'NGHỈ VIỆC', val:exitEmps.length, color:'var(--danger)', icon:'🔴', sub:'rời đi · '+periodLabel},
         {label:'TĂNG THUẦN', val:(net>=0?'+':'')+net, color:net>=0?'var(--success)':'var(--danger)', icon:net>=0?'📈':'📉', sub:'net headcount'},
-        {label:'TURNOVER', val:turnover+(turnover==='—'?'':'%'), color:'var(--accent)', icon:'🔄', sub:turnoverSub},
+        {label:'TURNOVER '+(mon>0?'T'+mon:yr), val:turnover+(turnover==='—'?'':'%'), color:'var(--accent)', icon:'🔄', sub:turnoverSub},
       ].map(k=>`
         <div class="card" style="padding:18px 20px;border-top:3px solid ${k.color}">
           <div style="font-size:10px;font-weight:700;letter-spacing:.08em;color:var(--ink-muted);margin-bottom:8px">${k.icon} ${k.label}</div>
@@ -12538,7 +12551,7 @@ function editCandidate(id, jobId){
     </div>
     <div class="form-grid">
       <div class="field"><label>Họ và tên *</label><input id="ca_name" value="${escapeHtml(a.name)}" placeholder="VD: Nguyễn Văn A"></div>
-      <div class="field"><label>Tuổi</label><input type="number" id="ca_age" value="${a.age||''}" min="16" max="80" placeholder="VD: 28"></div>
+      <div class="field"><label>Ngày sinh</label><input type="date" id="ca_dob" value="${dispToIso(a.dob||'')}" onchange="(()=>{const d=new Date(this.value);if(!isNaN(d)){const age=new Date().getFullYear()-d.getFullYear();document.getElementById('ca_age_display').textContent=age+' tuổi';}else{document.getElementById('ca_age_display').textContent='';}})()"><div id="ca_age_display" style="font-size:11px;color:var(--accent);margin-top:4px">${(()=>{if(!a.dob)return'';const d=new Date(dispToIso(a.dob));return isNaN(d)?'':(new Date().getFullYear()-d.getFullYear())+' tuổi';})()}</div></div>
       <div class="field"><label>SĐT *</label><input type="tel" id="ca_phone" value="${escapeHtml(a.phone)}" placeholder="0912345678"></div>
       <div class="field"><label>Email</label><input type="email" id="ca_email" value="${escapeHtml(a.email)}" placeholder="email@gmail.com"></div>
 
@@ -12733,39 +12746,53 @@ function saveCandidate(id, jobId, isNew){
   const applied = getDateIso('ca_applied');
   if(!applied){ toast('Vui lòng chọn ngày ứng tuyển','error'); return; }
 
+  // Helper: get field value safely, returns '' instead of undefined
+  const $v  = (id) => { const el=$('#'+id); return el ? el.value.trim() : ''; };
+  const $vi = (id) => { const el=$('#'+id); return el ? (parseInt(el.value)||0) : 0; };
+  const $vb = (id) => { const el=$('#'+id); return el ? el.checked : false; };
+  const $vd = (id) => { try{ return getDateIso(id)||''; }catch(e){ return ''; } };
+
+  // Tính tuổi từ ngày sinh
+  const dobVal = $v('ca_dob');
+  const dobYear = dobVal ? new Date(dobVal).getFullYear() : 0;
+  const ageCalc = dobYear ? (new Date().getFullYear() - dobYear) : 0;
+
   const data = {
     id, jobId: jobId,
     name, phone,
-    email: $('#ca_email').value.trim(),
-    appliedDate: getDateIso('ca_applied'),
-    status: $('#ca_status').value,
-    source: $('#ca_source').value,
-    cvLink: $('#ca_cvLink').value.trim(),
-    cvFile: $('#ca_cvFile').value,
-    age: parseInt($('#ca_age').value) || '',
-    experience: $('#ca_exp').value.trim(),
-    expectedSalary: parseInt($('#ca_salary').value) || 0,
-    rating: parseInt($('#ca_rating').value) || 0,
-    notes: $('#ca_notes').value.trim(),
-    screeningBy: $('#ca_screeningBy').value.trim(),
-    screeningDate: getDateIso('ca_screeningDate'),
-    hrInterviewBy: $('#ca_hrInterviewBy').value.trim(),
-    hrInterviewDate: getDateIso('ca_hrInterviewDate'),
-    deptInterviewBy: $('#ca_deptInterviewBy').value.trim(),
-    deptInterviewDate: getDateIso('ca_deptInterviewDate'),
-    gmInterviewRequired: $('#ca_gmInterviewRequired').checked,
-    gmInterviewBy: $('#ca_gmInterviewRequired').checked ? $('#ca_gmInterviewBy').value.trim() : '',
-    gmInterviewDate: $('#ca_gmInterviewRequired').checked ? getDateIso('ca_gmInterviewDate') : '',
-    corpInterviewRequired: $('#ca_corpInterviewRequired').checked,
-    corpInterviewBy: $('#ca_corpInterviewRequired').checked ? $('#ca_corpInterviewBy').value.trim() : '',
-    corpInterviewDate: $('#ca_corpInterviewRequired').checked ? getDateIso('ca_corpInterviewDate') : '',
-    refName: $('#ca_refName').value.trim(),
-    refPhone: $('#ca_refPhone').value.trim(),
-    refPosition: $('#ca_refPosition').value.trim(),
-    refCheckBy: $('#ca_refCheckBy').value.trim(),
-    refCheckDate: getDateIso('ca_refCheckDate'),
-    refResult: $('#ca_refResult').value.trim(),
+    email: $v('ca_email'),
+    appliedDate: $vd('ca_applied'),
+    status: $v('ca_status'),
+    source: $v('ca_source'),
+    cvLink: $v('ca_cvLink'),
+    cvFile: $v('ca_cvFile'),
+    dob: dobVal || '',
+    age: ageCalc || '',
+    experience: $v('ca_exp'),
+    expectedSalary: $vi('ca_salary'),
+    rating: $vi('ca_rating'),
+    notes: $v('ca_notes'),
+    screeningBy: $v('ca_screeningBy'),
+    screeningDate: $vd('ca_screeningDate'),
+    hrInterviewBy: $v('ca_hrInterviewBy'),
+    hrInterviewDate: $vd('ca_hrInterviewDate'),
+    deptInterviewBy: $v('ca_deptInterviewBy'),
+    deptInterviewDate: $vd('ca_deptInterviewDate'),
+    gmInterviewRequired: $vb('ca_gmInterviewRequired'),
+    gmInterviewBy: $vb('ca_gmInterviewRequired') ? $v('ca_gmInterviewBy') : '',
+    gmInterviewDate: $vb('ca_gmInterviewRequired') ? $vd('ca_gmInterviewDate') : '',
+    corpInterviewRequired: $vb('ca_corpInterviewRequired'),
+    corpInterviewBy: $vb('ca_corpInterviewRequired') ? $v('ca_corpInterviewBy') : '',
+    corpInterviewDate: $vb('ca_corpInterviewRequired') ? $vd('ca_corpInterviewDate') : '',
+    refName: $v('ca_refName'),
+    refPhone: $v('ca_refPhone'),
+    refPosition: $v('ca_refPosition'),
+    refCheckBy: $v('ca_refCheckBy'),
+    refCheckDate: $vd('ca_refCheckDate'),
+    refResult: $v('ca_refResult'),
   };
+  // Loại bỏ mọi field undefined trước khi gửi Firebase
+  Object.keys(data).forEach(k=>{ if(data[k]===undefined) data[k]=''; });
 
   if(!DB.candidates) DB.candidates = [];
   if(isNew){
