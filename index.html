@@ -10288,8 +10288,8 @@ function renderLeavePlan(main){
         const vsKH  = (kh>0&&real>0) ? Math.round((real-kh)*10)/10 : null;
         const vsKHC = vsKH!==null?(vsKH<=0?'var(--success)':'var(--danger)'):'';
         const vsKHT = vsKH!==null?(vsKH>0?'+'+vsKH:String(vsKH)):'—';
-        const達 = vsKH!==null?(vsKH<=0?'✅ Đạt':'❌ Vượt KH'):'—';
-        const đạtC= vsKH!==null?(vsKH<=0?'var(--success)':'var(--danger)'):'var(--ink-muted)';
+        const datText = vsKH!==null?(vsKH<=0?'✅ Đạt':'❌ Vượt KH'):'—';
+        const datColor= vsKH!==null?(vsKH<=0?'var(--success)':'var(--danger)'):'var(--ink-muted)';
 
         if(isAL){ footAL.ton+=ton; footAL.kh+=kh; footAL.real+=real; }
         else     { footCL.ton+=ton; footCL.kh+=kh; footCL.real+=real; }
@@ -10314,7 +10314,7 @@ function renderLeavePlan(main){
           </td>
           <td style="padding:6px 8px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:12px;color:${col};font-weight:600">${real||'—'}</td>
           <td style="padding:6px 8px;text-align:center">
-            <span style="font-size:12px;font-weight:700;color:${đạtC}">${達}</span>
+            <span style="font-size:12px;font-weight:700;color:${datColor}">${datText}</span>
             ${vsKH!==null?`<div style="font-size:10px;color:${vsKHC};font-family:'JetBrains Mono',monospace">${vsKHT}</div>`:''}
           </td>
         </tr>`;
