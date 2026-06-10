@@ -10203,7 +10203,21 @@ function renderLeavePlan(main){
   if(!DB.leaveSheet) DB.leaveSheet={};
   if(!DB.leavePlan)  DB.leavePlan={};
   if(!DB.leavePlan[curYear]) DB.leavePlan[curYear]={};
-  if(!window._lpSelMonths) window._lpSelMonths = new Set([curMonth]);
+  if(!window._lpShowAL) window._lpShowAL = true;
+  if(!window._lpShowCL) window._lpShowCL = true;
+  const showAL = window._lpShowAL;
+  const showCL = window._lpShowCL;
+
+  // ── Year list (same logic as leave tracking) ──
+  const lpYears = (()=>{
+    const s = new Set([today.getFullYear()]);
+    (DB.leaves||[]).forEach(l=>{ if(l.startDate) s.add(new Date(l.startDate).getFullYear()); });
+    if(DB.leaveSheet){ Object.values(DB.leaveSheet).forEach(emp=>{ Object.keys(emp).forEach(y=>{ const yi=parseInt(y); if(!isNaN(yi)&&emp[y]&&Object.keys(emp[y]).length>0) s.add(yi); }); }); }
+    (DB.leaveExtraYears||[]).forEach(y=>{ const yi=parseInt(y); if(!isNaN(yi)) s.add(yi); });
+    return [...s].sort((a,b)=>b-a);
+  })();
+  if(!window._leaveBal) window._leaveBal={};
+  if(!window._leaveBal.year) window._leaveBal.year = today.getFullYear();
 
   const selMonths = window._lpSelMonths;
   const activeEmps = DB.employees.filter(e=>getEffectiveStatus(e)!=='exit');
@@ -10276,7 +10290,9 @@ function renderLeavePlan(main){
 
     const rows = depts.map((dept,idx)=>{
       const plan = DB.leavePlan[curYear][dept.id]||{};
-      const types=['al','cl'];
+      const types=['al','cl'].filter(t=> t==='al'?showAL:showCL);
+      if(!types.length) return '';
+      const rowspan = types.length;
       return types.map((type,ti)=>{
         const isAL=type==='al';
         const col=isAL?'var(--success)':'var(--info)';
@@ -10295,7 +10311,7 @@ function renderLeavePlan(main){
         else     { footCL.ton+=ton; footCL.kh+=kh; footCL.real+=real; }
 
         const deptCell = ti===0
-          ? `<td rowspan="2" style="padding:8px 12px;font-weight:600;font-size:12px;border-right:2px solid var(--border-strong);border-bottom:1px solid var(--border-strong);position:sticky;left:0;background:var(--bg-card);z-index:1">
+          ? `<td rowspan="${rowspan}" style="padding:8px 12px;font-weight:600;font-size:12px;border-right:2px solid var(--border-strong);border-bottom:1px solid var(--border-strong);position:sticky;left:0;background:var(--bg-card);z-index:1">
                <div>${idx+1}. ${escapeHtml(dept.name)}</div>
              </td>`
           : '';
@@ -10322,7 +10338,7 @@ function renderLeavePlan(main){
     }).join('');
 
     // Footer totals
-    const footRow = ['al','cl'].map((type,ti)=>{
+    const footRow = ['al','cl'].filter(t=>t==='al'?showAL:showCL).map((type,ti)=>{
       const isAL=type==='al'; const f=isAL?footAL:footCL;
       const fTon=Math.round(f.ton*10)/10; const fKh=Math.round(f.kh*10)/10; const fReal=Math.round(f.real*10)/10;
       const fDuKien=fKh>0?Math.round((fTon-fKh)*10)/10:null;
@@ -10330,8 +10346,9 @@ function renderLeavePlan(main){
       const fDat=fVsKH!==null?(fVsKH<=0?'✅ Đạt':'❌ Vượt'):'—';
       const fDatC=fVsKH!==null?(fVsKH<=0?'var(--success)':'var(--danger)'):'var(--ink-muted)';
       const col=isAL?'var(--success)':'var(--info)';
+      const fRowspan = (showAL&&showCL)?2:1;
       return `<tr style="background:var(--bg-elev);font-weight:700">
-        ${ti===0?`<td rowspan="2" style="padding:8px 12px;font-weight:700;color:var(--accent);font-size:12px;position:sticky;left:0;background:var(--bg-elev);z-index:1">TỔNG</td>`:''}
+        ${ti===0?`<td rowspan="${fRowspan}" style="padding:8px 12px;font-weight:700;color:var(--accent);font-size:12px;position:sticky;left:0;background:var(--bg-elev);z-index:1">TỔNG</td>`:''}
         <td style="padding:4px 8px;font-size:10px;font-weight:700;color:${col};border-right:1px solid var(--border)">${isAL?'AL':'CL'}</td>
         <td style="padding:6px 8px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--accent)">${fTon}</td>
         <td style="padding:6px 8px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:12px;color:#ff9f43">${fKh||'—'}</td>
@@ -10393,6 +10410,23 @@ function renderLeavePlan(main){
         <div class="crumb">Nhân sự · Nghỉ phép · <span>Kế hoạch</span></div>
         <h1 class="page-title">Kế hoạch <em>nghỉ phép</em></h1>
         <div class="page-sub">Năm ${curYear} · ${depts.length} bộ phận · chọn nhiều tháng để xem cùng lúc</div>
+      </div>
+      <div class="topbar-right" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <select class="filter-select" onchange="if(!window._leaveBal)window._leaveBal={};window._leaveBal.year=parseInt(this.value);window._lpSelMonths=new Set([${curMonth}]);render()">
+          ${lpYears.map(y=>`<option value="${y}" ${y===curYear?'selected':''}>${y}</option>`).join('')}
+        </select>
+        <button class="btn" onclick="openNewLeaveYear()"
+          style="background:rgba(126,198,153,.12);border-color:rgba(126,198,153,.4);color:var(--success)">
+          🗓 + Năm
+        </button>
+        <button class="btn" onclick="window._lpShowAL=!window._lpShowAL;render()"
+          style="background:${showAL?'rgba(126,198,153,.15)':'transparent'};border-color:${showAL?'var(--success)':'var(--border)'};color:${showAL?'var(--success)':'var(--ink-muted)'}">
+          AL ${showAL?'✓':''}
+        </button>
+        <button class="btn" onclick="window._lpShowCL=!window._lpShowCL;render()"
+          style="background:${showCL?'rgba(100,180,220,.15)':'transparent'};border-color:${showCL?'var(--info)':'var(--border)'};color:${showCL?'var(--info)':'var(--ink-muted)'}">
+          CL ${showCL?'✓':''}
+        </button>
       </div>
     </div>
 
