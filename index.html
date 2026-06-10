@@ -940,11 +940,15 @@ function saveEmpProfile(empId){
   const doc = {...empNoPhoto, ...cd, _empId: empId,
                _syncBy: window.currentUser.uid, _syncAt};
   if(photo && photo.startsWith('http')){
+    // Có Cloudinary URL → lưu photoUrl
     doc.photoUrl = photo;
+  } else {
+    // Không có ảnh → dùng FieldValue.delete() để xóa photoUrl trên Firestore
+    doc.photoUrl = firebase.firestore.FieldValue.delete();
   }
   window.fbDb.collection(EMP_COLLECTION).doc(empId).set(doc, {merge: true})
     .then(()=>{ console.log('[EMP] saved:', empId, emp.name); })
-    .catch(err=>{ 
+    .catch(err=>{
       console.error('[EMP] FAILED:', empId, err.message);
       toast('❌ Lỗi lưu hồ sơ '+emp.name+': '+err.message,'error');
     });
@@ -5219,24 +5223,19 @@ function removePhoto(){
   const empId = $('#f_empid')?.value || currentEmpId || '';
   const empName = $('#f_name')?.value || '?';
 
-  // Xóa photoUrl trên Firestore (set photoUrl = null)
-  if(empId && window.fbDb && window.currentUser){
+  // Xóa ảnh: set photo='' trong DB → saveEmpProfile sẽ push FieldValue.delete() lên Firestore
+  if(empId){
     const empIdx = (DB.employees||[]).findIndex(e=>e.id===empId);
     if(empIdx>=0){
       DB.employees[empIdx].photo = '';
-      // Xóa photoUrl field trên Firestore
-      window.fbDb.collection(EMP_COLLECTION).doc(empId)
-        .update({photoUrl: firebase.firestore.FieldValue.delete()})
-        .catch(()=>{
-          // Fallback: set empty string nếu delete không được
-          window.fbDb.collection(EMP_COLLECTION).doc(empId).set({photoUrl:''},{merge:true});
-        });
       // Xóa localStorage photo
       try{
         const pm=JSON.parse(localStorage.getItem(STORE_KEY+'_photos')||'{}');
         delete pm[empId];
         localStorage.setItem(STORE_KEY+'_photos', JSON.stringify(pm));
       }catch(_){}
+      // Push lên Firestore — saveEmpProfile với photo='' sẽ dùng FieldValue.delete()
+      saveEmpProfile(empId);
     }
   }
 
@@ -5348,6 +5347,8 @@ function openPhotoCropper(dataUrl){
         const ctx = canvas.getContext('2d');
         ctx.drawImage(img, sx, sy, sw, sh, 0, 0, size, size);
         const croppedUrl = canvas.toDataURL('image/jpeg', 0.88);
+        // Lấy empId TRƯỚC khi closeModal (closeModal không destroy form, chỉ ẩn modal)
+        const empId = ($('#f_empid')?.value) || currentEmpId || '';
         closeModal();
         $('#f_photo').value = croppedUrl;
         const preview = $('#photoPreview');
@@ -5378,7 +5379,6 @@ function openPhotoCropper(dataUrl){
                   btnWrap.appendChild(delBtn);
                 }
                 toast('✅ Ảnh đã upload!','success');
-                const empId = ($('#f_empid')?.value) || currentEmpId || '';
                 if(empId && window.fbDb && window.currentUser){
                   const empIdx = (DB.employees||[]).findIndex(e=>e.id===empId);
                   if(empIdx >= 0){
