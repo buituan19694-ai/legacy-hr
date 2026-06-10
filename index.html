@@ -11160,16 +11160,54 @@ function renderWorkforce(main){
   });
 
   const allExitYear = DB.employees.filter(e=>{ const x=getExitDate(e); return x&&x.getFullYear()===yr; });
-  const avgHC=(()=>{
-    let t=0,c=0;
-    for(let m=0;m<(yr===curYear?curMonth:12);m++){
-      const snap=new Date(yr,m+1,0);
-      t+=DB.employees.filter(e=>e.joined&&new Date(e.joined)<=snap&&(()=>{ const x=getExitDate(e); return !x||x>snap; })()).length;
-      c++;
+
+  // Hàm tính số NV đang làm tại một thời điểm (đầu hoặc cuối tháng)
+  // Gồm: active + probation + exit (nếu chưa đến ngày nghỉ tại thời điểm đó)
+  const hcAt = (date) => DB.employees.filter(e=>{
+    if(!e.joined) return false;
+    const joined = _parseAnyDate(e.joined);
+    if(!joined||isNaN(joined)||joined>date) return false;
+    const ex = getExitDate(e);
+    // Nếu đã exit nhưng không có exitDate → không tính vào HC (không xác định được thời điểm)
+    if(!ex && e.status==='exit') return false;
+    return !ex || ex > date;
+  }).length;
+
+  // Tính turnover theo công thức đúng
+  let turnover, turnoverSub;
+  if(mon===0){
+    // Turnover năm = Số NV nghỉ cả năm / (Tổng HC TB 12 tháng / 12) * 100
+    // HC TB tháng m = (HC đầu tháng + HC cuối tháng) / 2
+    const maxM = yr===curYear ? curMonth : 12;
+    let sumAvg=0, countM=0;
+    for(let m=1;m<=maxM;m++){
+      const startOfMonth = new Date(yr, m-1, 1);
+      startOfMonth.setDate(startOfMonth.getDate()-1); // ngày cuối tháng trước = đầu tháng này
+      const endOfMonth   = new Date(yr, m, 0);       // ngày cuối tháng m
+      const hcStart = hcAt(startOfMonth);
+      const hcEnd   = hcAt(endOfMonth);
+      sumAvg += (hcStart + hcEnd) / 2;
+      countM++;
     }
-    return c?Math.round(t/c):0;
-  })();
-  const turnover=avgHC?(allExitYear.length/avgHC*100).toFixed(1):'—';
+    const avgMonthly = countM ? sumAvg/countM : 0;
+    turnover = avgMonthly>0 ? (allExitYear.length / avgMonthly * 100).toFixed(1) : '—';
+    turnoverSub = `HC TB tháng: ${avgMonthly>0?Math.round(avgMonthly):'—'} NV`;
+  } else {
+    // Turnover tháng = Số NV nghỉ trong tháng / [(HC đầu tháng + HC cuối tháng)/2] * 100
+    const startOfMonth = new Date(yr, mon-1, 1);
+    startOfMonth.setDate(startOfMonth.getDate()-1);
+    const endOfMonth   = new Date(yr, mon, 0);
+    const hcStart = hcAt(startOfMonth);
+    const hcEnd   = hcAt(endOfMonth);
+    const avgHCMon = (hcStart + hcEnd) / 2;
+    const exitThisMonth = DB.employees.filter(e=>{
+      const x=getExitDate(e);
+      return x && x.getFullYear()===yr && x.getMonth()+1===mon;
+    }).length;
+    turnover = avgHCMon>0 ? (exitThisMonth / avgHCMon * 100).toFixed(1) : '—';
+    turnoverSub = `HC: ${hcStart}→${hcEnd} NV (TB ${Math.round(avgHCMon)})`;
+  }
+
   const net=newEmps.length-exitEmps.length;
   const periodLabel = mon===0 ? `Năm ${yr}` : `T${mon}/${yr}`;
 
@@ -11177,7 +11215,7 @@ function renderWorkforce(main){
     <div class="topbar">
       <div class="topbar-left">
         <h1 class="page-title">Biến động <em>nhân sự</em></h1>
-        <div class="page-sub">${periodLabel} · ${newEmps.length} gia nhập · ${exitEmps.length} rời đi · Turnover ${turnover}%</div>
+        <div class="page-sub">${periodLabel} · ${newEmps.length} gia nhập · ${exitEmps.length} rời đi · Turnover ${turnover==='—'?'—':turnover+'%'}</div>
       </div>
       <div class="topbar-actions">
         <select class="filter-select" onchange="window._wfYear=parseInt(this.value);window._wfMonth=0;render()">${yearOpts}</select>
@@ -11194,7 +11232,7 @@ function renderWorkforce(main){
         {label:'NV MỚI', val:newEmps.length, color:'var(--success)', icon:'🟢', sub:'gia nhập · '+periodLabel},
         {label:'NGHỈ VIỆC', val:exitEmps.length, color:'var(--danger)', icon:'🔴', sub:'rời đi · '+periodLabel},
         {label:'TĂNG THUẦN', val:(net>=0?'+':'')+net, color:net>=0?'var(--success)':'var(--danger)', icon:net>=0?'📈':'📉', sub:'net headcount'},
-        {label:'TURNOVER', val:turnover+'%', color:'var(--accent)', icon:'🔄', sub:'HC TB: '+avgHC+' NV (cả năm)'},
+        {label:'TURNOVER', val:turnover+(turnover==='—'?'':'%'), color:'var(--accent)', icon:'🔄', sub:turnoverSub},
       ].map(k=>`
         <div class="card" style="padding:18px 20px;border-top:3px solid ${k.color}">
           <div style="font-size:10px;font-weight:700;letter-spacing:.08em;color:var(--ink-muted);margin-bottom:8px">${k.icon} ${k.label}</div>
@@ -11612,13 +11650,21 @@ function _wfResignTab(){
   };
 
   return `<div style="display:flex;flex-direction:column;gap:20px;padding-top:4px">
-    <div class="card" style="padding:16px 20px;display:flex;align-items:center;justify-content:space-between">
+    <div class="card" style="padding:14px 20px;display:flex;align-items:center;justify-content:space-between">
       <div>
         <div style="font-size:15px;font-weight:700">📋 Đơn nghỉ việc</div>
         <div style="font-size:12px;color:var(--ink-muted);margin-top:2px">${pending.length} đang chờ · ${confirmed.length} đã xác nhận · ${cancelled.length} đã huỷ</div>
       </div>
-      <button class="btn btn-primary" onclick="openResignModal()">+ Thêm đơn</button>
+      <button class="btn btn-primary" onclick="openResignModal()" style="padding:8px 18px;font-size:13px;font-weight:700;gap:6px;display:flex;align-items:center">
+        <span style="font-size:16px;line-height:1">＋</span> Thêm đơn nghỉ việc
+      </button>
     </div>
+    ${!pending.length && !confirmed.length && !cancelled.length ? `
+    <div class="card" onclick="openResignModal()" style="padding:28px;text-align:center;cursor:pointer;border:2px dashed var(--border);background:transparent;transition:border-color .15s" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
+      <div style="font-size:28px;margin-bottom:8px">📋</div>
+      <div style="font-size:13px;color:var(--ink-muted)">Chưa có đơn nghỉ việc nào</div>
+      <div style="font-size:12px;color:var(--accent);margin-top:6px;font-weight:600">＋ Nhấn để thêm đơn đầu tiên</div>
+    </div>` : ''}
     ${pending.length?`
     <div class="card" style="padding:0;overflow:hidden">
       <div style="padding:12px 16px;background:rgba(229,115,115,.08);border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px">
@@ -11626,7 +11672,7 @@ function _wfResignTab(){
         <span style="background:rgba(229,115,115,.2);color:var(--danger);border-radius:10px;padding:1px 8px;font-size:11px">${pending.length}</span>
       </div>
       <table style="width:100%;border-collapse:collapse">${tableHead}<tbody>${pending.map(r=>rowHtml(r,true)).join('')}</tbody></table>
-    </div>`:`<div class="card" style="text-align:center;padding:32px;color:var(--ink-muted)">✅ Không có đơn nào đang chờ xử lý</div>`}
+    </div>`:''}
     ${confirmed.length?`
     <div class="card" style="padding:0;overflow:hidden">
       <div style="padding:12px 16px;border-bottom:1px solid var(--border)">
@@ -14826,7 +14872,35 @@ function renderAwards(main){
       </div>
     </div>
 
-    ${periodSelectorHTML(_awardPeriod, 'setAwardPeriod', 'award', true)}
+    ${(()=>{
+      const yearPeriods = getDataYears('award');
+      const chipBtn = (key, label, active) =>
+        `<button class="period-chip${active?' active':''}" data-period="${key}" data-fn="setAwardPeriod" onclick="window[this.dataset.fn](this.dataset.period)">${label}</button>`;
+      const activeYear = _awardPeriod.startsWith('year_') ? parseInt(_awardPeriod.slice(5))
+                       : _awardPeriod.startsWith('month_') ? parseInt(_awardPeriod.split('_')[2])
+                       : new Date().getFullYear();
+      const monthRow = ['T1','T2','T3','T4','T5','T6','T7','T8','T9','T10','T11','T12']
+        .map((m,i)=>chipBtn(`month_${i+1}_${activeYear}`, m, _awardPeriod===`month_${i+1}_${activeYear}`)).join('');
+      return `
+        <div class="card" style="padding:14px 18px;margin-bottom:16px">
+          <div style="display:flex;align-items:flex-start;gap:14px;flex-wrap:wrap">
+            <div style="font-size:11px;color:var(--ink-muted);letter-spacing:.15em;text-transform:uppercase;font-weight:600;padding-top:6px;flex-shrink:0">Kỳ báo cáo</div>
+            <div style="display:flex;flex-direction:column;gap:8px;flex:1">
+              <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+                <div style="font-size:10.5px;color:var(--ink-muted);font-weight:600;text-transform:uppercase;letter-spacing:.12em;margin-right:2px;white-space:nowrap">📅 Theo năm:</div>
+                ${yearPeriods.length===0
+                  ? '<span style="font-size:12px;color:var(--ink-muted);font-style:italic">Chưa có dữ liệu</span>'
+                  : yearPeriods.map(yp=>chipBtn(yp.key,yp.label,_awardPeriod===yp.key)).join('')}
+                <button onclick="addPeriodYear('setAwardPeriod', ${JSON.stringify(yearPeriods.map(y=>parseInt(y.key.replace('year_',''))))})" style="padding:3px 10px;border-radius:12px;border:1px dashed var(--border);background:transparent;color:var(--ink-muted);font-size:11px;cursor:pointer;white-space:nowrap">+ Năm</button>
+              </div>
+              <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+                <div style="font-size:10.5px;color:var(--ink-muted);font-weight:600;text-transform:uppercase;letter-spacing:.12em;margin-right:2px;white-space:nowrap">📆 Theo tháng (${activeYear}):</div>
+                ${monthRow}
+              </div>
+            </div>
+          </div>
+        </div>`;
+    })()}
 
     <div class="kpi-grid">
       <div class="kpi">
