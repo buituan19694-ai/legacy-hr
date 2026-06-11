@@ -741,6 +741,8 @@ const DEFAULT_DATA = {
     {id:'cf_supOut', key:'supportOutProvince', label:'Hỗ trợ ngoại tỉnh', type:'select', group:(_lang==="en"?"Allowances":"Hỗ trợ"), placeholder:'', showInTable:false, required:false, options:'Có,Không'},
     {id:'cf_supTrans', key:'supportTransport', label:'Hỗ trợ di chuyển', type:'select', group:(_lang==="en"?"Allowances":"Hỗ trợ"), placeholder:'', showInTable:false, required:false, options:'Có,Không'},
     {id:'cf_distance', key:'distanceKm', label:'Số km tới công ty', type:'number', group:(_lang==="en"?"Allowances":"Hỗ trợ"), placeholder:'VD: 12.5', showInTable:false, required:false, options:''},
+    {id:'cf_dormitory', key:'dormitory', label:'Ký túc xá', type:'select', group:(_lang==="en"?"Allowances":"Hỗ trợ"), placeholder:'', showInTable:false, required:false, options:'Có,Không'},
+    {id:'cf_companyBus', key:'companyBus', label:'Đi xe bus công ty', type:'select', group:(_lang==="en"?"Allowances":"Hỗ trợ"), placeholder:'', showInTable:false, required:false, options:'Có,Không'},
 
     {id:'cf_edu', key:'education', label:(_lang==="en"?"Education":"Học vấn"), type:'select', group:(_lang==="en"?"Education":"Học vấn"), placeholder:'', showInTable:false, required:false, options:'Lao động phổ thông/THCS,Trung cấp/Trung cấp nghề,Chứng chỉ nghề,Cao đẳng,Trình độ đại học,Thạc sĩ,Tiến sĩ'},
     {id:'cf_school', key:'school', label:'Nơi đào tạo', type:'text', group:(_lang==="en"?"Education":"Học vấn"), placeholder:'VD: ĐH Bách Khoa Hà Nội', showInTable:false, required:false, options:''},
@@ -12110,7 +12112,7 @@ function _wfResignTab(){
     <div class="card" style="padding:14px 20px;display:flex;align-items:center;justify-content:space-between;cursor:pointer" onclick="openResignModal()">
       <div>
         <div style="font-size:15px;font-weight:700">📋 Ghi nhận nghỉ việc</div>
-        <div style="font-size:12px;color:var(--ink-muted);margin-top:2px">${confirmed.length} đã ghi nhận · ${cancelled.length} đã huỷ</div>
+        <div style="font-size:12px;color:var(--ink-muted);margin-top:2px">${pending.length?`<span style="color:var(--warning);font-weight:600">${pending.length} chờ duyệt</span> · `:''}${confirmed.length} đã ghi nhận · ${cancelled.length} đã huỷ</div>
       </div>
       <button class="btn btn-primary" onclick="event.stopPropagation();openResignModal()" style="padding:8px 18px;font-size:13px;font-weight:700;gap:6px;display:flex;align-items:center">
         <span style="font-size:16px;line-height:1">＋</span> Ghi nhận NV nghỉ việc
@@ -20126,18 +20128,25 @@ fbAuth.onAuthStateChanged(async user => {
             }catch(e){ console.warn('[MIGRATE] trainees:', e.message); }
           }
 
-          // Migration: nếu resignations rỗng, thử đọc từ workforce doc cũ
-          if(!DB.resignations || !DB.resignations.length){
-            try{
+          // Migration: đọc từ workforce doc cũ nếu resign doc chưa có data
+          // Chạy mọi lần để đồng bộ giữa các thiết bị
+          try{
+            const resignDoc = await window.fbDb.collection('hrdata').doc('resign').get();
+            if(!resignDoc.exists || !(resignDoc.data().resignations||[]).length){
+              // resign doc chưa có → thử đọc từ workforce cũ
               const oldWf = await window.fbDb.collection('hrdata').doc('workforce').get();
-              if(oldWf.exists && oldWf.data().resignations && oldWf.data().resignations.length){
+              if(oldWf.exists && (oldWf.data().resignations||[]).length){
                 DB.resignations = oldWf.data().resignations;
                 hasCloud = true;
                 console.log('[MIGRATE] resignations from workforce:', DB.resignations.length);
+                // Lưu sang resign doc mới
                 saveData(['resignations']);
               }
-            }catch(e){ console.warn('[MIGRATE] resignations:', e.message); }
-          }
+            } else {
+              // resign doc đã có → dùng data từ đó (đã được load ở snaps.forEach)
+              console.log('[LOAD] resign doc has', (resignDoc.data().resignations||[]).length, 'records');
+            }
+          }catch(e){ console.warn('[MIGRATE] resignations:', e.message); }
 
           // Migration: nếu manualBlacklist rỗng, thử đọc từ config doc cũ
           if(!DB.manualBlacklist || !DB.manualBlacklist.length){
