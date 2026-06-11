@@ -805,6 +805,7 @@ const DEFAULT_DATA = {
     {id:'cf_exitReason', key:'exitReason', label:'Lý do nghỉ việc', type:'select', group:(_lang==="en"?"Resigned":"Nghỉ việc"), placeholder:'', showInTable:false, required:false, options:'Sa thải,Từ chức,Không gia hạn hợp đồng,Lý do cá nhân,Sức khỏe không đảm bảo,Mâu thuẫn với đồng nghiệp,Bỏ việc,Không nhận lương/Xin hồ sơ,Khác'},
     {id:'cf_exitNotes', key:'exitNotes', label:'Ghi chú nghỉ việc', type:'textarea', group:(_lang==="en"?"Resigned":"Nghỉ việc"), placeholder:'Chi tiết bổ sung', showInTable:false, required:false, options:''},
 
+    {id:'cf_stdWorkDays', key:'stdWorkDays', label:'Ngày công TC/tháng', type:'number', group:(_lang==="en"?"Recruitment":"Tuyển dụng"), placeholder:'26', showInTable:false, required:false, options:''},
     {id:'cf_avatar', key:'avatarUrl', label:'Ảnh nhân viên (URL)', type:'url', group:(_lang==="en"?"Other":"Khác"), placeholder:'Link ảnh đại diện', showInTable:false, required:false, options:''},
   ],
   customData: {},
@@ -5328,7 +5329,7 @@ function editEmployee(id, prefill = null){
     const total = base + bonus;
     return `
       <div class="field" style="grid-column:1/-1">
-        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;padding:14px;background:rgba(212,165,116,.06);border:1px solid rgba(212,165,116,.2);border-radius:8px">
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr 140px;gap:10px;padding:14px;background:rgba(212,165,116,.06);border:1px solid rgba(212,165,116,.2);border-radius:8px">
           <div class="field" style="margin:0">
             <label>💰 ${_lang==="en"?"Base salary":"Lương cơ bản"} (VNĐ)</label>
             <input type="number" id="cf_baseSalary" value="${base}" min="0" step="500000"
@@ -5346,6 +5347,11 @@ function editEmployee(id, prefill = null){
               readonly
               style="background:var(--bg-elev);color:var(--accent);font-weight:700;font-family:'JetBrains Mono',monospace;cursor:not-allowed;border-color:rgba(212,165,116,.3)">
           </div>
+          <div class="field" style="margin:0">
+            <label>📅 Ngày công TC/tháng</label>
+            <input type="number" id="cf_stdWorkDays" value="${parseInt(customData.stdWorkDays)||''}" min="1" max="31" step="1" placeholder="26"
+              style="font-family:'JetBrains Mono',monospace">
+          </div>
         </div>
       </div>`;
   };
@@ -5355,7 +5361,7 @@ function editEmployee(id, prefill = null){
     let renderedFields;
     if(groupName === (_lang==="en"?"Recruitment":"Tuyển dụng")){
       const salaryKeys = ['baseSalary','bonusSalary'];
-      const otherFields = fields.filter(cf => !salaryKeys.includes(cf.key));
+      const otherFields = fields.filter(cf => !salaryKeys.includes(cf.key) && cf.key !== 'stdWorkDays');
       const hasSalary = fields.some(cf => cf.key === 'baseSalary');
       renderedFields = [
         ...otherFields.map(cf => renderCustomFieldInput(cf, customData[cf.key])),
@@ -9288,7 +9294,7 @@ function renderLeaveReports(main){
     const upd=(id,v)=>{const el=document.getElementById(id);if(el)el.textContent=fmt(v);};
     const pfx='ls_'+empId+'_'+leaveType+'_';
     upd(pfx+'pending',pendingEntitle); upd(pfx+'totalUsed',totalUsed);
-    upd(pfx+'remain',totalEntitle-totalUsed); upd(pfx+'cur',pending);
+    upd(pfx+'remain',pendingEntitle-totalUsed); upd(pfx+'cur',pending);
   };
 
   const calcRow = (empId, leaveType) => {
@@ -9515,8 +9521,8 @@ window.toggleLeaveGroup = function(did){
                 </td>
                 <!-- Tồn cuối năm -->
                 <td style="padding:3px 5px;text-align:center;font-size:10px;background:#1a2535;border-left:2px solid rgba(183,148,212,.4)">
-                  <div style="color:var(--success);font-weight:700;font-family:'JetBrains Mono',monospace">${fd(dAL.totalEntitle-dAL.totalUsed)}</div>
-                  <div style="color:var(--success);font-family:'JetBrains Mono',monospace">${fd(dCL.totalEntitle-dCL.totalUsed)}</div>
+                  <div style="color:var(--success);font-weight:700;font-family:'JetBrains Mono',monospace">${fd((dAL.pendingEntitle||dAL.totalEntitle)-dAL.totalUsed)}</div>
+                  <div style="color:var(--success);font-family:'JetBrains Mono',monospace">${fd((dCL.pendingEntitle||dCL.totalEntitle)-dCL.totalUsed)}</div>
                 </td>
               </tr>`;
 
@@ -9555,9 +9561,9 @@ window.toggleLeaveGroup = function(did){
                     }).join('')}
                     ${compCell(pfx+'totalUsed',d.totalUsed,'var(--purple)','rgba(183,148,212,.06)')}
                     ${compCell(pfx+'cur',d.pending,d.pending<0?'var(--danger)':'var(--success)','rgba(183,148,212,.08)')}
-                    <td style="text-align:center;font-weight:700;font-size:11px;padding:4px;color:${d.totalEntitle-d.totalUsed<0?'var(--danger)':'var(--success)'};background:rgba(183,148,212,.15);border-left:2px solid rgba(183,148,212,.4)"
-                      title="Tồn cuối năm = Tổng phát sinh − Tổng đã nghỉ (${d.carry}) + Hưởng (${fnum(d.totalEntitle-d.carry)}) − Nghỉ (${fnum(d.totalUsed)})">
-                      <span id="${pfx}remain">${fnum(d.totalEntitle-d.totalUsed)}</span>
+                    <td style="text-align:center;font-weight:700;font-size:11px;padding:4px;color:${(d.pendingEntitle-d.totalUsed)<0?'var(--danger)':'var(--success)'};background:rgba(183,148,212,.15);border-left:2px solid rgba(183,148,212,.4)"
+                      title="Tồn cuối năm = Tổng phát sinh − Tổng đã nghỉ = ${fnum(d.pendingEntitle)} − ${fnum(d.totalUsed)}">
+                      <span id="${pfx}remain">${fnum(d.pendingEntitle-d.totalUsed)}</span>
                     </td>
                   </tr>`;
                 };
@@ -9580,7 +9586,7 @@ window.toggleLeaveGroup = function(did){
               <td style="text-align:center;color:var(--warning);font-size:10px"><div>${fnum(empMonthData.reduce((s,x)=>s+(x.al.clearAL||0),0))}</div><div style="opacity:.5">—</div></td>
               ${Array.from({length:10},(_,i)=>`<td style="text-align:center;font-size:10px"><div style="color:var(--accent)">${fnum(empMonthData.reduce((s,x)=>s+x.al.months[i+2].used,0))}</div><div style="color:var(--info);opacity:.8">${fnum(empMonthData.reduce((s,x)=>s+x.cl.months[i+2].used,0))}</div></td>`).join('')}
               <td style="text-align:center;font-size:10px"><div style="color:var(--purple);font-weight:700">${fnum(empMonthData.reduce((s,x)=>s+x.al.totalUsed,0))}</div><div style="color:var(--purple);opacity:.7">${fnum(empMonthData.reduce((s,x)=>s+x.cl.totalUsed,0))}</div></td>
-              <td style="text-align:center;font-size:10px"><div style="color:var(--success);font-weight:700">${fnum(empMonthData.reduce((s,x)=>s+(x.al.totalEntitle-x.al.totalUsed),0))}</div><div style="color:var(--success);opacity:.7">${fnum(empMonthData.reduce((s,x)=>s+(x.cl.totalEntitle-x.cl.totalUsed),0))}</div></td>
+              <td style="text-align:center;font-size:10px"><div style="color:var(--success);font-weight:700">${fnum(empMonthData.reduce((s,x)=>s+((x.al.pendingEntitle||x.al.totalEntitle)-x.al.totalUsed),0))}</div><div style="color:var(--success);opacity:.7">${fnum(empMonthData.reduce((s,x)=>s+((x.cl.pendingEntitle||x.cl.totalEntitle)-x.cl.totalUsed),0))}</div></td>
               <td style="text-align:center;font-size:10px"><div style="color:var(--purple);font-weight:700">${fnum(empMonthData.reduce((s,x)=>s+x.al.pending,0))}</div><div style="color:var(--purple);opacity:.7">${fnum(empMonthData.reduce((s,x)=>s+x.cl.pending,0))}</div></td>
             </tr>
           </tfoot>
@@ -10566,6 +10572,124 @@ function renderLeaves(main){
           </div>
         </div>`;
     })()}
+
+  <!-- ═══ BẢNG PHÂN TÍCH CHI PHÍ NGHỈ PHÉP TỒN ĐỌNG ═══ -->
+  ${(()=>{
+    const yr = bal.year || today.getFullYear();
+    const activePool = DB.employees.filter(e=>getEffectiveStatus(e)!=='exit');
+    const fmtM = n => Math.round(n||0).toLocaleString('vi-VN');
+
+    // Per-emp: lấy stdDays từ custom field, lương tổng, tồn AL/CL
+    const empCost = activePool.map(e=>{
+      const cd = DB.customData[e.id]||{};
+      const sh = DB.leaveSheet[e.id]||{};
+      const shAL = (sh[yr]||{}).al||{};
+      const shCL = (sh[yr]||{}).cl||{};
+
+      // Ngày công tiêu chuẩn từ hồ sơ NV (custom field stdWorkDays)
+      const stdDays = parseFloat(cd.stdWorkDays)||26;
+
+      // Tổng lương = baseSalary + bonusSalary
+      const totalSalary = (parseFloat(cd.baseSalary)||0) + (parseFloat(cd.bonusSalary)||0);
+
+      // Đơn giá ngày công
+      const dayRate = stdDays > 0 ? totalSalary / stdDays : 0;
+
+      // Tồn cuối năm AL = pendingEntitle - totalUsed
+      const alPending = (shAL.carry||0) + (shAL.entitle||[]).reduce((s,x)=>s+(x||0),0);
+      const alUsed = (shAL.taken||[]).reduce((s,x)=>s+(x||0),0);
+      const alTon = Math.round((alPending - alUsed)*100)/100;
+
+      // Tồn CL
+      const clPending = (shCL.carry||0) + (shCL.entitle||[]).reduce((s,x)=>s+(x||0),0);
+      const clUsed = (shCL.taken||[]).reduce((s,x)=>s+(x||0),0);
+      const clTon = Math.round((clPending - clUsed)*100)/100;
+
+      const alCost = Math.round(alTon * dayRate);
+      const clCost = Math.round(clTon * dayRate);
+
+      return {e, cd, stdDays, totalSalary, dayRate, alTon, clTon, alCost, clCost};
+    }).filter(x=>x.totalSalary>0);
+
+    // Tổng công ty
+    const totALTon  = empCost.reduce((s,x)=>s+x.alTon,0);
+    const totCLTon  = empCost.reduce((s,x)=>s+x.clTon,0);
+    const totALCost = empCost.reduce((s,x)=>s+x.alCost,0);
+    const totCLCost = empCost.reduce((s,x)=>s+x.clCost,0);
+
+    // Theo bộ phận
+    const byDept = DB.departments.map(d=>{
+      const rows = empCost.filter(x=>x.e.deptId===d.id);
+      return {
+        d,
+        emps: rows.length,
+        alTon:  Math.round(rows.reduce((s,x)=>s+x.alTon,0)*10)/10,
+        clTon:  Math.round(rows.reduce((s,x)=>s+x.clTon,0)*10)/10,
+        alCost: rows.reduce((s,x)=>s+x.alCost,0),
+        clCost: rows.reduce((s,x)=>s+x.clCost,0),
+      };
+    }).filter(x=>x.emps>0);
+
+    return `
+    <div class="card" style="margin-top:20px">
+      <div class="card-head">
+        <div>
+          <div class="card-title">💰 Phân tích <em>chi phí nghỉ phép tồn đọng</em> — ${yr}</div>
+          <div class="card-sub">Đơn giá = Tổng lương ÷ Ngày công tiêu chuẩn · Tổng lương = Lương CB + Bổ sung KQCV · Ngày công lấy từ hồ sơ NV (field <b>stdWorkDays</b>)</div>
+        </div>
+      </div>
+
+      <!-- KPI tổng công ty -->
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:20px">
+        ${kpiCard('Tổng ngày AL tồn', Math.round(totALTon*10)/10+' ngày', empCost.length+' NV có lương','','success')}
+        ${kpiCard('Chi phí AL tồn', fmtM(totALCost)+' đ', 'Toàn công ty','','danger')}
+        ${kpiCard('Tổng ngày CL tồn', Math.round(totCLTon*10)/10+' ngày', 'Nghỉ bù tồn đọng','','info')}
+        ${kpiCard('Chi phí CL tồn', fmtM(totCLCost)+' đ', 'Toàn công ty','','warning')}
+      </div>
+
+      <!-- Bảng theo bộ phận -->
+      <div style="font-size:13px;font-weight:700;color:var(--ink-dim);margin-bottom:8px;text-transform:uppercase;letter-spacing:.06em">Theo bộ phận</div>
+      <div style="overflow-x:auto">
+        <table class="tbl">
+          <thead><tr>
+            <th>Bộ phận</th>
+            <th style="text-align:center">NV</th>
+            <th style="text-align:center;color:var(--success)">Tồn AL (ngày)</th>
+            <th style="text-align:center;color:var(--success)">Chi phí AL (đ)</th>
+            <th style="text-align:center;color:var(--info)">Tồn CL (ngày)</th>
+            <th style="text-align:center;color:var(--info)">Chi phí CL (đ)</th>
+            <th style="text-align:center;color:var(--accent)">Tổng chi phí (đ)</th>
+          </tr></thead>
+          <tbody>
+            ${byDept.map(x=>`<tr>
+              <td><b>${escapeHtml(x.d.name)}</b></td>
+              <td style="text-align:center">${x.emps}</td>
+              <td style="text-align:center;font-family:JetBrains Mono,monospace;color:var(--success)">${x.alTon}</td>
+              <td style="text-align:right;font-family:JetBrains Mono,monospace;color:var(--success)">${fmtM(x.alCost)}</td>
+              <td style="text-align:center;font-family:JetBrains Mono,monospace;color:var(--info)">${x.clTon}</td>
+              <td style="text-align:right;font-family:JetBrains Mono,monospace;color:var(--info)">${fmtM(x.clCost)}</td>
+              <td style="text-align:right;font-family:JetBrains Mono,monospace;font-weight:700;color:var(--accent)">${fmtM(x.alCost+x.clCost)}</td>
+            </tr>`).join('')}
+          </tbody>
+          <tfoot><tr style="background:var(--bg-elev);font-weight:700">
+            <td>TỔNG</td>
+            <td style="text-align:center">${empCost.length}</td>
+            <td style="text-align:center;font-family:JetBrains Mono,monospace;color:var(--success)">${Math.round(totALTon*10)/10}</td>
+            <td style="text-align:right;font-family:JetBrains Mono,monospace;color:var(--success)">${fmtM(totALCost)}</td>
+            <td style="text-align:center;font-family:JetBrains Mono,monospace;color:var(--info)">${Math.round(totCLTon*10)/10}</td>
+            <td style="text-align:right;font-family:JetBrains Mono,monospace;color:var(--info)">${fmtM(totCLCost)}</td>
+            <td style="text-align:right;font-family:JetBrains Mono,monospace;font-weight:700;color:var(--accent)">${fmtM(totALCost+totCLCost)}</td>
+          </tr></tfoot>
+        </table>
+      </div>
+
+      <!-- Ghi chú -->
+      <div style="margin-top:12px;padding:10px 14px;background:rgba(212,165,116,.06);border-radius:8px;border-left:3px solid var(--accent);font-size:12px;color:var(--ink-muted)">
+        💡 <b>Cách dùng:</b> Vào hồ sơ NV → Chỉnh sửa → thêm custom field <b>stdWorkDays</b> (số nguyên, VD: 26) để tính đơn giá ngày công. NV chưa có field này mặc định 26 ngày.
+        Công thức: <b>Chi phí = Tồn (ngày) × (Tổng lương ÷ Ngày công TC)</b>
+      </div>
+    </div>`;
+  })()}
   `;
 
 }
@@ -15616,8 +15740,14 @@ function editPromotion(id, presetEmpId, isHistorical=false){
             </div>
             <div>
               <div style="font-size:10.5px;color:var(--ink-muted);margin-bottom:3px">Bộ phận</div>
-              <input id="pr_oldDept" value="${deptName(p.oldDeptId||initEmp?.deptId||'')}" readonly
-                style="background:var(--bg-elev);color:var(--ink-dim);cursor:not-allowed;border-style:dashed">
+              ${p.isHistorical
+                ? `<select id="pr_oldDept" style="width:100%">
+                    <option value="">— Chọn bộ phận —</option>
+                    ${DB.departments.map(d=>`<option value="${d.id}" ${(p.oldDeptId||initEmp?.deptId||'')=== d.id?'selected':''}>${escapeHtml(d.name)}</option>`).join('')}
+                   </select>`
+                : `<input id="pr_oldDept" value="${deptName(p.oldDeptId||initEmp?.deptId||'')}" readonly
+                    style="background:var(--bg-elev);color:var(--ink-dim);cursor:not-allowed;border-style:dashed">`
+              }
             </div>
           </div>
           <!-- SAU THĂNG CHỨC — editable -->
@@ -15689,6 +15819,16 @@ function editPromotion(id, presetEmpId, isHistorical=false){
           </div>
         </div>
         <div id="pr_salaryDelta" style="margin-top:10px;font-size:12px;color:var(--ink-muted);font-family:'JetBrains Mono',monospace;padding:8px;background:var(--bg-elev);border-radius:5px"></div>
+        <!-- Ngày công tiêu chuẩn -->
+        <div style="margin-top:10px;display:flex;align-items:center;gap:10px;padding:10px 12px;background:rgba(126,182,232,.06);border:1px solid rgba(126,182,232,.2);border-radius:6px">
+          <span style="font-size:11px;color:var(--info);font-weight:600;white-space:nowrap">📅 Ngày công TC/tháng</span>
+          <input type="${p.isHistorical?'number':'text'}" id="pr_stdWorkDays"
+            value="${p.stdWorkDays||(initEmp?(DB.customData[initEmp.id]||{}).stdWorkDays:'')||''}"
+            placeholder="26"
+            ${p.isHistorical?'min="1" max="31" step="1"':'readonly'}
+            style="width:80px;font-family:'JetBrains Mono',monospace;font-size:13px;text-align:center;${p.isHistorical?'':'background:var(--bg-elev);color:var(--ink-dim);cursor:not-allowed;border-style:dashed'}">
+          <span style="font-size:11px;color:var(--ink-muted)">${p.isHistorical?'(tự điền cho đề xuất lịch sử)':'(tự động từ hồ sơ NV)'}</span>
+        </div>
       </div>
 
       <!-- Người liên quan — dropdown từ danh sách NV -->
@@ -15747,6 +15887,8 @@ function prAutoFillOld(){
   set('pr_oldDept',   deptName(emp.deptId || ''));
   set('pr_oldSalary', (cd.baseSalary  || 0).toLocaleString('vi-VN'));
   set('pr_oldBonus',  (cd.bonusSalary || 0).toLocaleString('vi-VN'));
+  const wdEl = document.getElementById('pr_stdWorkDays');
+  if(wdEl && wdEl.readOnly) wdEl.value = cd.stdWorkDays||26;
   prCalcDelta();
 }
 
@@ -15805,7 +15947,7 @@ function savePromotion(id, isNew){
     newRoleVN: $('#pr_newRoleVN')?.value.trim() || '',
     oldLevel: $('#pr_oldLevel')?.value || '',
     newLevel: $('#pr_newLevel')?.value || '',
-    oldDeptId: empById($s('pr_emp'))?.deptId || '',
+    oldDeptId: (()=>{ const sel=document.getElementById('pr_oldDept'); if(sel && sel.tagName==='SELECT') return sel.value; return empById($s('pr_emp'))?.deptId||''; })(),
     newDeptId: $('#pr_newDeptId')?.value || '',
     oldSalary: parseInt(($('#pr_oldSalary')?.value||'').replace(/[^0-9]/g,''))||0,
     oldBonus: parseInt(($('#pr_oldBonus')?.value||'').replace(/[^0-9]/g,''))||0,
