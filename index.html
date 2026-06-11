@@ -924,7 +924,7 @@ const FS_DOC_MAP = {
   workforce:  ['svcData','courses','casualExtraYears','salaryYears','trainingExtraYears','leaveExtraYears','dormConfig'],
   resign:     ['resignations'],  // doc riêng — tránh workforce vượt 1MB
   jobs:       ['jobs'],
-  blacklist:  ['manualBlacklist','blacklistConfig','blacklistReasons'],
+  blacklist:  ['manualBlacklist','blacklistConfig','blacklistReasons','candRequiredFields'],
   config:     ['customFields','rewardTypes','perfReviewTypes','company',
                'dashboardConfig','brandConfig',
                'disciplineSeverityConfig','requiredFieldsConfig',
@@ -9157,6 +9157,29 @@ function openNewLeaveYear(){
   );
 }
 
+function _leaveEmpFilter(q){
+  q=(q||'').toLowerCase();
+  const pool=(DB.employees||[]).filter(e=>getEffectiveStatus(e)!=='exit');
+  const list=(!q?pool:pool.filter(e=>(e.name||'').toLowerCase().includes(q)||(e.code||'').toLowerCase().includes(q))).slice(0,60);
+  const el=document.getElementById('leaveEmpList'); if(!el) return;
+  let html='<div style="padding:8px 12px;cursor:pointer;font-size:12px;color:#6e7681;border-bottom:1px solid #252d38" onclick="window._leaveEmpSelect(\'\',\'\')">— Tất cả nhân viên —</div>';
+  html+=list.map(e=>{
+    const eid=e.id, en=escapeHtml(e.name), ec=escapeHtml(e.code||''), ed=escapeHtml(deptName(e.deptId));
+    return '<div style="padding:8px 12px;cursor:pointer;border-bottom:1px solid #252d38" onclick="window._leaveEmpSelect(\''+eid+'\',\''+en+' · '+ec+'\')"><div style="font-size:13px;font-weight:600">'+en+'</div><div style="font-size:11px;color:#6e7681">'+ec+(ec?' · ':'')+ed+'</div></div>';
+  }).join('');
+  el.innerHTML=html; el.style.display='block';
+}
+window._leaveEmpFilter=_leaveEmpFilter;
+window._leaveEmpSelect=function(id,label){
+  const h=document.getElementById('leaveEmpHidden');
+  const s=document.getElementById('leaveEmpSearch');
+  const l=document.getElementById('leaveEmpList');
+  if(h) h.value=id; if(s) s.value=label||''; if(l) l.style.display='none';
+  setLeaveBal('emp',id);
+};
+function _leaveEmpShowList(){ _leaveEmpFilter(document.getElementById('leaveEmpSearch')?.value||''); }
+function _leaveEmpHideList(){ const l=document.getElementById('leaveEmpList'); if(l) l.style.display='none'; }
+
 function renderLeaveReports(main){
   const today = new Date(); today.setHours(0,0,0,0);
   if(!window._leaveBal) window._leaveBal = {emp:'', year: today.getFullYear(), dept:''};
@@ -9254,8 +9277,9 @@ function renderLeaveReports(main){
     const totalUsed=months.reduce((s,x)=>s+x.used,0);
     const totalEntitle=sh.carry+sh.entitle.reduce((s,x)=>s+x,0);
     const pendingUsed=months.slice(0,curMonth).reduce((s,x)=>s+x.used,0);
-    const pendingEntitle=sh.carry+sh.entitle.slice(0,curMonth).reduce((s,x)=>s+x,0);
-    const pending=Math.round((pendingEntitle-pendingUsed)*100)/100;
+    // Tổng phát sinh = carry + tổng hưởng T1→T12 (toàn bộ năm)
+    const pendingEntitle=sh.carry+sh.entitle.reduce((s,x)=>s+x,0);
+    const pending=Math.round(pendingEntitle*100)/100;
     return {carry:sh.carry,clearAL:sh.clearAL||0,months,totalUsed,totalEntitle,pending};
   };
 
@@ -9324,10 +9348,18 @@ window.toggleLeaveGroup = function(did){
     <!-- Filters -->
     <div class="card" style="padding:12px 16px;margin-bottom:14px">
       <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-        <select class="filter-select" onchange="setLeaveBal('emp',this.value)">
-          <option value="">— Tất cả nhân viên —</option>
-          ${allActive.map(e=>`<option value="${e.id}" ${bal.emp===e.id?'selected':''}>${escapeHtml(e.name)} · ${escapeHtml(e.code)}</option>`).join('')}
-        </select>
+        <div style="position:relative;display:inline-block">
+          <input type="text" id="leaveEmpSearch"
+            placeholder="🔍 Tìm nhân viên..."
+            autocomplete="off"
+            value="${(()=>{ const e=DB.employees.find(x=>x.id===bal.emp); return e?escapeHtml(e.name+' · '+e.code):''; })()}"
+            style="padding:8px 12px;background:var(--bg-card);border:1px solid var(--border);border-radius:7px;color:var(--ink);font-size:13px;width:220px"
+            oninput="_leaveEmpFilter(this.value)"
+            onfocus="_leaveEmpShowList()"
+            onblur="setTimeout(_leaveEmpHideList,200)">
+          <div id="leaveEmpList" style="display:none;position:absolute;top:100%;left:0;right:0;z-index:99;background:var(--bg-card);border:1px solid var(--border);border-radius:7px;max-height:220px;overflow-y:auto;margin-top:3px;box-shadow:0 8px 24px rgba(0,0,0,.4)"></div>
+          <input type="hidden" id="leaveEmpHidden" value="${bal.emp||''}">
+        </div>
         <select class="filter-select" onchange="setLeaveBal('dept',this.value)">
           <option value="">${t('filter_all_dept')}</option>
           ${DB.departments.map(d=>`<option value="${d.id}" ${bal.dept===d.id?'selected':''}>${escapeHtml(d.name)}</option>`).join('')}
@@ -9372,7 +9404,7 @@ window.toggleLeaveGroup = function(did){
               <th ${thStyle} rowspan="3" style="min-width:160px;text-align:left;padding:6px 10px;position:sticky;left:0;background:var(--bg-card);z-index:2;border-right:2px solid var(--border-strong)">${t('th_employee')}</th>
               <th ${thStyle} rowspan="3" style="background:rgba(255,200,0,.12);color:#FFCC00;border:1px solid rgba(255,200,0,.3);min-width:50px">Tồn<br>năm trước</th>
               <th ${thStyle} colspan="12" style="background:rgba(126,198,153,.12);color:var(--success);border:1px solid rgba(126,198,153,.3)">📥 Số ngày phép ĐƯỢC HƯỞNG từng tháng / AL Entitlement ${bal.year}</th>
-              <th ${thStyle} rowspan="3" style="background:rgba(126,182,232,.15);color:var(--info);border:2px solid rgba(126,182,232,.3);min-width:52px">Tồn<br>hiện tại<br><span style="font-size:9px;opacity:.7">tự động</span></th>
+              <th ${thStyle} rowspan="3" style="background:rgba(126,182,232,.15);color:var(--info);border:2px solid rgba(126,182,232,.3);min-width:52px">Tổng<br>phát sinh<br><span style="font-size:9px;opacity:.7">tự động</span></th>
               <th ${thStyle} colspan="13" style="background:rgba(212,165,116,.12);color:var(--accent);border:1px solid rgba(212,165,116,.3)">📤 Số ngày ĐÃ NGHỈ thực tế từng tháng / Taken AL ${bal.year}</th>
               <th ${thStyle} rowspan="3" style="background:rgba(183,148,212,.15);color:var(--purple);border:1px solid rgba(183,148,212,.3);min-width:52px">Tổng<br>đã nghỉ<br><span style="font-size:9px;opacity:.7">tự động</span></th>
               <th ${thStyle} rowspan="3" style="background:rgba(183,148,212,.15);color:var(--purple);border:1px solid rgba(183,148,212,.3);min-width:52px">Tồn cuối<br>năm ${bal.year}<br><span style="font-size:9px;opacity:.7">tự động</span></th>
@@ -9391,16 +9423,77 @@ window.toggleLeaveGroup = function(did){
             ${Object.entries(empByDept).map(([did, dEmps])=>{
               const dName = deptName(did);
               const isCollapsed = !!window._leaveCollapsed[did];
-              const deptHeader = `<tr style="background:var(--bg-elev);border-top:2px solid var(--border-strong);border-bottom:1px solid var(--border)">
-                <td colspan="32" style="padding:7px 12px;position:sticky;left:0;z-index:3;background:var(--bg-elev)">
-                  <div style="display:flex;align-items:center;gap:10px">
+              // Summary totals for dept header
+              const dAL = dEmps.reduce((s,{al})=>({
+                carry:s.carry+(al.carry||0),
+                entitle:al.months.map((m,i)=>(s.entitle[i]||0)+m.entitle),
+                pending:s.pending+(al.pending||0),
+                totalUsed:s.totalUsed+(al.totalUsed||0),
+                totalEntitle:s.totalEntitle+(al.totalEntitle||0),
+                taken:al.months.map((m,i)=>(s.taken[i]||0)+m.used),
+                clearAL:s.clearAL+(al.clearAL||0),
+              }),{carry:0,entitle:Array(12).fill(0),pending:0,totalUsed:0,totalEntitle:0,taken:Array(12).fill(0),clearAL:0});
+              const dCL = dEmps.reduce((s,{cl})=>({
+                carry:s.carry+(cl.carry||0),
+                entitle:cl.months.map((m,i)=>(s.entitle[i]||0)+m.entitle),
+                pending:s.pending+(cl.pending||0),
+                totalUsed:s.totalUsed+(cl.totalUsed||0),
+                totalEntitle:s.totalEntitle+(cl.totalEntitle||0),
+                taken:cl.months.map((m,i)=>(s.taken[i]||0)+m.used),
+                clearAL:0,
+              }),{carry:0,entitle:Array(12).fill(0),pending:0,totalUsed:0,totalEntitle:0,taken:Array(12).fill(0),clearAL:0});
+              const fd=v=>v===0?'—':(Math.round(v*10)/10);
+              const sumCell=(v,clr)=>`<td style="padding:3px 5px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:600;color:${clr||'var(--ink-dim)'};">${fd(v)}</td>`;
+              const deptHeader = `<tr style="background:#1a2535;border-top:2px solid var(--border-strong);border-bottom:1px solid var(--border-strong)">
+                <td style="padding:5px 10px;position:sticky;left:0;z-index:3;background:#1a2535;white-space:nowrap">
+                  <div style="display:flex;align-items:center;gap:8px">
                     <button id="leavegrp_${did}" onclick="toggleLeaveGroup('${did}')"
-                      style="padding:3px 10px;border-radius:4px;border:1px solid var(--border);background:var(--bg-card);color:var(--ink);font-size:11px;cursor:pointer;font-family:inherit">
-                      ${isCollapsed?(_lang==="en"?"▶ Expand":"▶ Mở ra"):(_lang==="en"?"▼ Collapse":"▼ Thu gọn")}
+                      style="padding:2px 8px;border-radius:4px;border:1px solid var(--border);background:var(--bg-card);color:var(--ink);font-size:11px;cursor:pointer;font-family:inherit">
+                      ${isCollapsed?"▶":"▼"}
                     </button>
                     <span style="font-weight:700;font-size:12px;color:var(--accent)">${escapeHtml(dName)}</span>
-                    <span style="font-size:11px;color:var(--ink-muted)">${dEmps.length} nhân viên</span>
+                    <span style="font-size:10px;color:var(--ink-muted)">${dEmps.length} NV</span>
+                    <span style="font-size:9px;padding:1px 6px;background:rgba(126,198,153,.15);color:var(--success);border-radius:4px">AL</span>
+                    <span style="font-size:9px;padding:1px 6px;background:rgba(126,182,232,.15);color:var(--info);border-radius:4px">CL</span>
                   </div>
+                </td>
+                <!-- Tồn năm trước -->
+                <td style="padding:3px 5px;text-align:center;font-size:10px;background:#1a2535">
+                  <div style="color:var(--success);font-weight:600;font-family:'JetBrains Mono',monospace">${fd(dAL.carry)}</div>
+                  <div style="color:var(--info);font-family:'JetBrains Mono',monospace">${fd(dCL.carry)}</div>
+                </td>
+                <!-- Entitle T1-T12 -->
+                ${dAL.entitle.map((v,i)=>`<td style="padding:2px 3px;text-align:center;font-size:10px;background:#1a2535">
+                  <div style="color:var(--success);font-weight:600;font-family:'JetBrains Mono',monospace">${fd(v)}</div>
+                  <div style="color:var(--info);font-family:'JetBrains Mono',monospace">${fd(dCL.entitle[i])}</div>
+                </td>`).join('')}
+                <!-- Tổng phát sinh -->
+                <td style="padding:3px 5px;text-align:center;font-size:10px;background:#1a2535;border-left:2px solid rgba(126,182,232,.3)">
+                  <div style="color:var(--success);font-weight:700;font-family:'JetBrains Mono',monospace">${fd(dAL.pending)}</div>
+                  <div style="color:var(--info);font-weight:700;font-family:'JetBrains Mono',monospace">${fd(dCL.pending)}</div>
+                </td>
+                <!-- Taken T1, T2, clearAL, T3-T12 -->
+                ${[0,1,'clear',2,3,4,5,6,7,8,9,10,11].map((mi,i)=>{
+                  if(mi==='clear') return `<td style="padding:2px 3px;text-align:center;font-size:10px;background:#1a2535"><div style="color:var(--warning);font-family:'JetBrains Mono',monospace">${fd(dAL.clearAL)}</div><div style="color:var(--ink-muted)">—</div></td>`;
+                  return `<td style="padding:2px 3px;text-align:center;font-size:10px;background:#1a2535">
+                    <div style="color:var(--accent);font-family:'JetBrains Mono',monospace">${fd(dAL.taken[mi])}</div>
+                    <div style="color:var(--info);font-family:'JetBrains Mono',monospace">${fd(dCL.taken[mi])}</div>
+                  </td>`;
+                }).join('')}
+                <!-- Tổng đã nghỉ -->
+                <td style="padding:3px 5px;text-align:center;font-size:10px;background:#1a2535">
+                  <div style="color:var(--purple);font-weight:700;font-family:'JetBrains Mono',monospace">${fd(dAL.totalUsed)}</div>
+                  <div style="color:var(--purple);font-family:'JetBrains Mono',monospace">${fd(dCL.totalUsed)}</div>
+                </td>
+                <!-- Tồn cuối năm -->
+                <td style="padding:3px 5px;text-align:center;font-size:10px;background:#1a2535">
+                  <div style="color:var(--success);font-weight:700;font-family:'JetBrains Mono',monospace">${fd(dAL.totalEntitle-dAL.totalUsed)}</div>
+                  <div style="color:var(--success);font-family:'JetBrains Mono',monospace">${fd(dCL.totalEntitle-dCL.totalUsed)}</div>
+                </td>
+                <!-- Còn lại tháng lương -->
+                <td style="padding:3px 5px;text-align:center;font-size:10px;background:#1a2535;border-left:2px solid rgba(183,148,212,.4)">
+                  <div style="color:var(--purple);font-weight:700;font-family:'JetBrains Mono',monospace">${fd(dAL.pending)}</div>
+                  <div style="color:var(--purple);font-family:'JetBrains Mono',monospace">${fd(dCL.pending)}</div>
                 </td>
               </tr>`;
 
@@ -9408,7 +9501,7 @@ window.toggleLeaveGroup = function(did){
                 const cd=DB.customData[e.id]||{};
                 const yrs=Math.floor((today-new Date(e.joined||today))/(365.25*24*3600*1000))||0;
                 const rowBase=idx%2===0?'#0f1419':'#111820';
-                const inp=(lt,field,mi,val,color,bg)=>`<input type="number" min="0" step="0.5" value="${val||''}" placeholder="0"
+                const inp=(lt,field,mi,val,color,bg)=>`<input type="number" min="0" step="0.01" value="${val||''}" placeholder="0"
                   oninput="saveLeaveCell('${e.id}','${lt}','${field}',${mi},this.value)"
                   style="width:38px;padding:2px 3px;background:${bg};border:1px solid ${color};border-radius:3px;color:${color};font-family:JetBrains Mono,monospace;font-size:11px;text-align:center">`;
                 const compCell=(id,val,color,bg)=>`<td style="text-align:center;font-weight:700;font-size:11px;padding:4px;color:${color};background:${bg}"><span id="${id}">${val===0?'—':fnum(val)}</span></td>`;
@@ -9473,7 +9566,7 @@ window.toggleLeaveGroup = function(did){
     <div style="margin-top:8px;padding:12px 16px;background:var(--bg-elev);border-radius:8px;border:1px solid var(--border);font-size:11.5px;color:var(--ink-muted)">
       <b style="color:var(--ink-dim)">Ghi chú:</b>
       Ô trắng = nhập tay. Ô tối = tự động tính.
-      <b>Tồn hiện tại</b> = Tồn năm trước + Hưởng đến T${curMonth} − Đã nghỉ đến T${curMonth}.
+      <b>Tổng phát sinh</b> = Tồn năm trước + Tổng hưởng T1→T12 (toàn năm).
       <b>Tồn cuối năm</b> = Tồn năm trước + Tổng hưởng cả năm − Tổng đã nghỉ.
       <b>Còn lại tháng lương</b> = Tồn hiện tại.
     </div>
@@ -9563,36 +9656,37 @@ function renderLeavePlan(main){
     saveData(['leavePlan']);
   };
 
+  // Tính "Còn lại cuối tháng mi" cho 1 NV — giống cột "Còn lại tháng lương" ở bảng Theo dõi
+  const getEmpRemain = (empId, mi, type)=>{
+    const sh = ((DB.leaveSheet[empId]||{})[curYear]||{})[type]||{};
+    const carry = parseFloat(sh.carry)||0;
+    const entitle = sh.entitle||[];
+    // Tổng phát sinh = carry + entitle T1→mi+1
+    const totalEnt = carry + entitle.slice(0, mi+1).reduce((s,x)=>s+(parseFloat(x)||0), 0);
+    // Tổng đã nghỉ T1→mi+1
+    const taken = sh.taken||[];
+    let used = 0; for(let m=0; m<=mi; m++) used += parseFloat(taken[m]||0);
+    // Trừ clearAL nếu AL
+    const clearAL = type==='al' ? (parseFloat(sh.clearAL)||0) : 0;
+    return Math.round((totalEnt - used - clearAL)*100)/100;
+  };
+
   const getBalByDept = (deptId, mi, type)=>{
+    // Tồn = tổng "Còn lại tháng lương" của từng NV trong bộ phận
     const emps = activeEmps.filter(e=>e.deptId===deptId);
-    let bal=0;
-    emps.forEach(e=>{
-      const yr=(DB.leaveSheet[e.id]||{})[curYear]||{};
-      const op=(DB.leaveOpening&&DB.leaveOpening[e.id])||{};
-      if(type==='al'){
-        const rate=alAccrualPerMonthForEmp(e.id,curYear);
-        const open=parseFloat(op.al)||0;
-        const accr=rate*(mi+1);
-        let used=0; for(let m=0;m<=mi;m++) used+=parseFloat((yr.al?.taken||[])[m]||0);
-        bal+=open+accr-used;
-      } else {
-        const rates=leaveAccrualRates();
-        const open=parseFloat(op.cl)||0;
-        const accr=rates.cl*(mi+1);
-        let used=0; for(let m=0;m<=mi;m++) used+=parseFloat((yr.cl?.taken||[])[m]||0);
-        bal+=open+accr-used;
-      }
-    });
+    const bal = emps.reduce((s,e)=>s+getEmpRemain(e.id, mi, type), 0);
     return Math.round(bal*10)/10;
   };
 
   const getTonDauThang = (deptId, mi, type)=>{
     if(mi===0){
+      // T1: tồn đầu năm = carry của từng NV
       return activeEmps.filter(e=>e.deptId===deptId).reduce((s,e)=>{
-        const op=(DB.leaveOpening&&DB.leaveOpening[e.id])||{};
-        return s+(parseFloat(type==='al'?op.al:op.cl)||0);
+        const sh = ((DB.leaveSheet[e.id]||{})[curYear]||{})[type]||{};
+        return s+(parseFloat(sh.carry)||0);
       },0);
     }
+    // Tháng sau: lấy tồn cuối tháng trước (= còn lại tháng lương tháng trước)
     return getBalByDept(deptId, mi-1, type);
   };
 
@@ -10044,7 +10138,7 @@ function renderLeaves(main){
             <th ${thStyle} rowspan="3" style="min-width:160px;text-align:left;padding:6px 10px;position:sticky;left:0;background:var(--bg-card);z-index:2;border-right:2px solid var(--border-strong)">${t('th_employee')}</th>
             <th ${thStyle} rowspan="3" style="background:rgba(255,200,0,.12);color:#FFCC00;border:1px solid rgba(255,200,0,.3)">Tồn<br>năm trước</th>
             <th ${thStyle} colspan="12" style="background:rgba(126,198,153,.12);color:var(--success);border:1px solid rgba(126,198,153,.3)">Số ngày phép ĐƯỢC HƯỞNG từng tháng / AL Entitlement per month ${bal.year}</th>
-            <th ${thStyle} rowspan="3" style="background:rgba(126,182,232,.12);color:var(--info);border:1px solid rgba(126,182,232,.3)">Tồn<br>hiện tại</th>
+            <th ${thStyle} rowspan="3" style="background:rgba(126,182,232,.12);color:var(--info);border:1px solid rgba(126,182,232,.3)">Tổng<br>phát sinh</th>
             <th ${thStyle} colspan="13" style="background:rgba(212,165,116,.12);color:var(--accent);border:1px solid rgba(212,165,116,.3)">Số ngày ĐÃ NGHỈ thực tế từng tháng / Taken AL per month ${bal.year}</th>
             <th ${thStyle} rowspan="3" style="background:rgba(183,148,212,.12);color:var(--purple);border:1px solid rgba(183,148,212,.3)">Tổng<br>đã nghỉ</th>
             <th ${thStyle} rowspan="3" style="background:rgba(183,148,212,.12);color:var(--purple);border:1px solid rgba(183,148,212,.3)">Tồn cuối<br>năm ${bal.year}<br><span style="font-size:9px;opacity:.7">(=Tồn trước<br>+Hưởng−Dùng)</span></th>
@@ -10067,7 +10161,7 @@ function renderLeaves(main){
             const rowBg = idx%2===0?'background:rgba(255,255,255,.01)':'';
             const cd = DB.customData[e.id]||{};
             const yrs = Math.floor((today-new Date(e.joined||today))/(365.25*24*3600*1000))||0;
-            const inputStyle = 'type="number" min="0" step="0.5" style="width:36px;padding:2px 3px;background:var(--bg);border:1px solid var(--border);border-radius:3px;color:inherit;font-family:JetBrains Mono,monospace;font-size:11px;text-align:center"';
+            const inputStyle = 'type="number" min="0" step="0.01" style="width:36px;padding:2px 3px;background:var(--bg);border:1px solid var(--border);border-radius:3px;color:inherit;font-family:JetBrains Mono,monospace;font-size:11px;text-align:center"';
             const compStyle = (color,bold) => `text-align:center;font-size:11px;padding:4px;font-weight:${bold?'700':'500'};color:${color}`;
             return `<tr style="${rowBg};border-bottom:1px solid var(--border)">
               <!-- NV info (sticky) -->
@@ -10082,7 +10176,7 @@ function renderLeaves(main){
               </td>
               <!-- Được hưởng T1-T12 — NHẬP TAY -->
               ${months.map((mo,i)=>`<td style="background:rgba(126,198,153,.05);padding:2px 1px;text-align:center">
-                <input type="number" min="0" step="0.5" value="${mo.entitle||''}" placeholder="0"
+                <input type="number" min="0" step="0.01" value="${mo.entitle||''}" placeholder="0"
                   oninput="saveLeaveCell('${e.id}','entitle',${i},this.value)"
                   style="width:36px;padding:2px 2px;background:rgba(126,198,153,.08);border:1px solid rgba(126,198,153,.2);border-radius:3px;color:var(--success);font-family:JetBrains Mono,monospace;font-size:11px;text-align:center">
               </td>`).join('')}
@@ -10094,14 +10188,14 @@ function renderLeaves(main){
               ${[0,1,'clear',2,3,4,5,6,7,8,9,10,11].map((mi,i)=>{
                 if(mi==='clear'){
                   return `<td style="background:rgba(255,200,0,.08);padding:2px 1px;text-align:center">
-                    <input type="number" min="0" step="0.5" value="${clearAL||''}" placeholder="0"
+                    <input type="number" min="0" step="0.01" value="${clearAL||''}" placeholder="0"
                       oninput="saveLeaveCell('${e.id}','clearAL',0,this.value)"
                       style="width:36px;padding:2px 2px;background:rgba(255,200,0,.1);border:1px solid rgba(255,200,0,.3);border-radius:3px;color:var(--warning);font-family:JetBrains Mono,monospace;font-size:11px;text-align:center">
                   </td>`;
                 }
                 const v = months[mi].used;
                 return `<td style="background:rgba(212,165,116,.05);padding:2px 1px;text-align:center">
-                  <input type="number" min="0" step="0.5" value="${v||''}" placeholder="0"
+                  <input type="number" min="0" step="0.01" value="${v||''}" placeholder="0"
                     oninput="saveLeaveCell('${e.id}','taken',${mi},this.value)"
                     style="width:36px;padding:2px 2px;background:rgba(212,165,116,.08);border:1px solid rgba(212,165,116,.2);border-radius:3px;color:var(--accent);font-family:JetBrains Mono,monospace;font-size:11px;text-align:center">
                 </td>`;
@@ -10146,7 +10240,7 @@ function renderLeaves(main){
               </td>
               <!-- CL taken T1-T12 -->
               ${months.map((mo,i)=>`<td style="background:rgba(212,165,116,.05);padding:2px 1px;text-align:center">
-                <input type="number" min="0" step="0.5" value="${mo.used||''}" placeholder="0"
+                <input type="number" min="0" step="0.01" value="${mo.used||''}" placeholder="0"
                   oninput="saveTraineeLeaveCell('${t.id}',${i},this.value)"
                   style="width:36px;padding:2px 2px;background:rgba(212,165,116,.08);border:1px solid rgba(212,165,116,.2);border-radius:3px;color:var(--accent);font-family:JetBrains Mono,monospace;font-size:11px;text-align:center">
               </td>`).join('')}
@@ -10507,8 +10601,8 @@ function editLeaveOpening(){
     const key = (e.name+' '+e.code).toLowerCase();
     return `<div data-oprow data-name="${escapeHtml(key)}" style="display:grid;grid-template-columns:1fr 90px 90px;gap:10px;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
       <div style="font-size:13px"><div style="font-weight:500">${escapeHtml(e.name)}</div><div style="color:var(--ink-muted);font-size:11px">${escapeHtml(e.code)} · ${deptName(e.deptId)}</div></div>
-      <input type="number" id="op_al_${e.id}" value="${o.al||0}" step="0.5" style="padding:6px 8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--ink);font-family:'JetBrains Mono',monospace;text-align:center" title="AL đầu năm">
-      <input type="number" id="op_cl_${e.id}" value="${o.cl||0}" step="0.5" style="padding:6px 8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--ink);font-family:'JetBrains Mono',monospace;text-align:center" title="CL đầu năm">
+      <input type="number" id="op_al_${e.id}" value="${o.al||0}" step="0.01" style="padding:6px 8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--ink);font-family:'JetBrains Mono',monospace;text-align:center" title="AL đầu năm">
+      <input type="number" id="op_cl_${e.id}" value="${o.cl||0}" step="0.01" style="padding:6px 8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--ink);font-family:'JetBrains Mono',monospace;text-align:center" title="CL đầu năm">
     </div>`;
   }).join('');
   openModal(`
@@ -13203,6 +13297,70 @@ function rejectOffer(id){
   render();
 }
 
+
+// ── Candidate form required fields config ──
+const CAND_FIELDS_CONFIG = [
+  {key:'name',           label:'Họ và tên',           alwaysRequired:true},
+  {key:'phone',          label:'Số điện thoại',        alwaysRequired:false},
+  {key:'email',          label:'Email',                alwaysRequired:false},
+  {key:'dob',            label:'Ngày sinh',            alwaysRequired:false},
+  {key:'source',         label:'Nguồn ứng tuyển',      alwaysRequired:false},
+  {key:'experience',     label:'Kinh nghiệm',          alwaysRequired:false},
+  {key:'expectedSalary', label:'Lương kỳ vọng',        alwaysRequired:false},
+  {key:'cvLink',         label:'Link CV / File CV',    alwaysRequired:false},
+  {key:'rating',         label:'Đánh giá (sao)',       alwaysRequired:false},
+  {key:'screeningBy',    label:'Người sàng lọc (V1)',  alwaysRequired:false},
+  {key:'hrInterviewBy',  label:'Người PV HR (V2)',     alwaysRequired:false},
+  {key:'deptInterviewBy',label:'Người PV bộ phận (V3)',alwaysRequired:false},
+];
+function getCandRequired(){
+  if(!DB.candRequiredFields) DB.candRequiredFields = ['name','phone'];
+  return DB.candRequiredFields;
+}
+function openCandFieldsConfig(){
+  const req = getCandRequired();
+  const rows = CAND_FIELDS_CONFIG.map(f=>{
+    const isReq = req.includes(f.key);
+    return `<tr style="border-bottom:1px solid var(--border)">
+      <td style="padding:10px 14px;font-size:13px;font-weight:500">${f.label}</td>
+      <td style="padding:10px 14px;text-align:center">
+        ${f.alwaysRequired
+          ? '<span style="font-size:11px;color:var(--accent);font-weight:600">Bắt buộc</span>'
+          : `<label class="switch"><input type="checkbox" id="cr_${f.key}" ${isReq?'checked':''}><span class="slider"></span></label>`}
+      </td>
+    </tr>`;
+  }).join('');
+  openModal(`
+    <div class="modal-head">
+      <div class="modal-title">⚙️ Cấu hình <em>trường bắt buộc</em></div>
+      <div class="modal-sub">Chọn các trường bắt buộc khi thêm/sửa ứng viên</div>
+    </div>
+    <table style="width:100%;border-collapse:collapse;border:1px solid var(--border);border-radius:8px;overflow:hidden;margin-bottom:16px">
+      <thead><tr style="background:var(--bg-elev)">
+        <th style="padding:8px 14px;text-align:left;font-size:11px;color:var(--ink-muted);text-transform:uppercase;letter-spacing:.1em">Trường thông tin</th>
+        <th style="padding:8px 14px;text-align:center;font-size:11px;color:var(--ink-muted);text-transform:uppercase;letter-spacing:.1em;width:120px">Bắt buộc</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeModal()">Huỷ</button>
+      <button class="btn btn-primary" onclick="saveCandFieldsConfig()">💾 Lưu cấu hình</button>
+    </div>
+  `);
+}
+function saveCandFieldsConfig(){
+  const req = ['name']; // always required
+  CAND_FIELDS_CONFIG.forEach(f=>{
+    if(f.alwaysRequired) return;
+    const el = document.getElementById('cr_'+f.key);
+    if(el && el.checked) req.push(f.key);
+  });
+  DB.candRequiredFields = req;
+  saveData(['candRequiredFields']);
+  toast('✅ Đã lưu cấu hình trường bắt buộc','success');
+  closeModal();
+}
+
 function editCandidate(id, jobId){
   const isNew = !id;
   const a = isNew ? {
@@ -13225,18 +13383,21 @@ function editCandidate(id, jobId){
   const SOURCES = ['Hoteljob','LinkedIn','Vietnamworks','TopCV','Fanpage','Referral','Headhunter','Walk-in',(_lang==="en"?"Other":"Khác")];
 
   openModalWide(`
-    <div class="modal-head">
-      <div class="modal-title">${isNew?(_lang==="en"?"Add":"Thêm"):(_lang==="en"?"Edit":"Sửa")} <em>ứng viên</em></div>
-      <div class="modal-sub">${isNew ? 'Cho vị trí: '+(DB.jobs.find(j=>j.id===jobId)?.title||'') : escapeHtml(a.name)}</div>
+    <div class="modal-head" style="display:flex;align-items:flex-start;justify-content:space-between">
+      <div>
+        <div class="modal-title">${isNew?(_lang==="en"?"Add":"Thêm"):(_lang==="en"?"Edit":"Sửa")} <em>ứng viên</em></div>
+        <div class="modal-sub">${isNew ? 'Cho vị trí: '+(DB.jobs.find(j=>j.id===jobId)?.title||'') : escapeHtml(a.name)}</div>
+      </div>
+      <button class="btn" onclick="openCandFieldsConfig()" style="font-size:12px;padding:6px 12px;flex-shrink:0">⚙️ Cấu hình fields</button>
     </div>
     <div class="form-grid">
-      <div class="field"><label>Họ và tên *</label><input id="ca_name" value="${escapeHtml(a.name)}" placeholder="VD: Nguyễn Văn A"></div>
+      <div class="field"><label>${getCandRequired().includes('name')?'Họ và tên *':'Họ và tên'}</label><input id="ca_name" value="${escapeHtml(a.name)}" placeholder="VD: Nguyễn Văn A"></div>
       <div class="field"><label>Ngày sinh</label><input type="date" id="ca_dob" value="${dispToIso(a.dob||'')}" onchange="(()=>{const d=new Date(this.value);if(!isNaN(d)){const age=new Date().getFullYear()-d.getFullYear();document.getElementById('ca_age_display').textContent=age+' tuổi';}else{document.getElementById('ca_age_display').textContent='';}})()"><div id="ca_age_display" style="font-size:11px;color:var(--accent);margin-top:4px">${(()=>{if(!a.dob)return'';const d=new Date(dispToIso(a.dob));return isNaN(d)?'':(new Date().getFullYear()-d.getFullYear())+' tuổi';})()}</div></div>
-      <div class="field"><label>SĐT *</label><input type="tel" id="ca_phone" value="${escapeHtml(a.phone)}" placeholder="0912345678"></div>
-      <div class="field"><label>Email</label><input type="email" id="ca_email" value="${escapeHtml(a.email)}" placeholder="email@gmail.com"></div>
+      <div class="field"><label>${getCandRequired().includes('phone')?'SĐT *':'SĐT'}</label><input type="tel" id="ca_phone" value="${escapeHtml(a.phone)}" placeholder="0912345678"></div>
+      <div class="field"><label>${getCandRequired().includes('email')?'Email *':'Email'}</label><input type="email" id="ca_email" value="${escapeHtml(a.email)}" placeholder="email@gmail.com"></div>
 
       <div class="field"><label>Ngày ứng tuyển *</label><input lang="vi" type="date" id="ca_applied" value="${dispToIso(a.appliedDate||'')}"></div>
-      <div class="field"><label>Nguồn ứng tuyển</label><select id="ca_source">
+      <div class="field"><label>${getCandRequired().includes('source')?'Nguồn ứng tuyển *':'Nguồn ứng tuyển'}</label><select id="ca_source">
         <option value="">— Chọn —</option>
         ${SOURCES.map(s=>`<option value="${s}" ${a.source===s?'selected':''}>${s}</option>`).join('')}
       </select></div>
@@ -13421,10 +13582,24 @@ function handleCvUpload(event){
 function saveCandidate(id, jobId, isNew){
   const name = $('#ca_name').value.trim();
   if(!name){ toast('Vui lòng nhập tên ứng viên','error'); return; }
-  const phone = $('#ca_phone').value.trim();
-  if(!phone){ toast('Vui lòng nhập SĐT','error'); return; }
   const applied = $sd('ca_applied');
   if(!applied){ toast('Vui lòng chọn ngày ứng tuyển','error'); return; }
+  // Validate required fields from config
+  const _req = getCandRequired();
+  const _reqMap = {
+    phone: {el:'ca_phone', label:'Số điện thoại'},
+    email: {el:'ca_email', label:'Email'},
+    source: {el:'ca_source', label:'Nguồn ứng tuyển'},
+    experience: {el:'ca_exp', label:'Kinh nghiệm'},
+    cvLink: {el:'ca_cvLink', label:'Link CV'},
+    rating: {el:'ca_rating', label:'Đánh giá (sao)'},
+  };
+  for(const key of _req){
+    if(!_reqMap[key]) continue;
+    const val = (document.getElementById(_reqMap[key].el)?.value||'').trim();
+    if(!val){ toast('Vui lòng nhập: '+_reqMap[key].label,'error'); return; }
+  }
+  const phone = $('#ca_phone')?.value.trim()||'';
 
   // Helper: get field value safely, returns '' instead of undefined
   // Using global helpers: $s $si $sf $sb $sd
