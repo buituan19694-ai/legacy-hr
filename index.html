@@ -1030,6 +1030,25 @@ async function loadEmpProfiles(localPhotos){
   }
 }
 
+// Đẩy NV chưa có trên Firestore (thường là NV exit chưa được migrate) lên emp_profiles
+async function pushMissingEmpProfiles(){
+  if(!window.fbDb || !window.currentUser) return;
+  try{
+    const snap = await window.fbDb.collection(EMP_COLLECTION).get();
+    const existingIds = new Set(snap.docs.map(d=>d.data()._empId||d.id));
+    let pushed = 0;
+    (DB.employees||[]).forEach(e=>{
+      if(!existingIds.has(e.id)){
+        saveEmpProfile(e.id);
+        pushed++;
+      }
+    });
+    if(pushed>0) console.log('[Migration] Pushed',pushed,'missing emp profiles to Firestore');
+  }catch(err){
+    console.warn('[Migration] pushMissingEmpProfiles error:', err.message);
+  }
+}
+
 function _pushDynamicKey(key, meta){
   if(!window.fbDb || !window.currentUser) return;
   const thisYear = new Date().getFullYear();
@@ -9501,7 +9520,7 @@ window.toggleLeaveGroup = function(did){
                 const cd=DB.customData[e.id]||{};
                 const yrs=Math.floor((today-new Date(e.joined||today))/(365.25*24*3600*1000))||0;
                 const rowBase=idx%2===0?'#0f1419':'#111820';
-                const inp=(lt,field,mi,val,color,bg)=>`<input type="number" min="0" step="0.01" value="${val||''}" placeholder="0"
+                const inp=(lt,field,mi,val,color,bg)=>`<input type="text" inputmode="decimal" value="${val||''}" placeholder="0"
                   oninput="saveLeaveCell('${e.id}','${lt}','${field}',${mi},this.value)"
                   style="width:38px;padding:2px 3px;background:${bg};border:1px solid ${color};border-radius:3px;color:${color};font-family:JetBrains Mono,monospace;font-size:11px;text-align:center">`;
                 const compCell=(id,val,color,bg)=>`<td style="text-align:center;font-weight:700;font-size:11px;padding:4px;color:${color};background:${bg}"><span id="${id}">${val===0?'—':fnum(val)}</span></td>`;
@@ -10161,7 +10180,7 @@ function renderLeaves(main){
             const rowBg = idx%2===0?'background:rgba(255,255,255,.01)':'';
             const cd = DB.customData[e.id]||{};
             const yrs = Math.floor((today-new Date(e.joined||today))/(365.25*24*3600*1000))||0;
-            const inputStyle = 'type="number" min="0" step="0.01" style="width:36px;padding:2px 3px;background:var(--bg);border:1px solid var(--border);border-radius:3px;color:inherit;font-family:JetBrains Mono,monospace;font-size:11px;text-align:center"';
+            const inputStyle = 'type="text" inputmode="decimal" style="width:36px;padding:2px 3px;background:var(--bg);border:1px solid var(--border);border-radius:3px;color:inherit;font-family:JetBrains Mono,monospace;font-size:11px;text-align:center"';
             const compStyle = (color,bold) => `text-align:center;font-size:11px;padding:4px;font-weight:${bold?'700':'500'};color:${color}`;
             return `<tr style="${rowBg};border-bottom:1px solid var(--border)">
               <!-- NV info (sticky) -->
@@ -10176,7 +10195,7 @@ function renderLeaves(main){
               </td>
               <!-- Được hưởng T1-T12 — NHẬP TAY -->
               ${months.map((mo,i)=>`<td style="background:rgba(126,198,153,.05);padding:2px 1px;text-align:center">
-                <input type="number" min="0" step="0.01" value="${mo.entitle||''}" placeholder="0"
+                <input type="text" inputmode="decimal" value="${mo.entitle||''}" placeholder="0"
                   oninput="saveLeaveCell('${e.id}','entitle',${i},this.value)"
                   style="width:36px;padding:2px 2px;background:rgba(126,198,153,.08);border:1px solid rgba(126,198,153,.2);border-radius:3px;color:var(--success);font-family:JetBrains Mono,monospace;font-size:11px;text-align:center">
               </td>`).join('')}
@@ -10188,14 +10207,14 @@ function renderLeaves(main){
               ${[0,1,'clear',2,3,4,5,6,7,8,9,10,11].map((mi,i)=>{
                 if(mi==='clear'){
                   return `<td style="background:rgba(255,200,0,.08);padding:2px 1px;text-align:center">
-                    <input type="number" min="0" step="0.01" value="${clearAL||''}" placeholder="0"
+                    <input type="text" inputmode="decimal" value="${clearAL||''}" placeholder="0"
                       oninput="saveLeaveCell('${e.id}','clearAL',0,this.value)"
                       style="width:36px;padding:2px 2px;background:rgba(255,200,0,.1);border:1px solid rgba(255,200,0,.3);border-radius:3px;color:var(--warning);font-family:JetBrains Mono,monospace;font-size:11px;text-align:center">
                   </td>`;
                 }
                 const v = months[mi].used;
                 return `<td style="background:rgba(212,165,116,.05);padding:2px 1px;text-align:center">
-                  <input type="number" min="0" step="0.01" value="${v||''}" placeholder="0"
+                  <input type="text" inputmode="decimal" value="${v||''}" placeholder="0"
                     oninput="saveLeaveCell('${e.id}','taken',${mi},this.value)"
                     style="width:36px;padding:2px 2px;background:rgba(212,165,116,.08);border:1px solid rgba(212,165,116,.2);border-radius:3px;color:var(--accent);font-family:JetBrains Mono,monospace;font-size:11px;text-align:center">
                 </td>`;
@@ -10240,7 +10259,7 @@ function renderLeaves(main){
               </td>
               <!-- CL taken T1-T12 -->
               ${months.map((mo,i)=>`<td style="background:rgba(212,165,116,.05);padding:2px 1px;text-align:center">
-                <input type="number" min="0" step="0.01" value="${mo.used||''}" placeholder="0"
+                <input type="text" inputmode="decimal" value="${mo.used||''}" placeholder="0"
                   oninput="saveTraineeLeaveCell('${t.id}',${i},this.value)"
                   style="width:36px;padding:2px 2px;background:rgba(212,165,116,.08);border:1px solid rgba(212,165,116,.2);border-radius:3px;color:var(--accent);font-family:JetBrains Mono,monospace;font-size:11px;text-align:center">
               </td>`).join('')}
@@ -10601,8 +10620,8 @@ function editLeaveOpening(){
     const key = (e.name+' '+e.code).toLowerCase();
     return `<div data-oprow data-name="${escapeHtml(key)}" style="display:grid;grid-template-columns:1fr 90px 90px;gap:10px;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
       <div style="font-size:13px"><div style="font-weight:500">${escapeHtml(e.name)}</div><div style="color:var(--ink-muted);font-size:11px">${escapeHtml(e.code)} · ${deptName(e.deptId)}</div></div>
-      <input type="number" id="op_al_${e.id}" value="${o.al||0}" step="0.01" style="padding:6px 8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--ink);font-family:'JetBrains Mono',monospace;text-align:center" title="AL đầu năm">
-      <input type="number" id="op_cl_${e.id}" value="${o.cl||0}" step="0.01" style="padding:6px 8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--ink);font-family:'JetBrains Mono',monospace;text-align:center" title="CL đầu năm">
+      <input type="text" inputmode="decimal" id="op_al_${e.id}" value="${o.al||0}" style="padding:6px 8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--ink);font-family:'JetBrains Mono',monospace;text-align:center" title="AL đầu năm">
+      <input type="text" inputmode="decimal" id="op_cl_${e.id}" value="${o.cl||0}" style="padding:6px 8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--ink);font-family:'JetBrains Mono',monospace;text-align:center" title="CL đầu năm">
     </div>`;
   }).join('');
   openModal(`
@@ -11792,6 +11811,10 @@ function _wfDormTab(){
   });
   const totalInDorm = activeEmps.filter(e=>{ const d=(DB.customData||{})[e.id]||{}; return d.dormitory && houses.some(h=>h.name===d.dormitory); }).length;
 
+  // Year selector - phải khai báo trước dormByMonth
+  if(!window._dormYear) window._dormYear = curYear;
+  const dispYear = window._dormYear || curYear;
+
   // Chart by month
   const dormByMonth = MN.map((_,mi)=>{
     const ms=new Date(dispYear,mi,1), me=new Date(dispYear,mi+1,0);
@@ -11816,8 +11839,6 @@ function _wfDormTab(){
     const d=(DB.customData||{})[e.id]||{};
     return d.exitDate ? new Date(d.exitDate).getFullYear() : (e.joined ? new Date(e.joined).getFullYear() : curYear);
   }).filter(y=>y)])].sort((a,b)=>b-a);
-  if(!window._dormYear) window._dormYear = curYear;
-  const dispYear = window._dormYear || curYear;
 
   const html = `
     <div style="display:flex;flex-direction:column;gap:16px">
@@ -20649,6 +20670,8 @@ fbAuth.onAuthStateChanged(async user => {
             loadEmpProfiles(localPhotos)
           ]);
           let hasCloud = empLoaded;
+          // Push NV chưa có trên Firestore (exit employees) sau 3 giây
+          if(empLoaded) setTimeout(()=>pushMissingEmpProfiles(), 3000);
           snaps.forEach((snap,i)=>{
             if(!snap.exists) return;
             hasCloud = true;
