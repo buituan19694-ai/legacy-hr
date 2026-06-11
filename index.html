@@ -1299,6 +1299,17 @@ if(!Array.isArray(DB.trainingExtraYears)) DB.trainingExtraYears = [];
 if(!Array.isArray(DB.leaveExtraYears))    DB.leaveExtraYears    = [];
 if(!Array.isArray(DB.resignations))       DB.resignations       = [];
 // Dọn candidates mồ côi (job đã xóa)
+// Migration: nếu e.role là tiếng Việt nhưng cd.position có EN → hoán đổi
+if(Array.isArray(DB.employees)){
+  DB.employees.forEach(e=>{
+    const cd=(DB.customData||{})[e.id]||{};
+    const isVi=s=>/[àáảãạăắằẳẵặâấầẩẫậđèéẻẽẹêếềểễệìíỉĩịòóỏõọôốồổỗộơớờởỡợùúủũụưứừửữựỳýỷỹỵ]/i.test(s||'');
+    if(isVi(e.role)&&cd.position&&!isVi(cd.position)){
+      if(!e.roleVN) e.roleVN=e.role;
+      e.role=cd.position;
+    }
+  });
+}
 if(Array.isArray(DB.candidates)&&Array.isArray(DB.jobs)){
   const _jids=new Set((DB.jobs||[]).map(j=>j.id));
   DB.candidates=DB.candidates.filter(c=>c.jobId&&_jids.has(c.jobId));
@@ -3762,8 +3773,13 @@ function renderEmployeeProfile(main){
           <h2 class="profile-name">${escapeHtml(e.name)}</h2>
           <div class="profile-role">
             ${escapeHtml(e.role||'')}
-            ${(e.roleVN||cd.jobLocation)?`<span style="color:var(--ink-muted);font-size:13px"> / ${escapeHtml(e.roleVN||cd.jobLocation||'')}</span>`:''}
-
+            ${(()=>{
+              const vn = e.roleVN||cd.jobLocation||'';
+              const en = e.role||'';
+              // Only show VI if different from EN (avoid duplicate display)
+              if(!vn || vn===en) return '';
+              return `<span style="color:var(--ink-muted);font-size:13px"> / ${escapeHtml(vn)}</span>`;
+            })()}
           </div>
           <div class="profile-quick">
             <div class="profile-quick-item"><span class="profile-quick-label">Mã NV</span><span class="profile-quick-value" style="font-family:'JetBrains Mono',monospace">${escapeHtml(e.code)}</span></div>
