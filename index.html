@@ -1393,6 +1393,9 @@ function initDateInputs(root){
       if(v.length>=6) v = v.slice(0,5)+'/'+v.slice(5);
       if(v.length>10) v = v.slice(0,10);
       this.value = v;
+      // Update data-iso realtime so oninput handlers can read it
+      var iso = dispToIso(this.value);
+      this.setAttribute('data-iso', iso||'');
     });
     txt.addEventListener('blur', function(){
       var iso = dispToIso(this.value);
