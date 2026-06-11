@@ -9284,12 +9284,13 @@ function renderLeaveReports(main){
     const pendingUsed=sh.taken.slice(0,curMonth).reduce((a,b)=>a+b,0);
     const pendingEntitle=sh.carry+sh.entitle.reduce((a,b)=>a+b,0); // Tổng phát sinh
     const tonCuoiNam=Math.round((totalEntitle-totalUsed)*100)/100;
-    const pending=tonCuoiNam; // Còn lại năm cũ = Tồn cuối năm
+    const pending=curMonth<tonCuoiNam?Math.round((tonCuoiNam-curMonth)*100)/100:0;
     const fmt=v=>v===0?'—':(Math.round(v*100)/100)%1===0?(Math.round(v*100)/100).toString():(Math.round(v*100)/100).toFixed(2);
     const upd=(id,v)=>{const el=document.getElementById(id);if(el)el.textContent=fmt(v);};
     const pfx='ls_'+empId+'_'+leaveType+'_';
     upd(pfx+'pending',pendingEntitle); upd(pfx+'totalUsed',totalUsed);
-    upd(pfx+'remain',pendingEntitle-totalUsed); upd(pfx+'cur',pending);
+    upd(pfx+'remain',pendingEntitle-totalUsed);
+    if(leaveType==='al') upd(pfx+'cur',pending);
   };
 
   const calcRow = (empId, leaveType) => {
@@ -9302,8 +9303,8 @@ function renderLeaveReports(main){
     const pendingEntitle=sh.carry+sh.entitle.reduce((s,x)=>s+x,0);
     // Tồn cuối năm = carry + tổng hưởng - tổng đã nghỉ
     const tonCuoiNam = Math.round((totalEntitle - totalUsed)*100)/100;
-    // Còn lại năm cũ = Tồn cuối năm (pendingEntitle - totalUsed), không trừ gì thêm
-    const pending = tonCuoiNam;
+    // Còn lại năm cũ = IF(curMonth < tonCuoiNam, tonCuoiNam - curMonth, 0)
+    const pending = curMonth < tonCuoiNam ? Math.round((tonCuoiNam - curMonth)*100)/100 : 0;
     return {carry:sh.carry,clearAL:sh.clearAL||0,months,totalUsed,totalEntitle,pending,pendingEntitle,tonCuoiNam};
   };
 
@@ -9512,7 +9513,7 @@ window.toggleLeaveGroup = function(did){
                 <!-- Còn lại năm cũ -->
                 <td style="padding:3px 5px;text-align:center;font-size:10px;background:#1a2535">
                   <div style="color:var(--purple);font-weight:700;font-family:'JetBrains Mono',monospace">${fd(dAL.pending)}</div>
-                  <div style="color:var(--purple);font-family:'JetBrains Mono',monospace">${fd(dCL.pending)}</div>
+                  <div style="color:var(--ink-muted);font-size:10px">—</div>
                 </td>
                 <!-- Tồn cuối năm -->
                 <td style="padding:3px 5px;text-align:center;font-size:10px;background:#1a2535;border-left:2px solid rgba(183,148,212,.4)">
@@ -9544,7 +9545,7 @@ window.toggleLeaveGroup = function(did){
                     ${d.months.map((mo,i)=>`<td style="background:${ent_bg};padding:2px 1px;text-align:center">
                       ${inp(lt,'entitle',i,mo.entitle,ent_color,ent_bg)}
                     </td>`).join('')}
-                    ${compCell(pfx+'pending',d.pending,d.pending<0?'var(--danger)':'var(--info)','rgba(126,182,232,.1)')}
+                    ${compCell(pfx+'pending',d.pendingEntitle,d.pendingEntitle<0?'var(--danger)':'var(--info)','rgba(126,182,232,.1)')}
                     ${[0,1,'clear',2,3,4,5,6,7,8,9,10,11].map((mi)=>{
                       if(mi==='clear') return `<td style="background:rgba(255,200,0,.08);padding:2px 1px;text-align:center">
                         ${inp(lt,'clearAL',0,d.clearAL,'var(--warning)','rgba(255,200,0,.1)')}
@@ -9555,7 +9556,7 @@ window.toggleLeaveGroup = function(did){
                       </td>`;
                     }).join('')}
                     ${compCell(pfx+'totalUsed',d.totalUsed,'var(--purple)','rgba(183,148,212,.06)')}
-                    ${compCell(pfx+'cur',d.pending,d.pending<0?'var(--danger)':'var(--success)','rgba(183,148,212,.08)')}
+                    ${lt==='al' ? compCell(pfx+'cur',d.pending,d.pending<0?'var(--danger)':'var(--success)','rgba(183,148,212,.08)') : '<td style="text-align:center;font-size:11px;color:var(--ink-muted);padding:4px;background:rgba(183,148,212,.04)">—</td>'}
                     <td style="text-align:center;font-weight:700;font-size:11px;padding:4px;color:${(d.pendingEntitle-d.totalUsed)<0?'var(--danger)':'var(--success)'};background:rgba(183,148,212,.15);border-left:2px solid rgba(183,148,212,.4)"
                       title="Tồn cuối năm = Tổng phát sinh − Tổng đã nghỉ = ${fnum(d.pendingEntitle)} − ${fnum(d.totalUsed)}">
                       <span id="${pfx}remain">${fnum(d.pendingEntitle-d.totalUsed)}</span>
@@ -9581,7 +9582,7 @@ window.toggleLeaveGroup = function(did){
               <td style="text-align:center;color:var(--warning);font-size:10px"><div>${fnum(empMonthData.reduce((s,x)=>s+(x.al.clearAL||0),0))}</div><div style="opacity:.5">—</div></td>
               ${Array.from({length:10},(_,i)=>`<td style="text-align:center;font-size:10px"><div style="color:var(--accent)">${fnum(empMonthData.reduce((s,x)=>s+x.al.months[i+2].used,0))}</div><div style="color:var(--info);opacity:.8">${fnum(empMonthData.reduce((s,x)=>s+x.cl.months[i+2].used,0))}</div></td>`).join('')}
               <td style="text-align:center;font-size:10px"><div style="color:var(--purple);font-weight:700">${fnum(empMonthData.reduce((s,x)=>s+x.al.totalUsed,0))}</div><div style="color:var(--purple);opacity:.7">${fnum(empMonthData.reduce((s,x)=>s+x.cl.totalUsed,0))}</div></td>
-              <td style="text-align:center;font-size:10px"><div style="color:var(--purple);font-weight:700">${fnum(empMonthData.reduce((s,x)=>s+x.al.pending,0))}</div><div style="color:var(--purple);opacity:.7">${fnum(empMonthData.reduce((s,x)=>s+x.cl.pending,0))}</div></td>
+              <td style="text-align:center;font-size:10px"><div style="color:var(--purple);font-weight:700">${fnum(empMonthData.reduce((s,x)=>s+x.al.pending,0))}</div><div style="color:var(--ink-muted);font-size:11px">—</div></td>
               <td style="text-align:center;font-size:10px;border-left:2px solid rgba(183,148,212,.4)"><div style="color:var(--success);font-weight:700">${fnum(empMonthData.reduce((s,x)=>s+((x.al.pendingEntitle||x.al.totalEntitle)-x.al.totalUsed),0))}</div><div style="color:var(--success);opacity:.7">${fnum(empMonthData.reduce((s,x)=>s+((x.cl.pendingEntitle||x.cl.totalEntitle)-x.cl.totalUsed),0))}</div></td>
             </tr>
           </tfoot>
@@ -9657,8 +9658,10 @@ function renderLeavePlan(main){
   if(!DB.leavePlan[curYear]) DB.leavePlan[curYear]={};
   if(window._lpShowAL === undefined) window._lpShowAL = true;
   if(window._lpShowCL === undefined) window._lpShowCL = true;
+  if(window._lpStatusFilter === undefined) window._lpStatusFilter = 'active';
   const showAL = window._lpShowAL;
   const showCL = window._lpShowCL;
+  const lpStatusFilter = window._lpStatusFilter;
 
   // Chỉ hiện năm đã mở trong Tracking (leaveExtraYears + năm hiện tại của leaveSheet)
   const _openedLeaveYears = new Set([today.getFullYear()]);
@@ -9680,7 +9683,11 @@ function renderLeavePlan(main){
   if(!(window._lpSelMonths instanceof Set) || window._lpSelMonths.size===0)
     window._lpSelMonths = new Set([curMonth]);
   const selMonths = window._lpSelMonths;
-  const activeEmps = DB.employees.filter(e=>getEffectiveStatus(e)!=='exit');
+  const activeEmps = lpStatusFilter==='all'
+    ? DB.employees
+    : lpStatusFilter==='exit'
+      ? DB.employees.filter(e=>getEffectiveStatus(e)==='exit')
+      : DB.employees.filter(e=>getEffectiveStatus(e)!=='exit');
   const depts = DB.departments;
 
   window._saveLeavePlan = (deptId, mi, type, val)=>{
@@ -9751,7 +9758,7 @@ function renderLeavePlan(main){
     const isPast = mon < curMonth;
     const isCur  = mon === curMonth;
 
-    let footAL={ton:0,kh:0,real:0}, footCL={ton:0,kh:0,real:0};
+    let footAL={ton:0,kh:0,real:0,conLai:0}, footCL={ton:0,kh:0,real:0,conLai:0};
 
     const rows = depts.map((dept,idx)=>{
       const plan = DB.leavePlan[curYear][dept.id]||{};
@@ -9763,10 +9770,14 @@ function renderLeavePlan(main){
         const col=isAL?'var(--success)':'var(--info)';
         const ton  = Math.round(getTonDauThang(dept.id, mi, type)*10)/10;
         const kh   = (plan[mi]||{})[type]||0;
-        // Tồn cuối năm bộ phận = getBalByDept (pendingEntitle - totalUsed, giống cột Tồn cuối năm)
-        const tonCuoiNamDept = getBalByDept(dept.id, 11, type);
-        // Còn lại năm cũ = Tồn cuối năm, hiện cả AL lẫn CL
-        const conLaiNamCu = Math.round(tonCuoiNamDept*10)/10;
+        // Còn lại năm cũ = Σ per-emp IF(curMonth < tonCuoiNam_emp, tonCuoiNam_emp - curMonth, 0) — chỉ AL
+        const conLaiNamCu = isAL ? Math.round(activeEmps.filter(e=>e.deptId===dept.id).reduce((s,e)=>{
+          const sh=((DB.leaveSheet[e.id]||{})[curYear]||{}).al||{};
+          const te=(sh.carry||0)+(sh.entitle||[]).reduce((a,b)=>a+(b||0),0);
+          const tu=(sh.taken||[]).reduce((a,b)=>a+(b||0),0);
+          const ton=Math.round((te-tu)*100)/100;
+          return s+(curMonth<ton ? ton-curMonth : 0);
+        },0)*10)/10 : null;
         const real = getRealByDept(dept.id, mi, type);
         const duKien = kh>0 ? Math.round((ton-kh)*10)/10 : null;
         const duKienC= duKien!==null?(duKien>=0?'var(--success)':'var(--danger)'):'';
@@ -9776,8 +9787,8 @@ function renderLeavePlan(main){
         const datText = vsKH!==null?(vsKH<=0?'✅ Đạt':'❌ Vượt KH'):'—';
         const datColor= vsKH!==null?(vsKH<=0?'var(--success)':'var(--danger)'):'var(--ink-muted)';
 
-        if(isAL){ footAL.ton+=ton; footAL.kh+=kh; footAL.real+=real; }
-        else     { footCL.ton+=ton; footCL.kh+=kh; footCL.real+=real; }
+        if(isAL){ footAL.ton+=ton; footAL.kh+=kh; footAL.real+=real; footAL.conLai+=conLaiNamCu||0; }
+        else     { footCL.ton+=ton; footCL.kh+=kh; footCL.real+=real; footCL.conLai+=conLaiNamCu||0; }
 
         const deptCell = ti===0
           ? `<td rowspan="${rowspan}" style="padding:8px 12px;font-weight:600;font-size:12px;border-right:2px solid var(--border-strong);border-bottom:1px solid var(--border-strong);position:sticky;left:0;background:var(--bg-card);z-index:1">
@@ -9789,7 +9800,7 @@ function renderLeavePlan(main){
           ${deptCell}
           <td style="padding:4px 8px;font-size:10px;font-weight:700;color:${col};border-right:1px solid var(--border);white-space:nowrap">${isAL?'AL':'CL'}</td>
           <td style="padding:6px 8px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:600;color:var(--accent)">${ton||'0'}</td>
-          <td style="padding:6px 8px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:600;color:var(--purple)">${conLaiNamCu}</td>
+          <td style="padding:6px 8px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:600;color:var(--purple)">${conLaiNamCu!==null?conLaiNamCu:'—'}</td>
           <td style="padding:6px 4px;text-align:center">
             <input type="number" min="0" step="0.5" value="${kh||''}" placeholder="0"
               oninput="window._saveLeavePlan('${dept.id}',${mi},'${type}',this.value)"
@@ -9820,7 +9831,7 @@ function renderLeavePlan(main){
         ${ti===0?`<td rowspan="${fRowspan}" style="padding:8px 12px;font-weight:700;color:var(--accent);font-size:12px;position:sticky;left:0;background:var(--bg-elev);z-index:1">TỔNG</td>`:''}
         <td style="padding:4px 8px;font-size:10px;font-weight:700;color:${col};border-right:1px solid var(--border)">${isAL?'AL':'CL'}</td>
         <td style="padding:6px 8px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--accent)">${fTon}</td>
-        <td style="padding:6px 8px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--purple)">—</td>
+        <td style="padding:6px 8px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--purple)">${Math.round(f.conLai*10)/10||'—'}</td>
         <td style="padding:6px 8px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:12px;color:#ff9f43">${fKh||'—'}</td>
         <td style="padding:6px 8px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:12px;color:${fDuKien!==null?(fDuKien>=0?'var(--success)':'var(--danger)'):'var(--ink-muted)'}">${fDuKien!==null?fDuKien:'—'}</td>
         <td style="padding:6px 8px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:12px;color:${col}">${fReal||'—'}</td>
@@ -9897,6 +9908,11 @@ function renderLeavePlan(main){
           style="background:${showCL?'rgba(100,180,220,.15)':'transparent'};border-color:${showCL?'var(--info)':'var(--border)'};color:${showCL?'var(--info)':'var(--ink-muted)'}">
           CL ${showCL?'✓':''}
         </button>
+        <select class="filter-select" onchange="window._lpStatusFilter=this.value;render()" style="font-size:12px">
+          <option value="active" ${lpStatusFilter==='active'?'selected':''}>● Đang làm</option>
+          <option value="all"    ${lpStatusFilter==='all'   ?'selected':''}>Tất cả</option>
+          <option value="exit"   ${lpStatusFilter==='exit'  ?'selected':''}>● Đã nghỉ</option>
+        </select>
       </div>
     </div>
 
@@ -15808,43 +15824,48 @@ function editPromotion(id, presetEmpId, isHistorical=false){
           </div>
         </div>
         <div id="pr_salaryDelta" style="margin-top:10px;font-size:12px;color:var(--ink-muted);font-family:'JetBrains Mono',monospace;padding:8px;background:var(--bg-elev);border-radius:5px"></div>
-        <!-- Ngày công tiêu chuẩn -->
-        <div style="margin-top:10px;display:flex;align-items:center;gap:10px;padding:10px 12px;background:rgba(126,182,232,.06);border:1px solid rgba(126,182,232,.2);border-radius:6px">
-          <span style="font-size:11px;color:var(--info);font-weight:600;white-space:nowrap">📅 Ngày công TC/tháng</span>
-          <input type="${p.isHistorical?'number':'text'}" id="pr_stdWorkDays"
-            value="${p.stdWorkDays||(initEmp?(DB.customData[initEmp.id]||{}).stdWorkDays:'')||''}"
-            placeholder="26"
-            ${p.isHistorical?'min="1" max="31" step="1"':'readonly'}
-            style="width:80px;font-family:'JetBrains Mono',monospace;font-size:13px;text-align:center;${p.isHistorical?'':'background:var(--bg-elev);color:var(--ink-dim);cursor:not-allowed;border-style:dashed'}">
-          <span style="font-size:11px;color:var(--ink-muted)">${p.isHistorical?'(tự điền cho đề xuất lịch sử)':'(tự động từ hồ sơ NV)'}</span>
+        <!-- Ngày công tiêu chuẩn: Cũ + Mới -->
+        <div style="margin-top:10px;display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:10px 12px;background:rgba(126,182,232,.06);border:1px solid rgba(126,182,232,.2);border-radius:6px">
+          <div style="display:flex;align-items:center;gap:8px">
+            <span style="font-size:11px;color:var(--ink-muted);font-weight:600;white-space:nowrap">📅 Ngày công cũ</span>
+            <input type="${p.isHistorical?'number':'text'}" id="pr_stdWorkDays"
+              value="${p.stdWorkDays||(initEmp?(DB.customData[initEmp.id]||{}).stdWorkDays:'')||''}"
+              placeholder="26" min="1" max="31" step="1"
+              ${p.isHistorical?'':'readonly'}
+              style="width:60px;font-family:'JetBrains Mono',monospace;font-size:13px;text-align:center;${p.isHistorical?'':'background:var(--bg-elev);color:var(--ink-dim);cursor:not-allowed;border-style:dashed'}">
+            ${p.isHistorical?'':'<span style="font-size:10px;color:var(--ink-muted)">(tự động)</span>'}
+          </div>
+          <div style="display:flex;align-items:center;gap:8px">
+            <span style="font-size:11px;color:var(--info);font-weight:600;white-space:nowrap">📅 Ngày công mới</span>
+            <input type="number" id="pr_newStdWorkDays"
+              value="${p.newStdWorkDays||''}"
+              placeholder="26" min="1" max="31" step="1"
+              style="width:60px;font-family:'JetBrains Mono',monospace;font-size:13px;text-align:center">
+          </div>
         </div>
       </div>
 
-      <!-- Người liên quan — dropdown từ danh sách NV -->
+      <!-- Người liên quan — searchable pickers -->
       <div class="field full" style="background:rgba(212,165,116,.04);padding:14px;border-radius:8px;border:1px solid rgba(212,165,116,.15)">
         <label style="margin-bottom:12px">👥 Người liên quan</label>
         <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px">
+          ${[
+            {fid:'pr_proposedBy', label:'Trưởng bộ phận đề xuất', col:'var(--ink-muted)', val:p.proposedBy||''},
+            {fid:'pr_hrBy',       label:'Phụ trách Nhân sự',       col:'var(--ink-muted)', val:p.hrBy||''},
+            {fid:'pr_approvedBy', label:'Phê duyệt',               col:'var(--accent)',    val:p.approvedBy||''},
+          ].map(({fid,label,col,val})=>`
           <div>
-            <div style="font-size:10.5px;color:var(--ink-muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.06em">Trưởng bộ phận đề xuất</div>
-            <select id="pr_proposedBy" style="width:100%">
-              <option value="">— Chọn —</option>
-              ${DB.employees.filter(e=>e.status!=='exit').map(e=>`<option value="${escapeHtml(e.code+' — '+e.name)}" ${(p.proposedBy||'').includes(e.name)?'selected':''}>${escapeHtml(e.code)} — ${escapeHtml(e.name)}${e.role?' ('+escapeHtml(e.role)+')':''}</option>`).join('')}
-            </select>
-          </div>
-          <div>
-            <div style="font-size:10.5px;color:var(--ink-muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.06em">Phụ trách Nhân sự</div>
-            <select id="pr_hrBy" style="width:100%">
-              <option value="">— Chọn —</option>
-              ${DB.employees.filter(e=>e.status!=='exit').map(e=>`<option value="${escapeHtml(e.code+' — '+e.name)}" ${(p.hrBy||'').includes(e.name)?'selected':''}>${escapeHtml(e.code)} — ${escapeHtml(e.name)}${e.role?' ('+escapeHtml(e.role)+')':''}</option>`).join('')}
-            </select>
-          </div>
-          <div>
-            <div style="font-size:10.5px;color:var(--accent);margin-bottom:4px;text-transform:uppercase;letter-spacing:.06em">Phê duyệt</div>
-            <select id="pr_approvedBy" style="width:100%">
-              <option value="">— Chọn —</option>
-              ${DB.employees.filter(e=>e.status!=='exit').map(e=>`<option value="${escapeHtml(e.code+' — '+e.name)}" ${(p.approvedBy||'').includes(e.name)?'selected':''}>${escapeHtml(e.code)} — ${escapeHtml(e.name)}${e.role?' ('+escapeHtml(e.role)+')':''}</option>`).join('')}
-            </select>
-          </div>
+            <div style="font-size:10.5px;color:${col};margin-bottom:4px;text-transform:uppercase;letter-spacing:.06em">${label}</div>
+            <div style="position:relative">
+              <input id="${fid}" type="text" value="${escapeHtml(val)}" placeholder="Tìm tên / mã NV..."
+                autocomplete="off"
+                oninput="_prRelSearch('${fid}',this.value)"
+                onfocus="_prRelSearch('${fid}',this.value)"
+                onblur="setTimeout(()=>{const d=document.getElementById('${fid}_list');if(d)d.style.display='none'},200)"
+                style="width:100%">
+              <div id="${fid}_list" style="display:none;position:absolute;top:100%;left:0;right:0;background:var(--bg-card);border:1px solid var(--border);border-radius:6px;max-height:180px;overflow-y:auto;z-index:999;box-shadow:0 4px 16px rgba(0,0,0,.4)"></div>
+            </div>
+          </div>`).join('')}
         </div>
       </div>
 
@@ -15862,6 +15883,28 @@ function editPromotion(id, presetEmpId, isHistorical=false){
     prAutoFillOld();  // refresh readonly fields from employee record
     prCalcDelta();    // update totals/delta display
   }, 50);
+}
+
+function _prRelSearch(fid, q){
+  const list = document.getElementById(fid+'_list');
+  if(!list) return;
+  const emps = DB.employees.filter(e=>getEffectiveStatus(e)!=='exit');
+  const qq = (q||'').toLowerCase().trim();
+  const matches = qq
+    ? emps.filter(e=>(e.name||'').toLowerCase().includes(qq)||(e.code||'').toLowerCase().includes(qq)||(e.role||'').toLowerCase().includes(qq))
+    : emps.slice(0,20);
+  if(!matches.length){ list.style.display='none'; return; }
+  list.innerHTML = matches.map(e=>{
+    const label = e.code+' — '+e.name+(e.role?' ('+e.role+')':'');
+    return `<div onclick="document.getElementById('${fid}').value='${escapeHtml(label)}';document.getElementById('${fid}_list').style.display='none'"
+      style="padding:8px 12px;cursor:pointer;font-size:12.5px;border-bottom:1px solid var(--border)"
+      onmouseover="this.style.background='var(--bg-elev)'" onmouseout="this.style.background=''">
+      <span style="font-family:'JetBrains Mono',monospace;color:var(--accent);font-size:11px">${escapeHtml(e.code)}</span>
+      <span style="font-weight:600;margin-left:6px">${escapeHtml(e.name)}</span>
+      ${e.role?`<span style="color:var(--ink-muted);font-size:11px;margin-left:4px">(${escapeHtml(e.role)})</span>`:''}
+    </div>`;
+  }).join('');
+  list.style.display='block';
 }
 
 function prAutoFillOld(){
@@ -15942,6 +15985,8 @@ function savePromotion(id, isNew){
     oldBonus: parseInt(($('#pr_oldBonus')?.value||'').replace(/[^0-9]/g,''))||0,
     newSalary: $si('pr_newSalary'),
     newBonus: $si('pr_newBonus'),
+    stdWorkDays: parseFloat(document.getElementById('pr_stdWorkDays')?.value)||0,
+    newStdWorkDays: parseFloat(document.getElementById('pr_newStdWorkDays')?.value)||0,
     proposedBy: $('#pr_proposedBy').value.trim(),
     hrBy:       $('#pr_hrBy')?.value.trim() || '',
     approvedBy: $('#pr_approvedBy').value.trim(),
