@@ -9430,8 +9430,8 @@ window.toggleLeaveGroup = function(did){
               <th ${thStyle} rowspan="3" style="background:rgba(126,182,232,.15);color:var(--info);border:2px solid rgba(126,182,232,.3);min-width:52px">Tổng<br>phát sinh<br><span style="font-size:9px;opacity:.7">tự động</span></th>
               <th ${thStyle} colspan="13" style="background:rgba(212,165,116,.12);color:var(--accent);border:1px solid rgba(212,165,116,.3)">📤 Số ngày ĐÃ NGHỈ thực tế từng tháng / Taken AL ${bal.year}</th>
               <th ${thStyle} rowspan="3" style="background:rgba(183,148,212,.15);color:var(--purple);border:1px solid rgba(183,148,212,.3);min-width:52px">Tổng<br>đã nghỉ<br><span style="font-size:9px;opacity:.7">tự động</span></th>
-              <th ${thStyle} rowspan="3" style="background:rgba(183,148,212,.15);color:var(--purple);border:1px solid rgba(183,148,212,.3);min-width:52px">Tồn cuối<br>năm<br><span style="font-size:9px;opacity:.7">tự động</span></th>
-              <th ${thStyle} rowspan="3" style="background:rgba(183,148,212,.2);color:var(--purple);font-weight:700;border:2px solid rgba(183,148,212,.5);min-width:52px">Còn lại<br>tháng<br>lương<br><span style="font-size:9px;opacity:.7">tự động</span></th>
+              <th ${thStyle} rowspan="3" style="background:rgba(183,148,212,.15);color:var(--purple);border:1px solid rgba(183,148,212,.3);min-width:52px">Còn lại<br>năm cũ<br><span style="font-size:9px;opacity:.7">tự động</span></th>
+              <th ${thStyle} rowspan="3" style="background:rgba(183,148,212,.2);color:var(--purple);font-weight:700;border:2px solid rgba(183,148,212,.5);min-width:52px">Tồn cuối<br>năm<br><span style="font-size:9px;opacity:.7">tự động</span></th>
             </tr>
             <tr style="background:#151b23">
               ${mnShort.map(m=>`<th ${thStyle} style="background:rgba(126,198,153,.07);color:var(--success);min-width:42px">${m}</th>`).join('')}
@@ -9508,15 +9508,15 @@ window.toggleLeaveGroup = function(did){
                   <div style="color:var(--purple);font-weight:700;font-family:'JetBrains Mono',monospace">${fd(dAL.totalUsed)}</div>
                   <div style="color:var(--purple);font-family:'JetBrains Mono',monospace">${fd(dCL.totalUsed)}</div>
                 </td>
-                <!-- Tồn cuối năm -->
+                <!-- Còn lại năm cũ -->
                 <td style="padding:3px 5px;text-align:center;font-size:10px;background:#1a2535">
-                  <div style="color:var(--success);font-weight:700;font-family:'JetBrains Mono',monospace">${fd(dAL.totalEntitle-dAL.totalUsed)}</div>
-                  <div style="color:var(--success);font-family:'JetBrains Mono',monospace">${fd(dCL.totalEntitle-dCL.totalUsed)}</div>
-                </td>
-                <!-- Còn lại tháng lương -->
-                <td style="padding:3px 5px;text-align:center;font-size:10px;background:#1a2535;border-left:2px solid rgba(183,148,212,.4)">
                   <div style="color:var(--purple);font-weight:700;font-family:'JetBrains Mono',monospace">${fd(dAL.pending)}</div>
                   <div style="color:var(--purple);font-family:'JetBrains Mono',monospace">${fd(dCL.pending)}</div>
+                </td>
+                <!-- Tồn cuối năm -->
+                <td style="padding:3px 5px;text-align:center;font-size:10px;background:#1a2535;border-left:2px solid rgba(183,148,212,.4)">
+                  <div style="color:var(--success);font-weight:700;font-family:'JetBrains Mono',monospace">${fd(dAL.totalEntitle-dAL.totalUsed)}</div>
+                  <div style="color:var(--success);font-family:'JetBrains Mono',monospace">${fd(dCL.totalEntitle-dCL.totalUsed)}</div>
                 </td>
               </tr>`;
 
@@ -9554,11 +9554,11 @@ window.toggleLeaveGroup = function(did){
                       </td>`;
                     }).join('')}
                     ${compCell(pfx+'totalUsed',d.totalUsed,'var(--purple)','rgba(183,148,212,.06)')}
-                    <td style="text-align:center;font-weight:700;font-size:11px;padding:4px;color:${d.totalEntitle-d.totalUsed<0?'var(--danger)':'var(--success)'};background:rgba(183,148,212,.06)"
-                      title="= Tồn trước (${d.carry}) + Hưởng (${fnum(d.totalEntitle-d.carry)}) − Nghỉ (${fnum(d.totalUsed)})">
+                    ${compCell(pfx+'cur',d.pending,d.pending<0?'var(--danger)':'var(--success)','rgba(183,148,212,.08)')}
+                    <td style="text-align:center;font-weight:700;font-size:11px;padding:4px;color:${d.totalEntitle-d.totalUsed<0?'var(--danger)':'var(--success)'};background:rgba(183,148,212,.15);border-left:2px solid rgba(183,148,212,.4)"
+                      title="Tồn cuối năm = Tổng phát sinh − Tổng đã nghỉ (${d.carry}) + Hưởng (${fnum(d.totalEntitle-d.carry)}) − Nghỉ (${fnum(d.totalUsed)})">
                       <span id="${pfx}remain">${fnum(d.totalEntitle-d.totalUsed)}</span>
                     </td>
-                    ${compCell(pfx+'cur',d.pending,d.pending<0?'var(--danger)':'var(--success)','rgba(183,148,212,.1)')}
                   </tr>`;
                 };
                 return (e._isTrainee ? '' : renderTypeRow('al',al,'AL / Phép năm','var(--success)','rgba(126,198,153,.07)','var(--accent)','rgba(212,165,116,.07)',true))
@@ -9593,7 +9593,7 @@ window.toggleLeaveGroup = function(did){
       Ô trắng = nhập tay. Ô tối = tự động tính.
       <b>Tổng phát sinh</b> = Tồn năm trước + Tổng hưởng T1→T12 (toàn năm).
       <b>Tồn cuối năm</b> = Tồn năm trước + Tổng hưởng cả năm − Tổng đã nghỉ.
-      <b>Còn lại tháng lương</b> = Tồn hiện tại.
+      <b>Còn lại năm cũ</b> = IF(Tồn cuối năm &gt; Tháng hiện tại, Tồn cuối năm − Tháng hiện tại, 0). <b>Tồn cuối năm</b> = Tổng phát sinh − Tổng đã nghỉ.
     </div>
   `;
 }
@@ -9762,6 +9762,16 @@ function renderLeavePlan(main){
         const col=isAL?'var(--success)':'var(--info)';
         const ton  = Math.round(getTonDauThang(dept.id, mi, type)*10)/10;
         const kh   = (plan[mi]||{})[type]||0;
+        // Còn lại năm cũ: IF(tonCuoiNam > curMonth, tonCuoiNam - curMonth, 0)
+        const deptEmps = activeEmps.filter(e=>e.deptId===dept.id);
+        const tonCuoiNamDept = Math.round(deptEmps.reduce((s,e)=>{
+          const sh=((DB.leaveSheet[e.id]||{})[curYear]||{})[type]||{};
+          const te=(sh.carry||0)+(sh.entitle||[]).reduce((a,b)=>a+(b||0),0);
+          const tu=(sh.taken||[]).reduce((a,b)=>a+(b||0),0);
+          return s+(te-tu);
+        },0)*10)/10;
+        // Chỉ AL mới có Còn lại năm cũ, CL = —
+        const conLaiNamCu = isAL ? (tonCuoiNamDept > curMonth ? Math.round((tonCuoiNamDept-curMonth)*10)/10 : 0) : null;
         const real = getRealByDept(dept.id, mi, type);
         const duKien = kh>0 ? Math.round((ton-kh)*10)/10 : null;
         const duKienC= duKien!==null?(duKien>=0?'var(--success)':'var(--danger)'):'';
@@ -9784,6 +9794,7 @@ function renderLeavePlan(main){
           ${deptCell}
           <td style="padding:4px 8px;font-size:10px;font-weight:700;color:${col};border-right:1px solid var(--border);white-space:nowrap">${isAL?'AL':'CL'}</td>
           <td style="padding:6px 8px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:600;color:var(--accent)">${ton||'0'}</td>
+          <td style="padding:6px 8px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:600;color:var(--purple)">${conLaiNamCu!==null?conLaiNamCu:'—'}</td>
           <td style="padding:6px 4px;text-align:center">
             <input type="number" min="0" step="0.5" value="${kh||''}" placeholder="0"
               oninput="window._saveLeavePlan('${dept.id}',${mi},'${type}',this.value)"
@@ -9814,6 +9825,7 @@ function renderLeavePlan(main){
         ${ti===0?`<td rowspan="${fRowspan}" style="padding:8px 12px;font-weight:700;color:var(--accent);font-size:12px;position:sticky;left:0;background:var(--bg-elev);z-index:1">TỔNG</td>`:''}
         <td style="padding:4px 8px;font-size:10px;font-weight:700;color:${col};border-right:1px solid var(--border)">${isAL?'AL':'CL'}</td>
         <td style="padding:6px 8px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--accent)">${fTon}</td>
+        <td style="padding:6px 8px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--purple)">—</td>
         <td style="padding:6px 8px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:12px;color:#ff9f43">${fKh||'—'}</td>
         <td style="padding:6px 8px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:12px;color:${fDuKien!==null?(fDuKien>=0?'var(--success)':'var(--danger)'):'var(--ink-muted)'}">${fDuKien!==null?fDuKien:'—'}</td>
         <td style="padding:6px 8px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:12px;color:${col}">${fReal||'—'}</td>
@@ -9836,6 +9848,7 @@ function renderLeavePlan(main){
               <th style="padding:8px 12px;text-align:left;font-size:11px;font-weight:700;color:var(--ink-muted);position:sticky;left:0;background:var(--bg-elev);z-index:2;min-width:160px">BỘ PHẬN</th>
               <th style="padding:8px 8px;font-size:11px;font-weight:700;color:var(--ink-muted);width:40px">LOẠI</th>
               <th style="padding:8px;font-size:11px;font-weight:700;color:var(--accent);text-align:center;min-width:80px">TỒN ĐẦU THÁNG</th>
+              <th style="padding:8px;font-size:11px;font-weight:700;color:var(--purple);text-align:center;min-width:90px">CÒN LẠI NĂM CŨ</th>
               <th style="padding:8px;font-size:11px;font-weight:700;color:#ff9f43;text-align:center;min-width:80px">KẾ HOẠCH</th>
               <th style="padding:8px;font-size:11px;font-weight:700;color:var(--success);text-align:center;min-width:90px">TỒN SAU KH</th>
               <th style="padding:8px;font-size:11px;font-weight:700;color:var(--info);text-align:center;min-width:80px">THỰC TẾ</th>
