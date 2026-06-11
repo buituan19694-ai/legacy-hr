@@ -8908,7 +8908,20 @@ function exportLeaveXLSX(){
     if(statusF==='exit') return st==='exit';
     if(statusF==='active') return ['active','probation','leave'].includes(st);
     return true;
-  }).sort(function(a,b){return (a.deptId||'').localeCompare(b.deptId||'')|| a.name.localeCompare(b.name,'vi');});
+  });
+  // Thêm trainee đang hoạt động (giống bảng Theo dõi)
+  if(statusF!=='exit'){
+    var now=today.toISOString().slice(0,10);
+    var activeTrainees=(DB.trainees||[])
+      .filter(function(tr){return tr.startDate&&(!tr.endDate||tr.endDate>=now);})
+      .map(function(tr){return {
+        id:tr.id, code:tr.code||'', name:tr.name||'',
+        role:'Thực tập sinh', deptId:tr.deptId||'',
+        joined:tr.startDate||'', status:'active', _isTrainee:true
+      };});
+    emps = emps.concat(activeTrainees);
+  }
+  emps = emps.sort(function(a,b){return (a.deptId||'').localeCompare(b.deptId||'')||a.name.localeCompare(b.name,'vi');});
 
   var mnEN=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
@@ -10391,9 +10404,19 @@ function renderLeaves(main){
     ${(()=>{
       const yr = bal.year || today.getFullYear();
       const _sf = bal.statusFilter||'active';
-      const activeEmps = _sf==='all' ? DB.employees
+      let activeEmps = _sf==='all' ? DB.employees
         : _sf==='exit' ? DB.employees.filter(e=>getEffectiveStatus(e)==='exit')
         : DB.employees.filter(e=>getEffectiveStatus(e)!=='exit');
+      // Thêm trainee đang hoạt động (giống bảng Theo dõi)
+      if(_sf!=='exit'){
+        const _now = today.toISOString().slice(0,10);
+        const _trainees = (DB.trainees||[])
+          .filter(tr=>tr.startDate&&(!tr.endDate||tr.endDate>=_now))
+          .map(tr=>({id:tr.id,code:tr.code||'',name:tr.name||'',
+            role:'Thực tập sinh',deptId:tr.deptId||'',
+            joined:tr.startDate||'',status:'active',_isTrainee:true}));
+        activeEmps = [...activeEmps, ..._trainees];
+      }
       const fnum = v => Math.round((v||0)*100)/100;
       const fmt = v => v===0?'0':(fnum(v)%1===0?fnum(v).toString():fnum(v).toFixed(1));
 
@@ -10489,7 +10512,7 @@ function renderLeaves(main){
         <div class="card" style="padding:12px 16px;margin-bottom:14px">
           <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
             <select class="filter-select" onchange="window._leaveBal=(window._leaveBal||{});window._leaveBal.year=parseInt(this.value);render()">
-              ${(()=>{ const s=new Set([new Date().getFullYear()+1,new Date().getFullYear(),new Date().getFullYear()-1]); if(DB.leaveSheet){Object.values(DB.leaveSheet).forEach(emp=>Object.keys(emp).forEach(y=>s.add(parseInt(y))));} (DB.leaves||[]).forEach(l=>{if(l.startDate)s.add(new Date(l.startDate).getFullYear());}); return [...s].sort((a,b)=>b-a); })().map(y=>`<option value="${y}" ${yr===y?'selected':''}>${y}</option>`).join('')}
+              ${[...new Set([today.getFullYear(),...(DB.leaveExtraYears||[]).map(y=>parseInt(y)).filter(y=>!isNaN(y))])].sort((a,b)=>b-a).map(y=>`<option value="${y}" ${yr===y?'selected':''}>${y}</option>`).join('')}
             </select>
             <select class="filter-select" onchange="window._leaveBal=(window._leaveBal||{});window._leaveBal.reportMonth=parseInt(this.value);render()">
               <option value="0" ${!bal.reportMonth?'selected':''}>📅 Cả năm</option>
@@ -10581,15 +10604,26 @@ function renderLeaves(main){
   <!-- ═══ BẢNG PHÂN TÍCH CHI PHÍ NGHỈ PHÉP TỒN ĐỌNG ═══ -->
   ${(()=>{
     const yr = bal.year || today.getFullYear();
-    const activePool = DB.employees.filter(e=>getEffectiveStatus(e)!=='exit');
+    // Dùng cùng status filter với bảng Theo dõi
+    const _costFilter = bal.statusFilter||'active';
+    const activePool = _costFilter==='all' ? DB.employees
+      : _costFilter==='exit' ? DB.employees.filter(e=>getEffectiveStatus(e)==='exit')
+      : DB.employees.filter(e=>getEffectiveStatus(e)!=='exit');
     const fmtM = n => Math.round(n||0).toLocaleString('vi-VN');
 
     // Per-emp: lấy stdDays từ custom field, lương tổng, tồn AL/CL
     const empCost = activePool.map(e=>{
       const cd = DB.customData[e.id]||{};
       const sh = DB.leaveSheet[e.id]||{};
-      const shAL = (sh[yr]||{}).al||{};
-      const shCL = (sh[yr]||{}).cl||{};
+      // Dùng cùng công thức với bảng Theo dõi: pendingEntitle - totalUsed = Tồn cuối năm
+      const _calcTon = (type) => {
+        const s = (sh[yr]||{})[type]||{};
+        const te = (s.carry||0) + (s.entitle||[]).reduce((a,b)=>a+(parseFloat(b)||0),0);
+        const tu = (s.taken||[]).reduce((a,b)=>a+(parseFloat(b)||0),0);
+        return Math.round((te-tu)*100)/100;
+      };
+      const alTon = _calcTon('al');
+      const clTon = _calcTon('cl');
 
       // Ngày công tiêu chuẩn từ hồ sơ NV (custom field stdWorkDays)
       const stdDays = parseFloat(cd.stdWorkDays)||26;
@@ -10599,16 +10633,6 @@ function renderLeaves(main){
 
       // Đơn giá ngày công
       const dayRate = stdDays > 0 ? totalSalary / stdDays : 0;
-
-      // Tồn cuối năm AL = pendingEntitle - totalUsed
-      const alPending = (shAL.carry||0) + (shAL.entitle||[]).reduce((s,x)=>s+(x||0),0);
-      const alUsed = (shAL.taken||[]).reduce((s,x)=>s+(x||0),0);
-      const alTon = Math.round((alPending - alUsed)*100)/100;
-
-      // Tồn CL
-      const clPending = (shCL.carry||0) + (shCL.entitle||[]).reduce((s,x)=>s+(x||0),0);
-      const clUsed = (shCL.taken||[]).reduce((s,x)=>s+(x||0),0);
-      const clTon = Math.round((clPending - clUsed)*100)/100;
 
       const alCost = Math.round(alTon * dayRate);
       const clCost = Math.round(clTon * dayRate);
@@ -10640,15 +10664,15 @@ function renderLeaves(main){
       <div class="card-head">
         <div>
           <div class="card-title">💰 Phân tích <em>chi phí nghỉ phép tồn đọng</em> — ${yr}</div>
-          <div class="card-sub">Đơn giá = Tổng lương ÷ Ngày công tiêu chuẩn · Tổng lương = Lương CB + Bổ sung KQCV · Ngày công lấy từ hồ sơ NV (field <b>stdWorkDays</b>)</div>
+          <div class="card-sub">Đơn giá = Tổng lương ÷ Ngày công TC · Tổng lương = Lương CB + Bổ sung KQCV · <b>Tồn cuối năm = Tổng phát sinh − Tổng đã nghỉ</b> · Ngày công từ hồ sơ NV (field stdWorkDays)</div>
         </div>
       </div>
 
       <!-- KPI tổng công ty -->
       <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:20px">
-        ${kpiCard('Tổng ngày AL tồn', Math.round(totALTon*10)/10+' ngày', empCost.length+' NV có lương','','success')}
+        ${kpiCard('Tồn cuối năm AL (ngày)', Math.round(totALTon*10)/10+' ngày', empCost.length+' NV có lương','','success')}
         ${kpiCard('Chi phí AL tồn', fmtM(totALCost)+' đ', 'Toàn công ty','','danger')}
-        ${kpiCard('Tổng ngày CL tồn', Math.round(totCLTon*10)/10+' ngày', 'Nghỉ bù tồn đọng','','info')}
+        ${kpiCard('Tồn cuối năm CL (ngày)', Math.round(totCLTon*10)/10+' ngày', 'Nghỉ bù tồn đọng','','info')}
         ${kpiCard('Chi phí CL tồn', fmtM(totCLCost)+' đ', 'Toàn công ty','','warning')}
       </div>
 
@@ -10659,9 +10683,9 @@ function renderLeaves(main){
           <thead><tr>
             <th>Bộ phận</th>
             <th style="text-align:center">NV</th>
-            <th style="text-align:center;color:var(--success)">Tồn AL (ngày)</th>
+            <th style="text-align:center;color:var(--success)">Tồn cuối năm AL (ngày)</th>
             <th style="text-align:center;color:var(--success)">Chi phí AL (đ)</th>
-            <th style="text-align:center;color:var(--info)">Tồn CL (ngày)</th>
+            <th style="text-align:center;color:var(--info)">Tồn cuối năm CL (ngày)</th>
             <th style="text-align:center;color:var(--info)">Chi phí CL (đ)</th>
             <th style="text-align:center;color:var(--accent)">Tổng chi phí (đ)</th>
           </tr></thead>
