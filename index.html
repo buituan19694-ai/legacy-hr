@@ -9281,12 +9281,13 @@ function renderLeaveReports(main){
     const totalUsed=sh.taken.reduce((a,b)=>a+b,0);
     const totalEntitle=sh.carry+sh.entitle.reduce((a,b)=>a+b,0);
     const pendingUsed=sh.taken.slice(0,curMonth).reduce((a,b)=>a+b,0);
-    const pendingEntitle=sh.carry+sh.entitle.slice(0,curMonth).reduce((a,b)=>a+b,0);
-    const pending=Math.round((pendingEntitle-pendingUsed)*100)/100;
+    const pendingEntitle=sh.carry+sh.entitle.reduce((a,b)=>a+b,0); // Tổng phát sinh
+    const tonCuoiNam=Math.round((totalEntitle-totalUsed)*100)/100;
+    const pending=tonCuoiNam>curMonth?Math.round((tonCuoiNam-curMonth)*100)/100:0; // Còn lại tháng lương
     const fmt=v=>v===0?'—':(Math.round(v*100)/100)%1===0?(Math.round(v*100)/100).toString():(Math.round(v*100)/100).toFixed(2);
     const upd=(id,v)=>{const el=document.getElementById(id);if(el)el.textContent=fmt(v);};
     const pfx='ls_'+empId+'_'+leaveType+'_';
-    upd(pfx+'pending',pending); upd(pfx+'totalUsed',totalUsed);
+    upd(pfx+'pending',pendingEntitle); upd(pfx+'totalUsed',totalUsed);
     upd(pfx+'remain',totalEntitle-totalUsed); upd(pfx+'cur',pending);
   };
 
@@ -9298,8 +9299,11 @@ function renderLeaveReports(main){
     const pendingUsed=months.slice(0,curMonth).reduce((s,x)=>s+x.used,0);
     // Tổng phát sinh = carry + tổng hưởng T1→T12 (toàn bộ năm)
     const pendingEntitle=sh.carry+sh.entitle.reduce((s,x)=>s+x,0);
-    const pending=Math.round(pendingEntitle*100)/100;
-    return {carry:sh.carry,clearAL:sh.clearAL||0,months,totalUsed,totalEntitle,pending};
+    // Tồn cuối năm = carry + tổng hưởng - tổng đã nghỉ
+    const tonCuoiNam = Math.round((totalEntitle - totalUsed)*100)/100;
+    // Còn lại tháng lương = IF(tháng hiện tại < Tồn cuối năm, Tồn cuối năm - tháng hiện tại, 0)
+    const pending = tonCuoiNam > curMonth ? Math.round((tonCuoiNam - curMonth)*100)/100 : 0;
+    return {carry:sh.carry,clearAL:sh.clearAL||0,months,totalUsed,totalEntitle,pending,pendingEntitle,tonCuoiNam};
   };
 
   const empMonthData = scopeEmps.map(e=>({
@@ -9426,7 +9430,7 @@ window.toggleLeaveGroup = function(did){
               <th ${thStyle} rowspan="3" style="background:rgba(126,182,232,.15);color:var(--info);border:2px solid rgba(126,182,232,.3);min-width:52px">Tổng<br>phát sinh<br><span style="font-size:9px;opacity:.7">tự động</span></th>
               <th ${thStyle} colspan="13" style="background:rgba(212,165,116,.12);color:var(--accent);border:1px solid rgba(212,165,116,.3)">📤 Số ngày ĐÃ NGHỈ thực tế từng tháng / Taken AL ${bal.year}</th>
               <th ${thStyle} rowspan="3" style="background:rgba(183,148,212,.15);color:var(--purple);border:1px solid rgba(183,148,212,.3);min-width:52px">Tổng<br>đã nghỉ<br><span style="font-size:9px;opacity:.7">tự động</span></th>
-              <th ${thStyle} rowspan="3" style="background:rgba(183,148,212,.15);color:var(--purple);border:1px solid rgba(183,148,212,.3);min-width:52px">Tồn cuối<br>năm ${bal.year}<br><span style="font-size:9px;opacity:.7">tự động</span></th>
+              <th ${thStyle} rowspan="3" style="background:rgba(183,148,212,.15);color:var(--purple);border:1px solid rgba(183,148,212,.3);min-width:52px">Tồn cuối<br>năm<br><span style="font-size:9px;opacity:.7">tự động</span></th>
               <th ${thStyle} rowspan="3" style="background:rgba(183,148,212,.2);color:var(--purple);font-weight:700;border:2px solid rgba(183,148,212,.5);min-width:52px">Còn lại<br>tháng<br>lương<br><span style="font-size:9px;opacity:.7">tự động</span></th>
             </tr>
             <tr style="background:#151b23">
@@ -9488,8 +9492,8 @@ window.toggleLeaveGroup = function(did){
                 </td>`).join('')}
                 <!-- Tổng phát sinh -->
                 <td style="padding:3px 5px;text-align:center;font-size:10px;background:#1a2535;border-left:2px solid rgba(126,182,232,.3)">
-                  <div style="color:var(--success);font-weight:700;font-family:'JetBrains Mono',monospace">${fd(dAL.pending)}</div>
-                  <div style="color:var(--info);font-weight:700;font-family:'JetBrains Mono',monospace">${fd(dCL.pending)}</div>
+                  <div style="color:var(--success);font-weight:700;font-family:'JetBrains Mono',monospace">${fd(dAL.pendingEntitle||dAL.totalEntitle)}</div>
+                  <div style="color:var(--info);font-weight:700;font-family:'JetBrains Mono',monospace">${fd(dCL.pendingEntitle||dCL.totalEntitle)}</div>
                 </td>
                 <!-- Taken T1, T2, clearAL, T3-T12 -->
                 ${[0,1,'clear',2,3,4,5,6,7,8,9,10,11].map((mi,i)=>{
@@ -9675,6 +9679,24 @@ function renderLeavePlan(main){
     if(!DB.leavePlan[curYear][deptId][mi]) DB.leavePlan[curYear][deptId][mi]={al:0,cl:0};
     DB.leavePlan[curYear][deptId][mi][type] = parseFloat(val)||0;
     saveData(['leavePlan']);
+    // Update Tồn sau KH và Đạt KH? realtime
+    const kh = DB.leavePlan[curYear][deptId][mi][type]||0;
+    const ton = Math.round(getTonDauThang(deptId, mi, type)*10)/10;
+    const real = getRealByDept(deptId, mi, type);
+    const duKien = kh>0 ? Math.round((ton-kh)*10)/10 : null;
+    const duKienC = duKien!==null?(duKien>=0?'var(--success)':'var(--danger)'):'';
+    const vsKH = (kh>0&&real>0) ? Math.round((real-kh)*10)/10 : null;
+    const vsKHC = vsKH!==null?(vsKH<=0?'var(--success)':'var(--danger)'):'';
+    const vsKHT = vsKH!==null?(vsKH>0?'+'+vsKH:String(vsKH)):'—';
+    const datText = vsKH!==null?(vsKH<=0?'✅ Đạt':'❌ Vượt KH'):'—';
+    const datColor = vsKH!==null?(vsKH<=0?'var(--success)':'var(--danger)'):'var(--ink-muted)';
+    const dkEl = document.getElementById('plan_dk_'+deptId+'_'+mi+'_'+type);
+    if(dkEl) dkEl.innerHTML = duKien!==null
+      ? '<span style="font-weight:700;font-size:12px;color:'+duKienC+';font-family:JetBrains Mono,monospace">'+duKien+'</span>'
+      : '<span style="color:var(--ink-muted);font-size:11px">—</span>';
+    const datEl = document.getElementById('plan_dat_'+deptId+'_'+mi+'_'+type);
+    if(datEl) datEl.innerHTML = '<span style="font-size:12px;font-weight:700;color:'+datColor+'">'+datText+'</span>'
+      + (vsKH!==null?'<div style="font-size:10px;color:'+vsKHC+';font-family:JetBrains Mono,monospace">'+vsKHT+'</div>':'');
   };
 
   // Tính "Còn lại cuối tháng mi" cho 1 NV — giống cột "Còn lại tháng lương" ở bảng Theo dõi
@@ -9767,11 +9789,11 @@ function renderLeavePlan(main){
               oninput="window._saveLeavePlan('${dept.id}',${mi},'${type}',this.value)"
               style="${inpStyle}" title="Kế hoạch nghỉ ${isAL?'AL':'CL'} tháng ${mon}">
           </td>
-          <td style="padding:6px 8px;text-align:center">
+          <td id="plan_dk_${dept.id}_${mi}_${type}" style="padding:6px 8px;text-align:center">
             ${duKien!==null?`<span style="font-weight:700;font-size:12px;color:${duKienC};font-family:'JetBrains Mono',monospace">${duKien}</span>`:`<span style="color:var(--ink-muted);font-size:11px">—</span>`}
           </td>
           <td style="padding:6px 8px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:12px;color:${col};font-weight:600">${real||'—'}</td>
-          <td style="padding:6px 8px;text-align:center">
+          <td id="plan_dat_${dept.id}_${mi}_${type}" style="padding:6px 8px;text-align:center">
             <span style="font-size:12px;font-weight:700;color:${datColor}">${datText}</span>
             ${vsKH!==null?`<div style="font-size:10px;color:${vsKHC};font-family:'JetBrains Mono',monospace">${vsKHT}</div>`:''}
           </td>
@@ -18566,8 +18588,28 @@ function renderSvcInline(svcYr, curYear, curMonth){
     if(!DB.svcData[yr]) DB.svcData[yr]=Array(12).fill(0);
     DB.svcData[yr][m] = parseFloat(String(val).replace(/[^0-9.]/g,''))||0;
     saveData(['svcData']);
+    // Update chart
     const el = document.getElementById('chartSvcInline_'+yr);
     if(el && el._chart){ el._chart.data.datasets[0].data[m]=DB.svcData[yr][m]; el._chart.update(); }
+    // Update KPI cards realtime
+    const d = DB.svcData[yr];
+    const tot = d.reduce((s,v)=>s+(v||0),0);
+    const filled = d.filter(v=>v>0).length;
+    const avg12 = Math.round(tot/12);
+    const avgF = filled ? Math.round(tot/filled) : 0;
+    const mx = Math.max(...d.map(v=>v||0));
+    const mxI = d.indexOf(mx);
+    const MNs2=['T1','T2','T3','T4','T5','T6','T7','T8','T9','T10','T11','T12'];
+    const fn = n => Math.round(n||0).toLocaleString('vi-VN');
+    const upd = (id,v) => { const e=document.getElementById(id); if(e) e.textContent=v; };
+    upd('svc_kpi_total_'+yr, fn(tot)+' đ');
+    upd('svc_kpi_avg12_'+yr, fn(avg12)+' đ');
+    upd('svc_kpi_avgF_'+yr,  fn(avgF)+' đ');
+    upd('svc_kpi_avgFsub_'+yr, filled+' tháng');
+    upd('svc_kpi_max_'+yr,   fn(mx)+' đ');
+    upd('svc_kpi_maxsub_'+yr, MNs2[mxI]||'');
+    const sub = document.getElementById('svc_kpi_sub_'+yr);
+    if(sub) sub.textContent = filled+'/12 tháng đã có dữ liệu · Click ô để nhập';
   };
 
   const cid = 'chartSvcInline_'+svcYr;
@@ -18608,27 +18650,27 @@ function renderSvcInline(svcYr, curYear, curMonth){
     <div class="card-head">
       <div>
         <div class="card-title">🎰 Service Charge (SVC) — ${svcYr}</div>
-        <div class="card-sub">${svcFilled}/12 tháng đã có dữ liệu · Click ô để nhập</div>
+        <div id="svc_kpi_sub_${svcYr}" class="card-sub">${svcFilled}/12 tháng đã có dữ liệu · Click ô để nhập</div>
       </div>
     </div>
     <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;padding:0 16px 14px">
       <div style="background:var(--bg-elev);border-radius:8px;padding:12px 14px">
         <div style="font-size:10px;color:var(--ink-muted);text-transform:uppercase;letter-spacing:.07em;margin-bottom:4px">${_lang==="en"?"Total SVC year":"Tổng SVC năm"}</div>
-        <div style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:15px;color:var(--accent)">${fmtN(svcTotal)} đ</div>
+        <div id="svc_kpi_total_${svcYr}" style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:15px;color:var(--accent)">${fmtN(svcTotal)} đ</div>
       </div>
       <div style="background:var(--bg-elev);border-radius:8px;padding:12px 14px">
         <div style="font-size:10px;color:var(--ink-muted);text-transform:uppercase;letter-spacing:.07em;margin-bottom:4px">TB / 12 tháng</div>
-        <div style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:15px;color:var(--info)">${fmtN(svcAvg12)} đ</div>
+        <div id="svc_kpi_avg12_${svcYr}" style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:15px;color:var(--info)">${fmtN(svcAvg12)} đ</div>
       </div>
       <div style="background:var(--bg-elev);border-radius:8px;padding:12px 14px">
         <div style="font-size:10px;color:var(--ink-muted);text-transform:uppercase;letter-spacing:.07em;margin-bottom:4px">${_lang==="en"?"Avg (SVC months)":"TB tháng có SVC"}</div>
-        <div style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:15px;color:var(--success)">${fmtN(svcAvgFilled)} đ</div>
-        <div style="font-size:10px;color:var(--ink-muted);margin-top:2px">${svcFilled} tháng</div>
+        <div id="svc_kpi_avgF_${svcYr}" style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:15px;color:var(--success)">${fmtN(svcAvgFilled)} đ</div>
+        <div id="svc_kpi_avgFsub_${svcYr}" style="font-size:10px;color:var(--ink-muted);margin-top:2px">${svcFilled} tháng</div>
       </div>
       <div style="background:var(--bg-elev);border-radius:8px;padding:12px 14px">
         <div style="font-size:10px;color:var(--ink-muted);text-transform:uppercase;letter-spacing:.07em;margin-bottom:4px">${_lang==="en"?"Highest month":"Tháng cao nhất"}</div>
-        <div style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:15px;color:var(--purple)">${fmtN(svcMax)} đ</div>
-        <div style="font-size:10px;color:var(--ink-muted);margin-top:2px">${MNs[svcMaxIdx]}</div>
+        <div id="svc_kpi_max_${svcYr}" style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:15px;color:var(--purple)">${fmtN(svcMax)} đ</div>
+        <div id="svc_kpi_maxsub_${svcYr}" style="font-size:10px;color:var(--ink-muted);margin-top:2px">${MNs[svcMaxIdx]}</div>
       </div>
     </div>
     <div style="display:grid;grid-template-columns:3fr 2fr;gap:14px;padding:0 16px 16px">
