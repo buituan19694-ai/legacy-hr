@@ -11773,7 +11773,9 @@ window._resignEmpSelect = function(id, name, code, dept){
 // ── Resign modal: global calc + confirm functions ──
 function _resignCalcEndGlobal(){
   const empId = document.getElementById('rEmp')?.value;
-  const submitDate = document.getElementById('rSubmitDate')?.value;
+  // date input có thể là native (value=yyyy-MM-dd) hoặc custom wrapper (data-iso=yyyy-MM-dd, value=dd/MM/yyyy)
+  const submitEl = document.getElementById('rSubmitDate');
+  const submitDate = submitEl ? (submitEl.getAttribute('data-iso') || dispToIso(submitEl.value||'') || submitEl.value) : '';
   const display = document.getElementById('rEndDateDisplay');
   const badge = document.getElementById('rNoticeBadge');
   const ctEl = document.getElementById('rContractType');
@@ -11798,7 +11800,8 @@ function _resignConfirmActionGlobal(action){
   if(action === 'cancel'){ closeModal(); return; }
 
   const empId     = document.getElementById('rEmp')?.value;
-  const submitDate= document.getElementById('rSubmitDate')?.value;
+  const submitEl  = document.getElementById('rSubmitDate');
+  const submitDate= submitEl ? (submitEl.getAttribute('data-iso') || dispToIso(submitEl.value||'') || submitEl.value) : '';
   const endDate   = document.getElementById('rEndDate')?.value;
   const reasonSel = document.getElementById('rReason')?.value||'';
   const reasonOth = document.getElementById('rReasonOther')?.value.trim()||'';
