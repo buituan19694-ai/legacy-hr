@@ -906,9 +906,10 @@ const FS_DOC_MAP = {
   contracts:  ['contracts'],
   workforce:  ['trainees','traineeSchedules','svcData','courses','casualExtraYears','salaryYears','trainingExtraYears','leaveExtraYears','resignations'],
   jobs:       ['jobs'],
+  blacklist:  ['manualBlacklist','blacklistConfig','blacklistReasons'],  // doc riêng tránh vượt 1MB
   config:     ['customFields','rewardTypes','perfReviewTypes','company',
-               'dashboardConfig','brandConfig','blacklistConfig','blacklistReasons',
-               'disciplineSeverityConfig','requiredFieldsConfig','manualBlacklist',
+               'dashboardConfig','brandConfig',
+               'disciplineSeverityConfig','requiredFieldsConfig',
                'contractTemplates','quickFilterPrefs','recReportConfig','perfReportConfig',
                '_rewardTypesV2','_levelReset2026','_removedProbationStatus','_normalizedDates2026'],
 };
@@ -19880,6 +19881,20 @@ fbAuth.onAuthStateChanged(async user => {
           const _mergeObj = (key)=>{ if(Object.keys(dynamicAccum[key]).length){ DB[key]=dynamicAccum[key]; hasCloud=true; } };
           ['leaves','kpiReviews','rewardRecords','casuals','candidates','promotions','disciplineRecords'].forEach(_mergeArr);
           ['leaveSheet','leaveOpening','leavePlan'].forEach(_mergeObj);
+
+          // Migration: nếu manualBlacklist rỗng, thử đọc từ config doc cũ
+          if(!DB.manualBlacklist || !DB.manualBlacklist.length){
+            try{
+              const oldConfig = await window.fbDb.collection('hrdata').doc('config').get();
+              if(oldConfig.exists && oldConfig.data().manualBlacklist){
+                DB.manualBlacklist = oldConfig.data().manualBlacklist;
+                hasCloud = true;
+                console.log('[MIGRATE] blacklist from old config:', DB.manualBlacklist.length, 'entries');
+                // Save to new doc
+                saveData(['manualBlacklist','blacklistConfig','blacklistReasons']);
+              }
+            }catch(e){ console.warn('[MIGRATE] blacklist read error:', e.message); }
+          }
 
           const oldDocIds = ['hr','recruitment','workforce','performance','leavedata','promotions','discipline'];
           const oldSnaps = await Promise.all(oldDocIds.map(id=>window.fbDb.collection('hrdata').doc(id).get()));
