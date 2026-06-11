@@ -805,7 +805,7 @@ const DEFAULT_DATA = {
     {id:'cf_exitReason', key:'exitReason', label:'Lý do nghỉ việc', type:'select', group:(_lang==="en"?"Resigned":"Nghỉ việc"), placeholder:'', showInTable:false, required:false, options:'Sa thải,Từ chức,Không gia hạn hợp đồng,Lý do cá nhân,Sức khỏe không đảm bảo,Mâu thuẫn với đồng nghiệp,Bỏ việc,Không nhận lương/Xin hồ sơ,Khác'},
     {id:'cf_exitNotes', key:'exitNotes', label:'Ghi chú nghỉ việc', type:'textarea', group:(_lang==="en"?"Resigned":"Nghỉ việc"), placeholder:'Chi tiết bổ sung', showInTable:false, required:false, options:''},
 
-    {id:'cf_stdWorkDays', key:'stdWorkDays', label:'Ngày công TC/tháng', type:'number', group:(_lang==="en"?"Recruitment":"Tuyển dụng"), placeholder:'26', showInTable:false, required:false, options:''},
+    {id:'cf_stdWorkDays', key:'stdWorkDays', label:'Ngày công TC/tháng', type:'number', group:(_lang==="en"?"Contract":"Hợp đồng"), placeholder:'26', showInTable:false, required:false, options:''},
     {id:'cf_avatar', key:'avatarUrl', label:'Ảnh nhân viên (URL)', type:'url', group:(_lang==="en"?"Other":"Khác"), placeholder:'Link ảnh đại diện', showInTable:false, required:false, options:''},
   ],
   customData: {},
@@ -9211,18 +9211,13 @@ function renderLeaveReports(main){
   const bal = window._leaveBal;
   const balRates = leaveAccrualRates();
   const balMono = "font-family:'JetBrains Mono',monospace";
-  const balYears = (()=>{
-    const s=new Set([today.getFullYear()]); // chỉ mặc định năm hiện tại
-    (DB.leaves||[]).forEach(l=>{ if(l.startDate) s.add(new Date(l.startDate).getFullYear()); });
-    if(DB.leaveSheet){ Object.values(DB.leaveSheet).forEach(emp=>{
-      Object.keys(emp).forEach(y=>{
-        const yi=parseInt(y);
-        if(!isNaN(yi) && emp[y] && typeof emp[y]==='object' && Object.keys(emp[y]).length>0) s.add(yi);
-      });
-    }); }
-    (DB.leaveExtraYears||[]).forEach(y=>{ const yi=parseInt(y); if(!isNaN(yi)) s.add(yi); });
-    return [...s].filter(y=>!isNaN(y)).sort((a,b)=>b-a);
-  })();
+  // Chỉ hiện năm đã mở trong Tracking
+  const _openedYears2 = new Set([today.getFullYear()]);
+  (DB.leaveExtraYears||[]).forEach(y=>{ const yi=parseInt(y); if(!isNaN(yi)) _openedYears2.add(yi); });
+  if(DB.leaveSheet){ Object.values(DB.leaveSheet).forEach(emp=>{
+    Object.keys(emp).forEach(y=>{ const yi=parseInt(y); if(!isNaN(yi)) _openedYears2.add(yi); });
+  }); }
+  const balYears = [..._openedYears2].filter(y=>!isNaN(y)).sort((a,b)=>b-a);
   const fnum = n => (Math.round((n||0)*100)/100).toString();
   const statusFilter = bal.statusFilter||'active';
   const allPool = statusFilter==='all' ? DB.employees
@@ -9580,14 +9575,14 @@ window.toggleLeaveGroup = function(did){
               <td rowspan="2" style="padding:6px 10px;position:sticky;left:0;background:#162030;z-index:1;border-right:2px solid var(--border-strong)">TỔNG · ${scopeEmps.length} NV</td>
               <td style="text-align:center;color:#FFCC00;font-size:10px">${fnum(empMonthData.reduce((s,x)=>s+(x.al.carry||0),0))}<div style="color:#FFCC00;opacity:.6">${fnum(empMonthData.reduce((s,x)=>s+(x.cl.carry||0),0))}</div></td>
               ${Array.from({length:12},(_,i)=>`<td style="text-align:center;font-size:10px"><div style="color:var(--success);font-weight:700">${fnum(empMonthData.reduce((s,x)=>s+x.al.months[i].entitle,0))}</div><div style="color:var(--info)">${fnum(empMonthData.reduce((s,x)=>s+x.cl.months[i].entitle,0))}</div></td>`).join('')}
-              <td style="text-align:center;font-size:10px"><div style="color:var(--info);font-weight:700">${fnum(empMonthData.reduce((s,x)=>s+x.al.pending,0))}</div><div style="color:var(--info);opacity:.7">${fnum(empMonthData.reduce((s,x)=>s+x.cl.pending,0))}</div></td>
+              <td style="text-align:center;font-size:10px"><div style="color:var(--info);font-weight:700">${fnum(empMonthData.reduce((s,x)=>s+(x.al.pendingEntitle||x.al.totalEntitle),0))}</div><div style="color:var(--info);opacity:.7">${fnum(empMonthData.reduce((s,x)=>s+(x.cl.pendingEntitle||x.cl.totalEntitle),0))}</div></td>
               <td style="text-align:center;color:#FFCC00;font-size:10px"><div>${fnum(empMonthData.reduce((s,x)=>s+(x.al.months[0].used||0),0))}</div><div style="opacity:.7">${fnum(empMonthData.reduce((s,x)=>s+(x.cl.months[0].used||0),0))}</div></td>
               <td style="text-align:center;color:#FFCC00;font-size:10px"><div>${fnum(empMonthData.reduce((s,x)=>s+(x.al.months[1].used||0),0))}</div><div style="opacity:.7">${fnum(empMonthData.reduce((s,x)=>s+(x.cl.months[1].used||0),0))}</div></td>
               <td style="text-align:center;color:var(--warning);font-size:10px"><div>${fnum(empMonthData.reduce((s,x)=>s+(x.al.clearAL||0),0))}</div><div style="opacity:.5">—</div></td>
               ${Array.from({length:10},(_,i)=>`<td style="text-align:center;font-size:10px"><div style="color:var(--accent)">${fnum(empMonthData.reduce((s,x)=>s+x.al.months[i+2].used,0))}</div><div style="color:var(--info);opacity:.8">${fnum(empMonthData.reduce((s,x)=>s+x.cl.months[i+2].used,0))}</div></td>`).join('')}
               <td style="text-align:center;font-size:10px"><div style="color:var(--purple);font-weight:700">${fnum(empMonthData.reduce((s,x)=>s+x.al.totalUsed,0))}</div><div style="color:var(--purple);opacity:.7">${fnum(empMonthData.reduce((s,x)=>s+x.cl.totalUsed,0))}</div></td>
-              <td style="text-align:center;font-size:10px"><div style="color:var(--success);font-weight:700">${fnum(empMonthData.reduce((s,x)=>s+((x.al.pendingEntitle||x.al.totalEntitle)-x.al.totalUsed),0))}</div><div style="color:var(--success);opacity:.7">${fnum(empMonthData.reduce((s,x)=>s+((x.cl.pendingEntitle||x.cl.totalEntitle)-x.cl.totalUsed),0))}</div></td>
               <td style="text-align:center;font-size:10px"><div style="color:var(--purple);font-weight:700">${fnum(empMonthData.reduce((s,x)=>s+x.al.pending,0))}</div><div style="color:var(--purple);opacity:.7">${fnum(empMonthData.reduce((s,x)=>s+x.cl.pending,0))}</div></td>
+              <td style="text-align:center;font-size:10px;border-left:2px solid rgba(183,148,212,.4)"><div style="color:var(--success);font-weight:700">${fnum(empMonthData.reduce((s,x)=>s+((x.al.pendingEntitle||x.al.totalEntitle)-x.al.totalUsed),0))}</div><div style="color:var(--success);opacity:.7">${fnum(empMonthData.reduce((s,x)=>s+((x.cl.pendingEntitle||x.cl.totalEntitle)-x.cl.totalUsed),0))}</div></td>
             </tr>
           </tfoot>
         </table>
@@ -9665,8 +9660,16 @@ function renderLeavePlan(main){
   const showAL = window._lpShowAL;
   const showCL = window._lpShowCL;
 
+  // Chỉ hiện năm đã mở trong Tracking (leaveExtraYears + năm hiện tại của leaveSheet)
+  const _openedLeaveYears = new Set([today.getFullYear()]);
+  (DB.leaveExtraYears||[]).forEach(y=>{ const yi=parseInt(y); if(!isNaN(yi)) _openedLeaveYears.add(yi); });
+  if(DB.leaveSheet){ Object.values(DB.leaveSheet).forEach(emp=>{
+    Object.keys(emp).forEach(y=>{ const yi=parseInt(y); if(!isNaN(yi)) _openedLeaveYears.add(yi); });
+  }); }
+
   const lpYears = (()=>{
-    const s = new Set([today.getFullYear()]);
+    const s = new Set();
+    _openedLeaveYears.forEach(y=>s.add(y)); // chỉ năm đã mở trong Tracking
     (DB.leaves||[]).forEach(l=>{ if(l.startDate) s.add(new Date(l.startDate).getFullYear()); });
     if(DB.leaveSheet){ Object.values(DB.leaveSheet).forEach(emp=>{ Object.keys(emp).forEach(y=>{ const yi=parseInt(y); if(!isNaN(yi)&&emp[y]&&Object.keys(emp[y]).length>0) s.add(yi); }); }); }
     (DB.leaveExtraYears||[]).forEach(y=>{ const yi=parseInt(y); if(!isNaN(yi)) s.add(yi); });
@@ -9705,23 +9708,21 @@ function renderLeavePlan(main){
       + (vsKH!==null?'<div style="font-size:10px;color:'+vsKHC+';font-family:JetBrains Mono,monospace">'+vsKHT+'</div>':'');
   };
 
-  // Tính "Còn lại cuối tháng mi" cho 1 NV — giống cột "Còn lại tháng lương" ở bảng Theo dõi
+  // Tính "Tồn cuối năm" cho 1 NV = Tổng phát sinh (carry+ALL entitle) - Tổng đã nghỉ
   const getEmpRemain = (empId, mi, type)=>{
     const sh = ((DB.leaveSheet[empId]||{})[curYear]||{})[type]||{};
     const carry = parseFloat(sh.carry)||0;
     const entitle = sh.entitle||[];
-    // Tổng phát sinh = carry + entitle T1→mi+1
-    const totalEnt = carry + entitle.slice(0, mi+1).reduce((s,x)=>s+(parseFloat(x)||0), 0);
-    // Tổng đã nghỉ T1→mi+1
+    // Tổng phát sinh = carry + ALL entitle T1-T12
+    const pendingEnt = carry + entitle.reduce((s,x)=>s+(parseFloat(x)||0), 0);
+    // Tổng đã nghỉ T1-T12
     const taken = sh.taken||[];
-    let used = 0; for(let m=0; m<=mi; m++) used += parseFloat(taken[m]||0);
-    // Trừ clearAL nếu AL
-    const clearAL = type==='al' ? (parseFloat(sh.clearAL)||0) : 0;
-    return Math.round((totalEnt - used - clearAL)*100)/100;
+    const used = taken.reduce((s,x)=>s+(parseFloat(x)||0), 0);
+    return Math.round((pendingEnt - used)*100)/100;
   };
 
   const getBalByDept = (deptId, mi, type)=>{
-    // Tồn = tổng "Còn lại tháng lương" của từng NV trong bộ phận
+    // Tồn cuối năm theo bộ phận = Tổng phát sinh - Tổng đã nghỉ
     const emps = activeEmps.filter(e=>e.deptId===deptId);
     const bal = emps.reduce((s,e)=>s+getEmpRemain(e.id, mi, type), 0);
     return Math.round(bal*10)/10;
@@ -9768,15 +9769,9 @@ function renderLeavePlan(main){
         const col=isAL?'var(--success)':'var(--info)';
         const ton  = Math.round(getTonDauThang(dept.id, mi, type)*10)/10;
         const kh   = (plan[mi]||{})[type]||0;
-        // Còn lại năm cũ: IF(tonCuoiNam > curMonth, tonCuoiNam - curMonth, 0)
-        const deptEmps = activeEmps.filter(e=>e.deptId===dept.id);
-        const tonCuoiNamDept = Math.round(deptEmps.reduce((s,e)=>{
-          const sh=((DB.leaveSheet[e.id]||{})[curYear]||{})[type]||{};
-          const te=(sh.carry||0)+(sh.entitle||[]).reduce((a,b)=>a+(b||0),0);
-          const tu=(sh.taken||[]).reduce((a,b)=>a+(b||0),0);
-          return s+(te-tu);
-        },0)*10)/10;
-        // Chỉ AL mới có Còn lại năm cũ, CL = —
+        // Tồn cuối năm bộ phận = getBalByDept (pendingEntitle - totalUsed, giống cột Tồn cuối năm)
+        const tonCuoiNamDept = getBalByDept(dept.id, 11, type);
+        // Còn lại năm cũ: IF(Tồn cuối năm > curMonth, Tồn cuối năm - curMonth, 0) — chỉ AL
         const conLaiNamCu = isAL ? (tonCuoiNamDept > curMonth ? Math.round((tonCuoiNamDept-curMonth)*10)/10 : 0) : null;
         const real = getRealByDept(dept.id, mi, type);
         const duKien = kh>0 ? Math.round((ton-kh)*10)/10 : null;
