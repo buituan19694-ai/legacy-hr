@@ -1376,6 +1376,7 @@ function isoToDisp(v){ if(!v) return ''; var m=v.match(/^(\d{4})-(\d{2})-(\d{2})
 function getDateIso(id){ const el = $('#'+id); if(!el) return ''; return el.getAttribute('data-iso') || dispToIso(el.value||'') || ''; }
 function initDateInputs(root){
   (root||document).querySelectorAll('input[type="date"]').forEach(function(el){
+    if(el.classList.contains('no-vn-wrap')) return; // skip — handled manually
     var iso = el.value;
     var wrapper = document.createElement('div');
     wrapper.style.cssText = 'position:relative;display:flex;align-items:center';
@@ -11798,12 +11799,20 @@ window._resignEmpSelect = function(id, name, code, dept){
   if(typeof _resignCalcEndGlobal === 'function') _resignCalcEndGlobal();
 };
 
+
+function _resignDateInput(el){
+  // Native date input returns ISO yyyy-MM-dd directly
+  var iso = el.value || '';
+  el.setAttribute('data-iso', iso);
+  if(iso) _resignCalcEndGlobal();
+}
 // ── Resign modal: global calc + confirm functions ──
 function _resignCalcEndGlobal(){
   const empId = document.getElementById('rEmp')?.value;
   // date input có thể là native (value=yyyy-MM-dd) hoặc custom wrapper (data-iso=yyyy-MM-dd, value=dd/MM/yyyy)
   const submitEl = document.getElementById('rSubmitDate');
-  const submitDate = submitEl ? (submitEl.getAttribute('data-iso') || dispToIso(submitEl.value||'') || submitEl.value) : '';
+  // Native date input: value is yyyy-MM-dd. Custom wrapper: use data-iso
+  const submitDate = submitEl ? (submitEl.value && /^\d{4}-\d{2}-\d{2}$/.test(submitEl.value) ? submitEl.value : (submitEl.getAttribute('data-iso') || dispToIso(submitEl.value||''))) : '';
   const display = document.getElementById('rEndDateDisplay');
   const badge = document.getElementById('rNoticeBadge');
   const ctEl = document.getElementById('rContractType');
@@ -11829,7 +11838,7 @@ function _resignConfirmActionGlobal(action){
 
   const empId     = document.getElementById('rEmp')?.value;
   const submitEl  = document.getElementById('rSubmitDate');
-  const submitDate= submitEl ? (submitEl.getAttribute('data-iso') || dispToIso(submitEl.value||'') || submitEl.value) : '';
+  const submitDate= submitEl ? (submitEl.value && /^\d{4}-\d{2}-\d{2}$/.test(submitEl.value) ? submitEl.value : (submitEl.getAttribute('data-iso') || dispToIso(submitEl.value||''))) : '';
   const endDate   = document.getElementById('rEndDate')?.value;
   const reasonSel = document.getElementById('rReason')?.value||'';
   const reasonOth = document.getElementById('rReasonOther')?.value.trim()||'';
@@ -11940,12 +11949,11 @@ function openResignModal(rid){
 
       <div>
         <label style="font-size:11px;color:var(--ink-muted);font-weight:600;letter-spacing:.1em">NGÀY NỘP ĐƠN *</label>
-        <input type="text" id="rSubmitDate" placeholder="dd/mm/yyyy"
-          value="${prefillDate ? isoToDisp(prefillDate) : ''}"
-          data-iso="${prefillDate||''}"
-          maxlength="10"
-          style="width:100%;margin-top:6px;padding:9px 12px;background:var(--bg-input);border:1px solid var(--border);border-radius:6px;color:var(--ink);font-size:13px;font-family:'JetBrains Mono',monospace"
-          oninput="(function(el){var v=el.value.replace(/[^\d]/g,'');if(v.length>=3)v=v.slice(0,2)+'/'+v.slice(2);if(v.length>=6)v=v.slice(0,5)+'/'+v.slice(5);if(v.length>10)v=v.slice(0,10);el.value=v;var iso=dispToIso(v);el.setAttribute('data-iso',iso||'');if(iso)_resignCalcEndGlobal();})(this)">
+        <input type="date" id="rSubmitDate" lang="vi"
+          class="no-vn-wrap"
+          value="${prefillDate||today}"
+          style="width:100%;margin-top:6px;padding:9px 12px;background:var(--bg-input);border:1px solid var(--border);border-radius:6px;color:var(--ink);font-size:13px"
+          oninput="_resignDateInput(this)" onchange="_resignDateInput(this)">
       </div>
 
       <div style="background:var(--bg-elev);border:1px solid var(--border);border-radius:8px;padding:14px 16px">
