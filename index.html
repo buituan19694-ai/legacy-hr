@@ -1293,6 +1293,11 @@ if(!Array.isArray(DB.salaryYears))        DB.salaryYears        = [];
 if(!Array.isArray(DB.trainingExtraYears)) DB.trainingExtraYears = [];
 if(!Array.isArray(DB.leaveExtraYears))    DB.leaveExtraYears    = [];
 if(!Array.isArray(DB.resignations))       DB.resignations       = [];
+// Dọn candidates mồ côi (job đã xóa)
+if(Array.isArray(DB.candidates)&&Array.isArray(DB.jobs)){
+  const _jids=new Set((DB.jobs||[]).map(j=>j.id));
+  DB.candidates=DB.candidates.filter(c=>c.jobId&&_jids.has(c.jobId));
+}
 if(!DB.leaveSheet   || Array.isArray(DB.leaveSheet))   DB.leaveSheet   = {};
 if(!DB.leaveOpening || Array.isArray(DB.leaveOpening)) DB.leaveOpening = {};
 if(!DB.leavePlan    || Array.isArray(DB.leavePlan))    DB.leavePlan    = {};
@@ -12749,7 +12754,7 @@ function renderJobDetail(main){
               return `<tr>
                 <td>
                   <div class="cell-emp-name" onclick="viewCandidate('${a.id}')" style="cursor:pointer;color:var(--accent);transition:color .15s" onmouseover="this.style.textDecoration='underline'" onmouseout="this.style.textDecoration='none'" title="Xem hồ sơ ứng viên">${escapeHtml(a.name)}</div>
-                  <div class="cell-emp-meta">${a.age?a.age+' ${_lang==="en"?"yrs · ":"tuổi · "}':''}${escapeHtml((a.experience||'').slice(0,50))}${a.experience && a.experience.length>50?'…':''}</div>
+                  <div class="cell-emp-meta">${a.age?a.age+(_lang==="en"?' yrs · ':' tuổi · '):''}${escapeHtml((a.experience||'').slice(0,50))}${a.experience && a.experience.length>50?'…':''}</div>
                 </td>
                 <td>
                   <div style="font-size:12px"><a href="tel:${escapeHtml(a.phone)}" style="color:var(--accent);text-decoration:none;font-family:'JetBrains Mono',monospace">${escapeHtml(a.phone)||'—'}</a></div>
@@ -12879,7 +12884,7 @@ function viewCandidate(id){
       <div style="flex:1;min-width:0">
         <div style="font-family:'Fraunces',serif;font-size:24px;font-weight:500;letter-spacing:-.02em">${escapeHtml(a.name)}</div>
         <div style="font-size:13px;color:var(--ink-dim);margin-top:2px">
-          ${a.age?a.age+' ${_lang==="en"?"yrs · ":"tuổi · "}':''}
+          ${a.age?a.age+(_lang==="en"?' yrs · ':' tuổi · '):''}
           <a href="tel:${escapeHtml(a.phone)}" style="color:var(--accent);text-decoration:none;font-family:'JetBrains Mono',monospace">${escapeHtml(a.phone)||'—'}</a>
           ${a.email?` · <a href="mailto:${escapeHtml(a.email)}" style="color:var(--ink-dim);text-decoration:none">${escapeHtml(a.email)}</a>`:''}
         </div>
@@ -13523,9 +13528,24 @@ function saveJob(id, isNew){
 
 function deleteJob(id, fromModal=false){
   if(fromModal) closeModal();
-  confirmDialog('Xoá vị trí?', 'Vị trí tuyển dụng sẽ bị xoá hoàn toàn. Hành động này không thể hoàn tác.', ()=>{
+  const job = (DB.jobs||[]).find(j=>j.id===id);
+  const candCount = (DB.candidates||[]).filter(c=>c.jobId===id).length;
+  const msg = candCount
+    ? `Vị trí và ${candCount} ứng viên liên quan sẽ bị xoá hoàn toàn. Không thể hoàn tác.`
+    : 'Vị trí tuyển dụng sẽ bị xoá hoàn toàn. Không thể hoàn tác.';
+  confirmDialog('Xoá vị trí?', msg, ()=>{
+    // Xóa job
     DB.jobs = DB.jobs.filter(x=>x.id!==id);
-    saveData(['jobs']); toast('Đã xoá vị trí'); render();
+    // Xóa candidates của job này
+    DB.candidates = (DB.candidates||[]).filter(c=>c.jobId!==id);
+    // Xóa Firestore shard cand_{jobId}
+    if(window.fbDb){
+      window.fbDb.collection('hrdata').doc('cand_'+id).delete()
+        .catch(e=>console.warn('[deleteJob] cand shard delete:', e.message));
+    }
+    saveData(['jobs','candidates']);
+    toast('Đã xoá vị trí'+(candCount?' và '+candCount+' ứng viên':''));
+    render();
   });
 }
 
