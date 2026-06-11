@@ -11833,7 +11833,11 @@ function openResignModal(rid){
     contractType:((DB.customData||{})[e.id]||{}).currentContractType||''
   }));
 
-  openModal('📋 Đơn xin nghỉ việc',`
+  openModal(`
+    <div class="modal-head">
+      <div class="modal-title">📋 Đơn <em>xin nghỉ việc</em></div>
+      <div class="modal-sub">Chọn NV → ngày nộp đơn → ngày nghỉ tự tính → Duyệt hoặc Huỷ</div>
+    </div>
     <div style="display:flex;flex-direction:column;gap:16px;min-width:440px">
 
       <div>
@@ -11877,8 +11881,11 @@ function openResignModal(rid){
         </button>
       </div>
 
+      <div class="modal-actions">
+        <button class="btn" onclick="closeModal()">Đóng</button>
+      </div>
     </div>
-  `,[{label:'Đóng', action:()=>closeModal()}]);
+  `);
 }
 
 
