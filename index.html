@@ -1387,19 +1387,25 @@ function initDateInputs(root){
     txt.value = iso ? isoToDisp(iso) : '';
     if(el.id) txt.id = el.id;
     if(el.required) txt.required = true;
+    // Copy oninput/onchange handlers from original native input
+    var _oninput = el.getAttribute('oninput');
+    var _onchange = el.getAttribute('onchange');
     txt.addEventListener('input', function(){
       var v = this.value.replace(/[^\d]/g,'');
       if(v.length>=3) v = v.slice(0,2)+'/'+v.slice(2);
       if(v.length>=6) v = v.slice(0,5)+'/'+v.slice(5);
       if(v.length>10) v = v.slice(0,10);
       this.value = v;
-      // Update data-iso realtime so oninput handlers can read it
+      // Update data-iso realtime
       var iso = dispToIso(this.value);
       this.setAttribute('data-iso', iso||'');
+      // Fire original oninput handler
+      if(_oninput) { try{ eval(_oninput); }catch(e){} }
     });
     txt.addEventListener('blur', function(){
       var iso = dispToIso(this.value);
       if(iso) this.setAttribute('data-iso', iso);
+      if(_onchange) { try{ eval(_onchange); }catch(e){} }
     });
     txt.setAttribute('data-iso', iso||'');
     el.parentNode.replaceChild(txt, el);
@@ -11929,9 +11935,12 @@ function openResignModal(rid){
 
       <div>
         <label style="font-size:11px;color:var(--ink-muted);font-weight:600;letter-spacing:.1em">NGÀY NỘP ĐƠN *</label>
-        <input type="date" id="rSubmitDate" value="${prefillDate}"
-          oninput="_resignCalcEndGlobal()"
-          style="width:100%;margin-top:6px;padding:9px 12px;background:var(--bg-input);border:1px solid var(--border);border-radius:6px;color:var(--ink);font-size:13px">
+        <input type="text" id="rSubmitDate" placeholder="dd/mm/yyyy"
+          value="${prefillDate ? isoToDisp(prefillDate) : ''}"
+          data-iso="${prefillDate||''}"
+          maxlength="10"
+          style="width:100%;margin-top:6px;padding:9px 12px;background:var(--bg-input);border:1px solid var(--border);border-radius:6px;color:var(--ink);font-size:13px;font-family:'JetBrains Mono',monospace"
+          oninput="(function(el){var v=el.value.replace(/[^\d]/g,'');if(v.length>=3)v=v.slice(0,2)+'/'+v.slice(2);if(v.length>=6)v=v.slice(0,5)+'/'+v.slice(5);if(v.length>10)v=v.slice(0,10);el.value=v;var iso=dispToIso(v);el.setAttribute('data-iso',iso||'');if(iso)_resignCalcEndGlobal();})(this)">
       </div>
 
       <div style="background:var(--bg-elev);border:1px solid var(--border);border-radius:8px;padding:14px 16px">
