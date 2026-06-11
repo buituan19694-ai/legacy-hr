@@ -1299,17 +1299,6 @@ if(!Array.isArray(DB.trainingExtraYears)) DB.trainingExtraYears = [];
 if(!Array.isArray(DB.leaveExtraYears))    DB.leaveExtraYears    = [];
 if(!Array.isArray(DB.resignations))       DB.resignations       = [];
 // Dọn candidates mồ côi (job đã xóa)
-// Migration: nếu e.role là tiếng Việt nhưng cd.position có EN → hoán đổi
-if(Array.isArray(DB.employees)){
-  DB.employees.forEach(e=>{
-    const cd=(DB.customData||{})[e.id]||{};
-    const isVi=s=>/[àáảãạăắằẳẵặâấầẩẫậđèéẻẽẹêếềểễệìíỉĩịòóỏõọôốồổỗộơớờởỡợùúủũụưứừửữựỳýỷỹỵ]/i.test(s||'');
-    if(isVi(e.role)&&cd.position&&!isVi(cd.position)){
-      if(!e.roleVN) e.roleVN=e.role;
-      e.role=cd.position;
-    }
-  });
-}
 if(Array.isArray(DB.candidates)&&Array.isArray(DB.jobs)){
   const _jids=new Set((DB.jobs||[]).map(j=>j.id));
   DB.candidates=DB.candidates.filter(c=>c.jobId&&_jids.has(c.jobId));
@@ -3772,13 +3761,12 @@ function renderEmployeeProfile(main){
           <div class="profile-tag" style="background:${deptColor}22;color:${deptColor}">${escapeHtml(dept?.name||'—')}</div>
           <h2 class="profile-name">${escapeHtml(e.name)}</h2>
           <div class="profile-role">
-            ${escapeHtml(e.role||'')}
             ${(()=>{
+              const en = e.role||cd.position||'';
               const vn = e.roleVN||cd.jobLocation||'';
-              const en = e.role||'';
-              // Only show VI if different from EN (avoid duplicate display)
-              if(!vn || vn===en) return '';
-              return `<span style="color:var(--ink-muted);font-size:13px"> / ${escapeHtml(vn)}</span>`;
+              if(!en && !vn) return '—';
+              if(!vn || vn===en) return escapeHtml(en);
+              return escapeHtml(en) + (en?`<span style="color:var(--ink-muted);font-size:13px"> / ${escapeHtml(vn)}</span>`:'') ;
             })()}
           </div>
           <div class="profile-quick">
@@ -13734,7 +13722,7 @@ function renderTraining(main){
 
   const periodAttendees = periodCourses.reduce((s,c)=>s+(c.attendees||0),0);
   const periodHours = periodCourses.reduce((s,c)=>s+(c.hours||0),0);
-  const periodTotalLearningHours = periodCourses.reduce((s,c)=>s+(c.hours||0)*(c.attendees||0),0);
+  const periodTotalLearningHours = periodCourses.reduce((s,c)=>s+(c.hours||0),0); // tổng giờ học thực tế (không nhân số người)
   const periodCost = periodCourses.reduce((s,c)=>s+(c.cost||0),0);
 
   const running = DB.courses.filter(c=>c.status==='running').length;
@@ -13760,7 +13748,7 @@ function renderTraining(main){
       if(attendeesFromDept > 0){
         courseCount++;
         attendeeCount += attendeesFromDept;
-        personHours += attendeesFromDept * (c.hours || 0);
+        personHours += (c.hours || 0); // giờ học thực tế theo khoá (không nhân số người)
       }
     });
     return {
@@ -13788,7 +13776,7 @@ function renderTraining(main){
       month: m,
       courses: inMonth.length,
       attendees: inMonth.reduce((s,c)=>s+(c.attendees||0),0),
-      hours: inMonth.reduce((s,c)=>s+(c.hours||0)*(c.attendees||0),0),
+      hours: inMonth.reduce((s,c)=>s+(c.hours||0),0),
       cost: inMonth.reduce((s,c)=>s+(c.cost||0),0),
     });
   }
@@ -14091,7 +14079,7 @@ function renderTraining(main){
 
     let datasets;
     const dHours = {
-      label: (_lang==="en"?"Hrs × staff":"Giờ × người"),
+      label: (_lang==="en"?"Training hours":"Giờ học"),
       data: deptTrainingStats.map(d => d.hours),
       backgroundColor: '#7ec699cc', borderColor: '#7ec699',
       borderWidth: 1, borderRadius: 4, pointBackgroundColor: '#7ec699',
@@ -14099,7 +14087,7 @@ function renderTraining(main){
       tension: 0.3, yAxisID: 'yHours',
     };
     const dAttendees = {
-      label: (_lang==="en"?"Person-sessions":"Lượt người"),
+      label: (_lang==="en"?"Attendees":"Lượt tham gia"),
       data: deptTrainingStats.map(d => d.attendees),
       backgroundColor: '#7eb6e8cc', borderColor: '#7eb6e8',
       borderWidth: 1, borderRadius: 4, pointBackgroundColor: '#7eb6e8',
@@ -14166,7 +14154,7 @@ function renderTraining(main){
               label: (ctx) => {
                 const lbl = ctx.dataset.label;
                 const val = isHorizontal ? ctx.parsed.x : ctx.parsed.y;
-                if(lbl === (_lang==="en"?"Hrs × staff":"Giờ × người")) return `  Giờ × người: ${val.toLocaleString('vi-VN')}`;
+                if(lbl === (_lang==="en"?"Training hours":"Giờ học")) return `  Giờ học: ${val.toLocaleString('vi-VN')}`;
                 if(lbl === (_lang==="en"?"Person-sessions":"Lượt người")) return `  Lượt người: ${val}`;
                 if(lbl === (_lang==="en"?"Sessions":"Số khoá")) return `  Số khoá: ${val}`;
                 return `  ${lbl}: ${val}`;
@@ -17189,7 +17177,9 @@ function renderTasks(main){
     const cd = DB.customData[emp.id] || {};
     const missing = [];
     REQUIRED_FIELDS.forEach(f => {
-      const val = f.source === 'emp' ? emp[f.key] : cd[f.key];
+      let val = f.source === 'emp' ? emp[f.key] : cd[f.key];
+      // Bỏ qua check ảnh nhân viên
+      if(f.key === 'avatarUrl') return;
       const isEmpty = val === undefined || val === null || val === '' || val === 0;
       if(isEmpty) missing.push(f);
     });
@@ -17535,6 +17525,7 @@ const MODULE_LIST = [
   {key:'warnings',    label:'Kỷ luật / Cảnh cáo'},
   {key:'tasks',       label:'Thông báo / Hồ sơ chưa đủ'},
   {key:'settings',    label:'Cấu hình'},
+  {key:'salary',      label:'Phân tích Lương'},
   {key:'dormitory',   label:'Staff House'},
 ];
 const PERM_LEVELS = ['none','view','edit','full'];
@@ -17622,7 +17613,11 @@ window.openAccountModal = async function(uid=null){
   const perms = userData?.permissions || {};
   const moduleRows = MODULE_LIST.map(m=>{
     const cur = perms[m.key] || 'none';
-    const opts = PERM_LEVELS.map(lv=>`<option value="${lv}" ${cur===lv?'selected':''}>${PERM_LABELS[lv]}</option>`).join('');
+    const isSalaryKey = m.key==='salary';
+    const cur_sal = isSalaryKey ? (perms.salary||'hide') : cur;
+    const opts = isSalaryKey
+      ? `<option value="hide" ${cur_sal==='hide'?'selected':''}>🚫 Không xem</option><option value="show" ${cur_sal==='show'?'selected':''}>👁 Xem được lương</option>`
+      : PERM_LEVELS.map(lv=>`<option value="${lv}" ${cur===lv?'selected':''}>${PERM_LABELS[lv]}</option>`).join('');
     const salaryRow = m.key==='employees' ? `
       <tr id="salaryRow" style="display:${cur==='none'?'none':''}">
         <td style="padding:6px 14px;padding-left:28px;color:var(--ink-muted);font-size:12px">└ Xem thông tin <strong>Lương</strong></td>
@@ -17655,7 +17650,7 @@ window.openAccountModal = async function(uid=null){
     return `<tr style="border-bottom:1px solid var(--border)">
       <td style="padding:8px 14px;font-weight:500;font-size:13px">${m.label}</td>
       <td style="padding:8px 14px">
-        <select id="perm_${m.key==='salary'?'salary_module':m.key}" onchange="onPermChange('${m.key}',this.value)" style="padding:6px 10px;background:var(--bg-elev);border:1px solid var(--border);border-radius:6px;color:var(--ink);font-size:12.5px;width:100%">
+        <select id="perm_${m.key}" onchange="onPermChange('${m.key}',this.value)" style="padding:6px 10px;background:var(--bg-elev);border:1px solid var(--border);border-radius:6px;color:var(--ink);font-size:12.5px;width:100%">
           ${opts}
         </select>
       </td>
@@ -17684,15 +17679,6 @@ window.openAccountModal = async function(uid=null){
     <div style="font-size:11px;color:var(--ink-muted);letter-spacing:.1em;text-transform:uppercase;margin-bottom:8px;font-weight:600">Phân quyền theo module</div>
     <table style="width:100%;border-collapse:collapse;border:1px solid var(--border);border-radius:8px;overflow:hidden">
       ${moduleRows}
-      <tr style="border-bottom:1px solid var(--border)">
-        <td style="padding:8px 14px;font-weight:500;font-size:13px">Phân tích Lương</td>
-        <td style="padding:8px 14px">
-          <select id="perm_salary" style="padding:6px 10px;background:var(--bg-elev);border:1px solid var(--border);border-radius:6px;color:var(--ink);font-size:12.5px;width:100%">
-            <option value="hide" ${(perms.salary||'hide')==='hide'?'selected':''}>🚫 Không xem</option>
-            <option value="show" ${(perms.salary||'hide')==='show'?'selected':''}>👁 Xem được lương</option>
-          </select>
-        </td>
-      </tr>
     </table>
     <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:20px">
       <button class="btn" onclick="closeModal()">${t('btn_cancel')}</button>
@@ -17720,7 +17706,7 @@ window.saveAccount = async function(uid){
     perms[m.key] = document.getElementById('perm_'+m.key)?.value || 'none';
   });
   perms.promotions = document.getElementById('perm_promotions')?.value || 'hide';
-  perms.salary = document.getElementById('perm_salary')?.value || 'hide';
+  // perm_salary is now in MODULE_LIST, read via perm_salary select
   const recInfoEl = document.getElementById('perm_recruitmentInfo');
   if(recInfoEl) perms.recruitmentInfo = recInfoEl.value;
 
