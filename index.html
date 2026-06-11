@@ -703,6 +703,9 @@ const DEFAULT_DATA = {
   contractTemplates: {},
 
   resignations: [],       // đơn xin nghỉ việc — lưu trong workforce doc
+  dormConfig: {          // cấu hình ký túc xá
+    houses: []           // [{id, name, capacity, note}]
+  },
   quickFilterPrefs: null, // null = dùng DEFAULT_QUICK_FILTER_KEYS
   manualBlacklist: [],    // danh sách đen thủ công — doc riêng 'blacklist' trên Firestore
   blacklistConfig: null,  // cấu hình blacklist (ngưỡng tự động)
@@ -741,7 +744,7 @@ const DEFAULT_DATA = {
     {id:'cf_supOut', key:'supportOutProvince', label:'Hỗ trợ ngoại tỉnh', type:'select', group:(_lang==="en"?"Allowances":"Hỗ trợ"), placeholder:'', showInTable:false, required:false, options:'Có,Không'},
     {id:'cf_supTrans', key:'supportTransport', label:'Hỗ trợ di chuyển', type:'select', group:(_lang==="en"?"Allowances":"Hỗ trợ"), placeholder:'', showInTable:false, required:false, options:'Có,Không'},
     {id:'cf_distance', key:'distanceKm', label:'Số km tới công ty', type:'number', group:(_lang==="en"?"Allowances":"Hỗ trợ"), placeholder:'VD: 12.5', showInTable:false, required:false, options:''},
-    {id:'cf_dormitory', key:'dormitory', label:'Ký túc xá', type:'select', group:(_lang==="en"?"Allowances":"Hỗ trợ"), placeholder:'', showInTable:false, required:false, options:'Có,Không'},
+    {id:'cf_dormitory', key:'dormitory', label:'Ký túc xá', type:'select', group:(_lang==="en"?"Allowances":"Hỗ trợ"), placeholder:'', showInTable:false, required:false, options:'__DORM__'},
     {id:'cf_companyBus', key:'companyBus', label:'Đi xe bus công ty', type:'select', group:(_lang==="en"?"Allowances":"Hỗ trợ"), placeholder:'', showInTable:false, required:false, options:'Có,Không'},
 
     {id:'cf_edu', key:'education', label:(_lang==="en"?"Education":"Học vấn"), type:'select', group:(_lang==="en"?"Education":"Học vấn"), placeholder:'', showInTable:false, required:false, options:'Lao động phổ thông/THCS,Trung cấp/Trung cấp nghề,Chứng chỉ nghề,Cao đẳng,Trình độ đại học,Thạc sĩ,Tiến sĩ'},
@@ -913,7 +916,8 @@ const FS_DOC_MAP = {
   employees:  ['departments'],
   contracts:  ['contracts'],         // contracts array — 150+ NV × vài HĐ → theo dõi size
   trainees:   ['trainees','traineeSchedules'],  // tách khỏi workforce — 48+ records
-  workforce:  ['svcData','courses','casualExtraYears','salaryYears','trainingExtraYears','leaveExtraYears','resignations'],
+  workforce:  ['svcData','courses','casualExtraYears','salaryYears','trainingExtraYears','leaveExtraYears','dormConfig'],
+  resign:     ['resignations'],  // doc riêng — tránh workforce vượt 1MB
   jobs:       ['jobs'],
   blacklist:  ['manualBlacklist','blacklistConfig','blacklistReasons'],
   config:     ['customFields','rewardTypes','perfReviewTypes','company',
@@ -1167,10 +1171,11 @@ function saveData(changedKeys=null){
     docsToSave.forEach(docId=>{
       const docKeys = FS_DOC_MAP[docId]; if(!docKeys) return;
       const payload = { ...meta };
-      docKeys.forEach(k=>{
+      // Chỉ ghi các key được request — không ghi toàn bộ doc để tránh 1MB limit
+      const keysToWrite = keys ? docKeys.filter(k=>keys.includes(k)) : docKeys;
+      keysToWrite.forEach(k=>{
         const val=DB[k];
         if(val===undefined || (typeof val==='number'&&isNaN(val))) return;
-        // Sanitize arrays to remove undefined fields before Firestore write
         if(Array.isArray(val)){
           payload[k] = val.map(item=> typeof item==='object'&&item!==null ? _sanitizeForFirebase(item) : item);
         } else {
@@ -1179,12 +1184,14 @@ function saveData(changedKeys=null){
       });
       window.fbDb.collection('hrdata').doc(docId).set(payload,{merge:true})
         .then(()=>{
-          if(docId==='resign') console.log('[saveData] ✅ resign doc saved, resignations:', (payload.resignations||[]).length);
+          if(docId==='resign'){
+            console.log('[saveData] ✅ resign saved:', (payload.resignations||[]).length, 'records');
+            toast('✅ Đơn nghỉ đã lưu cloud ('+(payload.resignations||[]).length+' đơn)','success',2000);
+          }
         })
         .catch(err=>{
-          console.error('[saveData] ❌', docId, err.code, err.message, JSON.stringify(payload).slice(0,200));
-          if(err.code==='permission-denied') toast('⚠️ Không có quyền lưu dữ liệu','error');
-          else toast('❌ Lỗi lưu '+docId+': '+err.message,'error');
+          console.error('[saveData] ❌', docId, err.code, err.message);
+          toast('❌ Lỗi lưu: '+err.code+' — '+err.message,'error');
         });
     });
 
@@ -5628,7 +5635,15 @@ function renderCustomFieldInput(cf, value){
   const dataAttr = `data-cf-key="${escapeHtml(cf.key)}"`;
 
   if(cf.type === 'select'){
-    const opts = (cf.options||'').split(',').map(s=>s.trim()).filter(Boolean);
+    // __DORM__ = dynamic dorm house list from dormConfig
+    let opts;
+    if(cf.options === '__DORM__'){
+      const houses = (DB.dormConfig?.houses||[]);
+      opts = houses.map(h=>h.name).filter(Boolean);
+      if(!opts.length) opts = ['(Chưa cấu hình ký túc xá)'];
+    } else {
+      opts = (cf.options||'').split(',').map(s=>s.trim()).filter(Boolean);
+    }
     return `<div class="${cls}"><label>${label}</label>
       <select id="${id}" ${dataAttr}>
         <option value="">— Chọn —</option>
@@ -11508,8 +11523,11 @@ function renderWorkforce(main){
       <button class="rec-tab ${tab==='resign'?'active':''}" onclick="window._wfTab='resign';sessionStorage.setItem('_wfTab','resign');render()">
         📋 Ghi nhận nghỉ việc <span style="background:rgba(255,160,80,.15);color:var(--warning);border-radius:10px;padding:1px 8px;font-size:11px;margin-left:4px">${(DB.resignations||[]).filter(r=>r.status==='pending').length}</span>
       </button>
+      <button class="rec-tab ${tab==='dorm'?'active':''}" onclick="window._wfTab='dorm';sessionStorage.setItem('_wfTab','dorm');render()">
+        🏠 Ký túc xá <span style="background:rgba(100,160,255,.15);color:#64a0ff;border-radius:10px;padding:1px 8px;font-size:11px;margin-left:4px">${(DB.dormConfig?.houses||[]).length}</span>
+      </button>
     </div>
-    ${tab==='new' ? _wfNewTab(newEmps,newByDept,PAL,yr,mon) : tab==='resign' ? _wfResignTab() : _wfExitTab(exitEmps,exitByDept,exitReasons,PAL,yr,mon)}
+    ${tab==='new' ? _wfNewTab(newEmps,newByDept,PAL,yr,mon) : tab==='resign' ? _wfResignTab() : tab==='dorm' ? _wfDormTab() : _wfExitTab(exitEmps,exitByDept,exitReasons,PAL,yr,mon)}
   `;
 
   setTimeout(()=>{
@@ -11575,6 +11593,191 @@ function _wfRenderCharts(tab,newByDept,exitByDept,exitReasons,PAL){
           scales:{x:{grid:{color:'#1f2630'},beginAtZero:true,ticks:{stepSize:1}},y:{grid:{display:false},ticks:{font:{size:11}}}}}});
     }
   }
+}
+
+
+function _wfDormTab(){
+  if(!DB.dormConfig) DB.dormConfig = {houses:[]};
+  const houses = DB.dormConfig.houses || [];
+  const today = new Date();
+  const curYear = today.getFullYear();
+  const MN = ['T1','T2','T3','T4','T5','T6','T7','T8','T9','T10','T11','T12'];
+
+  // Tính số NV đang ở từng nhà (dùng customData.dormitory)
+  const activeEmps = DB.employees.filter(e=>getEffectiveStatus(e)!=='exit');
+  const dormCount = {};
+  houses.forEach(h=>{ dormCount[h.name]=0; });
+  activeEmps.forEach(e=>{
+    const cd = (DB.customData||{})[e.id]||{};
+    if(cd.dormitory && dormCount[cd.dormitory]!==undefined) dormCount[cd.dormitory]++;
+  });
+  const totalInDorm = activeEmps.filter(e=>{ const cd=(DB.customData||{})[e.id]||{}; return cd.dormitory && houses.some(h=>h.name===cd.dormitory); }).length;
+
+  // Chart: số người ở KTX theo tháng trong năm hiện tại
+  // Dùng exit date để tính NV đã rời (NV exit → tự remove khỏi KTX)
+  const dormByMonth = MN.map((_,mi)=>{
+    const monthStart = new Date(curYear, mi, 1);
+    const monthEnd   = new Date(curYear, mi+1, 0);
+    return DB.employees.filter(e=>{
+      const cd = (DB.customData||{})[e.id]||{};
+      if(!cd.dormitory || !houses.some(h=>h.name===cd.dormitory)) return false;
+      const joined = e.joined ? new Date(e.joined) : null;
+      if(!joined || joined > monthEnd) return false;
+      const exitD = cd.exitDate ? new Date(cd.exitDate) : null;
+      if(exitD && exitD < monthStart) return false;
+      return true;
+    }).length;
+  });
+
+  return `
+    <div style="display:flex;flex-direction:column;gap:16px">
+
+      <!-- Header stats -->
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px">
+        ${kpiCard('Tổng đang ở KTX', totalInDorm, 'NV hiện tại', '', 'info')}
+        ${kpiCard('Số nhà', houses.length, 'Đang quản lý', '', '')}
+        ${kpiCard('Tổng sức chứa', houses.reduce((s,h)=>s+(parseInt(h.capacity)||0),0), 'Tối đa', '', '')}
+      </div>
+
+      <!-- Houses grid -->
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px">
+        ${houses.map(h=>{
+          const cnt = dormCount[h.name]||0;
+          const cap = parseInt(h.capacity)||0;
+          const pct = cap ? Math.round(cnt/cap*100) : 0;
+          const isFull = cap && cnt>=cap;
+          const color = isFull ? 'var(--danger)' : cnt/cap>0.8 ? 'var(--warning)' : 'var(--success)';
+          return `<div class="card" style="padding:16px;border:1.5px solid ${isFull?'rgba(229,115,115,.3)':'var(--border)'}">
+            <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px">
+              <div>
+                <div style="font-size:15px;font-weight:700">🏠 ${escapeHtml(h.name)}</div>
+                ${h.note?`<div style="font-size:11.5px;color:var(--ink-muted);margin-top:2px">${escapeHtml(h.note)}</div>`:''}
+              </div>
+              <div style="display:flex;gap:6px">
+                <button onclick="openDormHouseModal('${h.id}')" style="padding:4px 8px;background:var(--bg-elev);border:1px solid var(--border);border-radius:5px;color:var(--ink-muted);font-size:12px;cursor:pointer">✏️</button>
+                <button onclick="deleteDormHouse('${h.id}')" style="padding:4px 8px;background:rgba(229,115,115,.1);border:1px solid rgba(229,115,115,.3);border-radius:5px;color:var(--danger);font-size:12px;cursor:pointer">🗑</button>
+              </div>
+            </div>
+            <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:8px">
+              <span style="font-size:32px;font-weight:800;color:${color};font-family:'Fraunces',serif">${cnt}</span>
+              <span style="font-size:14px;color:var(--ink-muted)">/ ${cap||'?'} người</span>
+              ${isFull?'<span style="background:rgba(229,115,115,.15);color:var(--danger);border-radius:10px;padding:2px 8px;font-size:11px;font-weight:700">ĐẦY</span>':''}
+            </div>
+            ${cap?`<div style="background:var(--bg-elev);border-radius:6px;height:6px;overflow:hidden">
+              <div style="height:100%;width:${Math.min(pct,100)}%;background:${color};border-radius:6px;transition:width .3s"></div>
+            </div>
+            <div style="font-size:11px;color:var(--ink-muted);margin-top:4px">${pct}% sức chứa</div>`:''}
+            <!-- Danh sách NV trong nhà -->
+            <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">
+              <div style="font-size:11px;color:var(--ink-muted);font-weight:600;margin-bottom:6px">NHÂN VIÊN</div>
+              ${activeEmps.filter(e=>(DB.customData[e.id]||{}).dormitory===h.name).slice(0,5).map(e=>`
+                <div style="font-size:12px;padding:3px 0;display:flex;align-items:center;gap:6px;border-bottom:1px solid rgba(255,255,255,.04)">
+                  <span style="width:24px;height:24px;border-radius:50%;background:var(--bg-elev);display:flex;align-items:center;justify-content:center;font-size:10px;flex-shrink:0">${(e.name||'').split(' ').pop()[0]||'?'}</span>
+                  <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(e.name||'')}</span>
+                  <span style="font-size:10px;color:var(--ink-muted)">${escapeHtml(deptName(e.deptId)||'')}</span>
+                </div>`).join('')}
+              ${activeEmps.filter(e=>(DB.customData[e.id]||{}).dormitory===h.name).length>5?`<div style="font-size:11px;color:var(--ink-muted);margin-top:4px">+${activeEmps.filter(e=>(DB.customData[e.id]||{}).dormitory===h.name).length-5} người khác</div>`:''}
+            </div>
+          </div>`;
+        }).join('')}
+
+        <!-- Add house card -->
+        <div class="card" onclick="openDormHouseModal()" style="padding:16px;border:2px dashed var(--border);background:transparent;cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:160px;transition:border-color .15s"
+          onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
+          <div style="font-size:28px;margin-bottom:8px">➕</div>
+          <div style="font-size:13px;font-weight:600;color:var(--ink-muted)">Thêm nhà mới</div>
+        </div>
+      </div>
+
+      <!-- Chart theo tháng -->
+      <div class="card" style="padding:20px">
+        <div style="font-size:15px;font-weight:700;margin-bottom:4px">📊 Biến động KTX theo tháng — ${curYear}</div>
+        <div style="font-size:12px;color:var(--ink-muted);margin-bottom:14px">Số NV đang ở ký túc xá mỗi tháng</div>
+        <div style="position:relative;height:180px">
+          <canvas id="chartDorm" style="width:100%;height:100%"></canvas>
+        </div>
+      </div>
+
+    </div>
+  `;
+  // Render chart after DOM update
+  setTimeout(()=>{
+    const el = document.getElementById('chartDorm');
+    if(!el || typeof Chart==='undefined') return;
+    if(el._chart) el._chart.destroy();
+    const isFut = i => new Date(curYear, i+1, 0) > today;
+    el._chart = new Chart(el, {type:'bar',
+      data:{labels:MN, datasets:[{
+        label:'NV đang ở KTX',
+        data: dormByMonth.map((v,i)=>isFut(i)?null:v),
+        backgroundColor: dormByMonth.map((_,i)=>isFut(i)?'transparent':'rgba(100,160,255,.6)'),
+        borderRadius:4, borderSkipped:false
+      }]},
+      options:{responsive:true,maintainAspectRatio:false,
+        plugins:{legend:{display:false}, datalabels:{display:true,anchor:'end',align:'top',font:{size:11},formatter:v=>v||''}},
+        scales:{x:{grid:{display:false}},y:{beginAtZero:true,ticks:{stepSize:1},grid:{color:'#1f2630'}}}
+      }
+    });
+  }, 50);
+}
+
+function openDormHouseModal(houseId){
+  if(!DB.dormConfig) DB.dormConfig={houses:[]};
+  const isNew = !houseId;
+  const house = houseId ? (DB.dormConfig.houses||[]).find(h=>h.id===houseId) : null;
+
+  openModal(`
+    <div class="modal-head">
+      <div class="modal-title">${isNew?'➕ Thêm nhà mới':'✏️ Sửa thông tin nhà'}</div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:14px;min-width:360px">
+      <div class="field"><label>Tên nhà *</label><input id="dh_name" value="${escapeHtml(house?.name||'')}" placeholder="VD: Nhà A, Nhà Cam..."></div>
+      <div class="field"><label>Sức chứa (người)</label><input id="dh_cap" type="number" min="1" max="100" value="${house?.capacity||''}" placeholder="VD: 20"></div>
+      <div class="field full"><label>Ghi chú</label><input id="dh_note" value="${escapeHtml(house?.note||'')}" placeholder="Địa chỉ, mô tả..."></div>
+      <div class="modal-actions">
+        <button class="btn" onclick="closeModal()">Huỷ</button>
+        <button class="btn btn-primary" onclick="saveDormHouse('${houseId||''}')">💾 Lưu</button>
+      </div>
+    </div>
+  `);
+}
+
+function saveDormHouse(houseId){
+  const name = document.getElementById('dh_name')?.value.trim();
+  if(!name){ toast('Vui lòng nhập tên nhà','error'); return; }
+  const cap  = parseInt(document.getElementById('dh_cap')?.value)||0;
+  const note = document.getElementById('dh_note')?.value.trim()||'';
+  if(!DB.dormConfig) DB.dormConfig={houses:[]};
+  if(!DB.dormConfig.houses) DB.dormConfig.houses=[];
+
+  if(houseId){
+    DB.dormConfig = {...DB.dormConfig, houses: DB.dormConfig.houses.map(h=>
+      h.id===houseId ? {id:h.id, name, capacity:cap, note} : h
+    )};
+  } else {
+    DB.dormConfig = {...DB.dormConfig, houses: [...DB.dormConfig.houses, {id:uid(), name, capacity:cap, note}]};
+  }
+  // Update dormitory custom field options
+  const cfIdx = (DB.customFields||[]).findIndex(cf=>cf.key==='dormitory');
+  if(cfIdx>=0){
+    const updated = [...DB.customFields];
+    updated[cfIdx] = {...updated[cfIdx], options: DB.dormConfig.houses.map(h=>h.name).join(',')};
+    DB.customFields = updated;
+    saveData(['dormConfig','customFields']);
+  } else {
+    saveData(['dormConfig']);
+  }
+  closeModal(); render();
+  toast(`${houseId?'Đã cập nhật':'Đã thêm'} nhà "${name}"`, 'success');
+}
+
+function deleteDormHouse(houseId){
+  if(!confirm('Xoá nhà này? NV đang ở nhà này sẽ không bị ảnh hưởng.')) return;
+  if(!DB.dormConfig?.houses) return;
+  DB.dormConfig = {...DB.dormConfig, houses: DB.dormConfig.houses.filter(h=>h.id!==houseId)};
+  saveData(['dormConfig']);
+  render();
+  toast('Đã xoá nhà','success');
 }
 
 function _wfNewTab(emps,byDept,PAL,yr,mon){
@@ -20349,6 +20552,7 @@ fbAuth.onAuthStateChanged(async user => {
           trainees:    ['trainee','dashboard'],
           jobs:        ['recruitment','job-detail'],
           blacklist:   ['warnings'],  // blacklist doc → re-render warnings/discipline page
+          resign:      ['workforce'],  // resign doc → re-render HR movement
           config:      ['settings','employees','salary'],
         };
         const RENDER_MAP = {
@@ -20509,18 +20713,25 @@ fbAuth.onAuthStateChanged(async user => {
               if(isSelf && isRecent) return; // chính mình vừa save
               if(change.type === 'removed') return;
               if(d[key] && Array.isArray(d[key])){
-                const shardId = d._shard; // e.g. "2026" or "2026_06"
-                const isMonthShard = String(shardId).includes('_');
+                const shardId = d._shard; // year / YYYY_MM / jobId
+                const isMonthShard = typeof shardId==='string' && /^\d{4}_\d{2}$/.test(String(shardId));
+                const isYearShard  = typeof shardId==='number' || /^\d{4}$/.test(String(shardId));
                 if(isMonthShard){
-                  // casuals: sharded by YYYY_MM — filter by month
+                  // casuals: YYYY_MM
                   DB[key] = [
                     ...(DB[key]||[]).filter(r=>_recMonth(r)!==String(shardId)),
                     ...d[key]
                   ];
-                } else {
-                  // year-sharded: filter by year
+                } else if(isYearShard){
+                  // leaves/kpi/rewards/etc: year
                   DB[key] = [
                     ...(DB[key]||[]).filter(r=>_recYear(r)!==parseInt(shardId)),
+                    ...d[key]
+                  ];
+                } else {
+                  // candidates: sharded by jobId — replace entire shard
+                  DB[key] = [
+                    ...(DB[key]||[]).filter(r=>r.jobId!==shardId),
                     ...d[key]
                   ];
                 }
@@ -20539,7 +20750,7 @@ fbAuth.onAuthStateChanged(async user => {
                 render();
               }
               updateBadges();
-            }, 600);
+            }, 120);
           }, err=>{ console.warn('Dynamic listener error:', err.message); });
         window._hrListeners.push(dynamicUnsub);
 
