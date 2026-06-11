@@ -1299,6 +1299,23 @@ if(!Array.isArray(DB.trainingExtraYears)) DB.trainingExtraYears = [];
 if(!Array.isArray(DB.leaveExtraYears))    DB.leaveExtraYears    = [];
 if(!Array.isArray(DB.resignations))       DB.resignations       = [];
 // Dọn candidates mồ côi (job đã xóa)
+// Migration: đồng bộ e.role từ cd.position nếu e.role trống
+if(Array.isArray(DB.employees)){
+  let roleFixed=0;
+  DB.employees.forEach(e=>{
+    const cd=(DB.customData||{})[e.id]||{};
+    // Nếu e.role trống → dùng cd.position
+    if(!e.role && cd.position){
+      e.role = cd.position;
+      roleFixed++;
+    }
+    // Đồng bộ e.roleVN từ cd.jobLocation nếu chưa có
+    if(!e.roleVN && cd.jobLocation){
+      e.roleVN = cd.jobLocation;
+    }
+  });
+  if(roleFixed>0) console.log('[Migration] Synced role for', roleFixed, 'employees from cd.position');
+}
 if(Array.isArray(DB.candidates)&&Array.isArray(DB.jobs)){
   const _jids=new Set((DB.jobs||[]).map(j=>j.id));
   DB.candidates=DB.candidates.filter(c=>c.jobId&&_jids.has(c.jobId));
@@ -6481,11 +6498,15 @@ function confirmImportEmployees(){
   });
 
   window._importRows = null;
-  // saveEmpProfile called per-employee above in loop
+  // Save tất cả emp profiles lên Firestore
+  valid.forEach(r=>{
+    const emp = DB.employees.find(e=>e.code===r.code);
+    if(emp) saveEmpProfile(emp.id);
+  });
   saveData(["contracts"]);
   if(window._pendingRender) delete window._pendingRender[currentPage];
   closeModal();
-  toast('Nhập thành công: +'+added+' mới, ↻'+updated+' cập nhật');
+  toast('Nhập thành công: +'+added+' mới, ↻'+updated+' cập nhật — đang lưu lên cloud...');
   render();
 }
 
