@@ -913,8 +913,7 @@ const FS_DOC_MAP = {
   employees:  ['departments'],
   contracts:  ['contracts'],         // contracts array — 150+ NV × vài HĐ → theo dõi size
   trainees:   ['trainees','traineeSchedules'],  // tách khỏi workforce — 48+ records
-  workforce:  ['svcData','courses','casualExtraYears','salaryYears','trainingExtraYears','leaveExtraYears'],
-  resign:     ['resignations'],      // đơn nghỉ việc — doc riêng
+  workforce:  ['svcData','courses','casualExtraYears','salaryYears','trainingExtraYears','leaveExtraYears','resignations'],
   jobs:       ['jobs'],
   blacklist:  ['manualBlacklist','blacklistConfig','blacklistReasons'],
   config:     ['customFields','rewardTypes','perfReviewTypes','company',
@@ -20350,7 +20349,6 @@ fbAuth.onAuthStateChanged(async user => {
           trainees:    ['trainee','dashboard'],
           jobs:        ['recruitment','job-detail'],
           blacklist:   ['warnings'],  // blacklist doc → re-render warnings/discipline page
-          resign:      ['workforce'],  // resign doc → re-render HR movement page
           config:      ['settings','employees','salary'],
         };
         const RENDER_MAP = {
