@@ -11360,6 +11360,13 @@ function renderWorkforce(main){
     const x=_parseAnyDate(cd.exitDate); return x&&!isNaN(x)&&x.getFullYear()===yr&&x.getMonth()===mi;
   }).length);
 
+  // Đơn nghỉ pending — tính theo endDate (ngày nghỉ dự kiến) của tháng đó
+  const resignByMonth = MN.map((_,mi)=>(DB.resignations||[]).filter(r=>{
+    if(r.status!=='pending') return false;
+    const d=_parseAnyDate(r.endDate||r.submitDate);
+    return d&&!isNaN(d)&&d.getFullYear()===yr&&d.getMonth()===mi;
+  }).length);
+
   const newByDept={}, exitByDept={}, exitReasons={};
   newEmps.forEach(e=>{ const d=deptName(e.deptId)||'Khác'; newByDept[d]=(newByDept[d]||0)+1; });
   exitEmps.forEach(e=>{
@@ -11489,10 +11496,15 @@ function renderWorkforce(main){
         if(isFut(i)) return 'transparent';
         return mon===0||mon===i+1?'rgba(229,115,115,.8)':'rgba(229,115,115,.25)';
       });
+      const resignColors = resignByMonth.map((_,i)=>{
+        if(isFut(i)) return 'transparent';
+        return mon===0||mon===i+1?'rgba(229,115,115,.4)':'rgba(229,115,115,.15)';
+      });
       new Chart(ovEl,{type:'bar',
         data:{labels:MN,datasets:[
           {label:'NV Mới',data:newByMonth.map((v,i)=>isFut(i)?null:v),backgroundColor:newColors,borderRadius:4,borderSkipped:false},
           {label:'Nghỉ việc',data:exitByMonth.map((v,i)=>isFut(i)?null:v),backgroundColor:exitColors,borderRadius:4,borderSkipped:false},
+          {label:'Đơn nghỉ (chờ duyệt)',data:resignByMonth.map((v,i)=>isFut(i)?null:(v||null)),backgroundColor:resignColors,borderRadius:4,borderSkipped:false,borderDash:[4,2]},
         ]},
         options:{responsive:true,maintainAspectRatio:false,
           plugins:{legend:{position:'top',labels:{usePointStyle:true,padding:16,font:{size:11}}},datalabels:{display:false},
