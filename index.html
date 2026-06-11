@@ -11759,8 +11759,66 @@ window._resignEmpSelect = function(id, name, code, dept){
   if(info) info.textContent = dept;
   if(lst)  lst.style.display = 'none';
   // Auto tính ngày nghỉ sau khi chọn NV
-  if(typeof window._resignCalcEnd === 'function') window._resignCalcEnd();
+  if(typeof _resignCalcEndGlobal === 'function') _resignCalcEndGlobal();
 };
+
+// ── Resign modal: global calc + confirm functions ──
+function _resignCalcEndGlobal(){
+  const empId = document.getElementById('rEmp')?.value;
+  const submitDate = document.getElementById('rSubmitDate')?.value;
+  const display = document.getElementById('rEndDateDisplay');
+  const badge = document.getElementById('rNoticeBadge');
+  const ctEl = document.getElementById('rContractType');
+  const hidEnd = document.getElementById('rEndDate');
+  if(!empId || !submitDate){
+    if(display) display.textContent='—';
+    if(badge) badge.textContent='';
+    if(ctEl) ctEl.textContent='';
+    if(hidEnd) hidEnd.value='';
+    return;
+  }
+  const {endDate, noticeDays} = calcResignEndDate(empId, submitDate);
+  const cd = (DB.customData||{})[empId]||{};
+  const ct = cd.currentContractType||'';
+  if(display) display.textContent = endDate ? isoToDisp(endDate) : '—';
+  if(badge) badge.textContent = noticeDays ? '⏱ Báo trước ' + noticeDays + ' ngày' : '';
+  if(ctEl) ctEl.textContent = ct ? 'Loại HĐ: ' + ct : '';
+  if(hidEnd) hidEnd.value = endDate||'';
+}
+
+function _resignConfirmActionGlobal(action){
+  const empId = document.getElementById('rEmp')?.value;
+  const submitDate = document.getElementById('rSubmitDate')?.value;
+  const endDate = document.getElementById('rEndDate')?.value;
+
+  if(!empId){ toast('Vui lòng chọn nhân viên','error'); return; }
+  if(!submitDate){ toast('Vui lòng nhập ngày nộp đơn','error'); return; }
+
+  const emp = empById(empId);
+
+  if(action === 'approve'){
+    const eIdx = DB.employees.findIndex(e=>e.id===empId);
+    if(eIdx>=0) DB.employees[eIdx].status='exit';
+    if(!DB.customData[empId]) DB.customData[empId]={};
+    DB.customData[empId].exitDate = endDate||submitDate;
+    DB.customData[empId].exitReason = 'Nghỉ việc theo đơn';
+    if(!DB.resignations) DB.resignations=[];
+    const {noticeDays} = calcResignEndDate(empId, submitDate);
+    DB.resignations.push(_sanitizeForFirebase({
+      id:uid(), empId, submitDate, endDate:endDate||submitDate,
+      noticeDays, reason:'Nghỉ việc theo đơn', note:'',
+      status:'confirmed', confirmedAt:new Date().toISOString(),
+      createdAt:new Date().toISOString()
+    }));
+    saveEmpProfile(empId);
+    saveData(['resignations']);
+    closeModal(); render();
+    toast('✅ Đã duyệt nghỉ việc: '+(emp?.name||''), 'success');
+  } else {
+    closeModal();
+    toast('Đã huỷ — '+(emp?.name||'')+' tiếp tục làm việc', 'success');
+  }
+}
 
 function openResignModal(rid){
   const activeEmps = DB.employees
@@ -11769,7 +11827,6 @@ function openResignModal(rid){
 
   const today = new Date().toISOString().slice(0,10);
 
-  // Set global emp list for picker
   window._resignEmpAll = activeEmps.map(e=>({
     id:e.id, name:e.name||'', code:e.code||'',
     dept:deptName(e.deptId), role:e.role||'',
@@ -11797,7 +11854,7 @@ function openResignModal(rid){
       <div>
         <label style="font-size:11px;color:var(--ink-muted);font-weight:600;letter-spacing:.1em">NGÀY NỘP ĐƠN *</label>
         <input type="date" id="rSubmitDate" value="${today}"
-          oninput="_resignCalcEnd()"
+          oninput="_resignCalcEndGlobal()"
           style="width:100%;margin-top:6px;padding:9px 12px;background:var(--bg-input);border:1px solid var(--border);border-radius:6px;color:var(--ink);font-size:13px">
       </div>
 
@@ -11812,77 +11869,16 @@ function openResignModal(rid){
       </div>
 
       <div style="display:flex;gap:10px;padding-top:4px">
-        <button onclick="_resignConfirmAction('approve')" style="flex:1;padding:11px;background:rgba(229,115,115,.12);border:1.5px solid var(--danger);border-radius:8px;color:var(--danger);font-size:14px;font-weight:700;cursor:pointer;transition:all .15s" onmouseover="this.style.background='rgba(229,115,115,.22)'" onmouseout="this.style.background='rgba(229,115,115,.12)'">
+        <button onclick="_resignConfirmActionGlobal('approve')" style="flex:1;padding:11px;background:rgba(229,115,115,.12);border:1.5px solid var(--danger);border-radius:8px;color:var(--danger);font-size:14px;font-weight:700;cursor:pointer">
           ✔ Duyệt nghỉ — chuyển Đã nghỉ
         </button>
-        <button onclick="_resignConfirmAction('cancel')" style="flex:1;padding:11px;background:var(--bg-elev);border:1.5px solid var(--border);border-radius:8px;color:var(--ink-dim);font-size:14px;font-weight:700;cursor:pointer;transition:all .15s" onmouseover="this.style.background='var(--bg-card-hover)'" onmouseout="this.style.background='var(--bg-elev)'">
+        <button onclick="_resignConfirmActionGlobal('cancel')" style="flex:1;padding:11px;background:var(--bg-elev);border:1.5px solid var(--border);border-radius:8px;color:var(--ink-dim);font-size:14px;font-weight:700;cursor:pointer">
           ✘ Không nghỉ — huỷ đơn
         </button>
       </div>
 
     </div>
-  `,[ {label:'Đóng', action:()=>closeModal()} ]);
-
-  // Calc end date when emp or date changes
-  window._resignCalcEnd = function(){
-    const empId = document.getElementById('rEmp')?.value;
-    const submitDate = document.getElementById('rSubmitDate')?.value;
-    const display = document.getElementById('rEndDateDisplay');
-    const badge = document.getElementById('rNoticeBadge');
-    const ctEl = document.getElementById('rContractType');
-    const hidEnd = document.getElementById('rEndDate');
-    if(!empId || !submitDate){ 
-      if(display) display.textContent='—';
-      if(badge) badge.textContent='';
-      if(hidEnd) hidEnd.value='';
-      return;
-    }
-    const {endDate, noticeDays} = calcResignEndDate(empId, submitDate);
-    const cd = (DB.customData||{})[empId]||{};
-    const ct = cd.currentContractType||'';
-    if(display) display.textContent = endDate ? isoToDisp(endDate) : '—';
-    if(badge) badge.textContent = noticeDays ? '⏱ Báo trước ' + noticeDays + ' ngày' : '';
-    if(ctEl) ctEl.textContent = ct ? 'Loại HĐ: ' + ct : '';
-    if(hidEnd) hidEnd.value = endDate||'';
-  };
-
-  window._resignConfirmAction = function(action){
-    const empId = document.getElementById('rEmp')?.value;
-    const submitDate = document.getElementById('rSubmitDate')?.value;
-    const endDate = document.getElementById('rEndDate')?.value;
-
-    if(!empId){ toast('Vui lòng chọn nhân viên','error'); return; }
-    if(!submitDate){ toast('Vui lòng nhập ngày nộp đơn','error'); return; }
-
-    const emp = empById(empId);
-
-    if(action === 'approve'){
-      // Duyệt: chuyển exit ngay
-      const eIdx = DB.employees.findIndex(e=>e.id===empId);
-      if(eIdx>=0) DB.employees[eIdx].status='exit';
-      if(!DB.customData[empId]) DB.customData[empId]={};
-      DB.customData[empId].exitDate = endDate||submitDate;
-      DB.customData[empId].exitReason = 'Nghỉ việc theo đơn';
-      // Lưu lịch sử
-      if(!DB.resignations) DB.resignations=[];
-      const {noticeDays} = calcResignEndDate(empId, submitDate);
-      DB.resignations.push(_sanitizeForFirebase({
-        id:uid(), empId, submitDate, endDate:endDate||submitDate,
-        noticeDays, reason:'Nghỉ việc theo đơn', note:'',
-        status:'confirmed', confirmedAt:new Date().toISOString(),
-        createdAt:new Date().toISOString()
-      }));
-      saveEmpProfile(empId);
-      saveData(['resignations']);
-      closeModal(); render();
-      toast('✅ Đã duyệt nghỉ việc: '+(emp?.name||''), 'success');
-
-    } else {
-      // Huỷ đơn: NV về trạng thái bình thường (không làm gì thêm vì chưa đổi status)
-      closeModal();
-      toast('Đã huỷ đơn — '+(emp?.name||'')+' tiếp tục làm việc', 'success');
-    }
-  };
+  `,[{label:'Đóng', action:()=>closeModal()}]);
 }
 
 
