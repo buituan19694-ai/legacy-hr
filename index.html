@@ -97,6 +97,11 @@
         <span data-i18n="nav_workforce">Biến động NS</span>
         <span class="nav-badge" id="navWorkforceCount"></span>
       </div>
+      <div class="nav-item" data-page="dormitory">
+        <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/></svg>
+        <span>Ký túc xá</span>
+        <span class="nav-badge" id="navDormCount"></span>
+      </div>
       <div class="nav-item" data-page="training">
         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 14l9-5-9-5-9 5 9 5z"/><path stroke-linecap="round" stroke-linejoin="round" d="M12 14l6.16-3.422a12.083 12.083 0 01.665 6.479A11.952 11.952 0 0012 20.055a11.952 11.952 0 00-6.824-2.998 12.078 12.078 0 01.665-6.479L12 14z"/></svg>
         <span data-i18n="nav_training">Đào tạo</span>
@@ -11334,6 +11339,42 @@ function renderRecruitmentReports(main){
   }, 0);
 }
 
+
+function renderDormitory(main){
+  if(!window.canDo('workforce')){
+    main.innerHTML='<div class="topbar"><div class="topbar-left"><h1 class="page-title">🔒 Không có quyền</h1></div></div>';
+    return;
+  }
+  if(!DB.dormConfig) DB.dormConfig={houses:[]};
+  const houses = DB.dormConfig.houses||[];
+  const activeEmps = DB.employees.filter(e=>getEffectiveStatus(e)!=='exit');
+  const dormEmps = activeEmps.filter(e=>{
+    const cd=(DB.customData||{})[e.id]||{};
+    return cd.dormitory && houses.some(h=>h.name===cd.dormitory);
+  });
+
+  // Update nav badge
+  const badge = document.getElementById('navDormCount');
+  if(badge){ badge.textContent = dormEmps.length||''; badge.style.display = dormEmps.length?'':'none'; }
+
+  main.innerHTML = `
+    <div class="topbar">
+      <div class="topbar-left">
+        <div class="topbar-breadcrumb">NHÂN SỰ · KÝ TÚC XÁ</div>
+        <h1 class="page-title">🏠 Ký túc <em>xá</em></h1>
+        <div class="page-sub">${houses.length} nhà · ${dormEmps.length} NV đang ở · ${activeEmps.length} tổng NV</div>
+      </div>
+      <div class="topbar-actions">
+        <button class="btn btn-primary" onclick="openDormHouseModal()">＋ Thêm nhà</button>
+      </div>
+    </div>
+    <div class="page-body">
+      ${_wfDormTab()}
+    </div>
+  `;
+  // Chart is rendered via setTimeout inside _wfDormTab
+}
+
 function renderWorkforce(main){
   if(!window.canDo('workforce')){
     main.innerHTML='<div class="topbar"><div class="topbar-left"><h1 class="page-title">🔒 Không có quyền</h1><div class="page-sub">Bạn không được cấp quyền truy cập module Biến động nhân sự</div></div></div>';
@@ -11528,11 +11569,9 @@ function renderWorkforce(main){
       <button class="rec-tab ${tab==='resign'?'active':''}" onclick="window._wfTab='resign';sessionStorage.setItem('_wfTab','resign');render()">
         📋 Ghi nhận nghỉ việc <span style="background:rgba(255,160,80,.15);color:var(--warning);border-radius:10px;padding:1px 8px;font-size:11px;margin-left:4px">${(DB.resignations||[]).filter(r=>r.status==='pending').length}</span>
       </button>
-      <button class="rec-tab ${tab==='dorm'?'active':''}" onclick="window._wfTab='dorm';sessionStorage.setItem('_wfTab','dorm');render()">
-        🏠 Ký túc xá <span style="background:rgba(100,160,255,.15);color:#64a0ff;border-radius:10px;padding:1px 8px;font-size:11px;margin-left:4px">${(DB.dormConfig?.houses||[]).length}</span>
-      </button>
+
     </div>
-    ${tab==='new' ? _wfNewTab(newEmps,newByDept,PAL,yr,mon) : tab==='resign' ? _wfResignTab() : tab==='dorm' ? _wfDormTab() : _wfExitTab(exitEmps,exitByDept,exitReasons,PAL,yr,mon)}
+    ${tab==='new' ? _wfNewTab(newEmps,newByDept,PAL,yr,mon) : tab==='resign' ? _wfResignTab() : _wfExitTab(exitEmps,exitByDept,exitReasons,PAL,yr,mon)}
   `;
 
   setTimeout(()=>{
@@ -20568,7 +20607,8 @@ fbAuth.onAuthStateChanged(async user => {
           // Keys must match FS_DOC_MAP doc names
           employees:   ['employees','employee-profile','departments','department-detail','dashboard','tasks','salary','training'],
           contracts:   ['contracts','dashboard'],
-          workforce:   ['casual','training','dashboard','workforce'],
+          workforce:   ['casual','training','dashboard','workforce','dormitory'],
+          trainees:    ['trainee','dashboard'],
           trainees:    ['trainee','dashboard'],
           jobs:        ['recruitment','job-detail'],
           blacklist:   ['warnings'],  // blacklist doc → re-render warnings/discipline page
@@ -20586,6 +20626,7 @@ fbAuth.onAuthStateChanged(async user => {
           warnings: renderWarnings, settings: renderSettings,
           salary: renderSalaryAnalysis, training: renderTraining,
           workforce: renderWorkforce,
+          dormitory: renderDormitory,
         };
 
         window._renderMap = RENDER_MAP; // expose cho closeModal flush
