@@ -18744,7 +18744,10 @@ function renderTrainee(main){
   const yearsList = [...yearsSet].filter(y=>!isNaN(y)).sort((a,b)=>b-a);
 
   const filteredTrainees = allTrainees.filter(t => {
-    const isActive = !t.endDate || t.endDate >= now;
+    // status field: '' = auto từ endDate, 'active'/'exit' = thủ công
+    const isActive = t.status === 'active' ? true
+                   : t.status === 'exit'   ? false
+                   : (!t.endDate || t.endDate >= now);
     if(tsf === 'active' && !isActive) return false;
     if(tsf === 'exit'   &&  isActive) return false;
     // Year filter: TTS đang thực tập trong năm đó (startDate <= cuối năm AND (endDate >= đầu năm OR không có endDate))
@@ -18763,7 +18766,7 @@ function renderTrainee(main){
     return true;
   });
 
-  const active = allTrainees.filter(t => !t.endDate || t.endDate >= now);
+  const active = allTrainees.filter(t => t.status==='active'?true:(t.status==='exit'||t.status==='early_exit')?false:(!t.endDate||t.endDate>=now));
 
   const el = document.getElementById('navTraineeCount');
   if(el) el.textContent = active.length || '';
@@ -18780,7 +18783,7 @@ function renderTrainee(main){
   if(window._traineeView === 'schedule') return renderTraineeSchedule(main);
 
   const rows = filteredTrainees.map(t => {
-    const isActive = !t.endDate || t.endDate >= now;
+    const isActive = t.status==='active'?true:(t.status==='exit'||t.status==='early_exit')?false:(!t.endDate||t.endDate>=now);
     const daysLeft = t.endDate ? Math.ceil((new Date(t.endDate)-today)/864e5) : null;
     return `<tr style="cursor:pointer" onclick="viewTrainee('${t.id}')">
       <td>
@@ -19395,6 +19398,19 @@ function editTrainee(id){
       <div class="field"><label>Ngân hàng</label><input id="tr_bankName" value="${escapeHtml(tr.bankName||'')}" placeholder="VD: Vietcombank, BIDV..."></div>
       <div class="field"><label>Thù lao / Trợ cấp (VNĐ)</label><input type="number" id="tr_salary" value="${tr.salary||''}" placeholder="0" min="0" step="100000"></div>
       <div class="field"><label>Ngày công thực tế</label><input type="number" id="tr_workDays" value="${tr.workDays||''}" placeholder="0" min="0" step="0.5"></div>
+      <div class="field"><label>Trạng thái</label>
+        <select id="tr_status" onchange="(()=>{const v=this.value;const wrap=document.getElementById('tr_earlyExitWrap');if(wrap)wrap.style.display=v==='early_exit'?'':'none';})()">
+          <option value="" ${!tr.status?'selected':''}>— Tự động theo ngày kết thúc —</option>
+          <option value="active"      ${tr.status==='active'     ?'selected':''}>🟢 Đang thực tập</option>
+          <option value="exit"        ${tr.status==='exit'       ?'selected':''}>🔴 Đã kết thúc / Nghỉ</option>
+          <option value="early_exit"  ${tr.status==='early_exit' ?'selected':''}>⚠️ Kết thúc sớm hơn kế hoạch</option>
+        </select>
+      </div>
+      <div class="field" id="tr_earlyExitWrap" style="display:${tr.status==='early_exit'?'':'none'}">
+        <label>Ngày kết thúc thực tế *</label>
+        <input lang="vi" type="date" id="tr_earlyExitDate" value="${dispToIso(tr.earlyExitDate||tr.endDate||'')}" placeholder="dd/mm/yyyy">
+        <div style="font-size:11px;color:var(--ink-muted);margin-top:4px">Kế hoạch: ${tr.endDate?fmtDate(tr.endDate):'—'}</div>
+      </div>
       <div class="field full"><label>Ghi chú</label><input id="tr_notes" value="${escapeHtml(tr.notes||'')}"></div>
     </div>
     <div class="modal-actions">
@@ -19436,6 +19452,8 @@ function saveTrainee(id, isNew){
     salary:   $sf('tr_salary'),
     workDays: $sf('tr_workDays'),
     notes:    $('#tr_notes').value.trim(),
+    status:   $s('tr_status') || '',  // '' = tự động theo endDate
+    earlyExitDate: $s('tr_status')==='early_exit' ? (dispToIso($('#tr_earlyExitDate')?.value||'')||'') : '',
   };
   if(!DB.trainees) DB.trainees = [];
   if(isNew) DB.trainees.push(_sanitizeForFirebase(data));
