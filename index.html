@@ -19473,36 +19473,81 @@ function deleteTrainee(id, fromModal=false){
 
 function exportTraineeXLSX(){
   if(typeof XLSX==='undefined'){toast((_lang==="en"?"SheetJS not loaded":"SheetJS chưa tải"),'error');return;}
-  const HEADER = ['STT','Họ tên *','Mã SV','Ngày sinh (dd/mm/yyyy)',(_lang==="en"?"Phone":"SĐT"),'Tên trường *',(_lang==="en"?"Department":"Bộ phận"),(_lang==="en"?"Quantity":"Số lượng"),'Ngày bắt đầu * (dd/mm/yyyy)','Ngày kết thúc (dd/mm/yyyy)','CCCD','Số TK ngân hàng',(_lang==="en"?"Banking":"Ngân hàng"),(_lang==="en"?"Notes":"Ghi chú")];
+  // HEADER & data phải đồng bộ thứ tự cột — sửa ở ĐÂY rồi sửa importTraineeXLSX theo
+  const HEADER = [
+    'STT',                          // 0
+    'Họ tên *',                     // 1
+    'Mã số sinh viên',              // 2
+    'Ngày sinh (dd/mm/yyyy)',       // 3
+    'Giới tính (Nam/Nữ)',           // 4
+    'SĐT',                          // 5
+    'Tên trường / Đơn vị *',        // 6
+    'Bộ phận thực tập',             // 7
+    'Số lượng',                     // 8
+    'Ngày bắt đầu * (dd/mm/yyyy)', // 9
+    'Ngày kết thúc (dd/mm/yyyy)',  // 10
+    'Trạng thái',                   // 11  active/exit/early_exit/''
+    'Ngày kết thúc sớm (dd/mm/yyyy)', // 12
+    'CCCD/CMND',                    // 13
+    'Ngày cấp CCCD (dd/mm/yyyy)',  // 14
+    'Nơi cấp CCCD',                 // 15
+    'Số TK ngân hàng',              // 16
+    'Ngân hàng',                    // 17
+    'Thù lao/Trợ cấp (VNĐ)',       // 18
+    'Ngày công',                    // 19
+    'Ghi chú',                      // 20
+  ];
   const rows = (DB.trainees||[]).map((tr,i)=>[
-    i+1, tr.name||'', tr.code||'',
-    tr.dob ? isoToDisp(tr.dob) : '',
-    tr.phone||'', tr.school||'', deptName(tr.deptId), tr.qty||1,
+    i+1,
+    tr.name||'',
+    tr.code||'',
+    tr.dob       ? isoToDisp(tr.dob)       : '',
+    tr.gender==='male'?'Nam':tr.gender==='female'?'Nữ':'',
+    tr.phone||'',
+    tr.school||'',
+    deptName(tr.deptId),
+    tr.qty||1,
     tr.startDate ? isoToDisp(tr.startDate) : '',
     tr.endDate   ? isoToDisp(tr.endDate)   : '',
-    tr.cccd||'', tr.bank||'', tr.bankName||'', tr.notes||''
+    tr.status||'',
+    tr.earlyExitDate ? isoToDisp(tr.earlyExitDate) : '',
+    tr.cccd||'',
+    tr.cccdDate  ? isoToDisp(tr.cccdDate)  : '',
+    tr.cccdPlace||'',
+    tr.bank||'',
+    tr.bankName||'',
+    tr.salary||'',
+    tr.workDays||'',
+    tr.notes||'',
   ]);
   const ws = XLSX.utils.aoa_to_sheet([HEADER, ...rows]);
-  ws['!cols']=[{wch:5},{wch:24},{wch:14},{wch:16},{wch:14},{wch:28},{wch:18},{wch:8},{wch:18},{wch:18},{wch:14},{wch:18},{wch:14},{wch:24}];
+  ws['!cols']=[
+    {wch:5},{wch:24},{wch:14},{wch:16},{wch:10},{wch:14},
+    {wch:28},{wch:18},{wch:8},{wch:18},{wch:18},{wch:16},
+    {wch:20},{wch:14},{wch:16},{wch:24},{wch:18},{wch:14},
+    {wch:16},{wch:10},{wch:24}
+  ];
   const range = XLSX.utils.decode_range(ws['!ref']);
   for(let c=range.s.c; c<=range.e.c; c++){
     const cell = XLSX.utils.encode_cell({r:0,c});
-    if(ws[cell]) ws[cell].s = {font:{bold:true}, fill:{fgColor:{rgb:'1e3a5f'}}, font:{color:{rgb:'ffffff'},bold:true}};
+    if(ws[cell]) ws[cell].s = {font:{bold:true,color:{rgb:'ffffff'}}, fill:{fgColor:{rgb:'1e3a5f'}}};
   }
   const wb=XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb,ws,(_lang==="en"?"Trainees":"Thực tập sinh"));
   const wsNote = XLSX.utils.aoa_to_sheet([
     ['HƯỚNG DẪN NHẬP LIỆU'],[''],
-    ['Cột có dấu * là bắt buộc'],
+    ['Cột có dấu * là bắt buộc: Họ tên, Tên trường, Ngày bắt đầu'],
     ['Ngày tháng: nhập đúng định dạng dd/mm/yyyy (VD: 15/06/2026)'],
+    ['Giới tính: Nam hoặc Nữ'],
     ['Bộ phận: nhập đúng tên bộ phận trong hệ thống'],
     ['Số lượng: để trống sẽ mặc định là 1'],
+    ['Trạng thái: để trống (tự động), active, exit, early_exit'],
     ['Không xóa hoặc thay đổi dòng tiêu đề (dòng 1)'],
-    ['Có thể thêm nhiều sinh viên — mỗi sinh viên 1 dòng'],
+    ['Mỗi sinh viên 1 dòng'],
   ]);
   XLSX.utils.book_append_sheet(wb,wsNote,'Hướng dẫn');
   XLSX.writeFile(wb,'LegacyYenTu_Trainee_Template.xlsx');
-  toast('Đã xuất '+(rows.length?rows.length+' sinh viên · ':'')+'file template sẵn sàng nhập liệu');
+  toast('Đã xuất '+(rows.length?rows.length+' sinh viên · ':'')+'file Excel');
 }
 
 function importTraineeXLSX(){
@@ -19568,32 +19613,40 @@ window.processTraineeImport = function(input){
       for(let i=1; i<rows.length; i++){
         const r = rows[i];
         const name = String(r[1]||'').trim();
-        const school = String(r[5]||'').trim();
-        const startRaw = String(r[8]||'').trim();
+        const school = String(r[6]||'').trim();   // col 6 (new layout)
+        const startRaw = String(r[9]||'').trim(); // col 9 (new layout)
 
         if(!name && !school) continue; // skip empty rows
 
         if(!name)   { errors.push(`Dòng ${i+1}: thiếu Họ tên`); continue; }
         if(!school) { errors.push(`Dòng ${i+1}: thiếu Tên trường`); continue; }
 
-        const deptName2 = String(r[6]||'').trim();
+        const deptName2 = String(r[7]||'').trim();  // col 7 (new layout)
         const deptId = deptMap[deptName2.toLowerCase()] || '';
 
+        const genderRaw = String(r[4]||'').trim().toLowerCase();
         const traineeObj = {
           id: uid(),
-          name,
-          code:     String(r[2]||'').trim(),
-          dob:      dispToIso(String(r[3]||'').trim()),
-          phone:    String(r[4]||'').trim(),
-          school,
-          deptId,
-          qty:      parseInt(r[7])||1,
-          startDate:dispToIso(startRaw),
-          endDate:  dispToIso(String(r[9]||'').trim()),
-          cccd:     String(r[10]||'').trim(),
-          bank:     String(r[11]||'').trim(),
-          bankName: String(r[12]||'').trim(),
-          notes:    String(r[13]||'').trim(),
+          name,                                             // col 1
+          code:         String(r[2]||'').trim(),           // col 2
+          dob:          dispToIso(String(r[3]||'').trim()),// col 3
+          gender:       genderRaw==='nam'?'male':genderRaw==='nữ'||genderRaw==='nu'?'female':'', // col 4
+          phone:        String(r[5]||'').trim(),           // col 5
+          school,                                          // col 6
+          deptId,                                          // col 7
+          qty:          parseInt(r[8])||1,                 // col 8
+          startDate:    dispToIso(startRaw),               // col 9
+          endDate:      dispToIso(String(r[10]||'').trim()),// col 10
+          status:       String(r[11]||'').trim(),          // col 11
+          earlyExitDate:dispToIso(String(r[12]||'').trim()),// col 12
+          cccd:         String(r[13]||'').trim(),          // col 13
+          cccdDate:     dispToIso(String(r[14]||'').trim()),// col 14
+          cccdPlace:    String(r[15]||'').trim(),          // col 15
+          bank:         String(r[16]||'').trim(),          // col 16
+          bankName:     String(r[17]||'').trim(),          // col 17
+          salary:       parseFloat(String(r[18]||'').replace(/[^0-9.]/g,''))||0, // col 18
+          workDays:     parseFloat(String(r[19]||'').replace(/[^0-9.]/g,''))||0, // col 19
+          notes:        String(r[20]||'').trim(),          // col 20
         };
         imported.push(traineeObj);
       }
