@@ -907,11 +907,14 @@ function loadData(){
   return fresh;
 }
 const FS_DOC_MAP = {
+  // Mỗi doc giữ < 500KB để tránh Firestore 1MB limit
   employees:  ['departments'],
-  contracts:  ['contracts'],
-  workforce:  ['trainees','traineeSchedules','svcData','courses','casualExtraYears','salaryYears','trainingExtraYears','leaveExtraYears','resignations'],
+  contracts:  ['contracts'],         // contracts array — 150+ NV × vài HĐ → theo dõi size
+  trainees:   ['trainees','traineeSchedules'],  // tách khỏi workforce — 48+ records
+  workforce:  ['svcData','courses','casualExtraYears','salaryYears','trainingExtraYears','leaveExtraYears'],
+  resign:     ['resignations'],      // đơn nghỉ việc — doc riêng
   jobs:       ['jobs'],
-  blacklist:  ['manualBlacklist','blacklistConfig','blacklistReasons'],  // doc riêng tránh vượt 1MB
+  blacklist:  ['manualBlacklist','blacklistConfig','blacklistReasons'],
   config:     ['customFields','rewardTypes','perfReviewTypes','company',
                'dashboardConfig','brandConfig',
                'disciplineSeverityConfig','requiredFieldsConfig',
@@ -1145,8 +1148,9 @@ function saveData(changedKeys=null){
   }, 0);
 
   if(window.fbDb && window.currentUser){
-    const meta = { _syncBy: window.currentUser.uid, _syncAt: Date.now() };
+    const meta = { _syncBy: window.currentUser.uid, _syncAt: Date.now(), _lastSaved: Date.now() };
     window._lastSaveAt = meta._syncAt;
+    DB._lastSaved = meta._syncAt; // update before write so onSnapshot skip logic works
     const keys = changedKeys ? (Array.isArray(changedKeys)?changedKeys:[changedKeys]) : null;
 
     const docsToSave = new Set();
@@ -1173,10 +1177,13 @@ function saveData(changedKeys=null){
         }
       });
       window.fbDb.collection('hrdata').doc(docId).set(payload,{merge:true})
+        .then(()=>{
+          if(docId==='resign') console.log('[saveData] ✅ resign doc saved, resignations:', (payload.resignations||[]).length);
+        })
         .catch(err=>{
-          console.error('[saveData] ❌', docId, err.code, err.message);
+          console.error('[saveData] ❌', docId, err.code, err.message, JSON.stringify(payload).slice(0,200));
           if(err.code==='permission-denied') toast('⚠️ Không có quyền lưu dữ liệu','error');
-          else toast('❌ Lỗi lưu: '+err.message,'error');
+          else toast('❌ Lỗi lưu '+docId+': '+err.message,'error');
         });
     });
 
@@ -20105,6 +20112,33 @@ fbAuth.onAuthStateChanged(async user => {
           ['leaves','kpiReviews','rewardRecords','casuals','candidates','promotions','disciplineRecords'].forEach(_mergeArr);
           ['leaveSheet','leaveOpening','leavePlan'].forEach(_mergeObj);
 
+          // Migration: nếu trainees rỗng, thử đọc từ workforce doc cũ
+          if(!DB.trainees || !DB.trainees.length){
+            try{
+              const oldWfT = await window.fbDb.collection('hrdata').doc('workforce').get();
+              if(oldWfT.exists && oldWfT.data().trainees && oldWfT.data().trainees.length){
+                DB.trainees = oldWfT.data().trainees;
+                if(oldWfT.data().traineeSchedules) DB.traineeSchedules = oldWfT.data().traineeSchedules;
+                hasCloud = true;
+                console.log('[MIGRATE] trainees from workforce:', DB.trainees.length);
+                saveData(['trainees','traineeSchedules']);
+              }
+            }catch(e){ console.warn('[MIGRATE] trainees:', e.message); }
+          }
+
+          // Migration: nếu resignations rỗng, thử đọc từ workforce doc cũ
+          if(!DB.resignations || !DB.resignations.length){
+            try{
+              const oldWf = await window.fbDb.collection('hrdata').doc('workforce').get();
+              if(oldWf.exists && oldWf.data().resignations && oldWf.data().resignations.length){
+                DB.resignations = oldWf.data().resignations;
+                hasCloud = true;
+                console.log('[MIGRATE] resignations from workforce:', DB.resignations.length);
+                saveData(['resignations']);
+              }
+            }catch(e){ console.warn('[MIGRATE] resignations:', e.message); }
+          }
+
           // Migration: nếu manualBlacklist rỗng, thử đọc từ config doc cũ
           if(!DB.manualBlacklist || !DB.manualBlacklist.length){
             try{
@@ -20303,9 +20337,11 @@ fbAuth.onAuthStateChanged(async user => {
           // Keys must match FS_DOC_MAP doc names
           employees:   ['employees','employee-profile','departments','department-detail','dashboard','tasks','salary','training'],
           contracts:   ['contracts','dashboard'],
-          workforce:   ['casual','trainee','training','dashboard','workforce'],
+          workforce:   ['casual','training','dashboard','workforce'],
+          trainees:    ['trainee','dashboard'],
           jobs:        ['recruitment','job-detail'],
           blacklist:   ['warnings'],  // blacklist doc → re-render warnings/discipline page
+          resign:      ['workforce'],  // resign doc → re-render HR movement page
           config:      ['settings','employees','salary'],
         };
         const RENDER_MAP = {
