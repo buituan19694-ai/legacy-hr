@@ -6005,7 +6005,7 @@ function exportEmployeesXLSX(){
   const canSalary = window.canSeeSalary();
   const SALARY_KEYS = ['baseSalary','bonusSalary'];
 
-  const stdHeaders = [(_lang==="en"?"Employee ID":"Mã NV"),(_lang==="en"?"Full name":"Họ tên"),'Email',(_lang==="en"?"Phone":"SĐT"),(_lang==="en"?"Date of birth":"Ngày sinh"),(_lang==="en"?"Gender":"Giới tính"),(_lang==="en"?"Department":"Phòng ban"),(_lang==="en"?"Position":"Chức vụ"),(_lang==="en"?"Level":"Cấp bậc"),(_lang==="en"?"Join date":"Vào làm"),(_lang==="en"?"Status":"Trạng thái"),'Điểm Performance'];
+  const stdHeaders = [(_lang==="en"?"Employee ID":"Mã NV"),(_lang==="en"?"Full name":"Họ tên"),'Email',(_lang==="en"?"Phone":"SĐT"),(_lang==="en"?"Date of birth":"Ngày sinh"),(_lang==="en"?"Gender":"Giới tính"),(_lang==="en"?"Department":"Phòng ban"),(_lang==="en"?"Position":"Chức vụ (EN)"),'Chức vụ (VI)',(_lang==="en"?"Level":"Cấp bậc"),(_lang==="en"?"Join date":"Vào làm"),(_lang==="en"?"Status":"Trạng thái"),'Điểm Performance'];
   const customHeaders = DB.customFields
     .filter(cf => canSalary || !SALARY_KEYS.includes(cf.key))
     .map(cf => cf.label);
@@ -6016,7 +6016,7 @@ function exportEmployeesXLSX(){
     const std = [
       e.code, e.name, e.email||'', {v: e.phone||'', t:'s'},
       e.dob ? isoToDisp(e.dob) : '', e.gender==='male'?'Nam':e.gender==='female'?'Nữ':(_lang==="en"?"Other":"Khác"),
-      deptName(e.deptId), e.role||'', e.level||'', e.joined ? isoToDisp(e.joined) : '',
+      deptName(e.deptId), e.role||'', e.roleVN||(DB.customData[e.id]||{}).jobLocation||'', e.level||'', e.joined ? isoToDisp(e.joined) : '',
       STATUS_LABEL[e.status]||'', e.kpi||0,
     ];
     const custom = DB.customFields
@@ -6308,7 +6308,8 @@ function handleImportFile(file){
         const code = get(row,(_lang==="en"?"Employee ID":"Mã NV"));
         const name = get(row,(_lang==="en"?"Full name":"Họ tên"));
         const email = get(row,'Email');
-        const role = get(row,(_lang==="en"?"Position":"Chức vụ"));
+        const role = get(row,(_lang==="en"?"Position":"Chức vụ (EN)")) || get(row,"Chức vụ") || get(row,"Position");
+        const roleVN = get(row,'Chức vụ (VI)') || get(row,'Job Location') || '';
         const joined = get(row,(_lang==="en"?"Join date":"Ngày vào làm")) || get(row,(_lang==="en"?"Join date":"Vào làm"));
 
         const errors = [];
@@ -6335,7 +6336,7 @@ function handleImportFile(file){
 
         const existing = DB.employees.find(e=>e.code===code);
         return {
-          ri: ri+2, code, name, email, role,
+          ri: ri+2, code, name, email, role, roleVN,
           phone: getStr(row,(_lang==="en"?"Phone":"SĐT")) || getStr(row,(_lang==="en"?"Phone number":"Số điện thoại")),
           dob: get(row,(_lang==="en"?"Date of birth":"Ngày sinh")),
           gender, joined, status,
@@ -6453,6 +6454,7 @@ function confirmImportEmployees(){
           name:r.name||old.name, email:r.email||old.email,
           phone:r.phone||old.phone, dob:r.dob||old.dob,
           gender:r.gender||old.gender, role:r.role||old.role,
+          roleVN:r.roleVN||old.roleVN||'',
           level:r.level||old.level, joined:r.joined||old.joined,
           status:r.status||old.status,
           deptId:r.deptId||old.deptId,
@@ -6465,7 +6467,7 @@ function confirmImportEmployees(){
       DB.employees.push({
         id:newId, code:r.code, name:r.name, email:r.email,
         phone:r.phone, dob:r.dob, gender:r.gender,
-        deptId:r.deptId, role:r.role, level:r.level,
+        deptId:r.deptId, role:r.role, roleVN:r.roleVN||'', level:r.level,
         joined:r.joined, status:r.status, kpi:0, photo:'',
       });
       if(Object.keys(r.customData).length > 0)
@@ -9728,6 +9730,8 @@ function renderLeavePlan(main){
       </div>
     </div>
 
+    ${leaveTabsHTML('plan')}
+
     <div class="card" style="padding:14px 16px;margin-bottom:16px">
       <div style="font-size:11px;font-weight:700;color:var(--ink-muted);margin-bottom:8px;text-transform:uppercase;letter-spacing:.05em">Chọn tháng xem (có thể chọn nhiều)</div>
       <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center">
@@ -11356,7 +11360,7 @@ function renderRecruitmentReports(main){
 
 
 function renderDormitory(main){
-  if(!window.canDo('workforce')){
+  if(!window.canDo('dormitory')){
     main.innerHTML='<div class="topbar"><div class="topbar-left"><h1 class="page-title">🔒 Không có quyền</h1></div></div>';
     return;
   }
@@ -11674,7 +11678,7 @@ function _wfDormTab(){
 
   // Chart by month
   const dormByMonth = MN.map((_,mi)=>{
-    const ms=new Date(curYear,mi,1), me=new Date(curYear,mi+1,0);
+    const ms=new Date(dispYear,mi,1), me=new Date(dispYear,mi+1,0);
     return DB.employees.filter(e=>{
       const d=(DB.customData||{})[e.id]||{};
       if(!d.dormitory||!houses.some(h=>h.name===d.dormitory)) return false;
@@ -11690,6 +11694,14 @@ function _wfDormTab(){
   if(!window._dormSelectedHouse) window._dormSelectedHouse = null;
   const selHouse = window._dormSelectedHouse ? houses.find(h=>h.id===window._dormSelectedHouse) : null;
   const selEmps = selHouse ? activeEmps.filter(e=>(DB.customData[e.id]||{}).dormitory===selHouse.name) : [];
+
+  // Year selector
+  const allYears = [...new Set([curYear, curYear-1, curYear-2, ...DB.employees.map(e=>{
+    const d=(DB.customData||{})[e.id]||{};
+    return d.exitDate ? new Date(d.exitDate).getFullYear() : (e.joined ? new Date(e.joined).getFullYear() : curYear);
+  }).filter(y=>y)])].sort((a,b)=>b-a);
+  if(!window._dormYear) window._dormYear = curYear;
+  const dispYear = window._dormYear || curYear;
 
   const html = `
     <div style="display:flex;flex-direction:column;gap:16px">
@@ -11765,8 +11777,13 @@ function _wfDormTab(){
 
       <!-- Chart -->
       <div class="card" style="padding:20px">
-        <div style="font-size:15px;font-weight:700;margin-bottom:4px">📊 Biến động Staff House theo tháng — ${curYear}</div>
-        <div style="font-size:12px;color:var(--ink-muted);margin-bottom:14px">Số NV đang ở ký túc xá mỗi tháng (tổng tất cả nhà)</div>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
+          <div style="font-size:15px;font-weight:700">📊 Biến động Staff House theo tháng</div>
+          <select class="filter-select" onchange="window._dormYear=parseInt(this.value);render()" style="font-size:12px;padding:5px 10px">
+            ${allYears.map(y=>`<option value="${y}" ${dispYear===y?'selected':''}>${y}</option>`).join('')}
+          </select>
+        </div>
+        <div style="font-size:12px;color:var(--ink-muted);margin-bottom:14px">Năm ${dispYear} · Số NV đang ở mỗi tháng (tổng tất cả nhà)</div>
         <div style="height:200px"><canvas id="chartDorm"></canvas></div>
       </div>
 
@@ -11777,7 +11794,7 @@ function _wfDormTab(){
     const el=document.getElementById('chartDorm');
     if(!el||typeof Chart==='undefined') return;
     if(Chart.getChart(el)) Chart.getChart(el).destroy();
-    const isFut=i=>new Date(curYear,i+1,0)>today;
+    const isFut=i=>dispYear===curYear && new Date(dispYear,i+1,0)>today;
     new Chart(el,{type:'bar',
       data:{labels:MN, datasets:[{
         label:'NV đang ở KTX',
@@ -17502,7 +17519,7 @@ const MODULE_LIST = [
   {key:'warnings',    label:'Kỷ luật / Cảnh cáo'},
   {key:'tasks',       label:'Thông báo / Hồ sơ chưa đủ'},
   {key:'settings',    label:'Cấu hình'},
-  {key:'salary',      label:'Phân tích Lương'},
+  {key:'dormitory',   label:'Staff House'},
 ];
 const PERM_LEVELS = ['none','view','edit','full'];
 const PERM_LABELS = {none:(_lang==="en"?"🚫 No access":"🚫 Không xem"), view:(_lang==="en"?"👁 View only":"👁 Chỉ xem"), edit:(_lang==="en"?"✏️ View & Edit":"✏️ Xem & Sửa"), full:(_lang==="en"?"⭐ Full access":"⭐ Toàn quyền")};
