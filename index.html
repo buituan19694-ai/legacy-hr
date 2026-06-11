@@ -9284,7 +9284,7 @@ function renderLeaveReports(main){
     const pendingUsed=sh.taken.slice(0,curMonth).reduce((a,b)=>a+b,0);
     const pendingEntitle=sh.carry+sh.entitle.reduce((a,b)=>a+b,0); // Tổng phát sinh
     const tonCuoiNam=Math.round((totalEntitle-totalUsed)*100)/100;
-    const pending=tonCuoiNam>curMonth?Math.round((tonCuoiNam-curMonth)*100)/100:0; // Còn lại tháng lương
+    const pending=tonCuoiNam; // Còn lại năm cũ = Tồn cuối năm
     const fmt=v=>v===0?'—':(Math.round(v*100)/100)%1===0?(Math.round(v*100)/100).toString():(Math.round(v*100)/100).toFixed(2);
     const upd=(id,v)=>{const el=document.getElementById(id);if(el)el.textContent=fmt(v);};
     const pfx='ls_'+empId+'_'+leaveType+'_';
@@ -9302,8 +9302,8 @@ function renderLeaveReports(main){
     const pendingEntitle=sh.carry+sh.entitle.reduce((s,x)=>s+x,0);
     // Tồn cuối năm = carry + tổng hưởng - tổng đã nghỉ
     const tonCuoiNam = Math.round((totalEntitle - totalUsed)*100)/100;
-    // Còn lại tháng lương = IF(tháng hiện tại < Tồn cuối năm, Tồn cuối năm - tháng hiện tại, 0)
-    const pending = tonCuoiNam > curMonth ? Math.round((tonCuoiNam - curMonth)*100)/100 : 0;
+    // Còn lại năm cũ = Tồn cuối năm (pendingEntitle - totalUsed), không trừ gì thêm
+    const pending = tonCuoiNam;
     return {carry:sh.carry,clearAL:sh.clearAL||0,months,totalUsed,totalEntitle,pending,pendingEntitle,tonCuoiNam};
   };
 
@@ -9729,15 +9729,9 @@ function renderLeavePlan(main){
   };
 
   const getTonDauThang = (deptId, mi, type)=>{
-    if(mi===0){
-      // T1: tồn đầu năm = carry của từng NV
-      return activeEmps.filter(e=>e.deptId===deptId).reduce((s,e)=>{
-        const sh = ((DB.leaveSheet[e.id]||{})[curYear]||{})[type]||{};
-        return s+(parseFloat(sh.carry)||0);
-      },0);
-    }
-    // Tháng sau: lấy tồn cuối tháng trước (= còn lại tháng lương tháng trước)
-    return getBalByDept(deptId, mi-1, type);
+    // Tồn đầu tháng = Tồn cuối năm (lấy từ cột Tồn cuối năm bảng Theo dõi)
+    // = pendingEntitle - totalUsed cho từng NV trong bộ phận
+    return getBalByDept(deptId, mi, type);
   };
 
   const getRealByDept = (deptId, mi, type)=>{
@@ -9771,8 +9765,8 @@ function renderLeavePlan(main){
         const kh   = (plan[mi]||{})[type]||0;
         // Tồn cuối năm bộ phận = getBalByDept (pendingEntitle - totalUsed, giống cột Tồn cuối năm)
         const tonCuoiNamDept = getBalByDept(dept.id, 11, type);
-        // Còn lại năm cũ: IF(Tồn cuối năm > curMonth, Tồn cuối năm - curMonth, 0) — chỉ AL
-        const conLaiNamCu = isAL ? (tonCuoiNamDept > curMonth ? Math.round((tonCuoiNamDept-curMonth)*10)/10 : 0) : null;
+        // Còn lại năm cũ = Tồn cuối năm, hiện cả AL lẫn CL
+        const conLaiNamCu = Math.round(tonCuoiNamDept*10)/10;
         const real = getRealByDept(dept.id, mi, type);
         const duKien = kh>0 ? Math.round((ton-kh)*10)/10 : null;
         const duKienC= duKien!==null?(duKien>=0?'var(--success)':'var(--danger)'):'';
@@ -9795,7 +9789,7 @@ function renderLeavePlan(main){
           ${deptCell}
           <td style="padding:4px 8px;font-size:10px;font-weight:700;color:${col};border-right:1px solid var(--border);white-space:nowrap">${isAL?'AL':'CL'}</td>
           <td style="padding:6px 8px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:600;color:var(--accent)">${ton||'0'}</td>
-          <td style="padding:6px 8px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:600;color:var(--purple)">${conLaiNamCu!==null?conLaiNamCu:'—'}</td>
+          <td style="padding:6px 8px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:600;color:var(--purple)">${conLaiNamCu}</td>
           <td style="padding:6px 4px;text-align:center">
             <input type="number" min="0" step="0.5" value="${kh||''}" placeholder="0"
               oninput="window._saveLeavePlan('${dept.id}',${mi},'${type}',this.value)"
