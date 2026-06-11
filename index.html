@@ -19607,46 +19607,65 @@ window.processTraineeImport = function(input){
       const deptMap = {};
       DB.departments.forEach(d=>{ deptMap[d.name.toLowerCase().trim()] = d.id; });
 
+      // Detect format by reading header row
+      const headerRow = rows[0].map(h=>String(h||'').trim().toLowerCase());
+      // New format (21 cols) has 'giới tính' at col 4
+      // Old format (14 cols): col4=SĐT, col5=Trường, col6=Bộ phận, col7=Số lượng, col8=Ngày BĐ, col9=Ngày KT, col10=CCCD, col11=TK, col12=NH, col13=Notes
+      const isNewFormat = headerRow.length >= 12 && (headerRow[4].includes('giới') || headerRow[4].includes('gender') || headerRow[11].includes('trạng thái') || headerRow[11].includes('status'));
+      const isOldFormat = !isNewFormat;
+
+      // Column map
+      const C = isNewFormat ? {
+        name:1, code:2, dob:3, gender:4, phone:5, school:6, dept:7, qty:8,
+        start:9, end:10, status:11, earlyExit:12, cccd:13, cccdDate:14, cccdPlace:15,
+        bank:16, bankName:17, salary:18, workDays:19, notes:20
+      } : {
+        // Old 14-col format: STT,Họ tên,Mã SV,Ngày sinh,SĐT,Trường,Bộ phận,SL,BĐ,KT,CCCD,TK,NH,Notes
+        name:1, code:2, dob:3, gender:-1, phone:4, school:5, dept:6, qty:7,
+        start:8, end:9, status:-1, earlyExit:-1, cccd:10, cccdDate:-1, cccdPlace:-1,
+        bank:11, bankName:12, salary:-1, workDays:-1, notes:13
+      };
+
       const imported = [];
       const errors = [];
 
       for(let i=1; i<rows.length; i++){
         const r = rows[i];
-        const name = String(r[1]||'').trim();
-        const school = String(r[6]||'').trim();   // col 6 (new layout)
-        const startRaw = String(r[9]||'').trim(); // col 9 (new layout)
+        const name = String(r[C.name]||'').trim();
+        const school = String(r[C.school]||'').trim();
+        const startRaw = String(r[C.start]||'').trim();
 
         if(!name && !school) continue; // skip empty rows
 
         if(!name)   { errors.push(`Dòng ${i+1}: thiếu Họ tên`); continue; }
         if(!school) { errors.push(`Dòng ${i+1}: thiếu Tên trường`); continue; }
 
-        const deptName2 = String(r[7]||'').trim();  // col 7 (new layout)
+        const deptName2 = String(r[C.dept]||'').trim();
         const deptId = deptMap[deptName2.toLowerCase()] || '';
 
-        const genderRaw = String(r[4]||'').trim().toLowerCase();
+        const genderRaw = C.gender>=0 ? String(r[C.gender]||'').trim().toLowerCase() : '';
         const traineeObj = {
           id: uid(),
-          name,                                             // col 1
-          code:         String(r[2]||'').trim(),           // col 2
-          dob:          dispToIso(String(r[3]||'').trim()),// col 3
-          gender:       genderRaw==='nam'?'male':genderRaw==='nữ'||genderRaw==='nu'?'female':'', // col 4
-          phone:        String(r[5]||'').trim(),           // col 5
-          school,                                          // col 6
-          deptId,                                          // col 7
-          qty:          parseInt(r[8])||1,                 // col 8
-          startDate:    dispToIso(startRaw),               // col 9
-          endDate:      dispToIso(String(r[10]||'').trim()),// col 10
-          status:       String(r[11]||'').trim(),          // col 11
-          earlyExitDate:dispToIso(String(r[12]||'').trim()),// col 12
-          cccd:         String(r[13]||'').trim(),          // col 13
-          cccdDate:     dispToIso(String(r[14]||'').trim()),// col 14
-          cccdPlace:    String(r[15]||'').trim(),          // col 15
-          bank:         String(r[16]||'').trim(),          // col 16
-          bankName:     String(r[17]||'').trim(),          // col 17
-          salary:       parseFloat(String(r[18]||'').replace(/[^0-9.]/g,''))||0, // col 18
-          workDays:     parseFloat(String(r[19]||'').replace(/[^0-9.]/g,''))||0, // col 19
-          notes:        String(r[20]||'').trim(),          // col 20
+          name,
+          code:         String(r[C.code]||'').trim(),
+          dob:          dispToIso(String(r[C.dob]||'').trim()),
+          gender:       genderRaw==='nam'?'male':genderRaw==='nữ'||genderRaw==='nu'?'female':'',
+          phone:        String(r[C.phone]||'').trim(),
+          school,
+          deptId,
+          qty:          parseInt(r[C.qty])||1,
+          startDate:    dispToIso(startRaw),
+          endDate:      dispToIso(String(r[C.end]||'').trim()),
+          status:       C.status>=0 ? String(r[C.status]||'').trim() : '',
+          earlyExitDate:C.earlyExit>=0 ? dispToIso(String(r[C.earlyExit]||'').trim()) : '',
+          cccd:         String(r[C.cccd]||'').trim(),
+          cccdDate:     C.cccdDate>=0 ? dispToIso(String(r[C.cccdDate]||'').trim()) : '',
+          cccdPlace:    C.cccdPlace>=0 ? String(r[C.cccdPlace]||'').trim() : '',
+          bank:         String(r[C.bank]||'').trim(),
+          bankName:     String(r[C.bankName]||'').trim(),
+          salary:       C.salary>=0 ? (parseFloat(String(r[C.salary]||'').replace(/[^0-9.]/g,''))||0) : 0,
+          workDays:     C.workDays>=0 ? (parseFloat(String(r[C.workDays]||'').replace(/[^0-9.]/g,''))||0) : 0,
+          notes:        String(r[C.notes]||'').trim(),
         };
         imported.push(traineeObj);
       }
@@ -19665,7 +19684,8 @@ window.processTraineeImport = function(input){
         }
         if(imported.length){
           html += '<div style="background:rgba(126,198,153,.08);border:1px solid rgba(126,198,153,.2);border-radius:6px;padding:10px 12px;font-size:12.5px">';
-          html += '<b style="color:var(--success)">✅ Tìm thấy '+imported.length+' sinh viên sẵn sàng import:</b>';
+          html += '<b style="color:var(--success)">✅ Tìm thấy '+imported.length+' sinh viên sẵn sàng import</b>';
+          html += '<span style="margin-left:8px;font-size:10.5px;background:var(--bg-elev);padding:2px 7px;border-radius:4px;color:var(--ink-muted)">'+(isNewFormat?'Format mới (21 cột)':'Format cũ (14 cột) — tương thích')+'</span>';
           html += '<div style="margin-top:8px;max-height:160px;overflow-y:auto">';
           html += imported.map((t,i)=>`<div style="padding:4px 0;border-bottom:1px solid var(--border);font-size:12px">
             <b>${i+1}. ${escapeHtml(t.name)}</b> · ${escapeHtml(t.school)}
