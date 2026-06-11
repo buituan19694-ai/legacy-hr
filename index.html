@@ -9764,8 +9764,8 @@ function renderLeaves(main){
   }
   if(!window._leaveView) window._leaveView = sessionStorage.getItem('_leaveView')||'tracking';
   if(window._leaveView === 'plan') return renderLeavePlan(main);
-  if(window._leaveView === 'reports') return renderLeaveReports(main);
-  // 'tracking' = default: fall through to tracking view below
+  if(window._leaveView === 'tracking') return renderLeaveReports(main);
+  // 'reports' = default: fall through to reports/analysis view below
   const today = new Date(); today.setHours(0,0,0,0);
 
   if(!window._leaveBal) window._leaveBal = {emp:'', year: today.getFullYear(), dept:''};
@@ -10608,11 +10608,8 @@ function setRecPeriod(p){
 
 /* ---------- Period helpers ---------- */
 const PERIOD_LABELS = {
-  this_week: 'Tuần này',
   this_month: 'Tháng này',
   last_month: 'Tháng trước',
-  this_quarter: 'Quý này',
-  last_6m: '6 tháng gần',
   this_year: 'Năm nay',
 };
 function addPeriodYear(setFn, existingYears){
@@ -11083,7 +11080,7 @@ function renderRecruitmentReports(main){
     </div>
 
     ${recTabsHTML('reports')}
-    ${periodSelectorHTML(periodKey,'setRecPeriod','rec')}
+    ${periodSelectorWithMonths(periodKey,'setRecPeriod','rec')}
 
     <!-- KPI cards -->
     <div class="kpi-grid" id="recKpiGrid">
@@ -20499,6 +20496,11 @@ fbAuth.onAuthStateChanged(async user => {
           const _mergeObj = (key)=>{ if(Object.keys(dynamicAccum[key]).length){ DB[key]=dynamicAccum[key]; hasCloud=true; } };
           ['leaves','kpiReviews','rewardRecords','casuals','candidates','promotions','disciplineRecords'].forEach(_mergeArr);
           ['leaveSheet','leaveOpening','leavePlan'].forEach(_mergeObj);
+          // Cleanup orphaned candidates (job đã xóa) sau khi merge từ Firestore
+          if(Array.isArray(DB.candidates)&&Array.isArray(DB.jobs)){
+            const _jids2=new Set((DB.jobs||[]).map(j=>j.id));
+            DB.candidates=DB.candidates.filter(c=>c.jobId&&_jids2.has(c.jobId));
+          }
 
           // Migration: nếu trainees rỗng, thử đọc từ workforce doc cũ
           if(!DB.trainees || !DB.trainees.length){
@@ -20916,10 +20918,16 @@ fbAuth.onAuthStateChanged(async user => {
                   ];
                 } else {
                   // candidates: sharded by jobId — replace entire shard
-                  DB[key] = [
+                  let _merged = [
                     ...(DB[key]||[]).filter(r=>r.jobId!==shardId),
                     ...d[key]
                   ];
+                  // Cleanup orphaned candidates after realtime merge
+                  if(key==='candidates'&&Array.isArray(DB.jobs)){
+                    const _jids3=new Set((DB.jobs||[]).map(j=>j.id));
+                    _merged=_merged.filter(c=>c.jobId&&_jids3.has(c.jobId));
+                  }
+                  DB[key] = _merged;
                 }
                 changed = true;
               }
