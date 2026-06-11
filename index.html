@@ -11859,7 +11859,7 @@ function openResignModal(rid){
 
   const REASONS = ['Hết hạn HĐ — không ký tiếp', 'Tự nguyện nghỉ việc', 'Nghỉ theo thỏa thuận', 'Vi phạm nội quy', 'Thôi việc theo nguyện vọng cá nhân', 'Lý do gia đình / sức khỏe', 'Chuyển công tác / nơi khác', 'Thử việc không đạt yêu cầu'];
   const reasonOpts = REASONS.map(r=>
-    `<option value="${r}" ${prefillReason===r?'selected':''}>${r}</option>`
+    `<option value="${r}" style="background:#1a2028;color:#e6edf3" ${prefillReason===r?'selected':''}>${r}</option>`
   ).join('');
 
   const initSearch = prefillEmp ? (prefillEmp.name+' — '+(prefillEmp.code||'')) : '';
@@ -11921,11 +11921,11 @@ function openResignModal(rid){
 
       <div>
         <label style="font-size:11px;color:var(--ink-muted);font-weight:600;letter-spacing:.1em">LÝ DO NGHỈ VIỆC</label>
-        <select id="rReason" style="width:100%;margin-top:6px;padding:9px 12px;background:var(--bg-input);border:1px solid var(--border);border-radius:6px;color:var(--ink);font-size:13px"
+        <select id="rReason" style="width:100%;margin-top:6px;padding:9px 12px;background:#1a2028;border:1px solid var(--border);border-radius:6px;color:#e6edf3;font-size:13px"
           onchange="document.getElementById('rReasonOther').style.display=this.value==='__other__'?'block':'none'">
-          <option value="">— Chọn lý do —</option>
+          <option value="" style="background:#1a2028;color:#8b949e">— Chọn lý do —</option>
           ${reasonOpts}
-          <option value="__other__" ${!REASONS.includes(prefillReason)&&prefillReason?'selected':''}>Khác (tự nhập)</option>
+          <option value="__other__" style="background:#1a2028;color:#e6edf3" ${!REASONS.includes(prefillReason)&&prefillReason?'selected':''}>Khác (tự nhập)</option>
         </select>
         <input type="text" id="rReasonOther" placeholder="Nhập lý do cụ thể..."
           value="${!REASONS.includes(prefillReason)&&prefillReason?escapeHtml(prefillReason):''}"
