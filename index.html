@@ -1799,6 +1799,7 @@ function _doRender(){
       training: renderTraining,
       performance: renderPerformance,
       workforce: renderWorkforce,
+      dormitory: renderDormitory,
       awards: renderAwards,
       warnings: renderWarnings,
       tasks: renderTasks,
@@ -9439,7 +9440,7 @@ window.toggleLeaveGroup = function(did){
   `;
 }
 
-function setLeaveView(v){ window._leaveView=v; render(); }
+function setLeaveView(v){ window._leaveView=v; sessionStorage.setItem('_leaveView',v); render(); }
 
 function leaveTabsHTML(active){
   return `
@@ -9741,8 +9742,9 @@ function renderLeaves(main){
     return;
   }
   if(!window._leaveView) window._leaveView = sessionStorage.getItem('_leaveView')||'tracking';
-  if(window._leaveView === 'tracking') return renderLeaveReports(main);
   if(window._leaveView === 'plan') return renderLeavePlan(main);
+  if(window._leaveView === 'reports') return renderLeaveReports(main);
+  // 'tracking' = default: fall through to tracking view below
   const today = new Date(); today.setHours(0,0,0,0);
 
   if(!window._leaveBal) window._leaveBal = {emp:'', year: today.getFullYear(), dept:''};
@@ -14810,6 +14812,7 @@ function renderPerformance(main){
           <div class="card-sub">${allPromotions.length} bản ghi · ${pendingPromotions} đang xem xét · ${completedPromotions} đã duyệt</div>
         </div>
         <button class="btn btn-primary" onclick="editPromotion()">${ICONS.plus} Đề xuất mới</button>
+        <button class="btn" onclick="editPromotion(null,null,true)" style="border-color:rgba(212,165,116,.4);color:var(--accent)">📚 Nhập lịch sử</button>
       </div>
 
       ${candidates.length > 0 ? `
@@ -14892,6 +14895,7 @@ function renderPerformance(main){
                     <button class="btn btn-icon" onclick="completePromotion('${p.id}')" title="✓ Xác nhận đã thăng chức" style="color:var(--success);font-size:15px">✓</button>
                     <button class="btn btn-icon" onclick="rejectPromotion('${p.id}')" title="✗ Từ chối" style="color:var(--danger);font-size:15px">✗</button>
                   ` : ''}
+                  ${p.isHistorical?'<span style="background:rgba(212,165,116,.1);color:var(--accent);padding:1px 7px;border-radius:8px;font-size:10.5px;font-weight:600;margin-right:4px">📚 Lịch sử</span>':''}
                   <button class="btn btn-icon" onclick="editPromotion('${p.id}')" title="Sửa">${ICONS.edit}</button>
                   <button class="btn btn-icon btn-danger" onclick="deletePromotion('${p.id}')" title="Xoá">${ICONS.trash}</button>
                 </div></td>
@@ -14969,12 +14973,26 @@ function renderPerformance(main){
     })()}
 
     <div class="card" style="margin-top:16px">
-      <div class="card-head"><div><div class="card-title">Lịch sử <em>đánh giá</em></div><div class="card-sub">${(DB.kpiReviews||[]).length} bản ghi</div></div></div>
-      ${(DB.kpiReviews||[]).length===0 ? `<div class="empty-state"><h3>Chưa có đánh giá nào</h3><button class="btn btn-primary" onclick="editReview()">${ICONS.plus} Tạo đánh giá</button></div>` : `
+      ${(()=>{
+        const allYears = [...new Set((DB.kpiReviews||[]).map(k=>(k.period||'').slice(-4)).filter(y=>/^\d{4}$/.test(y)))].sort((a,b)=>b-a);
+        if(!window._perfHistYear) window._perfHistYear = String(new Date().getFullYear());
+        const selYear = window._perfHistYear;
+        const filtered = (DB.kpiReviews||[]).filter(k=>!selYear||(k.period||'').includes(selYear));
+        return `
+      <div class="card-head" style="display:flex;align-items:center;justify-content:space-between">
+        <div><div class="card-title">Lịch sử <em>đánh giá</em></div><div class="card-sub">${filtered.length} bản ghi${selYear?' · Năm '+selYear:''}</div></div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <select class="filter-select" onchange="window._perfHistYear=this.value;render()">
+            <option value="">Tất cả năm</option>
+            ${allYears.map(y=>`<option value="${y}" ${selYear===y?'selected':''}>${y}</option>`).join('')}
+          </select>
+        </div>
+      </div>
+      ${filtered.length===0 ? `<div class="empty-state"><h3>Không có đánh giá nào${selYear?' trong năm '+selYear:''}</h3><button class="btn btn-primary" onclick="editReview()">${ICONS.plus} Tạo đánh giá</button></div>` : `
         <table class="tbl">
-          <thead><tr><th>Nhân viên</th><th>${_lang==="en"?"Period":"Kỳ đánh giá"}</th><th>${_lang==="en"?"Format":"Hình thức"}</th><th>${_lang==="en"?"Score":"Điểm"}</th><th>${_lang==="en"?"Reviewer":"Người đánh giá"}</th><th>${_lang==="en"?"Comments":"Nhận xét"}</th><th></th></tr></thead>
+          <thead><tr><th>Nhân viên</th><th>${_lang==="en"?"Period":"Kỳ đánh giá"}</th><th>${_lang==="en"?"Score":"Điểm"}</th><th>${_lang==="en"?"Reviewer":"Người đánh giá"}</th><th>${_lang==="en"?"Comments":"Nhận xét"}</th><th></th></tr></thead>
           <tbody>
-            ${(DB.kpiReviews||[]).map(k=>{
+            ${filtered.map(k=>{
               const emp = empById(k.empId); if(!emp) return '';
               return `<tr>
                 <td><div class="cell-emp">
@@ -14994,6 +15012,8 @@ function renderPerformance(main){
           </tbody>
         </table>
       `}
+      `;
+      })()}
     </div>
   `;
 
@@ -15160,7 +15180,7 @@ function syncAllEmployees(){
 /* =========================================================
    PROMOTIONS — CRUD đề xuất thăng chức
    ========================================================= */
-function editPromotion(id, presetEmpId){
+function editPromotion(id, presetEmpId, isHistorical=false){
   if(!DB.promotions) DB.promotions = [];
   const isNew = !id;
   const today = new Date().toISOString().slice(0,10);
@@ -15181,8 +15201,10 @@ function editPromotion(id, presetEmpId){
     hrBy: '',
     approvedBy: '',
     reason: '',
-    notes: ''
+    notes: '',
+    isHistorical: isHistorical
   } : {...(DB.promotions||[]).find(x => x.id === id)};
+  if(p.isHistorical === undefined) p.isHistorical = false;
   if(!p) return;
 
   const initEmp = empById(p.empId);
@@ -15196,9 +15218,10 @@ function editPromotion(id, presetEmpId){
 
   openModalWide(`
     <div class="modal-head">
-      <div class="modal-title">🚀 ${isNew?(_lang==="en"?"Create":"Tạo"):(_lang==="en"?"Edit":"Sửa")} <em>đề xuất thăng chức</em></div>
-      <div class="modal-sub">${isNew ? 'Đề xuất mới cho 1 nhân viên' : escapeHtml(initEmp?.name||'')}</div>
+      <div class="modal-title">${p.isHistorical?'📚':'🚀'} ${isNew?(p.isHistorical?'Nhập lịch sử':(_lang==="en"?"Create":"Tạo")):(_lang==="en"?"Edit":"Sửa")} <em>${p.isHistorical?'thăng chức (quá khứ)':'đề xuất thăng chức'}</em></div>
+      <div class="modal-sub">${p.isHistorical?'<span style="background:rgba(212,165,116,.15);color:var(--accent);padding:2px 10px;border-radius:10px;font-size:11.5px;font-weight:600">📚 Lịch sử — không thay đổi lương/chức vụ hiện tại</span>':(isNew?'Đề xuất mới cho 1 nhân viên':escapeHtml(initEmp?.name||''))}</div>
     </div>
+    <input type="hidden" id="pr_isHistorical" value="${p.isHistorical?'1':'0'}">
     <div class="form-grid">
       <div class="field full"><label>Nhân viên *</label>
         <select id="pr_emp" onchange="prAutoFillOld()">
@@ -15228,18 +15251,15 @@ function editPromotion(id, presetEmpId){
             <label style="font-size:11px;color:var(--ink-muted);text-transform:uppercase;letter-spacing:.06em;margin:0">Hiện tại <span style="font-size:9px;opacity:.6">(tự động)</span></label>
             <div>
               <div style="font-size:10.5px;color:var(--ink-muted);margin-bottom:3px">Position (tiếng Anh)</div>
-              <input id="pr_oldRole" value="${escapeHtml(p.oldRole||initEmp?.role||'')}" readonly
-                style="background:var(--bg-elev);color:var(--ink-dim);cursor:not-allowed;border-style:dashed">
+              <input id="pr_oldRole" value="${escapeHtml(p.oldRole||initEmp?.role||'')}" ${p.isHistorical?'':' readonly style="background:var(--bg-elev);color:var(--ink-dim);cursor:not-allowed;border-style:dashed"'}>
             </div>
             <div>
               <div style="font-size:10.5px;color:var(--ink-muted);margin-bottom:3px">Vị trí công việc (tiếng Việt)</div>
-              <input id="pr_oldRoleVN" value="${escapeHtml(p.oldRoleVN||initEmp?.roleVN||'')}" readonly
-                style="background:var(--bg-elev);color:var(--ink-dim);cursor:not-allowed;border-style:dashed">
+              <input id="pr_oldRoleVN" value="${escapeHtml(p.oldRoleVN||initEmp?.roleVN||'')}" ${p.isHistorical?'':' readonly style="background:var(--bg-elev);color:var(--ink-dim);cursor:not-allowed;border-style:dashed"'}>
             </div>
             <div>
               <div style="font-size:10.5px;color:var(--ink-muted);margin-bottom:3px">Cấp bậc</div>
-              <input id="pr_oldLevel" value="${p.oldLevel||initEmp?.level||''}" readonly
-                style="background:var(--bg-elev);color:var(--ink-dim);cursor:not-allowed;border-style:dashed">
+              <input id="pr_oldLevel" value="${p.oldLevel||initEmp?.level||''}" ${p.isHistorical?'':' readonly style="background:var(--bg-elev);color:var(--ink-dim);cursor:not-allowed;border-style:dashed"'}>
             </div>
             <div>
               <div style="font-size:10.5px;color:var(--ink-muted);margin-bottom:3px">Bộ phận</div>
@@ -15416,8 +15436,10 @@ function savePromotion(id, isNew){
   const reason = $s('pr_reason');
   if(!reason){ toast('Vui lòng nhập lý do đề xuất','error'); return; }
 
+  const isHist = document.getElementById('pr_isHistorical')?.value === '1';
   const data = {
     id, empId,
+    isHistorical: isHist,
     date: dispToIso($('#pr_date')?.value||''),
     effectiveDate: dispToIso($('#pr_effDate')?.value||''),
     type: $s('pr_type'),
@@ -15443,8 +15465,8 @@ function savePromotion(id, isNew){
 
   if(!DB.promotions) DB.promotions = [];
 
-  if(data.status === 'completed'){
-    applyPromotionToEmployee(data);
+  if(data.status === 'completed' && !isHist){
+    applyPromotionToEmployee(data);  // historical = chỉ ghi lịch sử, không thay đổi NV hiện tại
   }
 
   if(isNew) DB.promotions.push(_sanitizeForFirebase(data));
@@ -15465,8 +15487,9 @@ function deletePromotion(id, fromModal=false){
   confirmDialog('Xoá đề xuất thăng chức?', (_lang==="en"?"This action cannot be undone.":"Hành động này không thể hoàn tác."), ()=>{
     const promo = (DB.promotions||[]).find(x => x.id === id);
     const empId = promo?.empId;
+    const delPromo = (DB.promotions||[]).find(x=>x.id===id);
     DB.promotions = (DB.promotions||[]).filter(x => x.id !== id);
-    if(empId) syncEmployeeFromPromotions(empId);
+    if(empId && !delPromo?.isHistorical) syncEmployeeFromPromotions(empId);
     if(empId) saveEmpProfile(empId);
     saveData(['promotions']);
     toast((_lang==="en"?"Deleted":"Đã xoá"));
