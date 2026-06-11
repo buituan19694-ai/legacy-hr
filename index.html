@@ -10638,13 +10638,13 @@ function renderLeaves(main){
       const clCost = Math.round(clTon * dayRate);
 
       return {e, cd, stdDays, totalSalary, dayRate, alTon, clTon, alCost, clCost};
-    }).filter(x=>x.totalSalary>0);
+    }); // Không filter theo lương — tất cả NV đều được tính tồn ngày
 
-    // Tổng công ty
+    // Tổng công ty — tồn ngày tính tất cả NV, chi phí chỉ tính NV có lương
     const totALTon  = empCost.reduce((s,x)=>s+x.alTon,0);
     const totCLTon  = empCost.reduce((s,x)=>s+x.clTon,0);
-    const totALCost = empCost.reduce((s,x)=>s+x.alCost,0);
-    const totCLCost = empCost.reduce((s,x)=>s+x.clCost,0);
+    const totALCost = empCost.filter(x=>x.totalSalary>0).reduce((s,x)=>s+x.alCost,0);
+    const totCLCost = empCost.filter(x=>x.totalSalary>0).reduce((s,x)=>s+x.clCost,0);
 
     // Theo bộ phận
     const byDept = DB.departments.map(d=>{
