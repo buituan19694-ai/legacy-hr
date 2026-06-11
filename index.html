@@ -11707,7 +11707,12 @@ function calcResignEndDate(empId, submitDate){
   let days = 30;
   if(ct.includes('thử việc')||ct.includes('probation')) days = 3;
   else if(ct.includes('vô thời hạn')||ct.includes('indefinite')||ct.includes('không xác định')) days = 45;
-  const d = new Date(submitDate);
+  // Normalize: dd/MM/yyyy → yyyy-MM-dd before parsing
+  let iso = submitDate||'';
+  const m = iso.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+  if(m) iso = m[3]+'-'+m[2].padStart(2,'0')+'-'+m[1].padStart(2,'0');
+  const d = new Date(iso+'T00:00:00');
+  if(isNaN(d)) return {endDate:'', noticeDays:days};
   d.setDate(d.getDate() + days);
   return {endDate: d.toISOString().slice(0,10), noticeDays: days};
 }
@@ -11852,8 +11857,8 @@ function openResignModal(rid){
 
   // Prefill nếu edit
   const prefillEmp   = existing ? empById(existing.empId) : null;
-  const prefillDate  = existing ? (existing.submitDate||today) : today;
-  const prefillEnd   = existing ? (existing.endDate||'') : '';
+  const prefillDate  = existing ? (dispToIso(existing.submitDate)||today) : today;
+  const prefillEnd   = existing ? (dispToIso(existing.endDate)||'') : '';
   const prefillReason= existing ? (existing.reason||'') : '';
   const prefillNote  = existing ? (existing.note||'') : '';
 
