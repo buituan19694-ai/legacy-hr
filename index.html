@@ -702,6 +702,7 @@ const DEFAULT_DATA = {
   ],
   contractTemplates: {},
 
+  resignations: [],       // đơn xin nghỉ việc — lưu trong workforce doc
   quickFilterPrefs: null, // null = dùng DEFAULT_QUICK_FILTER_KEYS
   manualBlacklist: [],    // danh sách đen thủ công — doc riêng 'blacklist' trên Firestore
   blacklistConfig: null,  // cấu hình blacklist (ngưỡng tự động)
@@ -827,6 +828,7 @@ function loadData(){
       if(!data.promotions) data.promotions = [];
       if(!data.requiredFieldsConfig) data.requiredFieldsConfig = JSON.parse(JSON.stringify(DEFAULT_REQUIRED_FIELDS));
       if(!data.manualBlacklist) data.manualBlacklist = [];
+      if(!data.resignations) data.resignations = [];
       const OBSOLETE_CF_KEYS = ['currentContractStart','currentContractEnd','probationResult','contractExpireMonth'];
       if(data.customFields){
         data.customFields = data.customFields.filter(cf => !OBSOLETE_CF_KEYS.includes(cf.key));
@@ -11838,13 +11840,13 @@ function _resignConfirmActionGlobal(action){
 
   if(editId){
     const idx = DB.resignations.findIndex(r=>r.id===editId);
-    if(idx>=0) DB.resignations[idx]=obj;
-    else DB.resignations.push(obj);
+    if(idx>=0) DB.resignations = DB.resignations.map((r,i)=>i===idx?obj:r);
+    else DB.resignations = [...(DB.resignations||[]), obj];
     toast('✅ Đã cập nhật đơn nghỉ việc', 'success');
   } else {
     const dup = DB.resignations.find(r=>r.empId===empId && r.status==='pending');
     if(dup){ toast('NV này đã có đơn đang chờ xử lý','error'); return; }
-    DB.resignations.push(obj);
+    DB.resignations = [...(DB.resignations||[]), obj];
     toast('📋 Đã lưu đơn — bấm ✔ trong danh sách để duyệt nghỉ', 'success');
   }
 
@@ -11985,8 +11987,9 @@ function resignAction(rid, action){
     if(!DB.customData[r.empId]) DB.customData[r.empId]={};
     DB.customData[r.empId].exitDate=r.endDate||r.submitDate;
     DB.customData[r.empId].exitReason=r.reason||'Theo đơn nghỉ việc';
-    DB.resignations[idx].status='confirmed';
-    DB.resignations[idx].confirmedAt=new Date().toISOString();
+    const _r2 = [...DB.resignations];
+    _r2[idx] = {..._r2[idx], status:'confirmed', confirmedAt:new Date().toISOString()};
+    DB.resignations = _r2;
     saveEmpProfile(r.empId);
     saveData(['resignations']);
     render();
@@ -11994,7 +11997,7 @@ function resignAction(rid, action){
   } else if(action==='cancel'){
     // Xoá đơn khỏi list, NV về bình thường
     const empName = empById(r.empId)?.name||r.empId;
-    DB.resignations.splice(idx, 1);
+    DB.resignations = DB.resignations.filter((_,i)=>i!==idx);
     saveData(['resignations']);
     render();
     toast(`Đã huỷ đơn — ${empName} về trạng thái bình thường`,'success');
