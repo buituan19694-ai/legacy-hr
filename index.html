@@ -11789,7 +11789,12 @@ window._resignEmpSelect = function(id, name, code, dept){
   if(srch) srch.value = name + ' — ' + code;
   if(info) info.textContent = dept;
   if(lst)  lst.style.display = 'none';
-  // Auto tính ngày nghỉ sau khi chọn NV
+  // Ensure data-iso is current before calc
+  const dateEl = document.getElementById('rSubmitDate');
+  if(dateEl && !dateEl.getAttribute('data-iso') && dateEl.value){
+    const iso = dispToIso(dateEl.value) || dateEl.value;
+    dateEl.setAttribute('data-iso', iso);
+  }
   if(typeof _resignCalcEndGlobal === 'function') _resignCalcEndGlobal();
 };
 
@@ -11979,10 +11984,18 @@ function openResignModal(rid){
     </div>
   `);
 
-  // If edit mode, trigger calc immediately
-  if(isEdit && initEmpId && prefillDate){
-    setTimeout(()=>_resignCalcEndGlobal(), 50);
-  }
+  // Trigger calc after modal renders (both new and edit mode)
+  setTimeout(()=>{
+    // Set data-iso on date field from its value
+    const dateEl = document.getElementById('rSubmitDate');
+    if(dateEl && dateEl.value && !dateEl.getAttribute('data-iso')){
+      const iso = dispToIso(dateEl.value) || dateEl.value;
+      dateEl.setAttribute('data-iso', iso);
+    }
+    if(document.getElementById('rEmp')?.value){
+      _resignCalcEndGlobal();
+    }
+  }, 80);
 }
 
 
