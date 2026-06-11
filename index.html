@@ -3798,7 +3798,10 @@ function renderEmployeeProfile(main){
           const bonus = bonusEntry ? parseInt(bonusEntry.val)||0 : 0;
           const total = base + bonus;
 
-          const salaryBlock = (groupName === (_lang==="en"?"Recruitment":"Tuyển dụng") && hasSalary) ? `
+          // Match group by key prefix (language-independent)
+          const isRecruitGroup = hasSalary && (groupName === 'Tuyển dụng' || groupName === 'Recruitment' || fields.some(({cf})=>cf.key==='recruitSource'||cf.key==='levelNum'));
+
+          const salaryBlock = (isRecruitGroup && hasSalary) ? `
             <div class="profile-field" style="grid-column:1/-1;border-bottom:none;padding-bottom:0">
               ${window.canSeeSalary() ? `
               <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;padding:12px;background:rgba(212,165,116,.06);border:1px solid rgba(212,165,116,.2);border-radius:8px;width:100%">
@@ -3821,7 +3824,7 @@ function renderEmployeeProfile(main){
             </div>` : '';
 
           const CONTRACT_HIGHLIGHT_KEYS = ['currentContractType','contractStart','contractEnd','currentContractStart','currentContractEnd'];
-          const fieldRows = (groupName === (_lang==="en"?"Recruitment":"Tuyển dụng"))
+          const fieldRows = (isRecruitGroup)
             ? otherFields.map(({cf,val})=>`
                 <div class="profile-field">
                   <div class="profile-field-label">${escapeHtml(cf.label)}</div>
@@ -11787,42 +11790,56 @@ function _resignCalcEndGlobal(){
 }
 
 function _resignConfirmActionGlobal(action){
-  const empId = document.getElementById('rEmp')?.value;
-  const submitDate = document.getElementById('rSubmitDate')?.value;
-  const endDate = document.getElementById('rEndDate')?.value;
+  if(action === 'cancel'){ closeModal(); return; }
+
+  const empId     = document.getElementById('rEmp')?.value;
+  const submitDate= document.getElementById('rSubmitDate')?.value;
+  const endDate   = document.getElementById('rEndDate')?.value;
+  const reasonSel = document.getElementById('rReason')?.value||'';
+  const reasonOth = document.getElementById('rReasonOther')?.value.trim()||'';
+  const reason    = reasonSel==='__other__' ? (reasonOth||'Lý do khác') : reasonSel;
+  const note      = document.getElementById('rNote')?.value.trim()||'';
+  const editId    = window._resignEditId||null;
 
   if(!empId){ toast('Vui lòng chọn nhân viên','error'); return; }
   if(!submitDate){ toast('Vui lòng nhập ngày nộp đơn','error'); return; }
 
   const emp = empById(empId);
+  if(!DB.resignations) DB.resignations=[];
 
-  if(action === 'approve'){
-    const eIdx = DB.employees.findIndex(e=>e.id===empId);
-    if(eIdx>=0) DB.employees[eIdx].status='exit';
-    if(!DB.customData[empId]) DB.customData[empId]={};
-    DB.customData[empId].exitDate = endDate||submitDate;
-    DB.customData[empId].exitReason = 'Nghỉ việc theo đơn';
-    if(!DB.resignations) DB.resignations=[];
-    const {noticeDays} = calcResignEndDate(empId, submitDate);
-    DB.resignations.push(_sanitizeForFirebase({
-      id:uid(), empId, submitDate, endDate:endDate||submitDate,
-      noticeDays, reason:'Nghỉ việc theo đơn', note:'',
-      status:'confirmed', confirmedAt:new Date().toISOString(),
-      createdAt:new Date().toISOString()
-    }));
-    saveEmpProfile(empId);
-    saveData(['resignations']);
-    closeModal(); render();
-    toast('✅ Đã duyệt nghỉ việc: '+(emp?.name||''), 'success');
+  const {noticeDays} = calcResignEndDate(empId, submitDate);
+  const obj = _sanitizeForFirebase({
+    id: editId||uid(), empId, submitDate,
+    endDate: endDate||submitDate, noticeDays,
+    reason, note, status:'pending',
+    createdAt: editId ? (DB.resignations.find(r=>r.id===editId)?.createdAt||new Date().toISOString()) : new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  });
+
+  if(editId){
+    const idx = DB.resignations.findIndex(r=>r.id===editId);
+    if(idx>=0) DB.resignations[idx]=obj;
+    else DB.resignations.push(obj);
+    toast('✅ Đã cập nhật đơn nghỉ việc', 'success');
   } else {
-    closeModal();
-    toast('Đã huỷ — '+(emp?.name||'')+' tiếp tục làm việc', 'success');
+    const dup = DB.resignations.find(r=>r.empId===empId && r.status==='pending');
+    if(dup){ toast('NV này đã có đơn đang chờ xử lý','error'); return; }
+    DB.resignations.push(obj);
+    toast('📋 Đã lưu đơn — bấm ✔ trong danh sách để duyệt nghỉ', 'success');
   }
+
+  window._resignEditId = null;
+  saveData(['resignations']);
+  closeModal(); render();
 }
 
 function openResignModal(rid){
+  // rid = edit mode (đơn đã có)
+  const isEdit = !!rid;
+  const existing = isEdit ? (DB.resignations||[]).find(r=>r.id===rid) : null;
+
   const activeEmps = DB.employees
-    .filter(e=>getEffectiveStatus(e)!=='exit')
+    .filter(e=> isEdit ? true : getEffectiveStatus(e)!=='exit')
     .sort((a,b)=>a.name.localeCompare(b.name,'vi'));
 
   const today = new Date().toISOString().slice(0,10);
@@ -11833,31 +11850,61 @@ function openResignModal(rid){
     contractType:((DB.customData||{})[e.id]||{}).currentContractType||''
   }));
 
+  // Prefill nếu edit
+  const prefillEmp   = existing ? empById(existing.empId) : null;
+  const prefillDate  = existing ? (existing.submitDate||today) : today;
+  const prefillEnd   = existing ? (existing.endDate||'') : '';
+  const prefillReason= existing ? (existing.reason||'') : '';
+  const prefillNote  = existing ? (existing.note||'') : '';
+
+  const REASONS = ['Hết hạn HĐ — không ký tiếp', 'Tự nguyện nghỉ việc', 'Nghỉ theo thỏa thuận', 'Vi phạm nội quy', 'Thôi việc theo nguyện vọng cá nhân', 'Lý do gia đình / sức khỏe', 'Chuyển công tác / nơi khác', 'Thử việc không đạt yêu cầu'];
+  const reasonOpts = REASONS.map(r=>
+    `<option value="${r}" ${prefillReason===r?'selected':''}>${r}</option>`
+  ).join('');
+
+  const initSearch = prefillEmp ? (prefillEmp.name+' — '+(prefillEmp.code||'')) : '';
+  const initDept   = prefillEmp ? deptName(prefillEmp.deptId) : '';
+  const initEmpId  = prefillEmp ? prefillEmp.id : '';
+  const initEnd    = prefillEnd ? isoToDisp(prefillEnd) : '—';
+  const initBadge  = existing ? (existing.noticeDays?'⏱ Báo trước '+existing.noticeDays+' ngày':'') : '';
+  const initCt     = prefillEmp ? (((DB.customData||{})[prefillEmp.id]||{}).currentContractType||'') : '';
+
+  // Store editing id globally
+  window._resignEditId = rid||null;
+
   openModal(`
     <div class="modal-head">
-      <div class="modal-title">📋 Đơn <em>xin nghỉ việc</em></div>
-      <div class="modal-sub">Chọn NV → ngày nộp đơn → ngày nghỉ tự tính → Duyệt hoặc Huỷ</div>
+      <div class="modal-title">${isEdit?'✏️ Sửa':'📋'} Đơn <em>xin nghỉ việc</em></div>
+      <div class="modal-sub">${isEdit?'Chỉnh sửa đơn đã nộp':'Chọn NV · ngày nộp đơn · ngày nghỉ tự tính'}</div>
     </div>
     <div style="display:flex;flex-direction:column;gap:16px;min-width:440px">
 
       <div>
         <label style="font-size:11px;color:var(--ink-muted);font-weight:600;letter-spacing:.1em">NHÂN VIÊN *</label>
-        <div style="position:relative;margin-top:6px">
-          <input type="text" id="rEmpSearch" placeholder="🔍 Tìm tên, mã NV, phòng ban..."
-            autocomplete="off"
-            style="width:100%;padding:9px 12px;background:var(--bg-input);border:1px solid var(--border);border-radius:6px;color:var(--ink);font-size:13px"
-            oninput="_resignEmpFilter(this.value)"
-            onfocus="_resignEmpShowList()"
-            onblur="setTimeout(_resignEmpHideList,200)">
-          <div id="rEmpList" style="display:none;position:absolute;top:100%;left:0;right:0;z-index:999;background:var(--bg-card);border:1px solid var(--border);border-radius:7px;max-height:220px;overflow-y:auto;margin-top:3px;box-shadow:0 8px 24px rgba(0,0,0,.4)"></div>
-        </div>
-        <input type="hidden" id="rEmp">
-        <div id="rEmpInfo" style="margin-top:5px;font-size:11.5px;color:var(--ink-muted)"></div>
+        ${isEdit ? `
+          <div style="margin-top:6px;padding:10px 12px;background:var(--bg-elev);border-radius:6px;border:1px solid var(--border)">
+            <div style="font-weight:600">${escapeHtml(prefillEmp?.name||'')}</div>
+            <div style="font-size:11.5px;color:var(--ink-muted)">${escapeHtml(initDept)}</div>
+          </div>
+          <input type="hidden" id="rEmp" value="${initEmpId}">
+        ` : `
+          <div style="position:relative;margin-top:6px">
+            <input type="text" id="rEmpSearch" placeholder="🔍 Tìm tên, mã NV, phòng ban..."
+              autocomplete="off" value="${escapeHtml(initSearch)}"
+              style="width:100%;padding:9px 12px;background:var(--bg-input);border:1px solid var(--border);border-radius:6px;color:var(--ink);font-size:13px"
+              oninput="_resignEmpFilter(this.value)"
+              onfocus="_resignEmpShowList()"
+              onblur="setTimeout(_resignEmpHideList,200)">
+            <div id="rEmpList" style="display:none;position:absolute;top:100%;left:0;right:0;z-index:999;background:var(--bg-card);border:1px solid var(--border);border-radius:7px;max-height:220px;overflow-y:auto;margin-top:3px;box-shadow:0 8px 24px rgba(0,0,0,.4)"></div>
+          </div>
+          <input type="hidden" id="rEmp" value="${initEmpId}">
+          <div id="rEmpInfo" style="margin-top:5px;font-size:11.5px;color:var(--ink-muted)">${escapeHtml(initDept)}</div>
+        `}
       </div>
 
       <div>
         <label style="font-size:11px;color:var(--ink-muted);font-weight:600;letter-spacing:.1em">NGÀY NỘP ĐƠN *</label>
-        <input type="date" id="rSubmitDate" value="${today}"
+        <input type="date" id="rSubmitDate" value="${prefillDate}"
           oninput="_resignCalcEndGlobal()"
           style="width:100%;margin-top:6px;padding:9px 12px;background:var(--bg-input);border:1px solid var(--border);border-radius:6px;color:var(--ink);font-size:13px">
       </div>
@@ -11865,27 +11912,43 @@ function openResignModal(rid){
       <div style="background:var(--bg-elev);border:1px solid var(--border);border-radius:8px;padding:14px 16px">
         <div style="font-size:11px;color:var(--ink-muted);font-weight:600;letter-spacing:.1em;margin-bottom:8px">NGÀY NGHỈ DỰ KIẾN (tự động)</div>
         <div style="display:flex;align-items:baseline;gap:12px">
-          <div id="rEndDateDisplay" style="font-size:28px;font-weight:800;color:var(--accent);font-family:'Fraunces',serif;letter-spacing:-.02em">—</div>
-          <div id="rNoticeBadge" style="font-size:12px;color:var(--ink-muted)"></div>
+          <div id="rEndDateDisplay" style="font-size:28px;font-weight:800;color:var(--accent);font-family:'Fraunces',serif;letter-spacing:-.02em">${initEnd}</div>
+          <div id="rNoticeBadge" style="font-size:12px;color:var(--ink-muted)">${initBadge}</div>
         </div>
-        <div id="rContractType" style="font-size:11px;color:var(--ink-muted);margin-top:4px"></div>
-        <input type="hidden" id="rEndDate">
+        <div id="rContractType" style="font-size:11px;color:var(--ink-muted);margin-top:4px">${initCt?'Loại HĐ: '+escapeHtml(initCt):''}</div>
+        <input type="hidden" id="rEndDate" value="${prefillEnd}">
       </div>
 
-      <div style="display:flex;gap:10px;padding-top:4px">
-        <button onclick="_resignConfirmActionGlobal('approve')" style="flex:1;padding:11px;background:rgba(229,115,115,.12);border:1.5px solid var(--danger);border-radius:8px;color:var(--danger);font-size:14px;font-weight:700;cursor:pointer">
-          ✔ Duyệt nghỉ — chuyển Đã nghỉ
-        </button>
-        <button onclick="_resignConfirmActionGlobal('cancel')" style="flex:1;padding:11px;background:var(--bg-elev);border:1.5px solid var(--border);border-radius:8px;color:var(--ink-dim);font-size:14px;font-weight:700;cursor:pointer">
-          ✘ Không nghỉ — huỷ đơn
-        </button>
+      <div>
+        <label style="font-size:11px;color:var(--ink-muted);font-weight:600;letter-spacing:.1em">LÝ DO NGHỈ VIỆC</label>
+        <select id="rReason" style="width:100%;margin-top:6px;padding:9px 12px;background:var(--bg-input);border:1px solid var(--border);border-radius:6px;color:var(--ink);font-size:13px"
+          onchange="document.getElementById('rReasonOther').style.display=this.value==='__other__'?'block':'none'">
+          <option value="">— Chọn lý do —</option>
+          ${reasonOpts}
+          <option value="__other__" ${!REASONS.includes(prefillReason)&&prefillReason?'selected':''}>Khác (tự nhập)</option>
+        </select>
+        <input type="text" id="rReasonOther" placeholder="Nhập lý do cụ thể..."
+          value="${!REASONS.includes(prefillReason)&&prefillReason?escapeHtml(prefillReason):''}"
+          style="width:100%;margin-top:8px;padding:9px 12px;background:var(--bg-input);border:1px solid var(--border);border-radius:6px;color:var(--ink);font-size:13px;display:${!REASONS.includes(prefillReason)&&prefillReason?'block':'none'}">
+      </div>
+
+      <div>
+        <label style="font-size:11px;color:var(--ink-muted);font-weight:600;letter-spacing:.1em">GHI CHÚ</label>
+        <textarea id="rNote" rows="2" placeholder="Ghi chú thêm (nếu có)..."
+          style="width:100%;margin-top:6px;padding:9px 12px;background:var(--bg-input);border:1px solid var(--border);border-radius:6px;color:var(--ink);font-size:13px;resize:vertical">${escapeHtml(prefillNote)}</textarea>
       </div>
 
       <div class="modal-actions">
-        <button class="btn" onclick="closeModal()">Đóng</button>
+        <button class="btn" onclick="_resignConfirmActionGlobal('cancel')">Huỷ</button>
+        <button class="btn btn-primary" onclick="_resignConfirmActionGlobal('save')">💾 ${isEdit?'Cập nhật đơn':'Lưu đơn'}</button>
       </div>
     </div>
   `);
+
+  // If edit mode, trigger calc immediately
+  if(isEdit && initEmpId && prefillDate){
+    setTimeout(()=>_resignCalcEndGlobal(), 50);
+  }
 }
 
 
@@ -11958,8 +12021,10 @@ function _wfResignTab(){
       <td style="padding:8px;text-align:center">
         ${isPending?`
           <div style="display:flex;gap:6px;justify-content:center">
-            <button onclick="resignAction('${r.id}','confirm')" title="Duyệt nghỉ việc — chuyển sang Đã nghỉ ngay"
-              style="padding:6px 14px;background:rgba(229,115,115,.18);border:1px solid var(--danger);border-radius:6px;color:var(--danger);font-size:13px;font-weight:800;cursor:pointer;letter-spacing:.02em">✔</button>
+            <button onclick="resignAction('${r.id}','confirm')" title="Duyệt — chuyển sang Đã nghỉ"
+              style="padding:6px 14px;background:rgba(229,115,115,.18);border:1px solid var(--danger);border-radius:6px;color:var(--danger);font-size:13px;font-weight:800;cursor:pointer">✔</button>
+            <button onclick="openResignModal('${r.id}')" title="Sửa đơn"
+              style="padding:6px 10px;background:rgba(212,165,116,.12);border:1px solid rgba(212,165,116,.4);border-radius:6px;color:var(--accent);font-size:13px;cursor:pointer">✏️</button>
             <button onclick="resignAction('${r.id}','cancel')" title="Huỷ đơn — xoá khỏi danh sách"
               style="padding:6px 14px;background:rgba(255,255,255,.05);border:1px solid var(--border);border-radius:6px;color:var(--ink-muted);font-size:13px;font-weight:800;cursor:pointer">✘</button>
           </div>
