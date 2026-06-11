@@ -1162,7 +1162,16 @@ function saveData(changedKeys=null){
     docsToSave.forEach(docId=>{
       const docKeys = FS_DOC_MAP[docId]; if(!docKeys) return;
       const payload = { ...meta };
-      docKeys.forEach(k=>{ const val=DB[k]; if(val!==undefined && !(typeof val==='number'&&isNaN(val))) payload[k]=val; });
+      docKeys.forEach(k=>{
+        const val=DB[k];
+        if(val===undefined || (typeof val==='number'&&isNaN(val))) return;
+        // Sanitize arrays to remove undefined fields before Firestore write
+        if(Array.isArray(val)){
+          payload[k] = val.map(item=> typeof item==='object'&&item!==null ? _sanitizeForFirebase(item) : item);
+        } else {
+          payload[k] = val;
+        }
+      });
       window.fbDb.collection('hrdata').doc(docId).set(payload,{merge:true})
         .catch(err=>{
           console.error('[saveData] ❌', docId, err.code, err.message);
@@ -20334,8 +20343,10 @@ fbAuth.onAuthStateChanged(async user => {
                 // Chỉ skip nếu cloud cũ HƠN local VÀ chính mình vừa save (< 3s)
                 // Không skip khi account khác cập nhật
                 const selfSave = (cloudData._syncBy === window.currentUser?.uid);
-                if(cloudTs < localTs && selfSave){
-                  console.log('[Sync] Cloud older than local (self save), skipping merge for', docId);
+                // Chỉ skip khi self-save VÀ cloud timestamp rất mới (< 8s) tránh echo
+                // Không skip quá lâu → có thể miss update từ chính mình trên tab khác
+                const skipAge = (Date.now() - cloudSyncAt) < 8000;
+                if(cloudTs < localTs && selfSave && skipAge){
                   return;
                 }
 
