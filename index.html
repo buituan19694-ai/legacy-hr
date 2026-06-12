@@ -11780,17 +11780,6 @@ function renderRecruitmentReports(main){
       ].filter(Boolean).join('')})()}
     </div>
 
-    <!-- Trend chart -->
-    <div class="card" style="display:${showMetric(getRecMetrics(),'chart_trend')?'block':'none'}">
-      <div class="card-head">
-        <div>
-          <div class="card-title">📈 Trend <em>CV & tuyển dụng</em> theo tháng</div>
-          <div class="card-sub">12 tháng gần nhất — bao gồm cả ngoài kỳ báo cáo, để thấy xu hướng tổng thể</div>
-        </div>
-      </div>
-      <div class="chart-wrap tall"><canvas id="chartRecTrend"></canvas></div>
-    </div>
-
     <div class="row row-2-equal" style="margin-top:16px">
       <!-- Source donut -->
       <div class="card" style="display:${showMetric(getRecMetrics(),'chart_source')?'block':'none'}">
@@ -11994,32 +11983,6 @@ function renderRecruitmentReports(main){
     Chart.defaults.font.family = "'Inter Tight', sans-serif";
     Chart.defaults.font.size = 11.5;
     Chart.defaults.color = '#8b949e';
-
-    const trendEl = document.getElementById('chartRecTrend');
-    if(trendEl){
-      if(Chart.getChart(trendEl)) Chart.getChart(trendEl).destroy();
-      new Chart(trendEl, {
-        type: 'bar',
-        data: {
-          labels: trendLabels,
-          datasets: [
-            {label:'CV nhận', data: trendCV, backgroundColor:'rgba(126,182,232,.7)', borderColor:'#7eb6e8', borderWidth:1, borderRadius:4, order:2},
-            {label:'Tuyển được', type:'line', data: trendHire, borderColor:'#7ec699', backgroundColor:'rgba(126,198,153,.15)', borderWidth:2.5, tension:0.35, fill:true, pointRadius:4, pointBackgroundColor:'#7ec699', order:1},
-          ]
-        },
-        options: {
-          responsive: true, maintainAspectRatio: false,
-          plugins: {
-            legend: {position:'top', labels:{usePointStyle:true, padding:14}},
-            tooltip: {mode:'index', intersect:false}
-          },
-          scales: {
-            x: {grid:{display:false}},
-            y: {beginAtZero:true, ticks:{stepSize:1, precision:0}, grid:{color:'rgba(255,255,255,.04)'}}
-          }
-        }
-      });
-    }
 
     const srcEl = document.getElementById('chartRecSource');
     if(srcEl && sourceArr.length > 0){
