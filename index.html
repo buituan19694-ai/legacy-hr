@@ -15886,24 +15886,20 @@ function _promoEmpSelect(id,name,code,dept){
 
 function openEditPromoTypes(){
   if(!DB.promoTypes||typeof DB.promoTypes!=='object'||Array.isArray(DB.promoTypes)) DB.promoTypes={};
-  // Merge defaults vào DB.promoTypes nếu chưa có
   Object.entries(PROMOTION_TYPE_DEFAULT).forEach(([k,v])=>{ if(!DB.promoTypes[k]) DB.promoTypes[k]=v; });
 
-  const renderList = ()=>{
-    const types = getPromoTypes();
-    return Object.entries(types).map(([k,v])=>`
-      <div style="display:flex;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid var(--border)" id="ptrow_${k}">
-        <input value="${escapeHtml(v)}" placeholder="Tên loại"
-          onchange="if(!DB.promoTypes)DB.promoTypes={};DB.promoTypes['${k}']=this.value;saveData(['promoTypes'])"
-          style="flex:1;padding:6px 10px;background:var(--bg-elev);border:1px solid var(--border);border-radius:6px;color:var(--ink);font-size:13px">
-        <span style="font-size:11px;color:var(--ink-muted);font-family:'JetBrains Mono',monospace;min-width:80px">${k}</span>
-        ${Object.keys(PROMOTION_TYPE_DEFAULT).includes(k)
-          ? `<span style="padding:4px 8px;opacity:.4;font-size:11px;color:var(--ink-muted)">🔒</span>`
-          : `<button onclick="delete DB.promoTypes['${k}'];saveData(['promoTypes']);document.getElementById('ptrow_${k}').remove();toast('Đã xóa','success')"
-              style="padding:4px 8px;background:transparent;border:1px solid rgba(229,115,115,.3);border-radius:5px;color:var(--danger);font-size:11px;cursor:pointer">✕</button>`
-        }
-      </div>`).join('');
-  };
+  const renderList = ()=>Object.entries(getPromoTypes()).map(([k,v])=>`
+    <div style="display:flex;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid var(--border)" id="ptrow_${k}">
+      <input value="${escapeHtml(v)}"
+        onchange="if(!DB.promoTypes)DB.promoTypes={};DB.promoTypes[${JSON.stringify(k)}]=this.value;saveData(['promoTypes'])"
+        style="flex:1;padding:6px 10px;background:var(--bg-elev);border:1px solid var(--border);border-radius:6px;color:var(--ink);font-size:13px">
+      <span style="font-size:11px;color:var(--ink-muted);font-family:'JetBrains Mono',monospace;min-width:80px">${k}</span>
+      ${Object.keys(PROMOTION_TYPE_DEFAULT).includes(k)
+        ? `<span style="padding:4px 8px;opacity:.4;font-size:11px;color:var(--ink-muted)">🔒</span>`
+        : `<button onclick="_deletePromoType(${JSON.stringify(k)})"
+            style="padding:4px 8px;background:transparent;border:1px solid rgba(229,115,115,.3);border-radius:5px;color:var(--danger);font-size:11px;cursor:pointer">✕</button>`
+      }
+    </div>`).join('');
 
   openModal(`
     <div class="modal-head">
@@ -15914,23 +15910,8 @@ function openEditPromoTypes(){
     <div style="display:flex;gap:8px;margin-top:14px;padding-top:12px;border-top:1px solid var(--border)">
       <input id="pt_newVal" placeholder="Tên loại mới (VD: Điều chuyển, Xuống cấp...)"
         style="flex:1;padding:7px 10px;background:var(--bg-elev);border:1px solid var(--border);border-radius:6px;color:var(--ink);font-size:13px"
-        onkeydown="if(event.key==='Enter')document.getElementById('pt_addBtn').click()">
-      <button id="pt_addBtn" onclick="(function(){
-        const v=document.getElementById('pt_newVal').value.trim();
-        if(!v){toast('Nhập tên loại','warning');return;}
-        if(!DB.promoTypes||typeof DB.promoTypes!=='object')DB.promoTypes={};
-        const k='custom_'+Date.now();
-        DB.promoTypes[k]=v;
-        saveData(['promoTypes']);
-        document.getElementById('pt_newVal').value='';
-        document.getElementById('promoTypeList').insertAdjacentHTML('beforeend',
-          '<div style=\\'display:flex;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid var(--border)\\' id=\\'ptrow_'+k+'\\'>'+
-          '<input value=\\''+v.replace(/'/g,'&#39;')+'\\' onchange=\\'DB.promoTypes[\\''+k+'\\']=this.value;saveData([\\'promoTypes\\'])\\' style=\\'flex:1;padding:6px 10px;background:var(--bg-elev);border:1px solid var(--border);border-radius:6px;color:var(--ink);font-size:13px\\'>'+
-          '<span style=\\'font-size:11px;color:var(--ink-muted);font-family:JetBrains Mono,monospace;min-width:80px\\'>'+k+'</span>'+
-          '<button onclick=\\'delete DB.promoTypes[\\''+k+'\\'];saveData([\\'promoTypes\\']);this.closest(\\'[id^=ptrow_]\\').remove();toast(\\'Đã xóa\\',\\'success\\')\\'style=\\'padding:4px 8px;background:transparent;border:1px solid rgba(229,115,115,.3);border-radius:5px;color:var(--danger);font-size:11px;cursor:pointer\\'>✕</button>'+
-          '</div>');
-        toast('Đã thêm: '+v,'success');
-      })()"
+        onkeydown="if(event.key==='Enter')_addPromoType()">
+      <button onclick="_addPromoType()"
         style="padding:7px 16px;background:var(--accent);border:none;border-radius:6px;color:var(--bg);font-weight:700;cursor:pointer;font-size:13px;white-space:nowrap">+ Thêm</button>
     </div>
     <div class="modal-actions">
@@ -15938,6 +15919,41 @@ function openEditPromoTypes(){
       <button class="btn" onclick="closeModal()">Đóng</button>
     </div>
   `);
+}
+
+function _addPromoType(){
+  const inp = document.getElementById('pt_newVal');
+  if(!inp) return;
+  const v = inp.value.trim();
+  if(!v){ toast('Nhập tên loại','warning'); return; }
+  if(!DB.promoTypes||typeof DB.promoTypes!=='object') DB.promoTypes={};
+  const k = 'custom_'+Date.now();
+  DB.promoTypes[k] = v;
+  saveData(['promoTypes']);
+  inp.value = '';
+  const list = document.getElementById('promoTypeList');
+  if(list){
+    const div = document.createElement('div');
+    div.id = 'ptrow_'+k;
+    div.style.cssText = 'display:flex;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid var(--border)';
+    div.innerHTML = `<input value="${escapeHtml(v)}"
+        onchange="DB.promoTypes[${JSON.stringify(k)}]=this.value;saveData(['promoTypes'])"
+        style="flex:1;padding:6px 10px;background:var(--bg-elev);border:1px solid var(--border);border-radius:6px;color:var(--ink);font-size:13px">
+      <span style="font-size:11px;color:var(--ink-muted);font-family:'JetBrains Mono',monospace;min-width:80px">${k}</span>
+      <button onclick="_deletePromoType(${JSON.stringify(k)})"
+        style="padding:4px 8px;background:transparent;border:1px solid rgba(229,115,115,.3);border-radius:5px;color:var(--danger);font-size:11px;cursor:pointer">✕</button>`;
+    list.appendChild(div);
+  }
+  toast('Đã thêm: '+v, 'success');
+}
+
+function _deletePromoType(k){
+  if(!DB.promoTypes) return;
+  delete DB.promoTypes[k];
+  saveData(['promoTypes']);
+  const el = document.getElementById('ptrow_'+k);
+  if(el) el.remove();
+  toast('Đã xóa', 'success');
 }
 
 function editPromotion(id, presetEmpId, isHistorical=false){
