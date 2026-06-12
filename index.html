@@ -15380,14 +15380,14 @@ function renderPerformanceReports(main){
   const needSupportArrPrev = scoredArrPrev.filter(r=>r.score<70);
 
   const bands = [
-    {label:'<60',min:0,max:60,color:'var(--danger)'},
-    {label:'60–70',min:60,max:70,color:'#e8a07a'},
-    {label:'70–75',min:70,max:75,color:'var(--warning)'},
-    {label:'75–80',min:75,max:80,color:'var(--warning)'},
-    {label:'80–85',min:80,max:85,color:'var(--accent)'},
-    {label:'85–90',min:85,max:90,color:'var(--accent)'},
-    {label:'90–95',min:90,max:95,color:'var(--success)'},
-    {label:'>95',min:95,max:101,color:'#50c8a0'},
+    {label:'<60',   min:0,  max:60,  color:'#e57373'},
+    {label:'60–70', min:60, max:70,  color:'#ef9a5a'},
+    {label:'70–75', min:70, max:75,  color:'#ffa726'},
+    {label:'75–80', min:75, max:80,  color:'#ffcc02'},
+    {label:'80–85', min:80, max:85,  color:'#d4a574'},
+    {label:'85–90', min:85, max:90,  color:'#7eb6e8'},
+    {label:'90–95', min:90, max:95,  color:'#7ec699'},
+    {label:'>95',   min:95, max:101, color:'#50c8a0'},
   ];
   const bucketCounts = bands.map(b => scoredArr.filter(r=>r.score>=b.min && r.score<b.max).length);
 
@@ -15562,8 +15562,37 @@ function renderPerformanceReports(main){
     const distEl=document.getElementById('chartPerfDist');
     if(distEl&&scoredArr.length>0){
       if(Chart.getChart(distEl)) Chart.getChart(distEl).destroy();
-      new Chart(distEl,{type:'bar',data:{labels:bands.map(b=>b.label),datasets:[{data:bucketCounts,backgroundColor:bands.map(b=>b.color+'cc'),borderRadius:6}]},
-        options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{grid:{display:false}},y:{beginAtZero:true,ticks:{stepSize:1,precision:0},grid:{color:'rgba(255,255,255,.04)'}}}}
+      new Chart(distEl,{type:'bar',
+        data:{
+          labels:bands.map(b=>b.label),
+          datasets:[{
+            data:bucketCounts,
+            backgroundColor:bands.map(b=>b.color+'cc'),
+            borderColor:bands.map(b=>b.color),
+            borderWidth:1,
+            borderRadius:6,
+            borderSkipped:false,
+          }]
+        },
+        options:{
+          responsive:true,maintainAspectRatio:false,
+          plugins:{
+            legend:{display:false},
+            tooltip:{callbacks:{
+              label:(c)=>` ${c.parsed.y} người`,
+              title:(c)=>`Điểm ${c[0].label}`
+            }},
+            datalabels:{
+              display:true,anchor:'end',align:'top',
+              color:'#ccc',font:{size:11,weight:'700'},
+              formatter:(v)=>v||''
+            }
+          },
+          scales:{
+            x:{grid:{display:false},ticks:{color:'#888',font:{size:11}}},
+            y:{beginAtZero:true,ticks:{stepSize:1,precision:0,color:'#888'},grid:{color:'rgba(255,255,255,.04)'}}
+          }
+        }
       });
     }
     const deptEl=document.getElementById('chartPerfDept');
@@ -23051,7 +23080,7 @@ function renderAttendance(main){
     const code = (attMo[e.id]||{})[day]||'';
     const bg   = code ? (ATTEND_COLOR_MAP[code]||'#555') : (isWeekend ? 'rgba(255,255,255,.03)' : 'transparent');
     const empIdJs = JSON.stringify(e.id);
-    return `<td style="padding:0;width:44px;min-width:44px;text-align:center;background:${bg};border-right:1px solid rgba(255,255,255,.06);transition:background .1s">
+    return `<td style="padding:0;width:34px;min-width:34px;text-align:center;background:${bg};border-right:1px solid rgba(255,255,255,.06);transition:background .1s">
       <select onchange="(function(){
         const yr=${curYear},mo=${curMonth},eid=${empIdJs},d=${day};
         if(!DB.attendanceData[yr])DB.attendanceData[yr]={};
@@ -23062,14 +23091,14 @@ function renderAttendance(main){
         saveData(['attendanceData']);
         const td=this.closest('td');
         td.style.background=this.value?(ATTEND_COLOR_MAP[this.value]||'#555'):(${isWeekend?'true':'false'}?'rgba(255,255,255,.03)':'transparent');
-        this.style.color=this.value?'#fff':'rgba(255,255,255,.25)';
+        this.style.color=this.value?'#fff':'rgba(255,255,255,.15)';
         this.style.fontWeight=this.value?'800':'400';
         const tot=document.getElementById('att_tot_'+eid);
         if(tot){const r=DB.attendanceData[yr][mo][eid]||{};const t=Object.values(r).reduce((s,c)=>s+(ATTEND_VALUE[c]??0),0);tot.textContent=t%1===0?String(t):t.toFixed(1);}
         const dayTot=document.getElementById('att_day_${day}');
         if(dayTot){const t=Object.values(DB.attendanceData[yr][mo]).reduce((s,er)=>s+(ATTEND_VALUE[er[${day}]]??0),0);dayTot.textContent=t||'';}
       }).call(this)"
-        style="width:44px;height:32px;background:transparent;border:none;color:${code?'#fff':'rgba(255,255,255,.2)'};font-size:${code.length>3?'9':'10'}px;font-weight:${code?'800':'400'};text-align:center;cursor:pointer;appearance:none;-webkit-appearance:none;outline:none;padding:0">
+        style="width:34px;height:28px;background:transparent;border:none;color:${code?'#fff':'rgba(255,255,255,.15)'};font-size:${code.length>3?'8':'9'}px;font-weight:${code?'800':'400'};text-align:center;cursor:pointer;appearance:none;-webkit-appearance:none;outline:none;padding:0">
         <option value=""></option>
         ${ATTEND_CODES.map(c=>`<option value="${c}" ${code===c?'selected':''}>${c}</option>`).join('')}
       </select>
@@ -23083,8 +23112,8 @@ function renderAttendance(main){
     const tot = total%1===0?total:total.toFixed(1);
     const totColor = total>=22?'var(--success)':total>=18?'var(--accent)':'var(--danger)';
     return `<tr style="border-bottom:1px solid rgba(255,255,255,.05)">
-      <td style="padding:8px 10px;font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--ink-muted);position:sticky;left:0;background:var(--bg-card);z-index:2;white-space:nowrap;border-right:1px solid rgba(255,255,255,.06)">${e.code||'—'}</td>
-      <td style="padding:8px 12px;font-size:12.5px;font-weight:600;color:var(--ink);position:sticky;left:72px;background:var(--bg-card);z-index:2;white-space:nowrap;border-right:2px solid rgba(255,255,255,.1);min-width:160px">${escapeHtml(e.name)}</td>
+      <td style="padding:8px 10px;font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--ink-muted);position:sticky;left:0;background:var(--bg-card);z-index:2;white-space:nowrap;border-right:1px solid rgba(255,255,255,.06);width:72px;min-width:72px">${e.code||'—'}</td>
+      <td style="padding:8px 12px;font-size:12px;font-weight:600;color:var(--ink);position:sticky;left:72px;background:var(--bg-card);z-index:2;white-space:nowrap;border-right:2px solid rgba(255,255,255,.1);min-width:140px;max-width:140px">${escapeHtml(e.name)}</td>
       ${cells}
       <td id="att_tot_${e.id}" style="padding:8px 10px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:14px;font-weight:800;color:${totColor};position:sticky;right:0;background:var(--bg-card);z-index:2;border-left:2px solid rgba(255,255,255,.1);min-width:56px">${tot||'0'}</td>
     </tr>`;
@@ -23092,15 +23121,15 @@ function renderAttendance(main){
 
   // ── Day headers ──
   const dayHeaders = days.map(({day,dow,isWeekend})=>`
-    <th style="padding:0;width:44px;min-width:44px;text-align:center;border-right:1px solid rgba(255,255,255,.06);background:${isWeekend?'rgba(229,115,115,.08)':'var(--bg-elev)'}">
-      <div style="font-size:8.5px;font-weight:600;color:${isWeekend?'var(--danger)':'var(--ink-muted)'};padding:3px 0 1px">${dow}</div>
-      <div style="font-size:12px;font-weight:700;color:${isWeekend?'var(--danger)':'var(--ink)'};padding:0 0 3px">${day}</div>
+    <th style="padding:0;width:34px;min-width:34px;text-align:center;border-right:1px solid rgba(255,255,255,.06);background:${isWeekend?'rgba(229,115,115,.08)':'var(--bg-elev)'}">
+      <div style="font-size:8px;font-weight:600;color:${isWeekend?'var(--danger)':'var(--ink-muted)'};padding:3px 0 1px">${dow}</div>
+      <div style="font-size:11px;font-weight:700;color:${isWeekend?'var(--danger)':'var(--ink)'};padding:0 0 3px">${day}</div>
     </th>`).join('');
 
   // ── Day totals footer ──
   const dayTotals = days.map(({day,isWeekend})=>{
     const t = deptEmps.reduce((s,e)=>s+(ATTEND_VALUE[(attMo[e.id]||{})[day]]??0),0);
-    return `<td id="att_day_${day}" style="padding:5px 2px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:600;color:${t?'var(--success)':'var(--ink-muted)'};border-right:1px solid rgba(255,255,255,.06)">${t||'–'}</td>`;
+    return `<td id="att_day_${day}" style="padding:4px 1px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:9px;font-weight:600;color:${t?'var(--success)':'var(--ink-muted)'};border-right:1px solid rgba(255,255,255,.06)">${t||'–'}</td>`;
   }).join('');
 
   // ── Month nav ──
@@ -23176,11 +23205,11 @@ function renderAttendance(main){
         <table style="border-collapse:collapse;white-space:nowrap;min-width:100%">
           <thead style="position:sticky;top:0;z-index:5">
             <tr style="background:var(--bg-elev);border-bottom:2px solid rgba(255,255,255,.08)">
-              <th style="padding:10px;text-align:left;position:sticky;left:0;background:var(--bg-elev);z-index:6;width:72px;border-right:1px solid rgba(255,255,255,.06)">
-                <span style="font-size:10px;color:var(--ink-muted);font-weight:600">MÃ NV</span>
+              <th style="padding:8px;text-align:left;position:sticky;left:0;background:var(--bg-elev);z-index:6;width:72px;min-width:72px;border-right:1px solid rgba(255,255,255,.06)">
+                <span style="font-size:9px;color:var(--ink-muted);font-weight:600">MÃ NV</span>
               </th>
-              <th style="padding:10px 12px;text-align:left;position:sticky;left:72px;background:var(--bg-elev);z-index:6;min-width:160px;border-right:2px solid rgba(255,255,255,.1)">
-                <span style="font-size:10px;color:var(--ink-muted);font-weight:600">HỌ TÊN</span>
+              <th style="padding:8px 10px;text-align:left;position:sticky;left:72px;background:var(--bg-elev);z-index:6;min-width:140px;max-width:140px;border-right:2px solid rgba(255,255,255,.1)">
+                <span style="font-size:9px;color:var(--ink-muted);font-weight:600">HỌ TÊN</span>
               </th>
               ${dayHeaders}
               <th style="padding:8px;text-align:center;position:sticky;right:0;background:var(--bg-elev);z-index:6;width:56px;border-left:2px solid rgba(255,255,255,.1)">
