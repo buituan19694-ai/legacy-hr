@@ -12218,6 +12218,7 @@ function renderWorkforce(main){
         <button class="btn" onclick="addWfTestData()" style="font-size:11px;opacity:.6;border-style:dashed">🧪 Test data</button>
         <button class="btn" onclick="addWfYear()" title="Thêm năm" style="padding:4px 10px;font-size:12px">+ Năm</button>
         <button class="btn" onclick="exportWorkforce(${yr},${mon})">📥 Xuất Excel</button>
+        <button class="btn" onclick="exportWorkforcePDF()">📄 Xuất PDF</button>
       </div>
     </div>
 
@@ -14603,6 +14604,7 @@ function renderTraining(main){
       </div>
       <div class="topbar-actions">
         <button class="btn" onclick="exportCSV('courses')">${ICONS.download} Xuất CSV</button>
+        <button class="btn" onclick="exportTrainingPDF()">📄 Xuất PDF</button>
         <button class="btn" onclick="addTrainingYear()" style="font-size:12px;padding:4px 10px">+ Năm</button>
         <button class="btn btn-primary" onclick="editCourse()">${ICONS.plus} ${_lang==="en"?"Add Course":"Thêm khoá học"}</button>
       </div>
@@ -22304,14 +22306,34 @@ function renderManning(main){
         dHC+=hc;dSal+=sal*hc;dBH+=bh*hc;dMeal+=meal*hc;dOth+=oth*hc;dTotHC+=totHC;
         gHC+=hc;gSal+=sal*hc;gBH+=bh*hc;gMeal+=meal*hc;gOth+=oth*hc;gTotHC+=totHC;
         const actHC  = allEmps.filter(e=>e.deptId===dept.id&&(e.role||'').trim()===title.trim()).length;
-        const noM    = !hc?`<span style="font-size:9px;padding:1px 5px;border-radius:3px;margin-left:4px;background:rgba(232,185,116,.15);color:var(--warning)">No manning</span>`:'';
-        const savePos = field=>`(function(v){const p=DB.manningPlan['${curYear}'].depts['${dept.id}'].positions.find(x=>x.title===${JSON.stringify(title)});if(p){p['${field}']=parseFloat(v)||0;if('${field}'==='budgetSalary'&&!p.budgetBH)p.budgetBH=Math.round((parseFloat(v)||0)*${BH_RATE});}saveData(['manningPlan']);}).call(this,this.value)`;
+        const noM    = !hc?`<span id="nomanning_${dept.id}_${title.replace(/\s/g,'_')}" style="font-size:9px;padding:1px 5px;border-radius:3px;margin-left:4px;background:rgba(232,185,116,.15);color:var(--warning)">No manning</span>`:'';
+        const savePos = field=>{
+          const updateDOM = field==='planned' ? `
+            ;(function(){
+              const v=parseFloat(this.value)||0;
+              const noEl=document.getElementById('nomanning_${dept.id}_'+${JSON.stringify(title)}.replace(/\\s/g,'_'));
+              if(noEl){if(v>0)noEl.remove();} 
+              // Update dept HC count
+              const deptRow=document.getElementById('mbudget_${dept.id}');
+              if(deptRow){
+                const hcCell=deptRow.querySelector('td:nth-child(2)');
+                if(hcCell){
+                  let tot=0;
+                  document.querySelectorAll('[data-hc-dept="${dept.id}"]').forEach(inp=>tot+=parseInt(inp.value)||0);
+                  hcCell.textContent=tot||'—';
+                }
+              }
+            }).call(this)` : '';
+          return `(function(v){const p=DB.manningPlan['${curYear}'].depts['${dept.id}'].positions.find(x=>x.title===${JSON.stringify(title)});if(p){p['${field}']=parseFloat(v)||0;if('${field}'==='budgetSalary'&&!p.budgetBH)p.budgetBH=Math.round((parseFloat(v)||0)*${BH_RATE});}saveData(['manningPlan']);}).call(this,this.value)${updateDOM}`;
+        };
 
         return `<tr data-dept-pos="${dept.id}" style="border-bottom:1px solid var(--border)">
           <td style="padding:5px 8px 5px 26px;font-size:12px;font-weight:500">${escapeHtml(title)}${noM}
             <div style="font-size:10px;color:var(--ink-muted)">Actual: ${actHC} NV</div>
           </td>
-          <td style="padding:3px 6px;text-align:center">${inpNum(savePos('planned'),p.planned,46,'var(--accent)','1')}</td>
+          <td style="padding:3px 6px;text-align:center"><input type="number" min="0" step="1" value="${p.planned||''}" placeholder="0" data-hc-dept="${dept.id}"
+            onchange="${savePos('planned')}"
+            style="width:46px;padding:3px 5px;background:var(--bg-elev);border:1px solid var(--accent);border-radius:4px;color:var(--accent);font-family:'JetBrains Mono',monospace;font-size:11px;text-align:right"></td>
           <td style="padding:3px 6px;text-align:right">${inpNum(savePos('budgetSalary'),p.budgetSalary,98,'var(--success)')}</td>
           <td style="padding:3px 6px;text-align:right">${inpNum(savePos('budgetBH'),p.budgetBH||(sal?Math.round(sal*BH_RATE):0),98,'var(--purple)')}</td>
           <td style="padding:3px 6px;text-align:right">${inpNum(savePos('mealRate'),p.mealRate,83,'var(--teal)')}</td>
@@ -22320,8 +22342,8 @@ function renderManning(main){
         </tr>`;
       }).join('');
 
-      dTotHC=dSal+dBH+dMeal+dOth;
-      gHC+=dHC;gSal+=dSal;gBH+=dBH;gMeal+=dMeal;gOth+=dOth;gTotHC+=dTotHC;
+      // dTotHC already accumulated in posRows loop above
+      // gHC/gSal etc already accumulated per-position above
 
       const addRow=`<tr data-dept-pos="${dept.id}"><td colspan="7" style="padding:3px 8px 6px 26px">
         <input type="text" placeholder="+ Thêm vị trí mới (Enter để lưu)..."
@@ -22494,7 +22516,12 @@ function renderManning(main){
                     onchange="${saveAct('other')};(function(){const row=this.closest('tr');const totEl=row.querySelector('[data-tot]');const salTotEl=row.querySelector('[data-saltot]');const bhEl=row.querySelector('[data-bh]');const mealEl=row.querySelector('[data-meal]');const sal=parseFloat(salTotEl?.textContent?.replace(/[^\\d.]/g,''))||${Math.round(sal)};const bh=parseFloat(bhEl?.value)||${bh};const meal=parseFloat(mealEl?.textContent?.replace(/[^\\d]/g,''))||0;const oth=parseFloat(this.value)||0;if(totEl)totEl.textContent=(sal+bh+meal+oth).toLocaleString('vi');}).call(this)"
                     style="width:80px;padding:3px 5px;background:var(--bg-elev);border:1px solid var(--warning)44;border-radius:4px;color:var(--warning);font-family:'JetBrains Mono',monospace;font-size:11px;text-align:right">
                 </td>
-                <td style="padding:3px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:#FFCC00"><span data-tot="">${(Math.round(tot)).toLocaleString('vi')}</span></td>`;
+                <td style="padding:3px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:#FFCC00"><span data-tot="">${(Math.round(tot)).toLocaleString('vi')}</span></td>
+                <td style="padding:2px 4px">
+                  <input type="text" value="${escapeHtml(eact.note||'')}" placeholder="Ghi chú..."
+                    onchange="${saveAct('note')}"
+                    style="width:120px;padding:3px 6px;background:var(--bg-elev);border:1px solid var(--border);border-radius:4px;color:var(--ink-muted);font-size:11px">
+                </td>`;
             }
           }).join('');
 
@@ -22521,6 +22548,43 @@ function renderManning(main){
         : `<td colspan="3" style="padding:7px 8px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:var(--success)"></td>
            <td colspan="6"></td>`;
 
+
+      // Extra rows (chức danh mới thêm trong tháng)
+      const extraRows = !multiMode ? Object.entries((DB.manningActual[curYear]||{})[singleMi]||{})
+        .filter(([id,v])=>v&&v._isExtra&&v._dept===dept.id)
+        .map(([tempId,eact])=>{
+          const saveActExtra = field=>`(function(v){const mo=DB.manningActual['${curYear}']['${singleMi}'];if(mo['${tempId}'])mo['${tempId}'][field]=field==='note'?v:(parseFloat(v)||0);saveData(['manningActual']);}).call(this,this.value)`.replace('field',JSON.stringify(field));
+          const sal = parseFloat(eact.salOverride)||0;
+          const bh  = parseFloat(eact.bhOverride)||Math.round(sal*BH_RATE_LOCAL);
+          const oth = parseFloat(eact.other)||0;
+          const tot = sal+bh+oth;
+          return `<tr data-dept-actual="${dept.id}" ${isCollapsed?'style="display:none"':''} class="actual-emp-row" style="border-bottom:1px solid var(--border);background:rgba(212,165,116,.03)">
+            <td style="padding:4px 8px 4px 28px;font-size:10px;color:var(--warning);font-style:italic">mới</td>
+            <td style="padding:4px 8px;font-size:12px;font-weight:500;color:var(--warning)">${escapeHtml(eact._label||'—')}
+              <button onclick="if(confirm('Xóa dòng này?')){delete DB.manningActual['${curYear}']['${singleMi}']['${tempId}'];saveData(['manningActual']);render();}"
+                style="margin-left:6px;padding:1px 6px;background:transparent;border:1px solid rgba(229,115,115,.3);border-radius:3px;color:var(--danger);font-size:10px;cursor:pointer">✕</button>
+            </td>
+            <td style="padding:3px 6px"><input type="number" min="0" step="100000" value="${eact.salOverride||''}" placeholder="0" data-sal=""
+              onchange="(function(v){const mo=DB.manningActual['${curYear}']['${singleMi}'];if(mo['${tempId}'])mo['${tempId}'].salOverride=parseFloat(v)||0;saveData(['manningActual']);}).call(this,this.value)"
+              style="width:88px;padding:2px 4px;background:var(--bg-elev);border:1px solid var(--success)55;border-radius:3px;color:var(--success);font-family:'JetBrains Mono',monospace;font-size:10px;text-align:right"></td>
+            <td><input type="number" min="0" step="100000" value="${eact.bonOverride||''}" placeholder="0" data-bon=""
+              onchange="(function(v){const mo=DB.manningActual['${curYear}']['${singleMi}'];if(mo['${tempId}'])mo['${tempId}'].bonOverride=parseFloat(v)||0;saveData(['manningActual']);}).call(this,this.value)"
+              style="width:80px;padding:2px 4px;background:var(--bg-elev);border:1px solid var(--border)55;border-radius:3px;color:var(--ink-dim);font-family:'JetBrains Mono',monospace;font-size:10px;text-align:right"></td>
+            <td style="padding:3px 5px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:600;color:var(--success)"><span data-saltot="">${sal.toLocaleString('vi')}</span></td>
+            <td><input type="number" min="0" step="100000" value="${eact.bhOverride||''}" placeholder="auto" data-bh=""
+              onchange="(function(v){const mo=DB.manningActual['${curYear}']['${singleMi}'];if(mo['${tempId}'])mo['${tempId}'].bhOverride=parseFloat(v)||0;saveData(['manningActual']);}).call(this,this.value)"
+              style="width:80px;padding:2px 4px;background:var(--bg-elev);border:1px solid var(--purple)55;border-radius:3px;color:var(--purple);font-family:'JetBrains Mono',monospace;font-size:10px;text-align:right"></td>
+            <td style="text-align:right;color:var(--teal);font-family:'JetBrains Mono',monospace;font-size:11px"><span data-meal="">—</span></td>
+            <td><input type="number" min="0" step="10000" value="${oth||''}" placeholder="0" data-oth=""
+              onchange="(function(v){const mo=DB.manningActual['${curYear}']['${singleMi}'];if(mo['${tempId}'])mo['${tempId}'].other=parseFloat(v)||0;saveData(['manningActual']);}).call(this,this.value)"
+              style="width:80px;padding:3px 5px;background:var(--bg-elev);border:1px solid var(--warning)44;border-radius:4px;color:var(--warning);font-family:'JetBrains Mono',monospace;font-size:11px;text-align:right"></td>
+            <td style="padding:3px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:#FFCC00"><span data-tot="">${tot.toLocaleString('vi')}</span></td>
+            <td><input type="text" value="${escapeHtml(eact.note||'')}" placeholder="Ghi chú..."
+              onchange="(function(v){const mo=DB.manningActual['${curYear}']['${singleMi}'];if(mo['${tempId}'])mo['${tempId}'].note=v;saveData(['manningActual']);}).call(this,this.value)"
+              style="width:120px;padding:3px 6px;background:var(--bg-elev);border:1px solid var(--border);border-radius:4px;color:var(--ink-muted);font-size:11px"></td>
+          </tr>`;
+        }).join('') : '';
+
       return `<tr style="background:var(--bg-elev);border-top:2px solid var(--border-strong)" data-dept-hdr="${dept.id}">
         <td colspan="2" style="padding:7px 14px;font-weight:700;font-size:13px;color:var(--accent);cursor:pointer"
           onclick="(function(){window._actualCollapsed=false;const rows=document.querySelectorAll('[data-dept-actual=\\'${dept.id}\\']');const anyVis=[...rows].some(r=>r.style.display!=='none');rows.forEach(r=>r.style.display=anyVis?'none':'');})()">
@@ -22539,9 +22603,25 @@ function renderManning(main){
             <td style="padding:5px 8px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:var(--purple)">${fmtM(t.bh)}</td>
             <td style="padding:5px 8px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--teal)">${fmtM(t.meal)}</td>
             <td style="padding:5px 8px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--warning)">${fmtM(t.oth)}</td>
-            <td style="padding:5px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:800;color:#FFCC00">${fmtM(t.tot)}</td>`;})()
+            <td style="padding:5px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:800;color:#FFCC00">${fmtM(t.tot)}</td>
+            <td></td>`;})()
         }
-      </tr>${roleBlocks}`;
+      </tr>${roleBlocks}${extraRows}
+      ${!multiMode ? `<tr data-dept-actual="${dept.id}" ${isCollapsed?'style="display:none"':''} class="actual-emp-row">
+        <td colspan="2" style="padding:4px 8px 6px 20px">
+          <input type="text" placeholder="+ Thêm chức danh mới trong tháng này (Enter)..."
+            onkeydown="if(event.key==='Enter'&&this.value.trim()){
+              const deptId=${JSON.stringify(dept.id)},yr=${curYear},mo=${singleMi};
+              const title=this.value.trim();
+              const tempId='extra_'+deptId.slice(-4)+'_'+Date.now();
+              if(!DB.manningActual[yr])DB.manningActual[yr]={};
+              if(!DB.manningActual[yr][mo])DB.manningActual[yr][mo]={};
+              DB.manningActual[yr][mo][tempId]={_label:title,_dept:deptId,_isExtra:true,salOverride:0,bhOverride:0,other:0,note:''};
+              saveData(['manningActual']);this.value='';render();}"
+            style="width:300px;padding:4px 8px;background:transparent;border:1px dashed rgba(212,165,116,.4);border-radius:5px;color:var(--ink-muted);font-size:11px">
+        </td>
+        <td colspan="8"></td>
+      </tr>` : ''}`;
     }).join('');
 
     // thead
@@ -22552,7 +22632,8 @@ function renderManning(main){
       <th style="${thS};min-width:100px;color:var(--purple)">BHXH+CĐ</th>
       <th style="${thS};min-width:85px;color:var(--teal)">Meal</th>
       <th style="${thS};min-width:90px;color:var(--warning)">Chi phí khác</th>
-      <th style="${thS};min-width:105px;color:#FFCC00">Tổng chi phí</th>`;
+      <th style="${thS};min-width:105px;color:#FFCC00">Tổng chi phí</th>
+      <th style="padding:8px 6px;font-size:10px;font-weight:700;text-align:left;min-width:130px;color:var(--ink-muted)">Ghi chú</th>`;
 
     const footerCells = multiMode
       ? sortedMonths.map(mi=>{
@@ -22568,7 +22649,8 @@ function renderManning(main){
           <td></td>
           <td style="padding:8px;text-align:right;font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--teal)">${fmtM(t.meal)}</td>
           <td style="padding:8px;text-align:right;font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--warning)">${fmtM(t.oth)}</td>
-          <td style="padding:8px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:800;color:#FFCC00">${fmtM(t.tot)}</td>`;})();
+          <td style="padding:8px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:800;color:#FFCC00">${fmtM(t.tot)}</td>
+          <td></td>`;})();
 
     const noteLabel = multiMode
       ? `Đã chọn ${sortedMonths.length} tháng · Nhấn tháng để bật/tắt`
@@ -23018,61 +23100,161 @@ function exportEmployeesPDF(){
 // ── HỢP ĐỒNG ──
 function exportContractPDF(){
   const today = new Date().toISOString().slice(0,10);
-  const contracts = (DB.contracts||[]).sort((a,b)=>a.endDate?.localeCompare(b.endDate||'')||0);
+  const in30  = new Date(Date.now()+30*864e5).toISOString().slice(0,10);
+  const in60  = new Date(Date.now()+60*864e5).toISOString().slice(0,10);
+  const depts = DB.departments||[];
+  const contracts = (DB.contracts||[])
+    .filter(c=>{ const emp=(DB.employees||[]).find(e=>e.id===c.empId); return emp&&getEffectiveStatus(emp)!=='exit'; })
+    .sort((a,b)=>(a.endDate||'9999').localeCompare(b.endDate||'9999'));
+
   const rows = contracts.map((c,i)=>{
     const emp = (DB.employees||[]).find(e=>e.id===c.empId);
-    const expiring = c.endDate && c.endDate >= today && c.endDate <= new Date(Date.now()+30*864e5).toISOString().slice(0,10);
-    return `<tr>
-      <td>${i+1}</td><td>${emp?.code||'—'}</td><td><b>${escapeHtml(emp?.name||'—')}</b></td>
-      <td>${c.type||'—'}</td><td>${c.startDate||'—'}</td>
-      <td style="${expiring?'color:#e65100;font-weight:700':''}">${c.endDate||'Không xác định'}</td>
-      <td>${c.probationMonths?c.probationMonths+' tháng':'—'}</td>
+    const expiringSoon = c.endDate && c.endDate >= today && c.endDate <= in30;
+    const expiring60   = c.endDate && c.endDate > in30  && c.endDate <= in60;
+    const expired      = c.endDate && c.endDate < today;
+    const rowStyle = expiringSoon ? 'background:#fff3e0' : expired ? 'background:#fce4ec' : '';
+    const endStyle = expiringSoon ? 'color:#e65100;font-weight:700' : expired ? 'color:#c62828;font-weight:700' : expiring60 ? 'color:#f57c00' : '';
+    const flagCol = expiringSoon ? '<span style="background:#ff9800;color:#fff;padding:1px 6px;border-radius:3px;font-size:8pt">⚠ &lt;30 ngày</span>' :
+                    expired      ? '<span style="background:#f44336;color:#fff;padding:1px 6px;border-radius:3px;font-size:8pt">HẾT HẠN</span>' : '';
+    return `<tr style="${rowStyle}">
+      <td>${i+1}</td>
+      <td style="font-family:monospace;font-size:9pt">${emp?.code||'—'}</td>
+      <td><b>${escapeHtml(emp?.name||'—')}</b></td>
+      <td>${depts.find(d=>d.id===emp?.deptId)?.name||'—'}</td>
+      <td>${CONTRACT_TYPE[c.type]||c.type||'—'}</td>
+      <td>${c.startDate||'—'}</td>
+      <td style="${endStyle}">${c.endDate||'Không xác định'} ${flagCol}</td>
+      <td>${escapeHtml(c.notes||'')}</td>
     </tr>`;
   }).join('');
-  _openPDF('Danh sách Hợp đồng',
-    `<table><thead><tr><th>#</th><th>Mã NV</th><th>Họ tên</th><th>Loại HĐ</th><th>Ngày bắt đầu</th><th>Ngày kết thúc</th><th>Thử việc</th></tr></thead><tbody>${rows}</tbody></table>`,
-    `${contracts.length} hợp đồng`);
+
+  // Count by type
+  const byType = {};
+  contracts.forEach(c=>{ byType[c.type]=(byType[c.type]||0)+1; });
+  const typeSummary = Object.entries(byType).map(([t,n])=>`${CONTRACT_TYPE[t]||t}: <b>${n}</b>`).join(' &nbsp;|&nbsp; ');
+  const expCount = contracts.filter(c=>c.endDate && c.endDate >= today && c.endDate <= in30).length;
+
+  _openPDF('Danh sách Hợp đồng Lao động',
+    `<div style="margin-bottom:12px;font-size:9.5pt;color:#555">${typeSummary}
+     ${expCount ? `&nbsp;·&nbsp; <span style="color:#e65100;font-weight:600">⚠ ${expCount} HĐ hết hạn trong 30 ngày</span>` : ''}</div>
+    <table><thead><tr>
+      <th>#</th><th>Mã NV</th><th>Họ tên</th><th>Phòng ban</th>
+      <th>Loại HĐ</th><th>Ngày bắt đầu</th><th>Ngày kết thúc</th><th>Ghi chú</th>
+    </tr></thead><tbody>${rows}</tbody></table>`,
+    `${contracts.length} hợp đồng đang hiệu lực`);
 }
 
 // ── NGHỈ PHÉP ──
 function exportLeavePDF(){
   const yr = window._leaveYear || new Date().getFullYear();
-  const emps = (DB.employees||[]).filter(e=>getEffectiveStatus(e)!=='exit');
+  const emps = (DB.employees||[]).filter(e=>getEffectiveStatus(e)!=='exit')
+    .sort((a,b)=>{
+      const da = (DB.departments||[]).find(d=>d.id===a.deptId)?.name||'';
+      const db = (DB.departments||[]).find(d=>d.id===b.deptId)?.name||'';
+      return da.localeCompare(db,'vi') || a.name.localeCompare(b.name,'vi');
+    });
+  const depts = DB.departments||[];
+
+  let curDept = '';
   const rows = emps.map((e,i)=>{
-    const cd = DB.customData[e.id]||{};
-    const alOpening = parseFloat(((DB.leaveOpening[yr]||{})[e.id]||{}).al)||0;
-    const clOpening = parseFloat(((DB.leaveOpening[yr]||{})[e.id]||{}).cl)||0;
-    const sheet = (DB.leaveSheet[e.id]||{})[yr]||{};
-    const alUsed = parseFloat(sheet.al?.reduce?.((s,v)=>s+(parseFloat(v)||0),0))||0;
-    const clUsed = parseFloat(sheet.cl?.reduce?.((s,v)=>s+(parseFloat(v)||0),0))||0;
-    return `<tr>
-      <td>${i+1}</td><td>${e.code||'—'}</td><td><b>${escapeHtml(e.name)}</b></td>
-      <td style="text-align:center">${alOpening}</td>
-      <td style="text-align:center;color:#1565c0;font-weight:600">${alUsed.toFixed(1)}</td>
-      <td style="text-align:center;font-weight:700">${(alOpening-alUsed).toFixed(1)}</td>
-      <td style="text-align:center">${clOpening}</td>
-      <td style="text-align:center;color:#6a1b9a;font-weight:600">${clUsed.toFixed(1)}</td>
-      <td style="text-align:center;font-weight:700">${(clOpening-clUsed).toFixed(1)}</td>
+    const shAL = getLeaveSheet(e.id, 'al', yr);
+    const shCL = getLeaveSheet(e.id, 'cl', yr);
+
+    const alEntitle = (shAL.carry||0) + (shAL.entitle||[]).reduce((s,x)=>s+x,0);
+    const alTaken   = (shAL.taken||[]).reduce((s,x)=>s+x,0);
+    const alRemain  = Math.max(0, alEntitle - alTaken);
+
+    const clEntitle = (shCL.carry||0) + (shCL.entitle||[]).reduce((s,x)=>s+x,0);
+    const clTaken   = (shCL.taken||[]).reduce((s,x)=>s+x,0);
+    const clRemain  = Math.max(0, clEntitle - clTaken);
+
+    const deptName  = depts.find(d=>d.id===e.deptId)?.name||'';
+    let deptRow = '';
+    if(deptName !== curDept){
+      curDept = deptName;
+      deptRow = `<tr style="background:#e8eaf6"><td colspan="9" style="font-weight:700;color:#1a237e;padding:6px 8px">📂 ${escapeHtml(deptName)}</td></tr>`;
+    }
+    return deptRow + `<tr>
+      <td>${i+1}</td>
+      <td style="font-family:monospace;font-size:9pt">${e.code||'—'}</td>
+      <td><b>${escapeHtml(e.name)}</b></td>
+      <td style="text-align:center;color:#1565c0">${alEntitle%1===0?alEntitle:alEntitle.toFixed(1)}</td>
+      <td style="text-align:center;color:#c62828">${alTaken%1===0?alTaken:alTaken.toFixed(1)}</td>
+      <td style="text-align:center;font-weight:700;color:${alRemain<=0?'#c62828':alRemain<=3?'#e65100':'#2e7d32'}">${alRemain%1===0?alRemain:alRemain.toFixed(1)}</td>
+      <td style="text-align:center;color:#6a1b9a">${clEntitle%1===0?clEntitle:clEntitle.toFixed(1)}</td>
+      <td style="text-align:center;color:#c62828">${clTaken%1===0?clTaken:clTaken.toFixed(1)}</td>
+      <td style="text-align:center;font-weight:700;color:${clRemain<=0?'#c62828':clRemain<=3?'#e65100':'#2e7d32'}">${clRemain%1===0?clRemain:clRemain.toFixed(1)}</td>
     </tr>`;
   }).join('');
+
+  // Tổng
+  const totALEntitle = emps.reduce((s,e)=>{const sh=getLeaveSheet(e.id,'al',yr);return s+(sh.carry||0)+(sh.entitle||[]).reduce((a,b)=>a+b,0);},0);
+  const totALTaken   = emps.reduce((s,e)=>{const sh=getLeaveSheet(e.id,'al',yr);return s+(sh.taken||[]).reduce((a,b)=>a+b,0);},0);
+  const totCLEntitle = emps.reduce((s,e)=>{const sh=getLeaveSheet(e.id,'cl',yr);return s+(sh.carry||0)+(sh.entitle||[]).reduce((a,b)=>a+b,0);},0);
+  const totCLTaken   = emps.reduce((s,e)=>{const sh=getLeaveSheet(e.id,'cl',yr);return s+(sh.taken||[]).reduce((a,b)=>a+b,0);},0);
+
+  const footerRow = `<tr style="background:#1a1a2e;color:#fff;font-weight:700">
+    <td colspan="3" style="padding:7px 8px;color:#fff">∑ TỔNG (${emps.length} NV)</td>
+    <td style="text-align:center;color:#90caf9">${totALEntitle.toFixed(1)}</td>
+    <td style="text-align:center;color:#ef9a9a">${totALTaken.toFixed(1)}</td>
+    <td style="text-align:center;color:#a5d6a7">${(totALEntitle-totALTaken).toFixed(1)}</td>
+    <td style="text-align:center;color:#ce93d8">${totCLEntitle.toFixed(1)}</td>
+    <td style="text-align:center;color:#ef9a9a">${totCLTaken.toFixed(1)}</td>
+    <td style="text-align:center;color:#a5d6a7">${(totCLEntitle-totCLTaken).toFixed(1)}</td>
+  </tr>`;
+
   _openPDF(`Báo cáo Nghỉ phép ${yr}`,
-    `<table><thead><tr><th>#</th><th>Mã NV</th><th>Họ tên</th><th>AL Đầu kỳ</th><th>AL Đã dùng</th><th>AL Còn lại</th><th>CL Đầu kỳ</th><th>CL Đã dùng</th><th>CL Còn lại</th></tr></thead><tbody>${rows}</tbody></table>`,
+    `<table><thead><tr>
+      <th>#</th><th>Mã NV</th><th>Họ tên</th>
+      <th style="text-align:center;background:#1565c0">AL Tổng</th>
+      <th style="text-align:center;background:#c62828">AL Đã dùng</th>
+      <th style="text-align:center;background:#2e7d32">AL Còn lại</th>
+      <th style="text-align:center;background:#6a1b9a">CL Tổng</th>
+      <th style="text-align:center;background:#c62828">CL Đã dùng</th>
+      <th style="text-align:center;background:#2e7d32">CL Còn lại</th>
+    </tr></thead><tbody>${rows}${footerRow}</tbody></table>`,
     `${emps.length} nhân viên · Năm ${yr}`);
 }
 
 // ── CASUAL ──
 function exportCasualPDF(){
-  const casuals = (DB.casuals||[]).sort((a,b)=>a.name?.localeCompare(b.name||'','vi')||0);
+  const casuals = (DB.casuals||[]).sort((a,b)=>{
+    if(a.year!==b.year) return (b.year||0)-(a.year||0);
+    return (b.month||0)-(a.month||0);
+  });
   const depts = DB.departments||[];
-  const rows = casuals.map((c,i)=>`<tr>
-    <td>${i+1}</td><td>${escapeHtml(c.name||'—')}</td><td>${c.phone||'—'}</td>
-    <td>${depts.find(d=>d.id===c.deptId)?.name||'—'}</td>
-    <td>${c.startDate||'—'}</td><td>${c.endDate||'Đang làm'}</td>
-    <td style="text-align:right">${c.dailyRate?(c.dailyRate).toLocaleString('vi')+' đ':'—'}</td>
-  </tr>`).join('');
-  _openPDF('Danh sách Lao động Casual',
-    `<table><thead><tr><th>#</th><th>Họ tên</th><th>SĐT</th><th>Phòng ban</th><th>Từ ngày</th><th>Đến ngày</th><th>Đơn giá/ngày</th></tr></thead><tbody>${rows}</tbody></table>`,
-    `${casuals.length} lao động casual`);
+  const MN = ['','T1','T2','T3','T4','T5','T6','T7','T8','T9','T10','T11','T12'];
+
+  const rows = casuals.map((c,i)=>{
+    const totalCost = (c.qty||0) * (c.hours||0) * (c.rate||0);
+    return `<tr>
+      <td>${i+1}</td>
+      <td style="text-align:center">${MN[c.month]||'—'}/${c.year||'—'}</td>
+      <td>${depts.find(d=>d.id===c.deptId)?.name||'—'}</td>
+      <td>${escapeHtml(c.desc||'—')}</td>
+      <td style="text-align:center">${c.qty||0}</td>
+      <td style="text-align:center">${c.hours||0}h</td>
+      <td style="text-align:right">${c.rate?(c.rate).toLocaleString('vi')+' đ':'—'}</td>
+      <td style="text-align:right;font-weight:700">${totalCost?(totalCost).toLocaleString('vi')+' đ':'—'}</td>
+      <td>${escapeHtml(c.notes||'')}</td>
+    </tr>`;
+  }).join('');
+
+  const grandTotal = casuals.reduce((s,c)=>s+(c.qty||0)*(c.hours||0)*(c.rate||0),0);
+  const footerRow = `<tr style="background:#1a1a2e;color:#fff;font-weight:700">
+    <td colspan="7" style="padding:7px 8px;color:#fff">∑ TỔNG (${casuals.length} bản ghi)</td>
+    <td style="text-align:right;color:#ffd700">${grandTotal.toLocaleString('vi')} đ</td>
+    <td></td>
+  </tr>`;
+
+  _openPDF('Báo cáo Lao động Casual',
+    `<table><thead><tr>
+      <th>#</th><th>Tháng</th><th>Phòng ban</th><th>Mô tả công việc</th>
+      <th style="text-align:center">SL người</th><th style="text-align:center">Giờ/người</th>
+      <th style="text-align:right">Đơn giá</th><th style="text-align:right">Thành tiền</th>
+      <th>Ghi chú</th>
+    </tr></thead><tbody>${rows}${footerRow}</tbody></table>`,
+    `${casuals.length} bản ghi`);
 }
 
 // ── TRAINEE ──
@@ -23132,6 +23314,131 @@ function exportManningPDF(){
     <h2>👥 Nhân sự Actual</h2>
     <table><thead><tr><th>Họ tên</th><th>Mã NV</th><th>Tổng lương</th><th>BHXH+CĐ</th><th>Tổng chi phí</th></tr></thead><tbody>${actRows}</tbody></table>`,
     `Năm ${yr} · ${allEmps.length} nhân viên`);
+}
+
+// ── ĐÀO TẠO ──
+function exportTrainingPDF(){
+  const today = new Date();
+  const p = window._trnPeriod || {mode:'year', month:today.getMonth()+1, year:today.getFullYear()};
+  const MN_FULL=['','Tháng 1','Tháng 2','Tháng 3','Tháng 4','Tháng 5','Tháng 6','Tháng 7','Tháng 8','Tháng 9','Tháng 10','Tháng 11','Tháng 12'];
+  const depts = DB.departments||[];
+
+  function courseInPeriod(c){
+    if(p.mode === 'all') return true;
+    if(!c.startDate) return false;
+    const start = new Date(c.startDate);
+    const end = c.endDate ? new Date(c.endDate) : start;
+    if(p.mode === 'year') return start.getFullYear()<=p.year && end.getFullYear()>=p.year;
+    const pStart = new Date(p.year, p.month-1, 1);
+    const pEnd   = new Date(p.year, p.month, 0);
+    return start<=pEnd && end>=pStart;
+  }
+
+  const COURSE_STATUS = {upcoming:'Sắp diễn ra', running:'Đang diễn ra', completed:'Hoàn thành', cancelled:'Đã hủy'};
+  const COURSE_STATUS_COLOR = {upcoming:'#1565c0', running:'#2e7d32', completed:'#555', cancelled:'#c62828'};
+  const CATEGORY = {hard:'Kỹ năng cứng', soft:'Kỹ năng mềm', compliance:'Tuân thủ', leadership:'Lãnh đạo', safety:'An toàn', other:'Khác'};
+
+  const courses = (DB.courses||[]).filter(courseInPeriod).sort((a,b)=>(a.startDate||'').localeCompare(b.startDate||''));
+
+  const totalCost = courses.reduce((s,c)=>s+(c.cost||0),0);
+  const totalHours = courses.reduce((s,c)=>s+(c.hours||0),0);
+  const totalAttendees = courses.reduce((s,c)=>s+(c.attendees||0),0);
+  const periodLabel = p.mode==='all' ? 'Toàn thời gian' : p.mode==='year' ? `Năm ${p.year}` : `${MN_FULL[p.month]} ${p.year}`;
+
+  const rows = courses.map((c,i)=>{
+    const sc = COURSE_STATUS_COLOR[c.status]||'#555';
+    const deptNames = (c.deptIds||[]).map(id=>depts.find(d=>d.id===id)?.name||'').filter(Boolean).join(', ');
+    return `<tr>
+      <td>${i+1}</td>
+      <td><b>${escapeHtml(c.name||'—')}</b>${c.description?`<div style="font-size:8.5pt;color:#666;margin-top:2px">${escapeHtml(c.description.slice(0,80))}${c.description.length>80?'…':''}</div>`:''}</td>
+      <td>${CATEGORY[c.category]||c.category||'—'}</td>
+      <td>${c.startDate||'—'}${c.endDate&&c.endDate!==c.startDate?`<br><span style="font-size:8.5pt;color:#888">→ ${c.endDate}</span>`:''}</td>
+      <td style="text-align:center">${c.hours||0}h</td>
+      <td style="text-align:center">${c.attendees||0}</td>
+      <td style="text-align:right">${c.cost?(c.cost).toLocaleString('vi')+' đ':'—'}</td>
+      <td>${escapeHtml(c.trainer||c.provider||'—')}</td>
+      <td style="text-align:center"><span style="background:${sc}22;color:${sc};padding:2px 7px;border-radius:3px;font-size:8pt;font-weight:600">${COURSE_STATUS[c.status]||c.status||'—'}</span></td>
+    </tr>`;
+  }).join('');
+
+  const footer = `<tr style="background:#1a1a2e;color:#fff;font-weight:700">
+    <td colspan="4" style="padding:7px 8px;color:#fff">∑ TỔNG (${courses.length} khoá)</td>
+    <td style="text-align:center;color:#ffd700">${totalHours}h</td>
+    <td style="text-align:center;color:#a5d6a7">${totalAttendees}</td>
+    <td style="text-align:right;color:#ffd700">${totalCost.toLocaleString('vi')} đ</td>
+    <td colspan="2"></td>
+  </tr>`;
+
+  _openPDF(`Báo cáo Đào tạo — ${periodLabel}`,
+    `<div style="display:flex;gap:24px;margin-bottom:14px;flex-wrap:wrap">
+      ${[['Khoá học',courses.length,'#1565c0'],['Tổng giờ học',totalHours+'h','#2e7d32'],['Lượt tham gia',totalAttendees,'#6a1b9a'],['Chi phí',totalCost.toLocaleString('vi')+' đ','#e65100']].map(([l,v,c])=>`
+      <div style="background:#f8f9fa;border-left:4px solid ${c};padding:10px 16px;border-radius:4px;min-width:120px">
+        <div style="font-size:8.5pt;color:#888;text-transform:uppercase;letter-spacing:.05em">${l}</div>
+        <div style="font-size:16pt;font-weight:700;color:${c}">${v}</div>
+      </div>`).join('')}
+    </div>
+    <table><thead><tr>
+      <th>#</th><th>Khoá học</th><th>Loại</th><th>Thời gian</th>
+      <th style="text-align:center">Giờ</th><th style="text-align:center">Người</th>
+      <th style="text-align:right">Chi phí</th><th>Giảng viên</th><th>Trạng thái</th>
+    </tr></thead><tbody>${rows}${footer}</tbody></table>`,
+    `${periodLabel} · ${courses.length} khoá học`);
+}
+
+// ── BIẾN ĐỘNG NHÂN SỰ ──
+function exportWorkforcePDF(){
+  const yr  = window._wfYear  || new Date().getFullYear();
+  const mon = window._wfMonth || 0;
+  const MN_FULL=['','Tháng 1','Tháng 2','Tháng 3','Tháng 4','Tháng 5','Tháng 6','Tháng 7','Tháng 8','Tháng 9','Tháng 10','Tháng 11','Tháng 12'];
+  const periodLabel = mon===0 ? `Năm ${yr}` : `${MN_FULL[mon]} ${yr}`;
+  const depts = DB.departments||[];
+
+  const inPeriod = dateStr=>{
+    const d=_parseAnyDate(dateStr); if(!d||isNaN(d)) return false;
+    if(d.getFullYear()!==yr) return false;
+    return mon===0 || d.getMonth()+1===mon;
+  };
+
+  const newEmps  = (DB.employees||[]).filter(e=>inPeriod(e.joined)).sort((a,b)=>(_parseAnyDate(b.joined)||0)-(_parseAnyDate(a.joined)||0));
+  const exitEmps = (DB.employees||[]).filter(e=>{const x=getExitDate(e);return x&&inPeriod(x.toISOString().slice(0,10));}).sort((a,b)=>{const xa=getExitDate(a),xb=getExitDate(b);return (xb||0)-(xa||0);});
+
+  const makeEmpRows = (emps, type) => emps.map((e,i)=>{
+    const dept = depts.find(d=>d.id===e.deptId)?.name||'—';
+    const dateStr = type==='new' ? (e.joined||'—') : (getExitDate(e)?.toISOString().slice(0,10)||'—');
+    const reason  = type==='exit' ? (e.exitReason||e.resignReason||'—') : (e.contractType||'—');
+    return `<tr>
+      <td>${i+1}</td>
+      <td style="font-family:monospace;font-size:9pt">${e.code||'—'}</td>
+      <td><b>${escapeHtml(e.name||'—')}</b></td>
+      <td>${escapeHtml(e.role||'—')}</td>
+      <td>${escapeHtml(dept)}</td>
+      <td>${dateStr}</td>
+      <td>${escapeHtml(reason)}</td>
+    </tr>`;
+  }).join('');
+
+  const newRows  = makeEmpRows(newEmps,  'new');
+  const exitRows = makeEmpRows(exitEmps, 'exit');
+  const thead = `<thead><tr><th>#</th><th>Mã NV</th><th>Họ tên</th><th>Chức danh</th><th>Phòng ban</th><th>Ngày</th><th>Loại HĐ / Lý do</th></tr></thead>`;
+
+  const net = newEmps.length - exitEmps.length;
+
+  _openPDF(`Báo cáo Biến động Nhân sự — ${periodLabel}`,
+    `<div style="display:flex;gap:20px;margin-bottom:14px;flex-wrap:wrap">
+      ${[
+        ['Gia nhập', newEmps.length, '#2e7d32'],
+        ['Rời đi', exitEmps.length, '#c62828'],
+        ['Tăng thuần', (net>=0?'+':'')+net, net>=0?'#2e7d32':'#c62828'],
+      ].map(([l,v,c])=>`<div style="background:#f8f9fa;border-left:4px solid ${c};padding:10px 16px;border-radius:4px">
+        <div style="font-size:8.5pt;color:#888;text-transform:uppercase">${l}</div>
+        <div style="font-size:18pt;font-weight:700;color:${c}">${v}</div>
+      </div>`).join('')}
+    </div>
+    <h2 style="color:#2e7d32">🟢 Nhân viên mới (${newEmps.length})</h2>
+    ${newEmps.length ? `<table>${thead}<tbody>${newRows}</tbody></table>` : '<p style="color:#888;font-style:italic">Không có nhân viên mới trong kỳ</p>'}
+    <h2 style="color:#c62828;margin-top:20px">🔴 Nhân viên nghỉ việc (${exitEmps.length})</h2>
+    ${exitEmps.length ? `<table>${thead}<tbody>${exitRows}</tbody></table>` : '<p style="color:#888;font-style:italic">Không có nhân viên nghỉ việc trong kỳ</p>'}`,
+    periodLabel);
 }
 
 </script>
