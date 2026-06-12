@@ -88,6 +88,10 @@
         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
         <span>Manning & Budget</span>
       </div>
+      <div class="nav-item" data-page="attendance">
+        <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+        <span>Bảng công</span>
+      </div>
     </div>
 
     <div class="nav-section">
@@ -926,7 +930,7 @@ const FS_DOC_MAP = {
   employees:  ['departments'],
   contracts:  ['contracts'],
   trainees:   ['trainees','traineeSchedules'],
-  workforce:  ['svcData','courses','casualExtraYears','salaryYears','trainingExtraYears','leaveExtraYears','dormConfig'],
+  workforce:  ['svcData','courses','casualExtraYears','salaryYears','trainingExtraYears','leaveExtraYears','dormConfig','attendanceConfig'],
   resign:     ['resignations'],
   jobs:       ['jobs'],
   blacklist:  ['manualBlacklist','blacklistConfig','blacklistReasons','candRequiredFields'],
@@ -939,7 +943,7 @@ const FS_DOC_MAP = {
 // manningPlan + manningActual được shard theo năm qua _pushDynamicKey → KHÔNG để trong FS_DOC_MAP
 const FS_DYNAMIC_KEYS = ['leaves','kpiReviews','rewardRecords','casuals','candidates',
                           'promotions','disciplineRecords','leaveSheet','leaveOpening','leavePlan',
-                          'manningPlan','manningActual'];
+                          'manningPlan','manningActual','attendanceData'];
 
 function _recYear(r){
   const d = r.startDate||r.date||r.effectiveDate||r.period||r.appliedDate||r.createdAt||'';
@@ -1127,6 +1131,23 @@ function _pushDynamicKey(key, meta){
       window.fbDb.collection('hrdata').doc(docId)
         .set(payload, {merge:false})
         .catch(err=>console.error(`[saveData] ❌ ${docId}`, err.message));
+    });
+    return;
+  }
+
+  if(key === 'attendanceData'){
+    const obj = DB.attendanceData||{};
+    const thisYear = new Date().getFullYear();
+    const thisMonth = new Date().getMonth()+1;
+    // Shard theo year_month
+    Object.entries(obj).forEach(([yr,months])=>{
+      Object.entries(months||{}).forEach(([mo,data])=>{
+        const docId = `attend_${yr}_${String(mo).padStart(2,'0')}`;
+        const payload = {...meta, attendanceData:{[yr]:{[mo]:data}}, _shard:`${yr}_${mo}`};
+        window.fbDb.collection('hrdata').doc(docId)
+          .set(payload,{merge:false})
+          .catch(err=>console.error('[saveData] ❌ '+docId, err.message));
+      });
     });
     return;
   }
@@ -1901,6 +1922,7 @@ function _doRender(){
       settings: renderSettings,
       accounts: renderAccounts,
       manning: renderManning,
+      attendance: renderAttendance,
     };
     (renderers[currentPage] || renderDashboard)(main);
     setTimeout(function(){ initDateInputs(main); }, 20);
@@ -21395,7 +21417,7 @@ fbAuth.onAuthStateChanged(async user => {
             leaves:[], kpiReviews:[], rewardRecords:[], casuals:[], candidates:[],
             promotions:[], disciplineRecords:[],
             leaveSheet:{}, leaveOpening:{}, leavePlan:{},
-            manningPlan:{}, manningActual:{}
+            manningPlan:{}, manningActual:{}, attendanceData:{}
           };
           hrdataSnap.forEach(doc=>{
             const id=doc.id; const d=doc.data();
@@ -21410,6 +21432,14 @@ fbAuth.onAuthStateChanged(async user => {
               Object.entries(d.leaveSheet).forEach(([eid,yrData])=>{
                 if(!dynamicAccum.leaveSheet[eid]) dynamicAccum.leaveSheet[eid]={};
                 Object.assign(dynamicAccum.leaveSheet[eid], yrData);
+              });
+            }
+            else if(id.startsWith('attend_')&&d.attendanceData){
+              Object.entries(d.attendanceData).forEach(([yr,months])=>{
+                if(!dynamicAccum.attendanceData[yr]) dynamicAccum.attendanceData[yr]={};
+                Object.entries(months||{}).forEach(([mo,data])=>{
+                  dynamicAccum.attendanceData[yr][mo]=data;
+                });
               });
             }
             else if(id.startsWith('manning_plan_')&&d.manningPlan){
@@ -21446,6 +21476,7 @@ fbAuth.onAuthStateChanged(async user => {
           ['leaveSheet','leaveOpening','leavePlan'].forEach(_mergeObj);
           // Manning: merge từ sharded docs
           if(Object.keys(dynamicAccum.manningPlan).length){ DB.manningPlan=dynamicAccum.manningPlan; hasCloud=true; }
+          if(Object.keys(dynamicAccum.attendanceData).length){ DB.attendanceData=dynamicAccum.attendanceData; hasCloud=true; }
           if(Object.keys(dynamicAccum.manningActual).length){ DB.manningActual=dynamicAccum.manningActual; hasCloud=true; }
           // Migration: đọc doc 'manning' cũ (chưa shard) nếu chưa có data mới
           if(!Object.keys(dynamicAccum.manningPlan).length && !Object.keys(dynamicAccum.manningActual).length){
@@ -22925,6 +22956,267 @@ function confirmNewManningYear(srcYear, newYear){
   closeModal();
   render();
   toast(`✅ Đã tạo năm ${newYear} với ${depts.length} bộ phận`, 'success');
+}
+
+/* =========================================================
+   BẢNG CÔNG (ATTENDANCE)
+   DB.attendanceData[year][month][empId][day] = mã công (X, OFF, AL, CL, X/OFF, ...)
+   Shard: attend_YYYY_MM
+   ========================================================= */
+if(!DB.attendanceData||Array.isArray(DB.attendanceData)) DB.attendanceData={};
+if(!DB.attendanceConfig||Array.isArray(DB.attendanceConfig)) DB.attendanceConfig={deptId:''};
+
+// Mã công và hệ số
+const ATTEND_CODES = ['X','X/OFF','OFF','AL','CL','X/AL','X/CL','AL/OFF','CL/OFF','HW','PH','P','WFH'];
+const ATTEND_VALUE = {X:1,'X/OFF':0.5,OFF:0,AL:1,CL:1,'X/AL':1,'X/CL':1,'AL/OFF':0.5,'CL/OFF':0.5,HW:1,PH:1,P:0,WFH:1};
+const ATTEND_COLOR = {
+  X:'#4caf50','X/OFF':'#8bc34a',OFF:'#f44336',AL:'#2196f3',CL:'#9c27b0',
+  'X/AL':'#00bcd4','X/CL':'#7c4dff','AL/OFF':'#64b5f6','CL/OFF':'#ce93d8',
+  HW:'#ff9800',PH:'#ffd700',P:'#607d8b',WFH:'#009688'
+};
+const ATTEND_COLOR_MAP = {
+  X:'#4caf50','X/OFF':'#8bc34a',OFF:'#e57373',AL:'#42a5f5',CL:'#ab47bc',
+  'X/AL':'#26c6da','X/CL':'#7e57c2','AL/OFF':'#90caf9','CL/OFF':'#ce93d8',
+  HW:'#ffa726',PH:'#ffd700',P:'#78909c',WFH:'#26a69a'
+};
+
+function renderAttendance(main){
+  const today    = new Date();
+  const curYear  = window._attendYear  || today.getFullYear();
+  const curMonth = window._attendMonth || (today.getMonth()+1); // 1-12
+  window._attendYear  = curYear;
+  window._attendMonth = curMonth;
+
+  if(!DB.attendanceData[curYear])           DB.attendanceData[curYear]={};
+  if(!DB.attendanceData[curYear][curMonth]) DB.attendanceData[curYear][curMonth]={};
+  const attMo = DB.attendanceData[curYear][curMonth];
+
+  // Dept filter — default P&C
+  if(!DB.attendanceConfig) DB.attendanceConfig={};
+  const pcDept = (DB.departments||[]).find(d=>d.name.includes('People')||d.name.includes('P&C'));
+  if(!DB.attendanceConfig.deptId && pcDept) DB.attendanceConfig.deptId = pcDept.id;
+  const selDeptId = window._attendDept || DB.attendanceConfig.deptId || '';
+  window._attendDept = selDeptId;
+
+  const depts = DB.departments||[];
+  const allEmps = (DB.employees||[]).filter(e=>getEffectiveStatus(e)!=='exit');
+  const deptEmps = selDeptId
+    ? allEmps.filter(e=>e.deptId===selDeptId).sort((a,b)=>a.name.localeCompare(b.name,'vi'))
+    : [];
+
+  // Ngày trong tháng
+  const daysInMonth = new Date(curYear, curMonth, 0).getDate();
+  const DOW = ['CN','T2','T3','T4','T5','T6','T7'];
+  const days = Array.from({length:daysInMonth},(_,i)=>{
+    const d = new Date(curYear, curMonth-1, i+1);
+    return {day:i+1, dow:DOW[d.getDay()], isWeekend:d.getDay()===0||d.getDay()===6};
+  });
+  const MN_FULL=['','Tháng 1','Tháng 2','Tháng 3','Tháng 4','Tháng 5','Tháng 6','Tháng 7','Tháng 8','Tháng 9','Tháng 10','Tháng 11','Tháng 12'];
+
+  // Tính tổng công cho 1 NV
+  const calcTotal = (empId)=>{
+    const row = attMo[empId]||{};
+    return Object.values(row).reduce((s,code)=>s+(ATTEND_VALUE[code]??0),0);
+  };
+
+  // Tổng toàn phòng
+  const grandTotal = deptEmps.reduce((s,e)=>s+calcTotal(e.id),0);
+  const grandDays  = deptEmps.reduce((s,e)=>{
+    const row=attMo[e.id]||{};
+    return s+Object.values(row).filter(c=>c&&c!=='OFF'&&c!=='P').length;
+  },0);
+
+  // Rows
+  const empRows = deptEmps.map((e,idx)=>{
+    const row = attMo[e.id]||{};
+    const total = calcTotal(e.id);
+
+    const cells = days.map(({day,isWeekend})=>{
+      const code = row[day]||'';
+      const bgColor = ATTEND_COLOR_MAP[code]||(isWeekend?'rgba(255,255,255,.04)':'');
+      const textColor = code ? '#fff' : (isWeekend?'var(--ink-muted)':'var(--ink-muted)');
+      const empIdJs = JSON.stringify(e.id);
+      return `<td style="padding:0;text-align:center;background:${bgColor};border-right:1px solid var(--border)">
+        <select onchange="(function(){
+          const yr=${curYear},mo=${curMonth},eid=${empIdJs},d=${day};
+          if(!DB.attendanceData[yr])DB.attendanceData[yr]={};
+          if(!DB.attendanceData[yr][mo])DB.attendanceData[yr][mo]={};
+          if(!DB.attendanceData[yr][mo][eid])DB.attendanceData[yr][mo][eid]={};
+          if(this.value)DB.attendanceData[yr][mo][eid][d]=this.value;
+          else delete DB.attendanceData[yr][mo][eid][d];
+          saveData(['attendanceData']);
+          // Update tổng ngay
+          const totEl=document.getElementById('att_tot_'+eid);
+          if(totEl){const row=DB.attendanceData[yr][mo][eid]||{};const t=Object.values(row).reduce((s,c)=>s+(ATTEND_VALUE[c]??0),0);totEl.textContent=t%1===0?t:t.toFixed(1);}
+          // Update màu ô
+          this.closest('td').style.background=ATTEND_COLOR_MAP[this.value]||(${isWeekend?'true':'false'}?'rgba(255,255,255,.04)':'');
+        }).call(this)"
+          style="width:42px;height:28px;background:transparent;border:none;color:${code?'#fff':'var(--ink-muted)'};font-size:10px;font-weight:${code?'700':'400'};text-align:center;cursor:pointer;appearance:none;-webkit-appearance:none;outline:none">
+          <option value="">${isWeekend&&!code?'–':''}</option>
+          ${ATTEND_CODES.map(c=>`<option value="${c}" ${code===c?'selected':''}>${c}</option>`).join('')}
+        </select>
+      </td>`;
+    }).join('');
+
+    return `<tr style="border-bottom:1px solid var(--border);${idx%2===0?'background:rgba(255,255,255,.015)':''}">
+      <td style="padding:6px 8px;font-size:11px;color:var(--ink-muted);font-family:'JetBrains Mono',monospace;white-space:nowrap;position:sticky;left:0;background:var(--bg-card);z-index:1;min-width:80px;border-right:1px solid var(--border)">${e.code||'—'}</td>
+      <td style="padding:6px 10px;font-size:12px;font-weight:600;white-space:nowrap;position:sticky;left:80px;background:var(--bg-card);z-index:1;min-width:150px;border-right:2px solid var(--border-strong)">${escapeHtml(e.name)}</td>
+      ${cells}
+      <td id="att_tot_${e.id}" style="padding:6px 10px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:800;color:var(--accent);white-space:nowrap;position:sticky;right:0;background:var(--bg-card);z-index:1;border-left:2px solid var(--border-strong)">${total%1===0?total:total.toFixed(1)}</td>
+    </tr>`;
+  }).join('');
+
+  // Day headers
+  const dayHeaders = days.map(({day,dow,isWeekend})=>`
+    <th style="padding:3px 1px;text-align:center;min-width:44px;font-size:9px;font-weight:600;color:${isWeekend?'var(--danger)':'var(--ink-muted)'};border-right:1px solid var(--border)">
+      <div>${dow}</div>
+      <div style="font-size:11px;font-weight:700;color:${isWeekend?'var(--danger)':'var(--ink)'}">${day}</div>
+    </th>`).join('');
+
+  // Month/year selectors
+  const yearOpts = [curYear-1,curYear,curYear+1].map(y=>`<option value="${y}" ${y===curYear?'selected':''}>${y}</option>`).join('');
+  const monthOpts = Array.from({length:12},(_,i)=>`<option value="${i+1}" ${i+1===curMonth?'selected':''}>${MN_FULL[i+1]}</option>`).join('');
+  const deptOpts = depts.map(d=>`<option value="${d.id}" ${d.id===selDeptId?'selected':''}>${d.name}</option>`).join('');
+
+  // Summary by code
+  const codeCount = {};
+  deptEmps.forEach(e=>{
+    const row=attMo[e.id]||{};
+    Object.values(row).forEach(c=>{ if(c) codeCount[c]=(codeCount[c]||0)+1; });
+  });
+  const codeSummary = ATTEND_CODES.filter(c=>codeCount[c]).map(c=>`
+    <span style="background:${ATTEND_COLOR_MAP[c]}22;color:${ATTEND_COLOR_MAP[c]};padding:3px 10px;border-radius:5px;font-size:11px;font-weight:700;border:1px solid ${ATTEND_COLOR_MAP[c]}44">
+      ${c}: ${codeCount[c]}
+    </span>`).join('');
+
+  main.innerHTML = `
+    <div class="topbar">
+      <div class="topbar-left">
+        <div class="crumb">NHÂN SỰ · <span>Bảng công</span></div>
+        <h1 class="page-title">Bảng <em>công</em></h1>
+        <div class="page-sub">${MN_FULL[curMonth]} ${curYear} · ${deptEmps.length} nhân viên · Tổng: ${grandTotal%1===0?grandTotal:grandTotal.toFixed(1)} công</div>
+      </div>
+      <div class="topbar-actions">
+        <select onchange="window._attendDept=this.value;render()"
+          style="background:var(--bg-card);border:1px solid var(--border);border-radius:7px;padding:7px 10px;color:var(--ink);font-family:inherit;font-size:13px">
+          <option value="">-- Chọn bộ phận --</option>${deptOpts}
+        </select>
+        <select onchange="window._attendMonth=parseInt(this.value);render()"
+          style="background:var(--bg-card);border:1px solid var(--border);border-radius:7px;padding:7px 10px;color:var(--ink);font-family:inherit;font-size:13px">
+          ${monthOpts}
+        </select>
+        <select onchange="window._attendYear=parseInt(this.value);render()"
+          style="background:var(--bg-card);border:1px solid var(--border);border-radius:7px;padding:7px 10px;color:var(--ink);font-family:inherit;font-size:13px">
+          ${yearOpts}
+        </select>
+        <button class="btn" onclick="exportAttendanceXLSX()">${ICONS.download} Xuất Excel</button>
+      </div>
+    </div>
+
+    ${!selDeptId ? `<div class="card" style="text-align:center;padding:40px;color:var(--ink-muted)">← Chọn bộ phận để xem bảng công</div>` : `
+    <!-- Legend -->
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px;align-items:center">
+      ${ATTEND_CODES.map(c=>`<span style="background:${ATTEND_COLOR_MAP[c]}22;color:${ATTEND_COLOR_MAP[c]};padding:2px 8px;border-radius:4px;font-size:10px;font-weight:700;border:1px solid ${ATTEND_COLOR_MAP[c]}33">${c}=${ATTEND_VALUE[c]}</span>`).join('')}
+    </div>
+
+    <!-- Summary chips -->
+    ${codeSummary ? `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">${codeSummary}</div>` : ''}
+
+    <!-- Table -->
+    <div class="card" style="padding:0;overflow:hidden">
+      <div style="overflow-x:auto;overflow-y:auto;max-height:calc(100vh - 280px)">
+        <table style="border-collapse:collapse;font-size:12px;white-space:nowrap">
+          <thead style="position:sticky;top:0;z-index:5">
+            <tr style="background:var(--bg-elev)">
+              <th style="padding:8px;text-align:left;position:sticky;left:0;background:var(--bg-elev);z-index:6;min-width:80px;border-right:1px solid var(--border)">Mã NV</th>
+              <th style="padding:8px 10px;text-align:left;position:sticky;left:80px;background:var(--bg-elev);z-index:6;min-width:150px;border-right:2px solid var(--border-strong)">Họ tên</th>
+              ${dayHeaders}
+              <th style="padding:8px;text-align:center;position:sticky;right:0;background:var(--bg-elev);z-index:6;min-width:60px;border-left:2px solid var(--border-strong);color:var(--accent)">Tổng<br>công</th>
+            </tr>
+          </thead>
+          <tbody>${empRows}</tbody>
+          <tfoot>
+            <tr style="background:#0f1a28;border-top:2px solid var(--border-strong)">
+              <td colspan="2" style="padding:8px 10px;font-weight:700;color:#FFCC00;position:sticky;left:0;background:#0f1a28;z-index:1;border-right:2px solid var(--border-strong)">∑ TỔNG</td>
+              ${days.map(({day})=>{
+                const dayTotal = deptEmps.reduce((s,e)=>{
+                  const code=(attMo[e.id]||{})[day]||'';
+                  return s+(ATTEND_VALUE[code]??0);
+                },0);
+                return `<td style="padding:5px 2px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--success);border-right:1px solid var(--border)">${dayTotal||''}</td>`;
+              }).join('')}
+              <td style="padding:8px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:800;color:#FFCC00;position:sticky;right:0;background:#0f1a28;z-index:1;border-left:2px solid var(--border-strong)">${grandTotal%1===0?grandTotal:grandTotal.toFixed(1)}</td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    </div>`}
+  `;
+}
+
+function exportAttendanceXLSX(){
+  if(typeof XLSX==='undefined'){toast('Thư viện XLSX chưa sẵn sàng','error');return;}
+  const year = window._attendYear||new Date().getFullYear();
+  const month = window._attendMonth||(new Date().getMonth()+1);
+  const selDeptId = window._attendDept||'';
+  if(!selDeptId){toast('Chọn bộ phận trước','warning');return;}
+
+  const dept = (DB.departments||[]).find(d=>d.id===selDeptId);
+  const emps = (DB.employees||[]).filter(e=>getEffectiveStatus(e)!=='exit'&&e.deptId===selDeptId)
+    .sort((a,b)=>a.name.localeCompare(b.name,'vi'));
+  const attMo = ((DB.attendanceData[year]||{})[month])||{};
+  const daysInMonth = new Date(year, month, 0).getDate();
+  const DOW = ['CN','T2','T3','T4','T5','T6','T7'];
+  const MN_FULL=['','Tháng 1','Tháng 2','Tháng 3','Tháng 4','Tháng 5','Tháng 6','Tháng 7','Tháng 8','Tháng 9','Tháng 10','Tháng 11','Tháng 12'];
+
+  const wb = XLSX.utils.book_new();
+  // Header row 1: tên ngày
+  const hdr1 = ['Mã NV','Họ tên','Chức danh'];
+  const hdr2 = ['','',''];
+  for(let d=1;d<=daysInMonth;d++){
+    const dow = DOW[new Date(year,month-1,d).getDay()];
+    hdr1.push(d);
+    hdr2.push(dow);
+  }
+  hdr1.push('Tổng công'); hdr2.push('');
+
+  const rows = [
+    [`BẢNG CÔNG — ${dept?.name||''} — ${MN_FULL[month]} ${year}`],
+    [],
+    hdr1, hdr2,
+  ];
+
+  emps.forEach((e,idx)=>{
+    const row = attMo[e.id]||{};
+    const r = [e.code||'', e.name, e.role||''];
+    for(let d=1;d<=daysInMonth;d++) r.push(row[d]||'');
+    const total = Object.values(row).reduce((s,c)=>s+(ATTEND_VALUE[c]??0),0);
+    r.push(total%1===0?total:parseFloat(total.toFixed(1)));
+    rows.push(r);
+  });
+
+  // Footer tổng
+  const footRow = ['','TỔNG',''];
+  for(let d=1;d<=daysInMonth;d++){
+    const dt = emps.reduce((s,e)=>{const c=(attMo[e.id]||{})[d]||'';return s+(ATTEND_VALUE[c]??0);},0);
+    footRow.push(dt||'');
+  }
+  const grand = emps.reduce((s,e)=>s+Object.values(attMo[e.id]||{}).reduce((ss,c)=>ss+(ATTEND_VALUE[c]??0),0),0);
+  footRow.push(grand%1===0?grand:parseFloat(grand.toFixed(1)));
+  rows.push(footRow);
+
+  const ws = XLSX.utils.aoa_to_sheet(rows);
+  // Column widths
+  ws['!cols'] = [
+    {wch:10},{wch:22},{wch:20},
+    ...Array(daysInMonth).fill({wch:5}),
+    {wch:10}
+  ];
+  // Merge title
+  ws['!merges'] = [{s:{r:0,c:0},e:{r:0,c:daysInMonth+3}}];
+  XLSX.utils.book_append_sheet(wb, ws, `Bảng công T${month}_${year}`);
+  XLSX.writeFile(wb, `Bang_cong_${dept?.name?.replace(/\s/g,'_')||'dept'}_T${month}_${year}.xlsx`);
+  toast(`Đã xuất bảng công ${MN_FULL[month]} ${year}`,'success');
 }
 
 </script>
