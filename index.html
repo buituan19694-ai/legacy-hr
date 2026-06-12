@@ -6671,7 +6671,7 @@ function exportRecruitmentPDF(){
   const totalJobs = DB.jobs.length;
   const openJobs  = DB.jobs.filter(j=>j.status==='open').length;
   const totalCands = (DB.candidates||[]).length;
-  const hired = (DB.candidates||[]).filter(c=>c.status==='hired').length;
+  const hired = DB.jobs.reduce((s,j)=> s + getJobHired(j.id), 0);
   const conv = totalCands > 0 ? (hired/totalCands*100).toFixed(1) : 0;
   const needTotal = DB.jobs.reduce((s,j)=>s+(j.positions||1),0);
   const hiredTotal = DB.jobs.reduce((s,j)=> s + getJobHired(j.id), 0);
@@ -6681,6 +6681,7 @@ function exportRecruitmentPDF(){
     const cands = (DB.candidates||[]).filter(c=>c.jobId===j.id);
     const hiredJ = getJobHired(j.id);
     const pct = (j.positions||1) > 0 ? Math.round(hiredJ/(j.positions||1)*100) : 0;
+    console.log('[PDF debug]', j.title, '| j.hired=', j.hired, '| fromCands=', cands.filter(c=>c.status==='hired').length, '| getJobHired=', hiredJ, '| pct=', pct);
     const statusColor = j.status==='open'?'#4caf50':j.status==='paused'?'#ff9800':j.status==='closed'?'#9e9e9e':'#2196f3';
     const prioColor = j.priority==='high'?'#f44336':j.priority==='medium'?'#ff9800':'#4caf50';
     const base = j.baseSalary||j.salary||0;
@@ -6734,7 +6735,7 @@ function exportRecruitmentPDF(){
       </div>
     </div>`;
 
-    const hiredCount = cands.filter(c=>c.status==='hired').length;
+    const hiredCount = getJobHired(j.id);
     const statusBadgeColor = j.status==='open'?'#4caf50':j.status==='paused'?'#ff9800':j.status==='closed'?'#9e9e9e':'#2196f3';
 
     const candRows = cands.map((c,idx)=>{
