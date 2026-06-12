@@ -9486,7 +9486,6 @@ window.toggleLeaveGroup = function(did){
               <th ${thStyle} rowspan="3" style="background:rgba(183,148,212,.15);color:var(--purple);border:1px solid rgba(183,148,212,.3);min-width:52px">Tổng<br>đã nghỉ<br><span style="font-size:9px;opacity:.7">tự động</span></th>
               <th ${thStyle} rowspan="3" style="background:rgba(183,148,212,.15);color:var(--purple);border:1px solid rgba(183,148,212,.3);min-width:52px">Còn lại<br>năm cũ<br><span style="font-size:9px;opacity:.7">tự động</span></th>
               <th ${thStyle} rowspan="3" style="background:rgba(183,148,212,.2);color:var(--purple);font-weight:700;border:2px solid rgba(183,148,212,.5);min-width:52px">Tồn cuối<br>năm<br><span style="font-size:9px;opacity:.7">tự động</span></th>
-              <th ${thStyle} rowspan="3" style="background:rgba(255,200,0,.18);color:#FFCC00;font-weight:700;border:2px solid rgba(255,200,0,.4);min-width:56px">Tổng<br>AL+CL<br><span style="font-size:9px;opacity:.7">tự động</span></th>
             </tr>
             <tr style="background:#151b23">
               ${mnShort.map(m=>`<th ${thStyle} style="background:rgba(126,198,153,.07);color:var(--success);min-width:42px">${m}</th>`).join('')}
@@ -9573,10 +9572,7 @@ window.toggleLeaveGroup = function(did){
                   <div style="color:var(--success);font-weight:700;font-family:'JetBrains Mono',monospace">${fd((dAL.pendingEntitle||dAL.totalEntitle)-dAL.totalUsed)}</div>
                   <div style="color:var(--success);font-family:'JetBrains Mono',monospace">${fd((dCL.pendingEntitle||dCL.totalEntitle)-dCL.totalUsed)}</div>
                 </td>
-                <!-- Tổng AL+CL col -->
-                <td style="padding:3px 5px;text-align:center;font-size:10px;background:#1a2030;border-left:2px solid rgba(255,200,0,.4)">
-                  <div style="color:#FFCC00;font-weight:800;font-family:'JetBrains Mono',monospace;font-size:11px">${fd(Math.round(((dAL.pendingEntitle||dAL.totalEntitle)-dAL.totalUsed+(dCL.pendingEntitle||dCL.totalEntitle)-dCL.totalUsed)*10)/10)}</div>
-                </td>
+
               </tr>
               <tr style="background:#0f1a28;border-bottom:2px solid var(--border-strong)">
                 <td style="padding:3px 10px;position:sticky;left:0;z-index:3;background:#0f1a28;white-space:nowrap">
@@ -9599,8 +9595,7 @@ window.toggleLeaveGroup = function(did){
                 <td style="padding:2px 5px;text-align:center;font-size:10px;background:#0f1a28"><span style="color:#FFCC00;font-weight:700;font-family:'JetBrains Mono',monospace">${fd(dAL.pending)}</span></td>
                 <!-- Tồn cuối năm -->
                 <td style="padding:2px 5px;text-align:center;font-size:10px;background:#0f1a28;border-left:2px solid rgba(183,148,212,.4)"><span style="color:#FFCC00;font-weight:700;font-family:'JetBrains Mono',monospace">${fd(Math.round(((dAL.pendingEntitle||dAL.totalEntitle)-dAL.totalUsed+(dCL.pendingEntitle||dCL.totalEntitle)-dCL.totalUsed)*10)/10)}</span></td>
-                <!-- Tổng AL+CL col -->
-                <td style="padding:2px 5px;text-align:center;font-size:10px;background:#0f1822;border-left:2px solid rgba(255,200,0,.4)"><span style="color:#FFCC00;font-weight:800;font-family:'JetBrains Mono',monospace">${fd(Math.round(((dAL.pendingEntitle||dAL.totalEntitle)-dAL.totalUsed+(dCL.pendingEntitle||dCL.totalEntitle)-dCL.totalUsed)*10)/10)}</span></td>
+
               </tr>`;
               // Lưu thẳng số Tồn cuối năm theo dept+year để bảng Kế hoạch dùng
               if(!window._trackingTon) window._trackingTon = {};
@@ -9649,16 +9644,12 @@ window.toggleLeaveGroup = function(did){
                       title="Tồn cuối năm = Tổng phát sinh − Tổng đã nghỉ = ${fnum(d.pendingEntitle)} − ${fnum(d.totalUsed)}">
                       <span id="${pfx}remain">${fnum(d.pendingEntitle-d.totalUsed)}</span>
                     </td>
-                    ${lt==='al'&&!e._isTrainee ? `<td rowspan="2" style="text-align:center;font-weight:800;font-size:12px;padding:4px;color:#FFCC00;background:rgba(255,200,0,.1);border-left:2px solid rgba(255,200,0,.4);vertical-align:middle" id="ls_${e.id}_alcl_total">
-                      ${fnum(Math.round((al.tonCuoiNam+cl.tonCuoiNam)*10)/10)}
-                    </td>` : lt==='al'&&e._isTrainee ? `<td style="text-align:center;font-weight:800;font-size:12px;padding:4px;color:#FFCC00;background:rgba(255,200,0,.1);border-left:2px solid rgba(255,200,0,.4)">
-                      ${fnum(Math.round((al.tonCuoiNam+cl.tonCuoiNam)*10)/10)}
-                    </td>` : ''}
+
                   </tr>`;
                 };
                 return (e._isTrainee ? '' : renderTypeRow('al',al,'AL / Phép năm','var(--success)','rgba(126,198,153,.07)','var(--accent)','rgba(212,165,116,.07)',true))
                      + renderTypeRow('cl',cl,'CL / Nghỉ bù','var(--info)','rgba(126,182,232,.07)','var(--info)','rgba(126,182,232,.05)', e._isTrainee ? true : false)
-                     + `<tr data-leave-dept="${did}" style="display:${isCollapsed?'none':''}"><td colspan="33" style="height:3px;background:rgba(255,255,255,.03)"></td></tr>`;
+                     + `<tr data-leave-dept="${did}" style="display:${isCollapsed?'none':''}"><td colspan="32" style="height:3px;background:rgba(255,255,255,.03)"></td></tr>`;
               }).join('');
 
               return deptHeader + empRows;
@@ -9677,7 +9668,6 @@ window.toggleLeaveGroup = function(did){
               <td style="text-align:center;font-size:10px"><div style="color:var(--purple);font-weight:700">${fnum(empMonthData.reduce((s,x)=>s+x.al.totalUsed,0))}</div><div style="color:var(--purple);opacity:.7">${fnum(empMonthData.reduce((s,x)=>s+x.cl.totalUsed,0))}</div></td>
               <td style="text-align:center;font-size:10px"><div style="color:var(--purple);font-weight:700">${fnum(empMonthData.reduce((s,x)=>s+x.al.pending,0))}</div><div style="color:var(--ink-muted);font-size:11px">—</div></td>
               <td style="text-align:center;font-size:10px;border-left:2px solid rgba(183,148,212,.4)"><div style="color:var(--success);font-weight:700">${fnum(empMonthData.reduce((s,x)=>s+((x.al.pendingEntitle||x.al.totalEntitle)-x.al.totalUsed),0))}</div><div style="color:var(--success);opacity:.7">${fnum(empMonthData.reduce((s,x)=>s+((x.cl.pendingEntitle||x.cl.totalEntitle)-x.cl.totalUsed),0))}</div></td>
-              <td style="text-align:center;font-size:11px;font-weight:800;border-left:2px solid rgba(255,200,0,.4);background:rgba(255,200,0,.08)"><div style="color:#FFCC00">${fnum(Math.round(empMonthData.reduce((s,x)=>s+((x.al.pendingEntitle||x.al.totalEntitle)-x.al.totalUsed+(x.cl.pendingEntitle||x.cl.totalEntitle)-x.cl.totalUsed),0)*10)/10)}</div></td>
             </tr>
           </tfoot>
         </table>
@@ -9906,12 +9896,14 @@ function renderLeavePlan(main){
       const types=['al','cl'].filter(t=> t==='al'?showAL:showCL);
       if(!types.length) return '';
       const rowspan = types.length;
-      return types.map((type,ti)=>{
+
+      let dTon={al:0,cl:0}, dKh={al:0,cl:0}, dReal={al:0,cl:0}, dDk={al:null,cl:null};
+
+      const typeRows = types.map((type,ti)=>{
         const isAL=type==='al';
         const col=isAL?'var(--success)':'var(--info)';
         const ton  = Math.round(getTonDauThang(dept.id, mi, type)*10)/10;
         const kh   = (plan[mi]||{})[type]||0;
-        // Còn lại năm cũ = Σ per-emp IF(curMonth < tonCuoiNam_emp, tonCuoiNam_emp - curMonth, 0) — chỉ AL
         const conLaiNamCu = isAL ? Math.round(activeEmps.filter(e=>e.deptId===dept.id).reduce((s,e)=>{
           const sh=((DB.leaveSheet[e.id]||{})[curYear]||{}).al||{};
           const te=(sh.carry||0)+(sh.entitle||[]).reduce((a,b)=>a+(b||0),0);
@@ -9931,13 +9923,15 @@ function renderLeavePlan(main){
         if(isAL){ footAL.ton+=ton; footAL.kh+=kh; footAL.real+=real; footAL.conLai+=conLaiNamCu||0; }
         else     { footCL.ton+=ton; footCL.kh+=kh; footCL.real+=real; footCL.conLai+=conLaiNamCu||0; }
 
+        dTon[type]=ton; dKh[type]=kh; dReal[type]=real; dDk[type]=duKien;
+
         const deptCell = ti===0
           ? `<td rowspan="${rowspan}" style="padding:8px 12px;font-weight:600;font-size:12px;border-right:2px solid var(--border-strong);border-bottom:1px solid var(--border-strong);position:sticky;left:0;background:var(--bg-card);z-index:1">
                <div>${idx+1}. ${escapeHtml(dept.name)}</div>
              </td>`
           : '';
 
-        return `<tr style="${ti===1?'border-bottom:2px solid var(--border-strong)':''}">
+        return `<tr style="${ti===1?'border-bottom:1px solid var(--border)':''}">
           ${deptCell}
           <td style="padding:4px 8px;font-size:10px;font-weight:700;color:${col};border-right:1px solid var(--border);white-space:nowrap">${isAL?'AL':'CL'}</td>
           <td style="padding:6px 8px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:600;color:var(--accent)">${ton||'0'}</td>
@@ -9957,6 +9951,29 @@ function renderLeavePlan(main){
           </td>
         </tr>`;
       }).join('');
+
+      // Dòng tổng AL+CL của dept (chỉ hiện khi cả 2 loại đều được hiện)
+      const totalRow = (showAL&&showCL) ? (()=>{
+        const totTon  = Math.round((dTon.al+dTon.cl)*10)/10;
+        const totKh   = Math.round((dKh.al+dKh.cl)*10)/10;
+        const totReal = Math.round((dReal.al+dReal.cl)*10)/10;
+        const totDk   = (dDk.al!==null||dDk.cl!==null) ? Math.round(((dDk.al||0)+(dDk.cl||0))*10)/10 : null;
+        const totVsKH = (totKh>0&&totReal>0) ? Math.round((totReal-totKh)*10)/10 : null;
+        const totDat  = totVsKH!==null?(totVsKH<=0?'✅ Đạt':'❌ Vượt'):'—';
+        const totDatC = totVsKH!==null?(totVsKH<=0?'var(--success)':'var(--danger)'):'var(--ink-muted)';
+        return `<tr style="background:#0f1a28;border-bottom:2px solid var(--border-strong)">
+          <td style="padding:4px 12px;position:sticky;left:0;background:#0f1a28;z-index:1;font-size:10px;font-weight:700;color:#FFCC00;font-family:'JetBrains Mono',monospace">∑ AL+CL</td>
+          <td style="padding:4px 8px;font-size:10px;color:#FFCC00;border-right:1px solid var(--border)">Tổng</td>
+          <td style="padding:4px 8px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:#FFCC00">${totTon||'0'}</td>
+          <td style="padding:4px 8px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:12px;color:#FFCC00">—</td>
+          <td style="padding:4px 8px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:#FFCC00">${totKh||'—'}</td>
+          <td style="padding:4px 8px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:${totDk!==null?(totDk>=0?'var(--success)':'var(--danger)'):'var(--ink-muted)'}">${totDk!==null?totDk:'—'}</td>
+          <td style="padding:4px 8px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:#FFCC00">${totReal||'—'}</td>
+          <td style="padding:4px 8px;text-align:center;font-size:12px;font-weight:700;color:${totDatC}">${totDat}</td>
+        </tr>`;
+      })() : '';
+
+      return typeRows + totalRow;
     }).join('');
 
     const footRow = ['al','cl'].filter(t=>t==='al'?showAL:showCL).map((type,ti)=>{
