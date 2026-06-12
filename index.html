@@ -13087,13 +13087,22 @@ function renderRecruitment(main){
   const overdue = DB.jobs.filter(j=>j.status==='open' && j.deadline && new Date(j.deadline) < today).length;
   const highPriority = DB.jobs.filter(j=>j.status==='open' && j.priority==='high').length;
 
-  if(!window._recFilter) window._recFilter = {status: '', priority: '', dept: ''};
+  if(!window._recFilter) window._recFilter = {status: '', priority: '', dept: '', month: ''};
   const f = window._recFilter;
 
   let filtered = DB.jobs;
-  if(f.status) filtered = filtered.filter(j=>j.status === f.status);
+  if(f.status)   filtered = filtered.filter(j=>j.status === f.status);
   if(f.priority) filtered = filtered.filter(j=>j.priority === f.priority);
-  if(f.dept) filtered = filtered.filter(j=>j.deptId === f.dept);
+  if(f.dept)     filtered = filtered.filter(j=>j.deptId === f.dept);
+  if(f.month){
+    // Lọc vị trí có startDate trong tháng đó, hoặc đang mở trong tháng đó
+    const [fy, fm] = f.month.split('-').map(Number);
+    filtered = filtered.filter(j=>{
+      if(!j.startDate) return true; // không có ngày thì hiện hết
+      const d = new Date(j.startDate);
+      return d.getFullYear()===fy && d.getMonth()+1===fm;
+    });
+  }
 
   main.innerHTML = `
     <div class="topbar">
@@ -13164,7 +13173,22 @@ function renderRecruitment(main){
           <option value="">${t('filter_all_dept')}</option>
           ${DB.departments.map(d=>`<option value="${d.id}" ${f.dept===d.id?'selected':''}>${d.name}</option>`).join('')}
         </select>
-        ${(f.status||f.priority||f.dept) ? `<button class="btn btn-icon" onclick="clearRecFilter()" title="Xoá lọc">${ICONS.x||'✕'}</button>` : ''}
+        <select class="filter-select" onchange="setRecFilter('month', this.value)">
+          <option value="">Tất cả tháng</option>
+          ${(()=>{
+            // Lấy các tháng có vị trí tuyển dụng
+            const months = new Set();
+            DB.jobs.forEach(j=>{ if(j.startDate){ const d=new Date(j.startDate); months.add(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`); } });
+            // Thêm 12 tháng năm hiện tại nếu chưa có
+            const yr=new Date().getFullYear();
+            for(let m=1;m<=12;m++) months.add(`${yr}-${String(m).padStart(2,'0')}`);
+            return [...months].sort().reverse().map(ym=>{
+              const [y,m]=ym.split('-');
+              return `<option value="${ym}" ${f.month===ym?'selected':''}>T${parseInt(m)}/${y}</option>`;
+            }).join('');
+          })()}
+        </select>
+        ${(f.status||f.priority||f.dept||f.month) ? `<button class="btn btn-icon" onclick="clearRecFilter()" title="Xoá lọc">${ICONS.x||'✕'}</button>` : ''}
       </div>
 
       ${filtered.length===0 ? `<div class="empty-state"><h3>Không có vị trí phù hợp</h3>${DB.jobs.length===0?`<button class="btn btn-primary" onclick="editJob()">${ICONS.plus} Mở vị trí mới</button>`:''}</div>` : `
@@ -13284,12 +13308,12 @@ function renderRecruitment(main){
 }
 
 function setRecFilter(key, val){
-  if(!window._recFilter) window._recFilter = {status:'', priority:'', dept:''};
+  if(!window._recFilter) window._recFilter = {status:'', priority:'', dept:'', month:''};
   window._recFilter[key] = val;
   render();
 }
 function clearRecFilter(){
-  window._recFilter = {status:'', priority:'', dept:''};
+  window._recFilter = {status:'', priority:'', dept:'', month:''};
   render();
 }
 
