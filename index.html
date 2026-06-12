@@ -9323,7 +9323,8 @@ function renderLeaveReports(main){
     if(!DB.leaveSheet[empId][bal.year]) DB.leaveSheet[empId][bal.year]={};
     DB.leaveSheet[empId][bal.year][leaveType]=sh;
     saveData(['leaveSheet']);
-    window._leaveTrackingData = null; // invalidate cache → bảng Kế hoạch sẽ tính lại
+    window._leaveTrackingData = null;
+    if(window._trackingTon) delete window._trackingTon[bal.year]; // invalidate → bảng Kế hoạch tính lại
     const totalUsed=sh.taken.reduce((a,b)=>a+b,0);
     const totalEntitle=sh.carry+sh.entitle.reduce((a,b)=>a+b,0);
     const pendingUsed=sh.taken.slice(0,curMonth).reduce((a,b)=>a+b,0);
@@ -9572,6 +9573,13 @@ window.toggleLeaveGroup = function(did){
                   <div style="color:var(--success);font-family:'JetBrains Mono',monospace">${fd((dCL.pendingEntitle||dCL.totalEntitle)-dCL.totalUsed)}</div>
                 </td>
               </tr>`;
+              // Lưu thẳng số Tồn cuối năm theo dept+year để bảng Kế hoạch dùng
+              if(!window._trackingTon) window._trackingTon = {};
+              if(!window._trackingTon[bal.year]) window._trackingTon[bal.year] = {};
+              window._trackingTon[bal.year][did] = {
+                al: Math.round(((dAL.pendingEntitle||dAL.totalEntitle)-dAL.totalUsed)*10)/10,
+                cl: Math.round(((dCL.pendingEntitle||dCL.totalEntitle)-dCL.totalUsed)*10)/10,
+              };
 
               const empRows = dEmps.map(({e,al,cl},idx)=>{
                 const cd=DB.customData[e.id]||{};
@@ -9831,8 +9839,11 @@ function renderLeavePlan(main){
   };
 
   const getTonDauThang = (deptId, mi, type)=>{
-    // Tồn đầu tháng = Tồn cuối năm (lấy từ cột Tồn cuối năm bảng Theo dõi)
-    // = pendingEntitle - totalUsed cho từng NV trong bộ phận
+    // Đọc thẳng số Tồn cuối năm từ bảng Theo dõi (đã lưu khi render)
+    if(window._trackingTon && window._trackingTon[curYear] && window._trackingTon[curYear][deptId]){
+      return window._trackingTon[curYear][deptId][type]||0;
+    }
+    // Fallback nếu chưa vào bảng Theo dõi
     return getBalByDept(deptId, mi, type);
   };
 
