@@ -80,9 +80,13 @@
         <span class="nav-badge" id="navCasualCount">0</span>
       </div>
       <div class="nav-item" data-page="trainee">
-        <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 14l9-5-9-5-9 5 9 5zm0 0l6.16-3.422a12.083 12.083 0 01.665 6.479A11.952 11.952 0 0012 20.055a11.952 11.952 0 00-6.824-2.998 12.078 12.078 0 01.665-6.479L12 14zm-4 6v-7.5l4-2.222"/></svg>
+        <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 14l9-5-9-5-9 5 9 5zm0 0l6.16-3.422a12.083 12.083 0 01.665 6.479A11.952 11.952 0 0112 20.055a11.952 11.952 0 01-6.824-2.998 12.078 12.078 0 01.665-6.479L12 14zm-4 6v-7.5l4-2.222"/></svg>
         <span data-i18n="nav_trainee">Trainee</span>
         <span class="nav-badge" id="navTraineeCount">0</span>
+      </div>
+      <div class="nav-item" data-page="manning">
+        <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
+        <span>Manning & Budget</span>
       </div>
     </div>
 
@@ -129,10 +133,6 @@
 
     <div class="nav-section">
       <div class="nav-label" data-i18n="sec_system">Hệ thống</div>
-      <div class="nav-item" data-page="manning">
-        <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
-        <span>Manning & Budget</span>
-      </div>
       <div class="nav-item" data-page="settings">
         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
         <span data-i18n="nav_settings">Cấu hình</span>
@@ -21870,94 +21870,130 @@ applyTheme('dark');
 /* =========================================================
    MANNING & BUDGET
    ========================================================= */
-if(!DB.manningPlan)  DB.manningPlan  = {};  // {year: {deptId: {planned, notes}}}
-if(!DB.hrBudget)     DB.hrBudget     = {};  // {year: {deptId: {m0..m11: {budget, forecast, actual}}}}
+if(!DB.manningPlan) DB.manningPlan = {}; // {year: {deptId: {planned, positions:[{title,budget}], notes}}}
+if(!DB.hrBudget)    DB.hrBudget    = {}; // not used separately - budget is per-position in manningPlan
 
 function renderManning(main){
-  const today = new Date();
-  const curYear = window._manningYear || today.getFullYear();
+  const today    = new Date();
+  const curYear  = window._manningYear || today.getFullYear();
   window._manningYear = curYear;
   const activeTab = window._manningTab || 'manning';
   window._manningTab = activeTab;
-
-  if(!DB.manningPlan[curYear])  DB.manningPlan[curYear]  = {};
-  if(!DB.hrBudget[curYear])     DB.hrBudget[curYear]     = {};
-
-  const depts = DB.departments || [];
-  const emps  = DB.employees   || [];
   const MN = ['T1','T2','T3','T4','T5','T6','T7','T8','T9','T10','T11','T12'];
-
-  // ── Năm picker ──
   const years = [];
-  for(let y = today.getFullYear()-1; y <= today.getFullYear()+2; y++) years.push(y);
+  for(let y=today.getFullYear()-1;y<=today.getFullYear()+2;y++) years.push(y);
+  const depts = DB.departments||[];
+  const allEmps = (DB.employees||[]).filter(e=>getEffectiveStatus(e)!=='exit');
+  const fmtM = v=>v?(Math.round(v/1000000*10)/10).toLocaleString('vi')+'M':'—';
+  const fmtVND = v=>v?Math.round(v).toLocaleString('vi'):'—';
+  if(!DB.manningPlan[curYear]) DB.manningPlan[curYear]={};
 
-  // ── MANNING TABLE ──
+  /* ── helpers ── */
+  const getSalary = e=>{
+    const cd=DB.customData[e.id]||{};
+    return (parseInt(cd.baseSalary)||0)+(parseInt(cd.bonusSalary)||0);
+  };
+  const getEmpsByDeptRole = (deptId, title)=>
+    allEmps.filter(e=>e.deptId===deptId && (e.role||'').trim()===title.trim());
+
+  /* ══════════════════════════════════════════════════
+     TAB 1 — MANNING (Định biên + Budget per position)
+     ══════════════════════════════════════════════════ */
   const renderManningTab = ()=>{
     const rows = depts.map(dept=>{
-      const plan = (DB.manningPlan[curYear][dept.id])||{};
-      const planned  = plan.planned || 0;
-      const actual   = emps.filter(e=>e.deptId===dept.id && getEffectiveStatus(e)!=='exit').length;
-      const variance = actual - planned;
-      const varC = variance===0?'var(--ink-dim)':variance>0?'var(--danger)':'var(--success)';
-      const varT = variance===0?'=':variance>0?`+${variance}`:String(variance);
-      // breakdown by contract type
-      const ft  = emps.filter(e=>e.deptId===dept.id && getEffectiveStatus(e)!=='exit' && (e.contractType||'').includes('full')).length;
-      const pt  = emps.filter(e=>e.deptId===dept.id && getEffectiveStatus(e)!=='exit' && (e.contractType||'').includes('part')).length;
-      const cas = emps.filter(e=>e.deptId===dept.id && getEffectiveStatus(e)!=='exit' && (e.contractType||'').includes('casual')).length;
-      const tts = (DB.trainees||[]).filter(tr=>{
-        const now=today.toISOString().slice(0,10);
-        return tr.deptId===dept.id && tr.startDate && (!tr.endDate||tr.endDate>=now);
-      }).length;
-      return `<tr>
-        <td style="padding:10px 14px;font-weight:600;font-size:13px;position:sticky;left:0;background:var(--bg-card);border-right:2px solid var(--border-strong)">${escapeHtml(dept.name)}</td>
-        <td style="padding:8px 10px;text-align:center">
-          <input type="number" min="0" value="${planned||''}" placeholder="0"
-            onchange="(function(){if(!DB.manningPlan['${curYear}'])DB.manningPlan['${curYear}']={};if(!DB.manningPlan['${curYear}']['${dept.id}'])DB.manningPlan['${curYear}']['${dept.id}']={};DB.manningPlan['${curYear}']['${dept.id}'].planned=parseInt(this.value)||0;saveData(['manningPlan']);})();this"
-            style="width:60px;padding:5px 8px;background:var(--bg-elev);border:1px solid var(--accent);border-radius:6px;color:var(--accent);font-family:'JetBrains Mono',monospace;font-size:13px;text-align:center;font-weight:600">
-        </td>
-        <td style="padding:8px 10px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:700;color:var(--success)">${actual}</td>
-        <td style="padding:8px 10px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:700;color:${varC}">${planned?varT:'—'}</td>
-        <td style="padding:8px 10px;text-align:center;font-size:12px;color:var(--ink-dim)">${ft||'—'}</td>
-        <td style="padding:8px 10px;text-align:center;font-size:12px;color:var(--ink-dim)">${pt||'—'}</td>
-        <td style="padding:8px 10px;text-align:center;font-size:12px;color:var(--ink-dim)">${cas||'—'}</td>
-        <td style="padding:8px 10px;text-align:center;font-size:12px;color:var(--info)">${tts||'—'}</td>
-        <td style="padding:8px 10px;text-align:center">
-          <input type="text" value="${plan.notes||''}" placeholder="Ghi chú..."
-            onchange="(function(){if(!DB.manningPlan['${curYear}'])DB.manningPlan['${curYear}']={};if(!DB.manningPlan['${curYear}']['${dept.id}'])DB.manningPlan['${curYear}']['${dept.id}']={};DB.manningPlan['${curYear}']['${dept.id}'].notes=this.value;saveData(['manningPlan']);}).call(this)"
-            style="width:180px;padding:5px 8px;background:var(--bg-elev);border:1px solid var(--border);border-radius:6px;color:var(--ink);font-size:12px">
+      const dp = DB.manningPlan[curYear][dept.id]||(DB.manningPlan[curYear][dept.id]={});
+      if(!dp.positions) dp.positions=[];
+
+      // Lấy tất cả chức danh duy nhất trong bộ phận (từ NV đang làm)
+      const rolesInDept = [...new Set(allEmps.filter(e=>e.deptId===dept.id).map(e=>e.role||'').filter(Boolean))].sort();
+
+      // Planned = tổng từ positions nhập tay
+      const totalPlanned  = dp.positions.reduce((s,p)=>s+(parseInt(p.planned)||0),0);
+      const totalActual   = allEmps.filter(e=>e.deptId===dept.id).length;
+      const totalVariance = totalActual - totalPlanned;
+      const varC = totalVariance===0?'var(--ink-dim)':totalVariance>0?'var(--danger)':'var(--success)';
+
+      // Budget tổng = sum budget nhập tay per position
+      const totalBudget = dp.positions.reduce((s,p)=>s+(parseFloat(p.budget)||0),0);
+
+      // Position rows
+      const posRows = rolesInDept.map(title=>{
+        const pos = dp.positions.find(p=>p.title===title)||(()=>{
+          const np={title,planned:0,budget:0};
+          dp.positions.push(np);
+          return np;
+        })();
+        const empCount = allEmps.filter(e=>e.deptId===dept.id&&(e.role||'').trim()===title.trim()).length;
+        const v = empCount-(parseInt(pos.planned)||0);
+        const vc = v===0?'var(--ink-dim)':v>0?'var(--danger)':'var(--success)';
+        return `<tr style="background:rgba(255,255,255,.015);border-bottom:1px solid var(--border)">
+          <td style="padding:6px 14px 6px 28px;font-size:12px;color:var(--ink-dim)">${escapeHtml(title)}</td>
+          <td style="padding:4px 8px;text-align:center">
+            <input type="number" min="0" value="${pos.planned||''}" placeholder="0"
+              onchange="(function(v){const dp=DB.manningPlan['${curYear}']['${dept.id}'];const p=dp.positions.find(x=>x.title===${JSON.stringify(title)});if(p)p.planned=parseInt(v)||0;saveData(['manningPlan']);}).call(this,this.value)"
+              style="width:54px;padding:4px 6px;background:var(--bg-elev);border:1px solid var(--accent);border-radius:5px;color:var(--accent);font-family:'JetBrains Mono',monospace;font-size:12px;text-align:center">
+          </td>
+          <td style="padding:6px 8px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--success)">${empCount}</td>
+          <td style="padding:6px 8px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:${vc}">${pos.planned?(v===0?'=':v>0?'+'+v:String(v)):'—'}</td>
+          <td style="padding:4px 8px;text-align:right">
+            <input type="number" min="0" step="500000" value="${pos.budget||''}" placeholder="0"
+              onchange="(function(v){const dp=DB.manningPlan['${curYear}']['${dept.id}'];const p=dp.positions.find(x=>x.title===${JSON.stringify(title)});if(p)p.budget=parseFloat(v)||0;saveData(['manningPlan']);}).call(this,this.value)"
+              style="width:110px;padding:4px 6px;background:var(--bg-elev);border:1px solid rgba(212,165,116,.4);border-radius:5px;color:var(--accent);font-family:'JetBrains Mono',monospace;font-size:11px;text-align:right">
+          </td>
+        </tr>`;
+      }).join('');
+
+      // Có thể thêm chức danh mới
+      const addPosRow = `<tr style="border-bottom:2px solid var(--border-strong)">
+        <td colspan="5" style="padding:4px 14px 4px 28px">
+          <input type="text" placeholder="+ Thêm chức danh mới (nhập tên rồi Enter)..."
+            onkeydown="if(event.key==='Enter'&&this.value.trim()){const dp=DB.manningPlan['${curYear}']['${dept.id}'];if(!dp.positions)dp.positions=[];if(!dp.positions.find(p=>p.title===this.value.trim())){dp.positions.push({title:this.value.trim(),planned:0,budget:0});}saveData(['manningPlan']);this.value='';render();}"
+            style="width:260px;padding:4px 8px;background:transparent;border:1px dashed var(--border);border-radius:5px;color:var(--ink-muted);font-size:11px">
         </td>
       </tr>`;
+
+      return `<tr style="background:var(--bg-elev);border-top:2px solid var(--border-strong)" class="manning-dept-row" data-dept="${dept.id}">
+        <td style="padding:8px 14px;font-weight:700;font-size:13px;position:sticky;left:0;background:var(--bg-elev);border-right:2px solid var(--border-strong);cursor:pointer"
+          onclick="this.closest('table').querySelectorAll('[data-dept-child=\\'${dept.id}\\']').forEach(r=>r.style.display=r.style.display==='none'?'':'none')">
+          ▸ ${escapeHtml(dept.name)}
+          <span style="font-size:10px;color:var(--ink-muted);font-weight:400;margin-left:6px">${totalActual} NV</span>
+        </td>
+        <td style="padding:6px 8px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:700;color:var(--accent)">${totalPlanned||'—'}</td>
+        <td style="padding:6px 8px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:700;color:var(--success)">${totalActual}</td>
+        <td style="padding:6px 8px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:700;color:${varC}">${totalPlanned?(totalVariance===0?'=':totalVariance>0?'+'+totalVariance:String(totalVariance)):'—'}</td>
+        <td style="padding:6px 12px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--accent)">${fmtM(totalBudget)}</td>
+      </tr>
+      ${posRows ? `<tr data-dept-child="${dept.id}"><td colspan="5" style="padding:0">
+        <table style="width:100%;border-collapse:collapse">${posRows}${addPosRow}</table>
+      </td></tr>` : ''}`;
     }).join('');
 
-    const totPlanned = depts.reduce((s,d)=>(DB.manningPlan[curYear][d.id]?.planned||0)+s, 0);
-    const totActual  = emps.filter(e=>getEffectiveStatus(e)!=='exit').length;
-    const totVar     = totActual - totPlanned;
-    const totVarC    = totVar===0?'var(--ink-dim)':totVar>0?'var(--danger)':'var(--success)';
+    const grandPlanned  = depts.reduce((s,d)=>(DB.manningPlan[curYear][d.id]?.positions||[]).reduce((ss,p)=>ss+(parseInt(p.planned)||0),0)+s,0);
+    const grandActual   = allEmps.length;
+    const grandVar      = grandActual-grandPlanned;
+    const grandVarC     = grandVar===0?'var(--ink-dim)':grandVar>0?'var(--danger)':'var(--success)';
+    const grandBudget   = depts.reduce((s,d)=>(DB.manningPlan[curYear][d.id]?.positions||[]).reduce((ss,p)=>ss+(parseFloat(p.budget)||0),0)+s,0);
 
     return `<div class="card" style="padding:0;overflow:hidden">
       <div style="overflow-x:auto">
         <table style="width:100%;border-collapse:collapse;font-size:13px">
           <thead>
-            <tr style="background:var(--bg-elev)">
-              <th style="padding:10px 14px;text-align:left;position:sticky;left:0;background:var(--bg-elev);z-index:2;min-width:160px;border-right:2px solid var(--border-strong)">Bộ phận</th>
+            <tr style="background:var(--bg-elev);border-bottom:2px solid var(--border-strong)">
+              <th style="padding:10px 14px;text-align:left;position:sticky;left:0;background:var(--bg-elev);z-index:2;min-width:200px;border-right:2px solid var(--border-strong)">Bộ phận / Chức danh</th>
               <th style="padding:10px;text-align:center;min-width:80px;color:var(--accent)">Định biên<br><span style="font-size:9px;opacity:.6">Planned</span></th>
               <th style="padding:10px;text-align:center;min-width:80px;color:var(--success)">Thực tế<br><span style="font-size:9px;opacity:.6">Actual</span></th>
-              <th style="padding:10px;text-align:center;min-width:70px;color:var(--warning)">Chênh lệch<br><span style="font-size:9px;opacity:.6">Variance</span></th>
-              <th style="padding:10px;text-align:center;min-width:60px;color:var(--info)">Full-time</th>
-              <th style="padding:10px;text-align:center;min-width:60px;color:var(--purple)">Part-time</th>
-              <th style="padding:10px;text-align:center;min-width:60px;color:var(--teal)">Casual</th>
-              <th style="padding:10px;text-align:center;min-width:60px;color:var(--info)">TTS</th>
-              <th style="padding:10px;text-align:left;min-width:200px">Ghi chú</th>
+              <th style="padding:10px;text-align:center;min-width:70px;color:var(--warning)">Chênh<br><span style="font-size:9px;opacity:.6">Variance</span></th>
+              <th style="padding:10px;text-align:right;min-width:120px;color:var(--accent)">Budget/tháng<br><span style="font-size:9px;opacity:.6">per position</span></th>
             </tr>
           </thead>
           <tbody>${rows}</tbody>
           <tfoot>
-            <tr style="background:var(--bg-elev);font-weight:700;border-top:2px solid var(--border-strong)">
-              <td style="padding:10px 14px;position:sticky;left:0;background:var(--bg-elev);z-index:1;border-right:2px solid var(--border-strong)">TỔNG</td>
-              <td style="padding:8px 10px;text-align:center;font-family:'JetBrains Mono',monospace;color:var(--accent);font-size:14px">${totPlanned||'—'}</td>
-              <td style="padding:8px 10px;text-align:center;font-family:'JetBrains Mono',monospace;color:var(--success);font-size:14px">${totActual}</td>
-              <td style="padding:8px 10px;text-align:center;font-family:'JetBrains Mono',monospace;color:${totVarC};font-size:14px">${totPlanned?(totVar===0?'=':totVar>0?'+'+totVar:String(totVar)):'—'}</td>
-              <td colspan="5"></td>
+            <tr style="background:#0f1a28;border-top:2px solid var(--border-strong);font-weight:800">
+              <td style="padding:10px 14px;position:sticky;left:0;background:#0f1a28;z-index:1;border-right:2px solid var(--border-strong);color:#FFCC00">∑ TỔNG</td>
+              <td style="padding:8px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:14px;color:var(--accent)">${grandPlanned||'—'}</td>
+              <td style="padding:8px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:14px;color:var(--success)">${grandActual}</td>
+              <td style="padding:8px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:14px;color:${grandVarC}">${grandPlanned?(grandVar===0?'=':grandVar>0?'+'+grandVar:String(grandVar)):'—'}</td>
+              <td style="padding:8px 12px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:13px;color:var(--accent)">${fmtM(grandBudget)}</td>
             </tr>
           </tfoot>
         </table>
@@ -21965,94 +22001,113 @@ function renderManning(main){
     </div>`;
   };
 
-  // ── BUDGET / FORECAST TABLE ──
-  const renderBudgetTab = ()=>{
-    const thStyle = `padding:8px 6px;text-align:center;font-size:10px;font-weight:600;white-space:nowrap`;
-    const rows = depts.map(dept=>{
-      if(!DB.hrBudget[curYear][dept.id]) DB.hrBudget[curYear][dept.id] = {};
-      const dp = DB.hrBudget[curYear][dept.id];
+  /* ══════════════════════════════════════════════════
+     TAB 2 — FORECAST (Auto từ DB.employees active)
+     Layout: Bộ phận → Chức danh → từng NV
+     Cột: Mã | Tên | Lương CB | Phụ cấp | Tổng lương | Chi phí BH 22.5% | Tổng chi phí
+     ══════════════════════════════════════════════════ */
+  const renderForecastTab = ()=>{
+    const BH_RATE = 0.225;
+    const thS = `padding:8px 10px;text-align:right;font-size:10px;font-weight:600;white-space:nowrap;color:var(--ink-muted)`;
+    const thSC = `padding:8px 10px;text-align:center;font-size:10px;font-weight:600;white-space:nowrap;color:var(--ink-muted)`;
+    const thSL = `padding:8px 10px;text-align:left;font-size:10px;font-weight:600;white-space:nowrap;color:var(--ink-muted)`;
 
-      const makeInput = (mi, field, color)=>{
-        const val = (dp[mi]||{})[field]||'';
-        return `<input type="number" min="0" value="${val}" placeholder="—"
-          onchange="(function(){const d=DB.hrBudget['${curYear}'];if(!d['${dept.id}'])d['${dept.id}']={};if(!d['${dept.id}'][${mi}])d['${dept.id}'][${mi}]={};d['${dept.id}'][${mi}]['${field}']=parseFloat(this.value)||0;saveData(['hrBudget']);}).call(this)"
-          style="width:68px;padding:3px 4px;background:var(--bg-elev);border:1px solid ${color}33;border-radius:4px;color:${color};font-family:'JetBrains Mono',monospace;font-size:11px;text-align:right">`;
-      };
+    let grandTotSalary=0, grandTotBH=0, grandTotCost=0;
 
-      // Tổng theo năm
-      const totBudget   = Array.from({length:12},(_,i)=>parseFloat((dp[i]||{}).budget  )||0).reduce((a,b)=>a+b,0);
-      const totForecast = Array.from({length:12},(_,i)=>parseFloat((dp[i]||{}).forecast)||0).reduce((a,b)=>a+b,0);
-      const totActual   = Array.from({length:12},(_,i)=>parseFloat((dp[i]||{}).actual  )||0).reduce((a,b)=>a+b,0);
-      const fmtM = v=>v?Math.round(v/1000000*10)/10+'M':'—';
+    const deptBlocks = depts.map(dept=>{
+      const deptEmps = allEmps.filter(e=>e.deptId===dept.id);
+      if(!deptEmps.length) return '';
 
-      return `<tr style="border-bottom:1px solid var(--border)">
-        <td style="padding:6px 14px;font-weight:600;font-size:12px;position:sticky;left:0;background:var(--bg-card);z-index:1;border-right:2px solid var(--border-strong);min-width:150px">${escapeHtml(dept.name)}</td>
-        <td style="padding:4px 6px;font-size:10px;color:var(--ink-muted);white-space:nowrap;border-right:1px solid var(--border)">
-          <div style="color:var(--accent);font-weight:600">KH</div>
-          <div style="color:var(--info)">FC</div>
-          <div style="color:var(--success)">AC</div>
+      // Group by role
+      const roles = [...new Set(deptEmps.map(e=>e.role||'(Chưa có chức danh)'))].sort();
+      let deptTotSalary=0, deptTotBH=0, deptTotCost=0;
+
+      const roleBlocks = roles.map(role=>{
+        const roleEmps = deptEmps.filter(e=>(e.role||'(Chưa có chức danh)')===role);
+        let roleTotSalary=0, roleTotBH=0, roleTotCost=0;
+
+        // Manning status cho role này
+        const dp = DB.manningPlan[curYear][dept.id]||{};
+        const posData = (dp.positions||[]).find(p=>p.title===role);
+        const plannedHC = posData?.planned||0;
+        const actualHC  = roleEmps.length;
+        const hasManning = plannedHC>0;
+        const manningBadge = hasManning
+          ? `<span style="font-size:9px;padding:1px 6px;border-radius:3px;margin-left:6px;${actualHC<=plannedHC?'background:rgba(126,198,153,.15);color:var(--success)':'background:rgba(229,115,115,.12);color:var(--danger)'}">${actualHC}/${plannedHC}</span>`
+          : `<span style="font-size:9px;padding:1px 6px;border-radius:3px;margin-left:6px;background:rgba(232,185,116,.12);color:var(--warning)">No manning</span>`;
+
+        const empRows = roleEmps.map(e=>{
+          const cd    = DB.customData[e.id]||{};
+          const base  = parseInt(cd.baseSalary)||0;
+          const bonus = parseInt(cd.bonusSalary)||0;
+          const total = base+bonus;
+          const bh    = Math.round(total*BH_RATE);
+          const cost  = total+bh;
+          roleTotSalary+=total; roleTotBH+=bh; roleTotCost+=cost;
+          return `<tr style="border-bottom:1px solid var(--border)">
+            <td style="padding:5px 10px 5px 36px;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--ink-muted)">${e.code||'—'}</td>
+            <td style="padding:5px 10px;font-size:12px;font-weight:500">${escapeHtml(e.name)}</td>
+            <td style="padding:5px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--ink-dim)">${fmtVND(base)}</td>
+            <td style="padding:5px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--ink-dim)">${fmtVND(bonus)}</td>
+            <td style="padding:5px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:600;color:var(--accent)">${fmtVND(total)}</td>
+            <td style="padding:5px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--purple)">${fmtVND(bh)}</td>
+            <td style="padding:5px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:var(--info)">${fmtVND(cost)}</td>
+          </tr>`;
+        }).join('');
+
+        deptTotSalary+=roleTotSalary; deptTotBH+=roleTotBH; deptTotCost+=roleTotCost;
+
+        return `<tr style="background:rgba(212,165,116,.04);border-top:1px solid var(--border)">
+          <td colspan="2" style="padding:6px 10px 6px 22px;font-size:11.5px;font-weight:600;color:var(--ink-dim)">
+            ${escapeHtml(role)}${manningBadge}
+          </td>
+          <td colspan="2" style="padding:6px 10px;text-align:right;font-size:10px;color:var(--ink-muted)">${roleEmps.length} NV</td>
+          <td style="padding:6px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--accent)">${fmtVND(roleTotSalary)}</td>
+          <td style="padding:6px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--purple)">${fmtVND(roleTotBH)}</td>
+          <td style="padding:6px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:700;color:var(--info)">${fmtVND(roleTotCost)}</td>
+        </tr>
+        ${empRows}`;
+      }).join('');
+
+      grandTotSalary+=deptTotSalary; grandTotBH+=deptTotBH; grandTotCost+=deptTotCost;
+
+      return `<tr style="background:var(--bg-elev);border-top:2px solid var(--border-strong)">
+        <td colspan="4" style="padding:8px 14px;font-weight:700;font-size:13px;color:var(--accent)">
+          ${escapeHtml(dept.name)} <span style="font-size:10px;color:var(--ink-muted);font-weight:400">${deptEmps.length} NV</span>
         </td>
-        ${Array.from({length:12},(_,mi)=>`<td style="padding:3px 2px;text-align:center;border-right:1px solid var(--border)">
-          <div>${makeInput(mi,'budget','var(--accent)')}</div>
-          <div style="margin-top:2px">${makeInput(mi,'forecast','var(--info)')}</div>
-          <div style="margin-top:2px">${makeInput(mi,'actual','var(--success)')}</div>
-        </td>`).join('')}
-        <td style="padding:4px 8px;text-align:right;border-left:2px solid var(--border-strong);min-width:80px">
-          <div style="color:var(--accent);font-size:11px;font-family:'JetBrains Mono',monospace">${fmtM(totBudget)}</div>
-          <div style="color:var(--info);font-size:11px;font-family:'JetBrains Mono',monospace">${fmtM(totForecast)}</div>
-          <div style="color:var(--success);font-size:11px;font-family:'JetBrains Mono',monospace">${fmtM(totActual)}</div>
-        </td>
-      </tr>`;
+        <td style="padding:8px 12px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:var(--accent)">${fmtVND(deptTotSalary)}</td>
+        <td style="padding:8px 12px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:var(--purple)">${fmtVND(deptTotBH)}</td>
+        <td style="padding:8px 12px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:var(--info)">${fmtVND(deptTotCost)}</td>
+      </tr>${roleBlocks}`;
     }).join('');
 
-    // Footer tổng
-    const grandBudget   = depts.reduce((s,d)=>s+Array.from({length:12},(_,i)=>parseFloat(((DB.hrBudget[curYear][d.id]||{})[i]||{}).budget  )||0).reduce((a,b)=>a+b,0),0);
-    const grandForecast = depts.reduce((s,d)=>s+Array.from({length:12},(_,i)=>parseFloat(((DB.hrBudget[curYear][d.id]||{})[i]||{}).forecast)||0).reduce((a,b)=>a+b,0),0);
-    const grandActual   = depts.reduce((s,d)=>s+Array.from({length:12},(_,i)=>parseFloat(((DB.hrBudget[curYear][d.id]||{})[i]||{}).actual  )||0).reduce((a,b)=>a+b,0),0);
-    const fmtM = v=>v?Math.round(v/1000000*10)/10+'M':'—';
-
-    return `<div style="margin-bottom:10px;font-size:12px;color:var(--ink-muted)">
-      <span style="background:rgba(212,165,116,.1);color:var(--accent);padding:3px 10px;border-radius:4px;font-weight:600;margin-right:8px">KH = Kế hoạch (Budget)</span>
-      <span style="background:rgba(126,182,232,.1);color:var(--info);padding:3px 10px;border-radius:4px;font-weight:600;margin-right:8px">FC = Dự báo (Forecast)</span>
-      <span style="background:rgba(126,198,153,.1);color:var(--success);padding:3px 10px;border-radius:4px;font-weight:600">AC = Thực tế (Actual)</span>
-      <span style="margin-left:12px;color:var(--ink-muted)">Đơn vị: VNĐ</span>
+    return `<div style="margin-bottom:10px;font-size:12px;color:var(--ink-muted);display:flex;gap:16px;flex-wrap:wrap">
+      <span>💡 Tổng lương = Lương CB + Phụ cấp</span>
+      <span style="color:var(--purple)">Chi phí BHXH+CĐ = Tổng lương × 22.5%</span>
+      <span style="color:var(--info)">Tổng chi phí = Tổng lương + BHXH+CĐ</span>
+      <span style="color:var(--warning)">⚠ Chỉ hiện NV đang làm việc</span>
     </div>
     <div class="card" style="padding:0;overflow:hidden">
       <div style="overflow-x:auto">
-        <table style="border-collapse:collapse;font-size:12px">
+        <table style="width:100%;border-collapse:collapse;font-size:12px">
           <thead>
-            <tr style="background:var(--bg-elev)">
-              <th style="${thStyle};text-align:left;position:sticky;left:0;background:var(--bg-elev);z-index:2;border-right:2px solid var(--border-strong)">Bộ phận</th>
-              <th style="${thStyle};border-right:1px solid var(--border)">Loại</th>
-              ${MN.map(m=>`<th style="${thStyle};min-width:76px">${m}</th>`).join('')}
-              <th style="${thStyle};border-left:2px solid var(--border-strong);min-width:80px">Cả năm</th>
+            <tr style="background:var(--bg-elev);border-bottom:2px solid var(--border-strong)">
+              <th style="${thSL};position:sticky;left:0;background:var(--bg-elev);z-index:2;min-width:100px;border-right:1px solid var(--border)">Mã NV</th>
+              <th style="${thSL};min-width:160px">Họ tên</th>
+              <th style="${thS};min-width:110px">Lương CB</th>
+              <th style="${thS};min-width:100px">Phụ cấp</th>
+              <th style="${thS};min-width:120px;color:var(--accent)">Tổng lương</th>
+              <th style="${thS};min-width:120px;color:var(--purple)">BHXH+CĐ<br><span style="font-size:9px;opacity:.7">(22.5%)</span></th>
+              <th style="${thS};min-width:130px;color:var(--info)">Tổng chi phí</th>
             </tr>
           </thead>
-          <tbody>${rows}</tbody>
+          <tbody>${deptBlocks}</tbody>
           <tfoot>
-            <tr style="background:var(--bg-elev);border-top:2px solid var(--border-strong)">
-              <td style="padding:8px 14px;font-weight:700;position:sticky;left:0;background:var(--bg-elev);z-index:1;border-right:2px solid var(--border-strong)">TỔNG</td>
-              <td style="padding:4px 6px;font-size:10px;border-right:1px solid var(--border)">
-                <div style="color:var(--accent);font-weight:600">KH</div>
-                <div style="color:var(--info)">FC</div>
-                <div style="color:var(--success)">AC</div>
-              </td>
-              ${Array.from({length:12},(_,mi)=>{
-                const bud = depts.reduce((s,d)=>s+(parseFloat(((DB.hrBudget[curYear][d.id]||{})[mi]||{}).budget  )||0),0);
-                const frc = depts.reduce((s,d)=>s+(parseFloat(((DB.hrBudget[curYear][d.id]||{})[mi]||{}).forecast)||0),0);
-                const act = depts.reduce((s,d)=>s+(parseFloat(((DB.hrBudget[curYear][d.id]||{})[mi]||{}).actual  )||0),0);
-                const fmt = v=>v?Math.round(v/1000000*10)/10+'M':'—';
-                return `<td style="padding:4px 6px;text-align:right;border-right:1px solid var(--border)">
-                  <div style="color:var(--accent);font-family:'JetBrains Mono',monospace;font-size:10px">${fmt(bud)}</div>
-                  <div style="color:var(--info);font-family:'JetBrains Mono',monospace;font-size:10px">${fmt(frc)}</div>
-                  <div style="color:var(--success);font-family:'JetBrains Mono',monospace;font-size:10px">${fmt(act)}</div>
-                </td>`;
-              }).join('')}
-              <td style="padding:6px 10px;text-align:right;border-left:2px solid var(--border-strong)">
-                <div style="color:var(--accent);font-weight:700;font-family:'JetBrains Mono',monospace;font-size:11px">${fmtM(grandBudget)}</div>
-                <div style="color:var(--info);font-weight:700;font-family:'JetBrains Mono',monospace;font-size:11px">${fmtM(grandForecast)}</div>
-                <div style="color:var(--success);font-weight:700;font-family:'JetBrains Mono',monospace;font-size:11px">${fmtM(grandActual)}</div>
-              </td>
+            <tr style="background:#0f1a28;border-top:2px solid var(--border-strong)">
+              <td colspan="4" style="padding:10px 14px;font-weight:800;color:#FFCC00;font-size:13px">∑ TỔNG TOÀN KHÁCH SẠN</td>
+              <td style="padding:10px 12px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:800;color:var(--accent)">${fmtVND(grandTotSalary)}</td>
+              <td style="padding:10px 12px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:800;color:var(--purple)">${fmtVND(grandTotBH)}</td>
+              <td style="padding:10px 12px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:800;color:#FFCC00">${fmtVND(grandTotCost)}</td>
             </tr>
           </tfoot>
         </table>
@@ -22063,9 +22118,9 @@ function renderManning(main){
   main.innerHTML = `
     <div class="topbar">
       <div class="topbar-left">
-        <div class="crumb">PHÁT TRIỂN · <span>Manning & Budget</span></div>
+        <div class="crumb">NHÂN SỰ · <span>Manning & Budget</span></div>
         <h1 class="page-title">Manning <em>&</em> Budget</h1>
-        <div class="page-sub">Định biên · Ngân sách · Dự báo chi phí nhân sự</div>
+        <div class="page-sub">Định biên · Ngân sách · Dự báo chi phí nhân sự · ${allEmps.length} NV đang làm việc</div>
       </div>
       <div class="topbar-actions">
         <select onchange="window._manningYear=parseInt(this.value);render()"
@@ -22074,18 +22129,11 @@ function renderManning(main){
         </select>
       </div>
     </div>
-
-    <!-- Tab bar -->
     <div class="tab-bar" style="margin-bottom:20px">
-      <button class="tab-btn ${activeTab==='manning'?'active':''}" onclick="window._manningTab='manning';render()">
-        👥 Manning — Định biên
-      </button>
-      <button class="tab-btn ${activeTab==='budget'?'active':''}" onclick="window._manningTab='budget';render()">
-        💰 Budget & Forecast
-      </button>
+      <button class="tab-btn ${activeTab==='manning'?'active':''}" onclick="window._manningTab='manning';render()">👥 Manning — Định biên</button>
+      <button class="tab-btn ${activeTab==='forecast'?'active':''}" onclick="window._manningTab='forecast';render()">📊 Forecast — Chi phí nhân sự</button>
     </div>
-
-    ${activeTab==='manning' ? renderManningTab() : renderBudgetTab()}
+    ${activeTab==='manning' ? renderManningTab() : renderForecastTab()}
   `;
 }
 
