@@ -22262,8 +22262,27 @@ function renderManning(main){
             if(mi===sortedMonths[0]) gTotals[mi].hc++;
 
             const saveAct = field=>`(function(v){const yr=DB.manningActual['${curYear}'];if(!yr['${mi}'])yr['${mi}']={};if(!yr['${mi}']['${e.id}'])yr['${mi}']['${e.id}']={};yr['${mi}']['${e.id}']['${field}']=parseFloat(v)||0;saveData(['manningActual']);}).call(this,this.value)`;
-            const inpS = (field,val,w,color)=>`<input type="number" min="0" step="${field.includes('sal')||field.includes('bon')||field.includes('bh')?'100000':'0.5'}" value="${val||''}" placeholder="auto"
-              onchange="${saveAct(field)}"
+
+            // Helper: tính lại và update DOM khi thay đổi lương/BH
+            const recalcJS = `(function(){
+              const row=this.closest('tr');
+              const salEl=row.querySelector('[data-sal]'); const bonEl=row.querySelector('[data-bon]');
+              const bhEl=row.querySelector('[data-bh]');  const totEl=row.querySelector('[data-tot]');
+              const mealEl=row.querySelector('[data-meal]'); const othEl=row.querySelector('[data-oth]');
+              const s=parseFloat(salEl?.value)||0; const b=parseFloat(bonEl?.value)||0;
+              const sal=s+b;
+              const bh=parseFloat(bhEl?.value)||Math.round(s*${BH_RATE_LOCAL});
+              const meal=parseFloat(mealEl?.textContent?.replace(/[^\\d]/g,''))||0;
+              const oth=parseFloat(othEl?.value)||0;
+              const tot=sal+bh+meal+oth;
+              const salTotEl=row.querySelector('[data-saltot]');
+              if(salTotEl)salTotEl.textContent=sal.toLocaleString('vi');
+              if(totEl)totEl.textContent=tot.toLocaleString('vi');
+            }).call(this)`;
+
+            const inpS = (field,val,w,color,dataAttr)=>`<input type="number" min="0" step="100000" value="${val||''}" placeholder="auto"
+              data-${dataAttr}=""
+              onchange="${saveAct(field)};${recalcJS}"
               style="width:${w}px;padding:2px 4px;background:var(--bg-elev);border:1px solid ${color}55;border-radius:3px;color:${color};font-family:'JetBrains Mono',monospace;font-size:10px;text-align:right">`;
 
             if(multiMode){
@@ -22273,22 +22292,22 @@ function renderManning(main){
                 <td style="padding:3px 5px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--teal)">${meal?meal.toLocaleString('vi'):'—'}</td>
                 <td style="padding:3px 7px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:700;color:#FFCC00">${(Math.round(tot)).toLocaleString('vi')}</td>`;
             } else {
-              return `<td style="padding:3px 6px;text-align:right">${inpS('salOverride',eact.salOverride,88,'var(--success)')}</td>
-                <td style="padding:3px 6px;text-align:right">${inpS('bonOverride',eact.bonOverride,80,'var(--ink-dim)')}</td>
-                <td style="padding:3px 5px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:600;color:var(--success)">${(Math.round(sal)).toLocaleString('vi')}</td>
-                <td style="padding:3px 6px;text-align:right">${inpS('bhOverride',eact.bhOverride,80,'var(--purple)')}</td>
+              return `<td style="padding:3px 6px;text-align:right">${inpS('salOverride',eact.salOverride,88,'var(--success)','sal')}</td>
+                <td style="padding:3px 6px;text-align:right">${inpS('bonOverride',eact.bonOverride,80,'var(--ink-dim)','bon')}</td>
+                <td style="padding:3px 5px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:600;color:var(--success)"><span data-saltot="">${(Math.round(sal)).toLocaleString('vi')}</span></td>
+                <td style="padding:3px 6px;text-align:right">${inpS('bhOverride',eact.bhOverride,80,'var(--purple)','bh')}</td>
                 <td style="padding:2px 4px;text-align:center">
                   <input type="number" min="0" max="31" step="0.5" value="${wdays||''}" placeholder="0"
-                    onchange="${saveAct('workDays')}"
+                    onchange="${saveAct('workDays')};(function(){const row=this.closest('tr');const mealEl=row.querySelector('[data-meal]');const totEl=row.querySelector('[data-tot]');const salTotEl=row.querySelector('[data-saltot]');const bhEl=row.querySelector('[data-bh]');const othEl=row.querySelector('[data-oth]');const sal=parseFloat(salTotEl?.textContent?.replace(/[^\\d.]/g,''))||${Math.round(sal)};const bh=parseFloat(bhEl?.value)||${bh};const meal=Math.round((parseFloat(this.value)||0)*${mealRate});const oth=parseFloat(othEl?.value)||0;if(mealEl)mealEl.textContent=meal?meal.toLocaleString('vi'):'—';if(totEl)totEl.textContent=(sal+bh+meal+oth).toLocaleString('vi');}).call(this)"
                     style="width:50px;padding:3px 5px;background:var(--bg-elev);border:1px solid var(--teal)55;border-radius:4px;color:var(--teal);font-family:'JetBrains Mono',monospace;font-size:11px;text-align:center">
                 </td>
-                <td style="padding:3px 5px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--teal)">${meal?meal.toLocaleString('vi'):'—'}</td>
+                <td style="padding:3px 5px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--teal)"><span data-meal="">${meal?meal.toLocaleString('vi'):'—'}</span></td>
                 <td style="padding:3px 6px;text-align:right">
-                  <input type="number" min="0" step="10000" value="${oth||''}" placeholder="0"
-                    onchange="${saveAct('other')}"
+                  <input type="number" min="0" step="10000" value="${oth||''}" placeholder="0" data-oth=""
+                    onchange="${saveAct('other')};(function(){const row=this.closest('tr');const totEl=row.querySelector('[data-tot]');const salTotEl=row.querySelector('[data-saltot]');const bhEl=row.querySelector('[data-bh]');const mealEl=row.querySelector('[data-meal]');const sal=parseFloat(salTotEl?.textContent?.replace(/[^\\d.]/g,''))||${Math.round(sal)};const bh=parseFloat(bhEl?.value)||${bh};const meal=parseFloat(mealEl?.textContent?.replace(/[^\\d]/g,''))||0;const oth=parseFloat(this.value)||0;if(totEl)totEl.textContent=(sal+bh+meal+oth).toLocaleString('vi');}).call(this)"
                     style="width:80px;padding:3px 5px;background:var(--bg-elev);border:1px solid var(--warning)44;border-radius:4px;color:var(--warning);font-family:'JetBrains Mono',monospace;font-size:11px;text-align:right">
                 </td>
-                <td style="padding:3px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:#FFCC00">${(Math.round(tot)).toLocaleString('vi')}</td>`;
+                <td style="padding:3px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:#FFCC00"><span data-tot="">${(Math.round(tot)).toLocaleString('vi')}</span></td>`;
             }
           }).join('');
 
@@ -22471,13 +22490,16 @@ function renderManning(main){
         <div class="page-sub">Định biên · Ngân sách · Chi phí nhân sự · ${allEmps.length} NV đang làm việc</div>
       </div>
       <div class="topbar-actions">
+        ${tab==='budget'?`
+        <button class="btn" onclick="document.querySelectorAll('[data-dept-pos]').forEach(r=>r.style.display='');toast('Đã mở tất cả','success')" style="font-size:12px">▼ Mở tất cả</button>
+        <button class="btn" onclick="document.querySelectorAll('[data-dept-pos]').forEach(r=>r.style.display='none');toast('Đã đóng tất cả','success')" style="font-size:12px">▶ Đóng tất cả</button>`:''}
         <select onchange="window._manningYear=parseInt(this.value);render()"
           style="background:var(--bg-card);border:1px solid var(--border);border-radius:7px;padding:8px 12px;color:var(--ink);font-family:inherit;font-size:13px">
           ${years.map(y=>`<option value="${y}" ${y===curYear?'selected':''}>${y}</option>`).join('')}
         </select>
         <button class="btn" onclick="exportManningXLSX()">${ICONS.download} Xuất Excel</button>
         <label class="btn" style="cursor:pointer">
-          ${ICONS.upload} Nhập Excel
+          📂 Nhập Excel
           <input type="file" accept=".xlsx,.xls" style="display:none" onchange="importManningXLSX(this)">
         </label>
       </div>
