@@ -6674,14 +6674,12 @@ function exportRecruitmentPDF(){
   const hired = (DB.candidates||[]).filter(c=>c.status==='hired').length;
   const conv = totalCands > 0 ? (hired/totalCands*100).toFixed(1) : 0;
   const needTotal = DB.jobs.reduce((s,j)=>s+(j.positions||1),0);
-  const hiredTotal = DB.jobs.reduce((s,j)=>{
-    return s + (DB.candidates||[]).filter(c=>c.jobId===j.id&&c.status==='hired').length;
-  },0);
+  const hiredTotal = DB.jobs.reduce((s,j)=> s + getJobHired(j.id), 0);
 
   const jobTableRows = DB.jobs.map(j=>{
     const dept = DB.departments.find(d=>d.id===j.deptId);
     const cands = (DB.candidates||[]).filter(c=>c.jobId===j.id);
-    const hiredJ = cands.filter(c=>c.status==='hired').length;
+    const hiredJ = getJobHired(j.id);
     const pct = (j.positions||1) > 0 ? Math.round(hiredJ/(j.positions||1)*100) : 0;
     const statusColor = j.status==='open'?'#4caf50':j.status==='paused'?'#ff9800':j.status==='closed'?'#9e9e9e':'#2196f3';
     const prioColor = j.priority==='high'?'#f44336':j.priority==='medium'?'#ff9800':'#4caf50';
