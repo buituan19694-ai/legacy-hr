@@ -1094,7 +1094,6 @@ function _pushDynamicKey(key, meta){
 
   if(key === 'candidates'){
     const arr = DB.candidates || [];
-    // Sanitize: loại bỏ undefined/NaN trước khi đẩy Firebase
     const sanitize = (obj) => {
       const out = {};
       Object.keys(obj).forEach(k=>{
@@ -1106,11 +1105,13 @@ function _pushDynamicKey(key, meta){
     };
     const byJob = {};
     arr.forEach(r=>{ const j=r.jobId||'_nojob'; (byJob[j]=byJob[j]||[]).push(sanitize(r)); });
-    Object.entries(byJob).forEach(([jid,records])=>{
+    const writes = Object.entries(byJob).map(([jid,records])=>
       window.fbDb.collection('hrdata').doc(`cand_${jid}`)
         .set({...meta, candidates:records, _shard:jid}, {merge:false})
-        .catch(err=>console.error(`[saveData] ❌ cand_${jid}`, err.message));
-    });
+        .catch(err=>{ console.error(`[saveData] ❌ cand_${jid}`, err.message); toast('❌ Lỗi lưu ứng viên: '+err.message,'error'); })
+    );
+    // Không cần await — fire and forget nhưng log xác nhận
+    Promise.all(writes).then(()=>console.log('[saveData] ✅ candidates saved', arr.length, 'records'));
     return;
   }
 
@@ -14228,7 +14229,22 @@ function saveCandidate(id, jobId, isNew){
       DB.candidates[i].hiredDate = oldHiredDate || data.hiredDate || '';
     }
   }
-  saveData(['candidates','jobs']); closeModal(); toast(isNew?'Đã thêm ứng viên':(_lang==="en"?"Updated":"Đã cập nhật")); render();
+  // Close modal và render ngay (data đã update trong memory)
+  closeModal(); render();
+  // Save lên Firestore async — không chặn UI
+  const savePromise = new Promise(resolve=>{
+    const meta2 = {_syncBy: window.currentUser?.uid||'', _syncAt: Date.now(), _lastSaved: Date.now()};
+    const sanitize2 = (obj)=>{ const out={}; Object.keys(obj).forEach(k=>{ const v=obj[k]; out[k]=(v===undefined||(typeof v==='number'&&isNaN(v)))?'':v; }); return out; };
+    const byJob2 = {};
+    (DB.candidates||[]).forEach(r=>{ const j2=r.jobId||'_nojob'; (byJob2[j2]=byJob2[j2]||[]).push(sanitize2(r)); });
+    const writes2 = Object.entries(byJob2).filter(([jid])=>jid===jobId||jid===(data.jobId||'_nojob')).map(([jid,recs])=>
+      window.fbDb?.collection('hrdata').doc(`cand_${jid}`).set({...meta2, candidates:recs, _shard:jid},{merge:false})
+    ).filter(Boolean);
+    Promise.all(writes2).then(()=>{ toast(isNew?'✅ Đã thêm ứng viên':(_lang==="en"?"✅ Updated":"✅ Đã cập nhật")); resolve(); })
+      .catch(err=>{ toast('❌ Lỗi lưu: '+err.message,'error'); resolve(); });
+  });
+  // Cũng save jobs
+  saveData(['jobs']);
 }
 
 function deleteCandidate(id, fromModal=false){
@@ -22233,7 +22249,8 @@ function renderManning(main){
         const oth    = parseFloat(p.budgetOther)||0;
         const tot1   = sal+bh+meal+oth;
         const totHC  = tot1*hc;
-        dHC+=hc;dSal+=sal*hc;dBH+=bh*hc;dMeal+=meal*hc;dOth+=oth*hc;dTotHC+=tot1*hc;
+        dHC+=hc;dSal+=sal*hc;dBH+=bh*hc;dMeal+=meal*hc;dOth+=oth*hc;dTotHC+=totHC;
+        gHC+=hc;gSal+=sal*hc;gBH+=bh*hc;gMeal+=meal*hc;gOth+=oth*hc;gTotHC+=totHC;
         const actHC  = allEmps.filter(e=>e.deptId===dept.id&&(e.role||'').trim()===title.trim()).length;
         const noM    = !hc?`<span style="font-size:9px;padding:1px 5px;border-radius:3px;margin-left:4px;background:rgba(232,185,116,.15);color:var(--warning)">No manning</span>`:'';
         const savePos = field=>`(function(v){const p=DB.manningPlan['${curYear}'].depts['${dept.id}'].positions.find(x=>x.title===${JSON.stringify(title)});if(p){p['${field}']=parseFloat(v)||0;if('${field}'==='budgetSalary'&&!p.budgetBH)p.budgetBH=Math.round((parseFloat(v)||0)*${BH_RATE});}saveData(['manningPlan']);}).call(this,this.value)`;
@@ -22358,6 +22375,10 @@ function renderManning(main){
       const dp = getDeptPlan(dept.id);
       const roles = [...new Set(deptEmps.map(e=>e.role||'(Chưa có vị trí)'))].sort();
 
+      // Dept-level totals
+      const dTotals = {};
+      sortedMonths.forEach(mi=>{ dTotals[mi]={sal:0,bh:0,meal:0,oth:0,tot:0}; });
+
       const roleBlocks = roles.map(role=>{
         const isCollapsed = window._actualCollapsed;
         const pos = dp.positions.find(p=>p.title===role)||{};
@@ -22366,21 +22387,19 @@ function renderManning(main){
 
         const empRows = roleEmps.map(e=>{
           const cd    = DB.customData[e.id]||{};
-          // Override lương/BHXH per NV per month từ actMo
           const empCells = sortedMonths.map(mi=>{
             const actMo = (DB.manningActual[curYear]||{})[mi]||{};
             const eact  = actMo[e.id]||{};
-            // Lương: dùng override nếu có, fallback DB
             const base  = parseFloat(eact.salOverride ?? cd.baseSalary) || (parseInt(cd.baseSalary)||0);
             const bonus = parseFloat(eact.bonOverride ?? cd.bonusSalary) || (parseInt(cd.bonusSalary)||0);
             const sal   = base+bonus;
-            // BHXH: override nếu có, fallback auto
             const bh    = parseFloat(eact.bhOverride) || Math.round(base*BH_RATE_LOCAL);
             const wdays = parseInt(eact.workDays)||0;
             const meal  = Math.round(wdays*mealRate);
             const oth   = parseFloat(eact.other)||0;
             const tot   = sal+bh+meal+oth;
             gTotals[mi].sal+=sal;gTotals[mi].bh+=bh;gTotals[mi].meal+=meal;gTotals[mi].oth+=oth;gTotals[mi].tot+=tot;
+            dTotals[mi].sal+=sal;dTotals[mi].bh+=bh;dTotals[mi].meal+=meal;dTotals[mi].oth+=oth;dTotals[mi].tot+=tot;
             if(mi===sortedMonths[0]) gTotals[mi].hc++;
 
             const saveAct = field=>`(function(v){const yr=DB.manningActual['${curYear}'];if(!yr['${mi}'])yr['${mi}']={};if(!yr['${mi}']['${e.id}'])yr['${mi}']['${e.id}']={};yr['${mi}']['${e.id}']['${field}']=parseFloat(v)||0;saveData(['manningActual']);}).call(this,this.value)`;
@@ -22455,7 +22474,21 @@ function renderManning(main){
           onclick="(function(){window._actualCollapsed=false;const rows=document.querySelectorAll('[data-dept-actual=\\'${dept.id}\\']');const anyVis=[...rows].some(r=>r.style.display!=='none');rows.forEach(r=>r.style.display=anyVis?'none':'');})()">
           ▸ ${escapeHtml(dept.name)} <span style="font-size:10px;color:var(--ink-muted);font-weight:400">${deptEmps.length} NV</span>
         </td>
-        ${multiMode ? sortedMonths.map(()=>'<td colspan="5" style="border-left:2px solid var(--border-strong)"></td>').join('') : '<td colspan="8"></td>'}
+        ${multiMode
+          ? sortedMonths.map(mi=>{
+              const t=dTotals[mi];
+              return `<td style="padding:5px 5px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:700;color:var(--success);border-left:2px solid var(--border-strong)">${fmtM(t.sal)}</td>
+                <td style="padding:5px 5px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:700;color:var(--purple)">${fmtM(t.bh)}</td>
+                <td style="padding:5px 5px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--teal)">${fmtM(t.meal)}</td>
+                <td style="padding:5px 7px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:800;color:#FFCC00">${fmtM(t.tot)}</td>`;
+            }).join('')
+          : (()=>{const t=dTotals[singleMi]; return `
+            <td colspan="3" style="padding:5px 8px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:var(--success)">${fmtM(t.sal)}</td>
+            <td style="padding:5px 8px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:var(--purple)">${fmtM(t.bh)}</td>
+            <td style="padding:5px 8px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--teal)">${fmtM(t.meal)}</td>
+            <td style="padding:5px 8px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--warning)">${fmtM(t.oth)}</td>
+            <td style="padding:5px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:800;color:#FFCC00">${fmtM(t.tot)}</td>`;})()
+        }
       </tr>${roleBlocks}`;
     }).join('');
 
