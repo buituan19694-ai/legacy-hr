@@ -8920,18 +8920,22 @@ function exportLeaveXLSX(){
     if(statusF==='active') return ['active','probation','leave'].includes(st);
     return true;
   });
-  // Thêm trainee đang hoạt động (giống bảng Theo dõi)
-  if(statusF!=='exit'){
-    var now=today.toISOString().slice(0,10);
-    var activeTrainees=(DB.trainees||[])
-      .filter(function(tr){return tr.startDate&&(!tr.endDate||tr.endDate>=now);})
-      .map(function(tr){return {
-        id:tr.id, code:tr.code||'', name:tr.name||'',
-        role:'Thực tập sinh', deptId:tr.deptId||'',
-        joined:tr.startDate||'', status:'active', _isTrainee:true
-      };});
-    emps = emps.concat(activeTrainees);
-  }
+  // Thêm trainee theo trạng thái (đang làm / đã nghỉ)
+  var nowStr2 = today.toISOString().slice(0,10);
+  var filteredTrainees = (DB.trainees||[])
+    .filter(function(tr){
+      if(!tr.startDate) return false;
+      var isActive = !tr.endDate || tr.endDate >= nowStr2;
+      if(statusF === 'exit') return !isActive;
+      if(statusF === 'active') return isActive;
+      return true;
+    })
+    .map(function(tr){return {
+      id:tr.id, code:tr.code||'', name:tr.name||'',
+      role:'Thực tập sinh', deptId:tr.deptId||'',
+      joined:tr.startDate||'', status:'active', _isTrainee:true
+    };});
+  emps = emps.concat(filteredTrainees);
   emps = emps.sort(function(a,b){return (a.deptId||'').localeCompare(b.deptId||'')||a.name.localeCompare(b.name,'vi');});
 
   var mnEN=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
@@ -9253,7 +9257,13 @@ function renderLeaveReports(main){
   if(!bal.emp){
     const now = today.toISOString().slice(0,10);
     const activeTrainees = (DB.trainees||[])
-      .filter(tr => tr.startDate && (!tr.endDate || tr.endDate >= now))
+      .filter(tr => {
+        if(!tr.startDate) return false;
+        const isActive = !tr.endDate || tr.endDate >= now;
+        if(statusFilter === 'exit') return !isActive;
+        if(statusFilter === 'active') return isActive;
+        return true; // 'all'
+      })
       .filter(tr => !bal.dept || tr.deptId === bal.dept)
       .map(tr => ({
         id: tr.id, code: tr.code||'', name: tr.name||'',
