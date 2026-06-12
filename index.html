@@ -22171,7 +22171,11 @@ function renderManning(main){
 
   const MN = ['T1','T2','T3','T4','T5','T6','T7','T8','T9','T10','T11','T12'];
   const MN_FULL = ['Tháng 1','Tháng 2','Tháng 3','Tháng 4','Tháng 5','Tháng 6','Tháng 7','Tháng 8','Tháng 9','Tháng 10','Tháng 11','Tháng 12'];
-  const years = []; for(let y=today.getFullYear()-1;y<=today.getFullYear()+2;y++) years.push(y);
+  const years = [...new Set([
+    today.getFullYear(), // năm hiện tại luôn có
+    ...Object.keys(DB.manningPlan||{}).map(Number).filter(y=>!isNaN(y)),
+    ...Object.keys(DB.manningActual||{}).map(Number).filter(y=>!isNaN(y)),
+  ])].sort((a,b)=>b-a);
   const depts = DB.departments||[];
   const allEmps = (DB.employees||[]).filter(e=>getEffectiveStatus(e)!=='exit');
   const BH_RATE = 0.225;
