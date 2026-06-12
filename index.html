@@ -9801,17 +9801,16 @@ function renderLeavePlan(main){
     if(fDatEl){ fDatEl.textContent=fDatFoot; fDatEl.style.color=fDatCFoot; }
   };
 
-  // Tính "Tồn cuối năm" cho 1 NV = Tổng phát sinh (carry+ALL entitle) - Tổng đã nghỉ
+  // Tính "Tồn cuối năm" cho 1 NV — dùng đúng công thức như bảng Theo dõi (calcRow)
   const getEmpRemain = (empId, mi, type)=>{
     const sh = ((DB.leaveSheet[empId]||{})[curYear]||{})[type]||{};
     const carry = parseFloat(sh.carry)||0;
-    const entitle = sh.entitle||[];
-    // Tổng phát sinh = carry + ALL entitle T1-T12
-    const pendingEnt = carry + entitle.reduce((s,x)=>s+(parseFloat(x)||0), 0);
-    // Tổng đã nghỉ T1-T12
-    const taken = sh.taken||[];
-    const used = taken.reduce((s,x)=>s+(parseFloat(x)||0), 0);
-    return Math.round((pendingEnt - used)*100)/100;
+    const entitle = Array.isArray(sh.entitle) ? sh.entitle : Array(12).fill(0);
+    const taken   = Array.isArray(sh.taken)   ? sh.taken   : Array(12).fill(0);
+    const totalEntitle = carry + entitle.reduce((s,x)=>s+(parseFloat(x)||0), 0);
+    const totalUsed    = taken.reduce((s,x)=>s+(parseFloat(x)||0), 0);
+    // Tồn cuối năm = Tổng phát sinh - Tổng đã nghỉ (giống cột cuối bảng Theo dõi)
+    return Math.round((totalEntitle - totalUsed)*100)/100;
   };
 
   const getBalByDept = (deptId, mi, type)=>{
