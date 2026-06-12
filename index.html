@@ -22238,6 +22238,20 @@ applyTheme('dark');
 if(!DB.manningPlan)   DB.manningPlan   = {};
 if(!DB.manningActual) DB.manningActual = {};
 
+function _saveBudgetPos(el, dIdEnc, titEnc, field, yr, bhRate){
+  const deptId = decodeURIComponent(dIdEnc);
+  const title  = decodeURIComponent(titEnc);
+  const val    = parseFloat(el.value)||0;
+  if(!DB.manningPlan[yr]) DB.manningPlan[yr]={depts:{}};
+  if(!DB.manningPlan[yr].depts[deptId]) DB.manningPlan[yr].depts[deptId]={positions:[]};
+  const dp = DB.manningPlan[yr].depts[deptId];
+  let p = dp.positions.find(x=>x.title===title);
+  if(!p){ p={title,planned:0,budgetSalary:0,budgetBH:0,mealRate:0,budgetOther:0,notes:''}; dp.positions.push(p); }
+  p[field] = val;
+  if(field==='budgetSalary' && !p.budgetBH) p.budgetBH = Math.round(val*bhRate);
+  saveData(['manningPlan']);
+}
+
 function _manningUpdateHC(deptId, titleKey, val){
   // Remove No manning badge
   const noEl = document.getElementById('nomanning_'+deptId+'_'+titleKey);
@@ -22335,14 +22349,11 @@ function renderManning(main){
         gHC+=hc;gSal+=sal*hc;gBH+=bh*hc;gMeal+=meal*hc;gOth+=oth*hc;gTotHC+=totHC;
         const actHC  = allEmps.filter(e=>e.deptId===dept.id&&(e.role||'').trim()===title.trim()).length;
         const noM    = !hc?`<span id="nomanning_${dept.id}_${title.replace(/[^a-zA-Z0-9]/g,'_')}" style="font-size:9px;padding:1px 5px;border-radius:3px;margin-left:4px;background:rgba(232,185,116,.15);color:var(--warning)">No manning</span>`:'';
-        const deptIdJ = JSON.stringify(dept.id);
+        const dIdEnc  = encodeURIComponent(dept.id);
+        const titEnc  = encodeURIComponent(title);
         const titleKey = title.replace(/[^a-zA-Z0-9]/g,'_');
-        const savePos = field=>{
-          const afterSave = field==='planned'
-            ? `;_manningUpdateHC(${deptIdJ},${JSON.stringify(titleKey)},parseFloat(this.value)||0)`
-            : '';
-          return `(function(v){const dp=DB.manningPlan['${curYear}'].depts[${deptIdJ}];const p=dp&&dp.positions?dp.positions.find(x=>x.title===${JSON.stringify(title)}):null;if(p){p[${JSON.stringify(field)}]=parseFloat(v)||0;if(${JSON.stringify(field)}==='budgetSalary'&&!p.budgetBH)p.budgetBH=Math.round((parseFloat(v)||0)*${BH_RATE});}saveData(['manningPlan']);}).call(this,this.value)${afterSave}`;
-        };
+        const savePos = field => `_saveBudgetPos(this,'${dIdEnc}','${titEnc}','${field}',${curYear},${BH_RATE});` +
+          (field==='planned'?`_manningUpdateHC('${dept.id}','${titleKey}',parseFloat(this.value)||0);`:'');
 
         return `<tr data-dept-pos="${dept.id}" style="border-bottom:1px solid var(--border)">
           <td style="padding:5px 8px 5px 26px;font-size:12px;font-weight:500">${escapeHtml(title)}${noM}
@@ -22469,9 +22480,9 @@ function renderManning(main){
       // Dept-level totals
       const dTotals = {};
       sortedMonths.forEach(mi=>{ dTotals[mi]={sal:0,bh:0,meal:0,oth:0,tot:0}; });
+      const isCollapsed = window._actualCollapsed; // dept-level scope
 
       const roleBlocks = roles.map(role=>{
-        const isCollapsed = window._actualCollapsed;
         const pos = dp.positions.find(p=>p.title===role)||{};
         const mealRate = parseFloat(pos.mealRate)||0;
         const roleEmps = deptEmps.filter(e=>(e.role||'(Chưa có vị trí)')===role);
@@ -23185,9 +23196,14 @@ function exportLeavePDF(){
   const bal = window._leaveBal || {};
   const yr = parseInt(bal.year) || new Date().getFullYear();
   const selDept = bal.dept || '';
+  const statusFilter = bal.statusFilter || 'active'; // 'active' | 'exit' | 'all'
   const depts = DB.departments||[];
 
-  let emps = (DB.employees||[]).filter(e=>getEffectiveStatus(e)!=='exit');
+  let emps = DB.employees||[];
+  // Apply status filter — đúng như màn hình
+  if(statusFilter === 'active')    emps = emps.filter(e=>['active','probation','leave'].includes(getEffectiveStatus(e)));
+  else if(statusFilter === 'exit') emps = emps.filter(e=>getEffectiveStatus(e)==='exit');
+  // 'all' → không filter status
   if(selDept) emps = emps.filter(e=>e.deptId===selDept);
   emps = emps.sort((a,b)=>{
     const da = depts.find(d=>d.id===a.deptId)?.name||'';
@@ -23196,6 +23212,7 @@ function exportLeavePDF(){
   });
 
   const deptLabel = selDept ? (depts.find(d=>d.id===selDept)?.name||'') : 'Tất cả phòng ban';
+  const statusLabel3 = statusFilter==='active'?'Đang làm':statusFilter==='exit'?'Đã nghỉ':'Tất cả trạng thái';
 
   let curDept = '';
   const rows = emps.map((e,i)=>{
@@ -23255,7 +23272,7 @@ function exportLeavePDF(){
       <th style="text-align:center;background:#c62828">CL Đã dùng</th>
       <th style="text-align:center;background:#2e7d32">CL Còn lại</th>
     </tr></thead><tbody>${rows}${footerRow}</tbody></table>`,
-    `${emps.length} nhân viên · ${deptLabel} · Năm ${yr}`);
+    `${emps.length} nhân viên · ${deptLabel} · ${statusLabel3} · Năm ${yr}`);
 }
 
 // ── CASUAL ──
