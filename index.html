@@ -11237,9 +11237,10 @@ function deleteLeave(id, fromModal=false){
    ========================================================= */
 function getJobHired(jobId){
   const j = DB.jobs?.find(x => x.id === jobId);
+  const fromJob = j ? (j.hired || 0) : 0;
+  // j.hired là source of truth (được update khi tích ✓ accept offer)
+  // fromCands chỉ dùng để verify hoặc khi j.hired chưa có
   const fromCands = (DB.candidates||[]).filter(a => a.jobId === jobId && a.status === 'hired').length;
-  const fromJob   = j ? (j.hired || 0) : 0;
-  // Lấy số lớn hơn — tránh trường hợp candidates chưa sync đủ từ Firestore
   return Math.max(fromCands, fromJob);
 }
 
@@ -21869,7 +21870,6 @@ fbAuth.onAuthStateChanged(async user => {
               const isRecent = (Date.now()-cloudSyncAt) < 5000;
               if(isSelf && isRecent) return; // chính mình vừa save
               if(change.type === 'removed') return;
-              if(key === 'candidates') console.log('[REALTIME] candidates change:', change.type, 'doc:', docId, 'count:', d[key]?.length);
               if(d[key] && Array.isArray(d[key])){
                 const shardId = d._shard; // year / YYYY_MM / jobId
                 const isMonthShard = typeof shardId==='string' && /^\d{4}_\d{2}$/.test(String(shardId));
@@ -21905,7 +21905,7 @@ fbAuth.onAuthStateChanged(async user => {
             if(!changed) return;
             clearTimeout(window._dynamicDebounce);
             window._dynamicDebounce = setTimeout(()=>{
-              const pages = ['awards','warnings','performance','leaves','recruitment','dashboard'];
+              const pages = ['awards','warnings','performance','leaves','recruitment','job-detail','dashboard'];
               const modalOpen = document.getElementById('modal')?.classList.contains('open');
               if(modalOpen){
                 if(!window._pendingRender) window._pendingRender={};
