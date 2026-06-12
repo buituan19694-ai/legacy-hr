@@ -9803,13 +9803,25 @@ function renderLeavePlan(main){
 
   // Tính "Tồn cuối năm" cho 1 NV — dùng đúng công thức như bảng Theo dõi (calcRow)
   const getEmpRemain = (empId, mi, type)=>{
-    const sh = ((DB.leaveSheet[empId]||{})[curYear]||{})[type]||{};
-    const carry = parseFloat(sh.carry)||0;
+    const empYrData = (DB.leaveSheet[empId]||{})[curYear]||{};
+    let sh = empYrData[type];
+    // Nếu chưa có data năm curYear → tính auto-carry từ năm trước (giống getSheet trong renderLeaveReports)
+    if(!sh){
+      let autoCarry = 0;
+      const prevYr = (DB.leaveSheet[empId]||{})[curYear-1];
+      if(prevYr && prevYr[type]){
+        const ps = prevYr[type];
+        const totalEntitle = (parseFloat(ps.carry)||0) + (Array.isArray(ps.entitle)?ps.entitle:[]).reduce((a,b)=>a+(parseFloat(b)||0),0);
+        const totalTaken   = (Array.isArray(ps.taken)?ps.taken:[]).reduce((a,b)=>a+(parseFloat(b)||0),0);
+        autoCarry = Math.max(0, Math.round((totalEntitle-totalTaken)*100)/100);
+      }
+      sh = {carry: autoCarry, entitle: Array(12).fill(0), taken: Array(12).fill(0)};
+    }
+    const carry   = parseFloat(sh.carry)||0;
     const entitle = Array.isArray(sh.entitle) ? sh.entitle : Array(12).fill(0);
     const taken   = Array.isArray(sh.taken)   ? sh.taken   : Array(12).fill(0);
     const totalEntitle = carry + entitle.reduce((s,x)=>s+(parseFloat(x)||0), 0);
     const totalUsed    = taken.reduce((s,x)=>s+(parseFloat(x)||0), 0);
-    // Tồn cuối năm = Tổng phát sinh - Tổng đã nghỉ (giống cột cuối bảng Theo dõi)
     return Math.round((totalEntitle - totalUsed)*100)/100;
   };
 
