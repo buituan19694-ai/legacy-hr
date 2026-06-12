@@ -11555,26 +11555,32 @@ function renderRecruitmentReports(main){
   const hiresInPeriod = allCands.filter(a => a.status === 'hired' && inRange(getHireDateSafe(a), from, to));
   const hiresInPrev   = allCands.filter(a => a.status === 'hired' && inRange(getHireDateSafe(a), prevFrom, prevTo));
 
-  // Nếu không có hired candidates nhưng j.hired > 0, dùng tổng từ jobs
+  // Đã tuyển: dùng getJobHired() làm source of truth (j.hired = field chính xác nhất)
+  // hiredDate filter chỉ dùng khi cần breakdown theo kỳ
   const hireCountFromCands = hiresInPeriod.length;
-  const hireCountFromJobs  = DB.jobs
-    .filter(j => inRange(j.startDate, from, to) || j.status === 'filled')
+  // Tổng hired từ tất cả jobs trong kỳ (theo startDate của job)
+  const hireCountFromJobs = DB.jobs
+    .filter(j => {
+      // Job có trong kỳ nếu: startDate trong kỳ, hoặc đang open/filled và kỳ là năm hiện tại
+      if(inRange(j.startDate, from, to)) return true;
+      if(j.status==='filled' || j.status==='open') return true;
+      return false;
+    })
     .reduce((s,j) => s + getJobHired(j.id), 0);
-  // Lấy max của 2 nguồn
-  const cvCount    = cvInPeriod.length;
-  const cvPrev     = cvInPrev.length;
-  const hireCount  = Math.max(hireCountFromCands,
-    allCands.filter(a => a.status === 'hired').length > 0 ? hireCountFromCands : hireCountFromJobs);
-  const hirePrev   = Math.max(hiresInPrev.length, 0);
 
-  // Conversion: trong số CV nộp kỳ này, bao nhiêu đã hired
-  const cvHired       = cvInPeriod.filter(a => a.status === 'hired').length;
-  // Nếu cvHired = 0 nhưng có hired thực tế, dùng tỉ lệ toàn bộ
-  const totalHiredAll = allCands.filter(a => a.status === 'hired').length;
+  const cvCount  = cvInPeriod.length;
+  const cvPrev   = cvInPrev.length;
+  // Ưu tiên jobs total vì j.hired là source of truth
+  const hireCount = hireCountFromJobs > 0 ? hireCountFromJobs : hireCountFromCands;
+  const hirePrev  = Math.max(hiresInPrev.length, 0);
+
+  // Conversion: tổng hired / tổng CV nhận
+  const totalHiredAll = DB.jobs.reduce((s,j)=>s+getJobHired(j.id),0);
   const totalCVAll    = allCands.length;
+  const cvHired       = cvInPeriod.filter(a => a.status === 'hired').length;
   const conversionRate = cvCount > 0
-    ? Math.round((cvHired > 0 ? cvHired : 0) / cvCount * 100)
-    : (totalCVAll > 0 ? Math.round(totalHiredAll / totalCVAll * 100) : 0);
+    ? Math.round(totalHiredAll / Math.max(totalCVAll, 1) * 100)
+    : 0;
   const cvPrevHired   = cvInPrev.filter(a => a.status === 'hired').length;
   const conversionPrev= cvPrev > 0 ? Math.round(cvPrevHired / cvPrev * 100) : 0;
 
