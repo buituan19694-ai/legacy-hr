@@ -4658,6 +4658,7 @@ function renderEmployees(main){
       <div class="topbar-actions">
         <button class="btn" onclick="manageCustomFields()" title="Quản lý các cột thông tin">${ICONS.settings} Trường tuỳ chỉnh</button>
         <button class="btn" onclick="exportEmployeesXLSX()">${ICONS.download} ${t('btn_export')}</button>
+        <button class="btn" onclick="exportEmployeesPDF()">📄 Xuất PDF</button>
         <button class="btn" onclick="openImportEmployeesModal()">
           <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" width="14" height="14"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
           Nhập Excel
@@ -7380,6 +7381,7 @@ function renderContracts(main){
       </div>
       <div class="topbar-actions">
         <button class="btn" onclick="exportContractExcel()">${ICONS.download} Xuất Excel</button>
+        <button class="btn" onclick="exportContractPDF()">📄 Xuất PDF</button>
         <button class="btn btn-primary" onclick="editContract()">${ICONS.plus} ${_lang==="en"?"Add Contract":"Thêm hợp đồng"}</button>
       </div>
     </div>
@@ -9569,6 +9571,7 @@ window.toggleLeaveGroup = function(did){
         <button class="btn" onclick="window.print()">📄 In / PDF</button>
         <button class="btn" onclick="importLeaveXLSX()">📥 ${t('btn_import')}</button>
         <button class="btn" onclick="exportLeaveXLSX()">${ICONS.download} ${t('btn_export')}</button>
+        <button class="btn" onclick="exportLeavePDF()">📄 Xuất PDF</button>
       </div>
     </div>
 
@@ -19755,6 +19758,7 @@ function renderCasual(main){
       </div>
       <div class="topbar-actions">
         <button class="btn" onclick="exportCasualXLSX()">${ICONS.download} ${t('btn_export')}</button>
+        <button class="btn" onclick="exportCasualPDF()">📄 Xuất PDF</button>
         <button class="btn" onclick="importCasualXLSX()">📥 ${t('btn_import')}</button>
         <button class="btn btn-primary" onclick="editCasual()">${ICONS.plus} Thêm bản ghi</button>
       </div>
@@ -20437,6 +20441,7 @@ function renderTrainee(main){
         </div>
         <button class="btn" onclick="importTraineeXLSX()">📥 ${t('btn_import')}</button>
         <button class="btn" onclick="exportTraineeXLSX()">${ICONS.download} ${t('btn_export')}</button>
+        <button class="btn" onclick="exportTraineePDF()">📄 Xuất PDF</button>
         <button class="btn btn-primary" onclick="editTrainee()">${ICONS.plus} ${t('btn_add_trainee')}</button>
       </div>
     </div>
@@ -22703,6 +22708,7 @@ function renderManning(main){
         </select>
         <button class="btn btn-primary" onclick="openNewManningYear()" style="font-size:12px">✨ Mở năm mới</button>
         <button class="btn" onclick="exportManningXLSX()">${ICONS.download} Xuất Excel</button>
+        <button class="btn" onclick="exportManningPDF()">📄 Xuất PDF</button>
         <label class="btn" style="cursor:pointer">
           📂 Nhập Excel
           <input type="file" accept=".xlsx,.xls" style="display:none" onchange="importManningXLSX(this)">
@@ -22975,6 +22981,158 @@ function confirmNewManningYear(srcYear, newYear){
   toast(`✅ Đã tạo năm ${newYear} với ${depts.length} bộ phận`, 'success');
 }
 
+
+/* =========================================================
+   PDF EXPORTS — all sections
+   ========================================================= */
+function _openPDF(title, bodyHTML, subtitle){
+  const css = `*{margin:0;padding:0;box-sizing:border-box}body{font-family:'Segoe UI',Arial,sans-serif;font-size:10.5pt;color:#1a1a2e;background:#fff;padding:18px 24px}h1{font-size:18pt;color:#1a1a2e;margin-bottom:3px}h2{font-size:13pt;color:#1a1a2e;margin:16px 0 8px;border-bottom:2px solid #e0e0e0;padding-bottom:4px}.sub{font-size:9.5pt;color:#666;margin-bottom:14px}table{width:100%;border-collapse:collapse;font-size:9.5pt}th{background:#1a1a2e;color:#fff;padding:6px 8px;text-align:left;font-size:9pt}td{padding:5px 8px;border-bottom:1px solid #f0f0f0}tr:nth-child(even) td{background:#fafafa}.badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:8pt;font-weight:600}.footer{margin-top:18px;font-size:8.5pt;color:#aaa;text-align:right;border-top:1px solid #eee;padding-top:6px}@media print{body{padding:0}@page{margin:12mm}}`;
+  const today = new Date().toLocaleDateString('vi-VN');
+  const company = DB.company?.name || 'Legacy Yên Tử MGallery';
+  const html = `<!DOCTYPE html><html lang="vi"><head><meta charset="utf-8"><title>${title}</title><style>${css}</style></head><body>
+    <h1>${title}</h1><div class="sub">${company} &nbsp;·&nbsp; ${subtitle||''} &nbsp;·&nbsp; In ngày ${today}</div>
+    ${bodyHTML}
+    <div class="footer">Xuất bởi Legacy Yên Tử HR System · ${today}</div>
+  </body></html>`;
+  const w = window.open('','_blank','width=960,height=700');
+  w.document.write(html); w.document.close();
+  setTimeout(()=>w.print(), 600);
+}
+
+// ── NV ──
+function exportEmployeesPDF(){
+  const emps = (DB.employees||[]).filter(e=>getEffectiveStatus(e)!=='exit').sort((a,b)=>a.name.localeCompare(b.name,'vi'));
+  const depts = DB.departments||[];
+  const rows = emps.map((e,i)=>`<tr>
+    <td>${i+1}</td><td>${e.code||'—'}</td><td><b>${escapeHtml(e.name)}</b></td>
+    <td>${escapeHtml(e.role||'—')}</td>
+    <td>${depts.find(d=>d.id===e.deptId)?.name||'—'}</td>
+    <td>${e.startDate||'—'}</td>
+    <td><span class="badge" style="background:${getEffectiveStatus(e)==='active'?'#e8f5e9;color:#2e7d32':getEffectiveStatus(e)==='probation'?'#fff3e0;color:#e65100':'#fce4ec;color:#c62828'}">${getEffectiveStatus(e)}</span></td>
+  </tr>`).join('');
+  _openPDF('Danh sách Nhân viên',
+    `<table><thead><tr><th>#</th><th>Mã NV</th><th>Họ tên</th><th>Chức danh</th><th>Phòng ban</th><th>Ngày vào</th><th>Trạng thái</th></tr></thead><tbody>${rows}</tbody></table>`,
+    `${emps.length} nhân viên đang làm việc`);
+}
+
+// ── HỢP ĐỒNG ──
+function exportContractPDF(){
+  const today = new Date().toISOString().slice(0,10);
+  const contracts = (DB.contracts||[]).sort((a,b)=>a.endDate?.localeCompare(b.endDate||'')||0);
+  const rows = contracts.map((c,i)=>{
+    const emp = (DB.employees||[]).find(e=>e.id===c.empId);
+    const expiring = c.endDate && c.endDate >= today && c.endDate <= new Date(Date.now()+30*864e5).toISOString().slice(0,10);
+    return `<tr>
+      <td>${i+1}</td><td>${emp?.code||'—'}</td><td><b>${escapeHtml(emp?.name||'—')}</b></td>
+      <td>${c.type||'—'}</td><td>${c.startDate||'—'}</td>
+      <td style="${expiring?'color:#e65100;font-weight:700':''}">${c.endDate||'Không xác định'}</td>
+      <td>${c.probationMonths?c.probationMonths+' tháng':'—'}</td>
+    </tr>`;
+  }).join('');
+  _openPDF('Danh sách Hợp đồng',
+    `<table><thead><tr><th>#</th><th>Mã NV</th><th>Họ tên</th><th>Loại HĐ</th><th>Ngày bắt đầu</th><th>Ngày kết thúc</th><th>Thử việc</th></tr></thead><tbody>${rows}</tbody></table>`,
+    `${contracts.length} hợp đồng`);
+}
+
+// ── NGHỈ PHÉP ──
+function exportLeavePDF(){
+  const yr = window._leaveYear || new Date().getFullYear();
+  const emps = (DB.employees||[]).filter(e=>getEffectiveStatus(e)!=='exit');
+  const rows = emps.map((e,i)=>{
+    const cd = DB.customData[e.id]||{};
+    const alOpening = parseFloat(((DB.leaveOpening[yr]||{})[e.id]||{}).al)||0;
+    const clOpening = parseFloat(((DB.leaveOpening[yr]||{})[e.id]||{}).cl)||0;
+    const sheet = (DB.leaveSheet[e.id]||{})[yr]||{};
+    const alUsed = parseFloat(sheet.al?.reduce?.((s,v)=>s+(parseFloat(v)||0),0))||0;
+    const clUsed = parseFloat(sheet.cl?.reduce?.((s,v)=>s+(parseFloat(v)||0),0))||0;
+    return `<tr>
+      <td>${i+1}</td><td>${e.code||'—'}</td><td><b>${escapeHtml(e.name)}</b></td>
+      <td style="text-align:center">${alOpening}</td>
+      <td style="text-align:center;color:#1565c0;font-weight:600">${alUsed.toFixed(1)}</td>
+      <td style="text-align:center;font-weight:700">${(alOpening-alUsed).toFixed(1)}</td>
+      <td style="text-align:center">${clOpening}</td>
+      <td style="text-align:center;color:#6a1b9a;font-weight:600">${clUsed.toFixed(1)}</td>
+      <td style="text-align:center;font-weight:700">${(clOpening-clUsed).toFixed(1)}</td>
+    </tr>`;
+  }).join('');
+  _openPDF(`Báo cáo Nghỉ phép ${yr}`,
+    `<table><thead><tr><th>#</th><th>Mã NV</th><th>Họ tên</th><th>AL Đầu kỳ</th><th>AL Đã dùng</th><th>AL Còn lại</th><th>CL Đầu kỳ</th><th>CL Đã dùng</th><th>CL Còn lại</th></tr></thead><tbody>${rows}</tbody></table>`,
+    `${emps.length} nhân viên · Năm ${yr}`);
+}
+
+// ── CASUAL ──
+function exportCasualPDF(){
+  const casuals = (DB.casuals||[]).sort((a,b)=>a.name?.localeCompare(b.name||'','vi')||0);
+  const depts = DB.departments||[];
+  const rows = casuals.map((c,i)=>`<tr>
+    <td>${i+1}</td><td>${escapeHtml(c.name||'—')}</td><td>${c.phone||'—'}</td>
+    <td>${depts.find(d=>d.id===c.deptId)?.name||'—'}</td>
+    <td>${c.startDate||'—'}</td><td>${c.endDate||'Đang làm'}</td>
+    <td style="text-align:right">${c.dailyRate?(c.dailyRate).toLocaleString('vi')+' đ':'—'}</td>
+  </tr>`).join('');
+  _openPDF('Danh sách Lao động Casual',
+    `<table><thead><tr><th>#</th><th>Họ tên</th><th>SĐT</th><th>Phòng ban</th><th>Từ ngày</th><th>Đến ngày</th><th>Đơn giá/ngày</th></tr></thead><tbody>${rows}</tbody></table>`,
+    `${casuals.length} lao động casual`);
+}
+
+// ── TRAINEE ──
+function exportTraineePDF(){
+  const trainees = (DB.trainees||[]).sort((a,b)=>a.name?.localeCompare(b.name||'','vi')||0);
+  const depts = DB.departments||[];
+  const today = new Date().toISOString().slice(0,10);
+  const rows = trainees.map((c,i)=>{
+    const active = !c.endDate || c.endDate >= today;
+    return `<tr>
+      <td>${i+1}</td><td>${escapeHtml(c.name||'—')}</td><td>${c.school||'—'}</td>
+      <td>${depts.find(d=>d.id===c.deptId)?.name||'—'}</td>
+      <td>${c.startDate||'—'}</td><td>${c.endDate||'—'}</td>
+      <td><span class="badge" style="${active?'background:#e8f5e9;color:#2e7d32':'background:#f5f5f5;color:#757575'}">${active?'Đang TTS':'Đã kết thúc'}</span></td>
+    </tr>`;
+  }).join('');
+  _openPDF('Danh sách Thực tập sinh',
+    `<table><thead><tr><th>#</th><th>Họ tên</th><th>Trường</th><th>Phòng ban</th><th>Từ ngày</th><th>Đến ngày</th><th>Trạng thái</th></tr></thead><tbody>${rows}</tbody></table>`,
+    `${trainees.length} thực tập sinh`);
+}
+
+// ── MANNING & BUDGET ──
+function exportManningPDF(){
+  const yr = window._manningYear || new Date().getFullYear();
+  const depts = DB.departments||[];
+  const allEmps = (DB.employees||[]).filter(e=>getEffectiveStatus(e)!=='exit');
+  const BH = 0.225;
+  const fmtM = v=>v?(Math.round(v/1e6*10)/10).toLocaleString('vi')+'M':'—';
+
+  let budRows = '', actRows = '';
+  depts.forEach(dept=>{
+    const dp = ((DB.manningPlan[yr]||{}).depts||{})[dept.id]||{positions:[]};
+    const deptEmps = allEmps.filter(e=>e.deptId===dept.id);
+    // Budget
+    if(dp.positions?.length){
+      budRows += `<tr style="background:#f8f9fa"><td colspan="6"><b>${escapeHtml(dept.name)}</b></td></tr>`;
+      dp.positions.forEach(p=>{
+        const tot = ((p.budgetSalary||0)+(p.budgetBH||0)+(p.mealRate||0)+(p.budgetOther||0))*(p.planned||0);
+        budRows += `<tr><td style="padding-left:16px">${escapeHtml(p.title)}</td><td style="text-align:center">${p.planned||0}</td><td style="text-align:right">${fmtM(p.budgetSalary)}</td><td style="text-align:right">${fmtM(p.budgetBH)}</td><td style="text-align:right">${fmtM(p.mealRate)}</td><td style="text-align:right;font-weight:700">${fmtM(tot)}</td></tr>`;
+      });
+    }
+    // Actual
+    if(deptEmps.length){
+      actRows += `<tr style="background:#f8f9fa"><td colspan="5"><b>${escapeHtml(dept.name)}</b></td></tr>`;
+      deptEmps.forEach(e=>{
+        const cd=DB.customData[e.id]||{};
+        const sal=(parseInt(cd.baseSalary)||0)+(parseInt(cd.bonusSalary)||0);
+        const bh=Math.round((parseInt(cd.baseSalary)||0)*BH);
+        actRows += `<tr><td style="padding-left:16px">${escapeHtml(e.name)}</td><td>${e.code||'—'}</td><td style="text-align:right">${fmtM(sal)}</td><td style="text-align:right">${fmtM(bh)}</td><td style="text-align:right;font-weight:700">${fmtM(sal+bh)}</td></tr>`;
+      });
+    }
+  });
+
+  _openPDF(`Manning & Budget ${yr}`,
+    `<h2>📋 Kế hoạch Budget ${yr}</h2>
+    <table><thead><tr><th>Vị trí</th><th>HC</th><th>Lương/người</th><th>BHXH+CĐ</th><th>Meal</th><th>Tổng×HC</th></tr></thead><tbody>${budRows}</tbody></table>
+    <h2>👥 Nhân sự Actual</h2>
+    <table><thead><tr><th>Họ tên</th><th>Mã NV</th><th>Tổng lương</th><th>BHXH+CĐ</th><th>Tổng chi phí</th></tr></thead><tbody>${actRows}</tbody></table>`,
+    `Năm ${yr} · ${allEmps.length} nhân viên`);
+}
 
 </script>
 </body>
