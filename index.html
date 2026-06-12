@@ -1422,6 +1422,8 @@ if(!DB.manningPlan  || Array.isArray(DB.manningPlan))  DB.manningPlan  = {};
 if(!DB.hrBudget     || Array.isArray(DB.hrBudget))     DB.hrBudget     = {};
 if(!DB.manningActual|| Array.isArray(DB.manningActual))DB.manningActual= {};
 if(!DB.promoTypes   || Array.isArray(DB.promoTypes))   DB.promoTypes   = {};
+if(!DB.attendanceData  || Array.isArray(DB.attendanceData))  DB.attendanceData  = {};
+if(!DB.attendanceConfig|| Array.isArray(DB.attendanceConfig))DB.attendanceConfig= {};
 window._dirtyKeys = new Set();
 DB = new Proxy(DB, {
   set(target, key, value){
@@ -18454,6 +18456,7 @@ const MODULE_LIST = [
   {key:'salary',      label:'Phân tích Lương'},
   {key:'dormitory',   label:'Staff House'},
   {key:'manning',     label:'Manning & Budget'},
+  {key:'attendance',  label:'Bảng công'},
 ];
 const PERM_LEVELS = ['none','view','edit','full'];
 const PERM_LABELS = {none:(_lang==="en"?"🚫 No access":"🚫 Không xem"), view:(_lang==="en"?"👁 View only":"👁 Chỉ xem"), edit:(_lang==="en"?"✏️ View & Edit":"✏️ Xem & Sửa"), full:(_lang==="en"?"⭐ Full access":"⭐ Toàn quyền")};
@@ -21753,6 +21756,7 @@ fbAuth.onAuthStateChanged(async user => {
           warnings: renderWarnings, settings: renderSettings,
           salary: renderSalaryAnalysis, training: renderTraining,
           workforce: renderWorkforce,
+          attendance: renderAttendance,
           dormitory: renderDormitory,
         };
 
@@ -21883,6 +21887,7 @@ fbAuth.onAuthStateChanged(async user => {
           'discipline_': 'disciplineRecords',
           'casuals_':    'casuals',
           'cand_':       'candidates',
+          'attend_':     'attendanceData',
         };
         const dynamicUnsub = window.fbDb.collection('hrdata')
           .onSnapshot(snap=>{
@@ -21900,8 +21905,18 @@ fbAuth.onAuthStateChanged(async user => {
               const isRecent = (Date.now()-cloudSyncAt) < 5000;
               if(isSelf && isRecent) return; // chính mình vừa save
               if(change.type === 'removed') return;
-              if(d[key] && Array.isArray(d[key])){
-                const shardId = d._shard; // year / YYYY_MM / jobId
+              // attendanceData: nested object {year:{month:{empId:{day:code}}}}
+              if(key === 'attendanceData' && d[key] && typeof d[key]==='object'){
+                if(!DB.attendanceData) DB.attendanceData={};
+                Object.entries(d[key]).forEach(([yr,months])=>{
+                  if(!DB.attendanceData[yr]) DB.attendanceData[yr]={};
+                  Object.entries(months||{}).forEach(([mo,moData])=>{
+                    DB.attendanceData[yr][mo] = moData;
+                  });
+                });
+                changed = true;
+              } else if(d[key] && Array.isArray(d[key])){
+                const shardId = d._shard;
                 const isMonthShard = typeof shardId==='string' && /^\d{4}_\d{2}$/.test(String(shardId));
                 const isYearShard  = typeof shardId==='number' || /^\d{4}$/.test(String(shardId));
                 if(isMonthShard){
@@ -21935,7 +21950,7 @@ fbAuth.onAuthStateChanged(async user => {
             if(!changed) return;
             clearTimeout(window._dynamicDebounce);
             window._dynamicDebounce = setTimeout(()=>{
-              const pages = ['awards','warnings','performance','leaves','recruitment','job-detail','dashboard'];
+              const pages = ['awards','warnings','performance','leaves','recruitment','job-detail','dashboard','attendance'];
               const modalOpen = document.getElementById('modal')?.classList.contains('open');
               if(modalOpen){
                 if(!window._pendingRender) window._pendingRender={};
@@ -22981,176 +22996,209 @@ const ATTEND_COLOR_MAP = {
 };
 
 function renderAttendance(main){
+  if(!window.canDo('attendance')){
+    main.innerHTML='<div class="topbar"><div class="topbar-left"><h1 class="page-title">🔒 Không có quyền</h1><div class="page-sub">Bạn không được cấp quyền truy cập Bảng công</div></div></div>';
+    return;
+  }
   const today    = new Date();
   const curYear  = window._attendYear  || today.getFullYear();
-  const curMonth = window._attendMonth || (today.getMonth()+1); // 1-12
+  const curMonth = window._attendMonth || (today.getMonth()+1);
   window._attendYear  = curYear;
   window._attendMonth = curMonth;
 
-  if(!DB.attendanceData[curYear])           DB.attendanceData[curYear]={};
+  if(!DB.attendanceData) DB.attendanceData={};
+  if(!DB.attendanceData[curYear]) DB.attendanceData[curYear]={};
   if(!DB.attendanceData[curYear][curMonth]) DB.attendanceData[curYear][curMonth]={};
   const attMo = DB.attendanceData[curYear][curMonth];
 
-  // Dept filter — default P&C
-  if(!DB.attendanceConfig) DB.attendanceConfig={};
-  const pcDept = (DB.departments||[]).find(d=>d.name.includes('People')||d.name.includes('P&C'));
-  if(!DB.attendanceConfig.deptId && pcDept) DB.attendanceConfig.deptId = pcDept.id;
-  const selDeptId = window._attendDept || DB.attendanceConfig.deptId || '';
-  window._attendDept = selDeptId;
+  // Auto-detect P&C dept — không cho chọn bộ phận khác
+  const pcDept = (DB.departments||[]).find(d=>
+    d.name.toLowerCase().includes('people') ||
+    d.name.toLowerCase().includes('p&c') ||
+    d.name.toLowerCase().includes('nhân sự')
+  );
+  const selDeptId = pcDept?.id || '';
+  const selDeptName = pcDept?.name || 'People & Culture';
 
-  const depts = DB.departments||[];
   const allEmps = (DB.employees||[]).filter(e=>getEffectiveStatus(e)!=='exit');
   const deptEmps = selDeptId
     ? allEmps.filter(e=>e.deptId===selDeptId).sort((a,b)=>a.name.localeCompare(b.name,'vi'))
     : [];
 
-  // Ngày trong tháng
   const daysInMonth = new Date(curYear, curMonth, 0).getDate();
   const DOW = ['CN','T2','T3','T4','T5','T6','T7'];
+  const MN = ['','T1','T2','T3','T4','T5','T6','T7','T8','T9','T10','T11','T12'];
+  const MN_FULL = ['','Tháng 1','Tháng 2','Tháng 3','Tháng 4','Tháng 5','Tháng 6','Tháng 7','Tháng 8','Tháng 9','Tháng 10','Tháng 11','Tháng 12'];
   const days = Array.from({length:daysInMonth},(_,i)=>{
     const d = new Date(curYear, curMonth-1, i+1);
     return {day:i+1, dow:DOW[d.getDay()], isWeekend:d.getDay()===0||d.getDay()===6};
   });
-  const MN_FULL=['','Tháng 1','Tháng 2','Tháng 3','Tháng 4','Tháng 5','Tháng 6','Tháng 7','Tháng 8','Tháng 9','Tháng 10','Tháng 11','Tháng 12'];
 
-  // Tính tổng công cho 1 NV
-  const calcTotal = (empId)=>{
-    const row = attMo[empId]||{};
-    return Object.values(row).reduce((s,code)=>s+(ATTEND_VALUE[code]??0),0);
+  const calcTotal = (empId)=>Object.values(attMo[empId]||{}).reduce((s,c)=>s+(ATTEND_VALUE[c]??0),0);
+  const grandTotal = deptEmps.reduce((s,e)=>s+calcTotal(e.id),0);
+
+  // Summary counts
+  const codeCount = {};
+  deptEmps.forEach(e=>Object.values(attMo[e.id]||{}).forEach(c=>{ if(c) codeCount[c]=(codeCount[c]||0)+1; }));
+
+  // KPI: ngày có mặt, nghỉ phép, vắng
+  const totalX   = deptEmps.reduce((s,e)=>s+Object.values(attMo[e.id]||{}).filter(c=>['X','HW','WFH','PH','X/OFF','X/AL','X/CL'].includes(c)).length,0);
+  const totalAL  = deptEmps.reduce((s,e)=>s+Object.values(attMo[e.id]||{}).filter(c=>c==='AL'||c==='AL/OFF').length,0);
+  const totalOFF = deptEmps.reduce((s,e)=>s+Object.values(attMo[e.id]||{}).filter(c=>c==='OFF'||c==='P').length,0);
+
+  // ── Cell renderer ──
+  const renderCell = (e, day, isWeekend) => {
+    const code = (attMo[e.id]||{})[day]||'';
+    const bg   = code ? (ATTEND_COLOR_MAP[code]||'#555') : (isWeekend ? 'rgba(255,255,255,.03)' : 'transparent');
+    const empIdJs = JSON.stringify(e.id);
+    return `<td style="padding:0;width:44px;min-width:44px;text-align:center;background:${bg};border-right:1px solid rgba(255,255,255,.06);transition:background .1s">
+      <select onchange="(function(){
+        const yr=${curYear},mo=${curMonth},eid=${empIdJs},d=${day};
+        if(!DB.attendanceData[yr])DB.attendanceData[yr]={};
+        if(!DB.attendanceData[yr][mo])DB.attendanceData[yr][mo]={};
+        if(!DB.attendanceData[yr][mo][eid])DB.attendanceData[yr][mo][eid]={};
+        if(this.value)DB.attendanceData[yr][mo][eid][d]=this.value;
+        else delete DB.attendanceData[yr][mo][eid][d];
+        saveData(['attendanceData']);
+        const td=this.closest('td');
+        td.style.background=this.value?(ATTEND_COLOR_MAP[this.value]||'#555'):(${isWeekend?'true':'false'}?'rgba(255,255,255,.03)':'transparent');
+        this.style.color=this.value?'#fff':'rgba(255,255,255,.25)';
+        this.style.fontWeight=this.value?'800':'400';
+        const tot=document.getElementById('att_tot_'+eid);
+        if(tot){const r=DB.attendanceData[yr][mo][eid]||{};const t=Object.values(r).reduce((s,c)=>s+(ATTEND_VALUE[c]??0),0);tot.textContent=t%1===0?String(t):t.toFixed(1);}
+        const dayTot=document.getElementById('att_day_${day}');
+        if(dayTot){const t=Object.values(DB.attendanceData[yr][mo]).reduce((s,er)=>s+(ATTEND_VALUE[er[${day}]]??0),0);dayTot.textContent=t||'';}
+      }).call(this)"
+        style="width:44px;height:32px;background:transparent;border:none;color:${code?'#fff':'rgba(255,255,255,.2)'};font-size:${code.length>3?'9':'10'}px;font-weight:${code?'800':'400'};text-align:center;cursor:pointer;appearance:none;-webkit-appearance:none;outline:none;padding:0">
+        <option value=""></option>
+        ${ATTEND_CODES.map(c=>`<option value="${c}" ${code===c?'selected':''}>${c}</option>`).join('')}
+      </select>
+    </td>`;
   };
 
-  // Tổng toàn phòng
-  const grandTotal = deptEmps.reduce((s,e)=>s+calcTotal(e.id),0);
-  const grandDays  = deptEmps.reduce((s,e)=>{
-    const row=attMo[e.id]||{};
-    return s+Object.values(row).filter(c=>c&&c!=='OFF'&&c!=='P').length;
-  },0);
-
-  // Rows
+  // ── Emp rows ──
   const empRows = deptEmps.map((e,idx)=>{
-    const row = attMo[e.id]||{};
     const total = calcTotal(e.id);
-
-    const cells = days.map(({day,isWeekend})=>{
-      const code = row[day]||'';
-      const bgColor = ATTEND_COLOR_MAP[code]||(isWeekend?'rgba(255,255,255,.04)':'');
-      const textColor = code ? '#fff' : (isWeekend?'var(--ink-muted)':'var(--ink-muted)');
-      const empIdJs = JSON.stringify(e.id);
-      return `<td style="padding:0;text-align:center;background:${bgColor};border-right:1px solid var(--border)">
-        <select onchange="(function(){
-          const yr=${curYear},mo=${curMonth},eid=${empIdJs},d=${day};
-          if(!DB.attendanceData[yr])DB.attendanceData[yr]={};
-          if(!DB.attendanceData[yr][mo])DB.attendanceData[yr][mo]={};
-          if(!DB.attendanceData[yr][mo][eid])DB.attendanceData[yr][mo][eid]={};
-          if(this.value)DB.attendanceData[yr][mo][eid][d]=this.value;
-          else delete DB.attendanceData[yr][mo][eid][d];
-          saveData(['attendanceData']);
-          // Update tổng ngay
-          const totEl=document.getElementById('att_tot_'+eid);
-          if(totEl){const row=DB.attendanceData[yr][mo][eid]||{};const t=Object.values(row).reduce((s,c)=>s+(ATTEND_VALUE[c]??0),0);totEl.textContent=t%1===0?t:t.toFixed(1);}
-          // Update màu ô
-          this.closest('td').style.background=ATTEND_COLOR_MAP[this.value]||(${isWeekend?'true':'false'}?'rgba(255,255,255,.04)':'');
-        }).call(this)"
-          style="width:42px;height:28px;background:transparent;border:none;color:${code?'#fff':'var(--ink-muted)'};font-size:10px;font-weight:${code?'700':'400'};text-align:center;cursor:pointer;appearance:none;-webkit-appearance:none;outline:none">
-          <option value="">${isWeekend&&!code?'–':''}</option>
-          ${ATTEND_CODES.map(c=>`<option value="${c}" ${code===c?'selected':''}>${c}</option>`).join('')}
-        </select>
-      </td>`;
-    }).join('');
-
-    return `<tr style="border-bottom:1px solid var(--border);${idx%2===0?'background:rgba(255,255,255,.015)':''}">
-      <td style="padding:6px 8px;font-size:11px;color:var(--ink-muted);font-family:'JetBrains Mono',monospace;white-space:nowrap;position:sticky;left:0;background:var(--bg-card);z-index:1;min-width:80px;border-right:1px solid var(--border)">${e.code||'—'}</td>
-      <td style="padding:6px 10px;font-size:12px;font-weight:600;white-space:nowrap;position:sticky;left:80px;background:var(--bg-card);z-index:1;min-width:150px;border-right:2px solid var(--border-strong)">${escapeHtml(e.name)}</td>
+    const cells = days.map(({day,isWeekend})=>renderCell(e,day,isWeekend)).join('');
+    const tot = total%1===0?total:total.toFixed(1);
+    const totColor = total>=22?'var(--success)':total>=18?'var(--accent)':'var(--danger)';
+    return `<tr style="border-bottom:1px solid rgba(255,255,255,.05)">
+      <td style="padding:8px 10px;font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--ink-muted);position:sticky;left:0;background:var(--bg-card);z-index:2;white-space:nowrap;border-right:1px solid rgba(255,255,255,.06)">${e.code||'—'}</td>
+      <td style="padding:8px 12px;font-size:12.5px;font-weight:600;color:var(--ink);position:sticky;left:72px;background:var(--bg-card);z-index:2;white-space:nowrap;border-right:2px solid rgba(255,255,255,.1);min-width:160px">${escapeHtml(e.name)}</td>
       ${cells}
-      <td id="att_tot_${e.id}" style="padding:6px 10px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:800;color:var(--accent);white-space:nowrap;position:sticky;right:0;background:var(--bg-card);z-index:1;border-left:2px solid var(--border-strong)">${total%1===0?total:total.toFixed(1)}</td>
+      <td id="att_tot_${e.id}" style="padding:8px 10px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:14px;font-weight:800;color:${totColor};position:sticky;right:0;background:var(--bg-card);z-index:2;border-left:2px solid rgba(255,255,255,.1);min-width:56px">${tot||'0'}</td>
     </tr>`;
   }).join('');
 
-  // Day headers
+  // ── Day headers ──
   const dayHeaders = days.map(({day,dow,isWeekend})=>`
-    <th style="padding:3px 1px;text-align:center;min-width:44px;font-size:9px;font-weight:600;color:${isWeekend?'var(--danger)':'var(--ink-muted)'};border-right:1px solid var(--border)">
-      <div>${dow}</div>
-      <div style="font-size:11px;font-weight:700;color:${isWeekend?'var(--danger)':'var(--ink)'}">${day}</div>
+    <th style="padding:0;width:44px;min-width:44px;text-align:center;border-right:1px solid rgba(255,255,255,.06);background:${isWeekend?'rgba(229,115,115,.08)':'var(--bg-elev)'}">
+      <div style="font-size:8.5px;font-weight:600;color:${isWeekend?'var(--danger)':'var(--ink-muted)'};padding:3px 0 1px">${dow}</div>
+      <div style="font-size:12px;font-weight:700;color:${isWeekend?'var(--danger)':'var(--ink)'};padding:0 0 3px">${day}</div>
     </th>`).join('');
 
-  // Month/year selectors
-  const yearOpts = [curYear-1,curYear,curYear+1].map(y=>`<option value="${y}" ${y===curYear?'selected':''}>${y}</option>`).join('');
-  const monthOpts = Array.from({length:12},(_,i)=>`<option value="${i+1}" ${i+1===curMonth?'selected':''}>${MN_FULL[i+1]}</option>`).join('');
-  const deptOpts = depts.map(d=>`<option value="${d.id}" ${d.id===selDeptId?'selected':''}>${d.name}</option>`).join('');
+  // ── Day totals footer ──
+  const dayTotals = days.map(({day,isWeekend})=>{
+    const t = deptEmps.reduce((s,e)=>s+(ATTEND_VALUE[(attMo[e.id]||{})[day]]??0),0);
+    return `<td id="att_day_${day}" style="padding:5px 2px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:600;color:${t?'var(--success)':'var(--ink-muted)'};border-right:1px solid rgba(255,255,255,.06)">${t||'–'}</td>`;
+  }).join('');
 
-  // Summary by code
-  const codeCount = {};
-  deptEmps.forEach(e=>{
-    const row=attMo[e.id]||{};
-    Object.values(row).forEach(c=>{ if(c) codeCount[c]=(codeCount[c]||0)+1; });
-  });
-  const codeSummary = ATTEND_CODES.filter(c=>codeCount[c]).map(c=>`
-    <span style="background:${ATTEND_COLOR_MAP[c]}22;color:${ATTEND_COLOR_MAP[c]};padding:3px 10px;border-radius:5px;font-size:11px;font-weight:700;border:1px solid ${ATTEND_COLOR_MAP[c]}44">
-      ${c}: ${codeCount[c]}
-    </span>`).join('');
+  // ── Month nav ──
+  const prevM = curMonth===1?12:curMonth-1;
+  const prevY = curMonth===1?curYear-1:curYear;
+  const nextM = curMonth===12?1:curMonth+1;
+  const nextY = curMonth===12?curYear+1:curYear;
+
+  // ── Legend ──
+  const legend = ATTEND_CODES.map(c=>`
+    <div style="display:flex;align-items:center;gap:5px">
+      <div style="width:32px;height:22px;border-radius:5px;background:${ATTEND_COLOR_MAP[c]||'#555'};display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:800;color:#fff">${c}</div>
+      <span style="font-size:10px;color:var(--ink-muted)">${ATTEND_VALUE[c]}</span>
+    </div>`).join('');
+
+  // ── Summary ──
+  const summaryChips = Object.entries(codeCount).sort((a,b)=>b[1]-a[1]).map(([c,n])=>`
+    <div style="display:flex;align-items:center;gap:6px;background:var(--bg-elev);border:1px solid ${ATTEND_COLOR_MAP[c]||'#555'}44;border-radius:8px;padding:5px 10px">
+      <div style="width:8px;height:8px;border-radius:50%;background:${ATTEND_COLOR_MAP[c]||'#555'}"></div>
+      <span style="font-size:11px;color:var(--ink);font-weight:600">${c}</span>
+      <span style="font-size:13px;font-weight:800;color:${ATTEND_COLOR_MAP[c]||'var(--accent)'};font-family:'JetBrains Mono',monospace">${n}</span>
+    </div>`).join('');
+
+  const gtDisp = grandTotal%1===0?grandTotal:grandTotal.toFixed(1);
 
   main.innerHTML = `
     <div class="topbar">
       <div class="topbar-left">
         <div class="crumb">NHÂN SỰ · <span>Bảng công</span></div>
-        <h1 class="page-title">Bảng <em>công</em></h1>
-        <div class="page-sub">${MN_FULL[curMonth]} ${curYear} · ${deptEmps.length} nhân viên · Tổng: ${grandTotal%1===0?grandTotal:grandTotal.toFixed(1)} công</div>
+        <h1 class="page-title">Bảng <em>công</em> <span style="font-size:14px;color:var(--ink-muted);font-family:inherit;font-weight:400">— ${selDeptName}</span></h1>
+        <div class="page-sub">${MN_FULL[curMonth]} ${curYear} · ${deptEmps.length} nhân viên</div>
       </div>
       <div class="topbar-actions">
-        <select onchange="window._attendDept=this.value;render()"
-          style="background:var(--bg-card);border:1px solid var(--border);border-radius:7px;padding:7px 10px;color:var(--ink);font-family:inherit;font-size:13px">
-          <option value="">-- Chọn bộ phận --</option>${deptOpts}
-        </select>
-        <select onchange="window._attendMonth=parseInt(this.value);render()"
-          style="background:var(--bg-card);border:1px solid var(--border);border-radius:7px;padding:7px 10px;color:var(--ink);font-family:inherit;font-size:13px">
-          ${monthOpts}
-        </select>
-        <select onchange="window._attendYear=parseInt(this.value);render()"
-          style="background:var(--bg-card);border:1px solid var(--border);border-radius:7px;padding:7px 10px;color:var(--ink);font-family:inherit;font-size:13px">
-          ${yearOpts}
-        </select>
+        <div style="display:flex;align-items:center;gap:6px;background:var(--bg-elev);border:1px solid var(--border);border-radius:8px;padding:4px 6px">
+          <button onclick="window._attendMonth=${prevM};window._attendYear=${prevY};render()"
+            style="padding:4px 10px;background:transparent;border:none;color:var(--ink);cursor:pointer;font-size:14px;border-radius:5px;transition:background .15s" onmouseover="this.style.background='var(--bg-card)'" onmouseout="this.style.background='transparent'">‹</button>
+          <span style="font-size:13px;font-weight:700;color:var(--ink);min-width:100px;text-align:center">${MN_FULL[curMonth]} ${curYear}</span>
+          <button onclick="window._attendMonth=${nextM};window._attendYear=${nextY};render()"
+            style="padding:4px 10px;background:transparent;border:none;color:var(--ink);cursor:pointer;font-size:14px;border-radius:5px;transition:background .15s" onmouseover="this.style.background='var(--bg-card)'" onmouseout="this.style.background='transparent'">›</button>
+        </div>
         <button class="btn" onclick="exportAttendanceXLSX()">${ICONS.download} Xuất Excel</button>
       </div>
     </div>
 
-    ${!selDeptId ? `<div class="card" style="text-align:center;padding:40px;color:var(--ink-muted)">← Chọn bộ phận để xem bảng công</div>` : `
-    <!-- Legend -->
-    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px;align-items:center">
-      ${ATTEND_CODES.map(c=>`<span style="background:${ATTEND_COLOR_MAP[c]}22;color:${ATTEND_COLOR_MAP[c]};padding:2px 8px;border-radius:4px;font-size:10px;font-weight:700;border:1px solid ${ATTEND_COLOR_MAP[c]}33">${c}=${ATTEND_VALUE[c]}</span>`).join('')}
+    <!-- KPI row -->
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px">
+      ${[
+        {label:'Tổng công', val:gtDisp, color:'var(--accent)', icon:'📊'},
+        {label:'Ngày có mặt', val:totalX, color:'var(--success)', icon:'✅'},
+        {label:'Ngày nghỉ phép', val:totalAL, color:'var(--info)', icon:'🏖'},
+        {label:'Vắng / Nghỉ', val:totalOFF, color:'var(--danger)', icon:'❌'},
+      ].map(k=>`<div class="card" style="padding:14px 16px;display:flex;align-items:center;gap:12px">
+        <span style="font-size:22px">${k.icon}</span>
+        <div>
+          <div style="font-size:10px;color:var(--ink-muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:3px">${k.label}</div>
+          <div style="font-size:24px;font-weight:800;color:${k.color};font-family:'Fraunces',serif">${k.val}</div>
+        </div>
+      </div>`).join('')}
     </div>
 
-    <!-- Summary chips -->
-    ${codeSummary ? `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">${codeSummary}</div>` : ''}
+    <!-- Legend compact -->
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;align-items:center">
+      <span style="font-size:10px;color:var(--ink-muted);font-weight:600;letter-spacing:.05em">MÃ CÔNG:</span>
+      ${legend}
+    </div>
+
+    <!-- Summary chips (only when has data) -->
+    ${summaryChips ? `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">${summaryChips}</div>` : ''}
 
     <!-- Table -->
-    <div class="card" style="padding:0;overflow:hidden">
-      <div style="overflow-x:auto;overflow-y:auto;max-height:calc(100vh - 280px)">
-        <table style="border-collapse:collapse;font-size:12px;white-space:nowrap">
+    <div class="card" style="padding:0;overflow:hidden;border-radius:12px">
+      <div style="overflow-x:auto;overflow-y:auto;max-height:calc(100vh - 360px)">
+        <table style="border-collapse:collapse;white-space:nowrap;min-width:100%">
           <thead style="position:sticky;top:0;z-index:5">
-            <tr style="background:var(--bg-elev)">
-              <th style="padding:8px;text-align:left;position:sticky;left:0;background:var(--bg-elev);z-index:6;min-width:80px;border-right:1px solid var(--border)">Mã NV</th>
-              <th style="padding:8px 10px;text-align:left;position:sticky;left:80px;background:var(--bg-elev);z-index:6;min-width:150px;border-right:2px solid var(--border-strong)">Họ tên</th>
+            <tr style="background:var(--bg-elev);border-bottom:2px solid rgba(255,255,255,.08)">
+              <th style="padding:10px;text-align:left;position:sticky;left:0;background:var(--bg-elev);z-index:6;width:72px;border-right:1px solid rgba(255,255,255,.06)">
+                <span style="font-size:10px;color:var(--ink-muted);font-weight:600">MÃ NV</span>
+              </th>
+              <th style="padding:10px 12px;text-align:left;position:sticky;left:72px;background:var(--bg-elev);z-index:6;min-width:160px;border-right:2px solid rgba(255,255,255,.1)">
+                <span style="font-size:10px;color:var(--ink-muted);font-weight:600">HỌ TÊN</span>
+              </th>
               ${dayHeaders}
-              <th style="padding:8px;text-align:center;position:sticky;right:0;background:var(--bg-elev);z-index:6;min-width:60px;border-left:2px solid var(--border-strong);color:var(--accent)">Tổng<br>công</th>
+              <th style="padding:8px;text-align:center;position:sticky;right:0;background:var(--bg-elev);z-index:6;width:56px;border-left:2px solid rgba(255,255,255,.1)">
+                <span style="font-size:10px;color:var(--accent);font-weight:700">TỔNG</span>
+              </th>
             </tr>
           </thead>
           <tbody>${empRows}</tbody>
           <tfoot>
-            <tr style="background:#0f1a28;border-top:2px solid var(--border-strong)">
-              <td colspan="2" style="padding:8px 10px;font-weight:700;color:#FFCC00;position:sticky;left:0;background:#0f1a28;z-index:1;border-right:2px solid var(--border-strong)">∑ TỔNG</td>
-              ${days.map(({day})=>{
-                const dayTotal = deptEmps.reduce((s,e)=>{
-                  const code=(attMo[e.id]||{})[day]||'';
-                  return s+(ATTEND_VALUE[code]??0);
-                },0);
-                return `<td style="padding:5px 2px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--success);border-right:1px solid var(--border)">${dayTotal||''}</td>`;
-              }).join('')}
-              <td style="padding:8px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:800;color:#FFCC00;position:sticky;right:0;background:#0f1a28;z-index:1;border-left:2px solid var(--border-strong)">${grandTotal%1===0?grandTotal:grandTotal.toFixed(1)}</td>
+            <tr style="background:#0d1520;border-top:2px solid rgba(255,255,255,.1)">
+              <td colspan="2" style="padding:8px 12px;font-size:11px;font-weight:700;color:rgba(255,204,0,.8);position:sticky;left:0;background:#0d1520;z-index:2;border-right:2px solid rgba(255,255,255,.1)">∑ Ngày công</td>
+              ${dayTotals}
+              <td style="padding:8px 10px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:15px;font-weight:900;color:#FFCC00;position:sticky;right:0;background:#0d1520;z-index:2;border-left:2px solid rgba(255,255,255,.1)">${gtDisp}</td>
             </tr>
           </tfoot>
         </table>
       </div>
-    </div>`}
+    </div>
   `;
 }
 
