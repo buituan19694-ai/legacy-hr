@@ -6678,12 +6678,24 @@ function exportRecruitmentPDF(){
   const needTotal = DB.jobs.reduce((s,j)=>s+(j.positions||1),0);
   const hiredTotal = DB.jobs.reduce((s,j)=> s + getJobHired(j.id), 0);
 
-  const jobTableRows = DB.jobs.map(j=>{
+  // Apply screen filters to jobs
+  const rf = window._recFilter||{};
+  let filteredJobs = DB.jobs;
+  if(rf.status) filteredJobs = filteredJobs.filter(j=>j.status===rf.status);
+  if(rf.priority) filteredJobs = filteredJobs.filter(j=>j.priority===rf.priority);
+  if(rf.dept) filteredJobs = filteredJobs.filter(j=>j.deptId===rf.dept);
+  if(rf.month){ const [fy2,fm2]=rf.month.split('-').map(Number); filteredJobs=filteredJobs.filter(j=>{if(!j.startDate)return true;const d2=new Date(j.startDate);return d2.getFullYear()===fy2&&d2.getMonth()+1===fm2;}); }
+  const openJobs2  = filteredJobs.filter(j=>j.status==='open').length;
+  const totalPositions2 = filteredJobs.reduce((s,j)=>s+(j.positions||0),0);
+  const hiredTotal2 = filteredJobs.reduce((s,j)=>s+getJobHired(j.id),0);
+  const totalCands2 = (DB.candidates||[]).filter(c=>filteredJobs.some(j=>j.id===c.jobId)).length;
+  const conv2 = totalCands2>0?(hiredTotal2/totalCands2*100).toFixed(1):0;
+
+  const jobTableRows = filteredJobs.map(j=>{
     const dept = DB.departments.find(d=>d.id===j.deptId);
     const cands = (DB.candidates||[]).filter(c=>c.jobId===j.id);
     const hiredJ = getJobHired(j.id);
     const pct = (j.positions||1) > 0 ? Math.round(hiredJ/(j.positions||1)*100) : 0;
-    console.log('[PDF debug]', j.title, '| j.hired=', j.hired, '| fromCands=', cands.filter(c=>c.status==='hired').length, '| getJobHired=', hiredJ, '| pct=', pct);
     const statusColor = j.status==='open'?'#4caf50':j.status==='paused'?'#ff9800':j.status==='closed'?'#9e9e9e':'#2196f3';
     const prioColor = j.priority==='high'?'#f44336':j.priority==='medium'?'#ff9800':'#4caf50';
     const base = j.baseSalary||j.salary||0;
@@ -6707,9 +6719,9 @@ function exportRecruitmentPDF(){
   }).join('');
 
   const cvBySource = {};
-  (DB.candidates||[]).forEach(c=>{ cvBySource[c.source||(_lang==="en"?"Other":"Khác")]=(cvBySource[c.source||(_lang==="en"?"Other":"Khác")]||0)+1; });
+  (DB.candidates||[]).filter(c=>filteredJobs.some(j=>j.id===c.jobId)).forEach(c=>{ cvBySource[c.source||(_lang==="en"?"Other":"Khác")]=(cvBySource[c.source||(_lang==="en"?"Other":"Khác")]||0)+1; });
   const sourceRows = Object.entries(cvBySource).sort((a,b)=>b[1]-a[1]).map(([src,cnt])=>
-    `<tr><td>${src}</td><td style="text-align:center;font-weight:600">${cnt}</td><td style="text-align:center">${totalCands>0?Math.round(cnt/totalCands*100):0}%</td></tr>`
+    `<tr><td>${src}</td><td style="text-align:center;font-weight:600">${cnt}</td><td style="text-align:center">${totalCands2>0?Math.round(cnt/totalCands2*100):0}%</td></tr>`
   ).join('');
 
   // ── Chi tiết CV theo từng vị trí ──
@@ -6722,7 +6734,7 @@ function exportRecruitmentPDF(){
     interview3:'#673ab7', offer:'#009688', hired:'#4caf50', rejected:'#f44336', withdrawn:'#9e9e9e'
   };
 
-  const cvDetailBlocks = DB.jobs.map(j=>{
+  const cvDetailBlocks = filteredJobs.map(j=>{
     const dept = DB.departments.find(d=>d.id===j.deptId);
     const cands = (DB.candidates||[]).filter(c=>c.jobId===j.id)
       .sort((a,b)=>{
@@ -6789,10 +6801,10 @@ function exportRecruitmentPDF(){
   <div class="subtitle">${company} &nbsp;·&nbsp; In ngày ${todayFmt}</div>
 
   <div class="kpi-row">
-    <div class="kpi"><div class="kpi-label">Vị trí đang mở</div><div class="kpi-value">${openJobs}</div><div class="kpi-sub">/ ${totalJobs} vị trí tổng</div></div>
-    <div class="kpi"><div class="kpi-label">Tổng CV nhận</div><div class="kpi-value">${totalCands}</div><div class="kpi-sub">trong pipeline</div></div>
-    <div class="kpi"><div class="kpi-label">Đã tuyển</div><div class="kpi-value">${hiredTotal}</div><div class="kpi-sub">/ ${needTotal} slot cần tuyển</div></div>
-    <div class="kpi"><div class="kpi-label">Tỉ lệ chuyển đổi</div><div class="kpi-value">${conv}%</div><div class="kpi-sub">CV → Hired</div></div>
+    <div class="kpi"><div class="kpi-label">Vị trí đang mở</div><div class="kpi-value">${openJobs2}</div><div class="kpi-sub">/ ${filteredJobs.length} vị trí</div></div>
+    <div class="kpi"><div class="kpi-label">Tổng CV nhận</div><div class="kpi-value">${totalCands2}</div><div class="kpi-sub">trong pipeline</div></div>
+    <div class="kpi"><div class="kpi-label">Đã tuyển</div><div class="kpi-value">${hiredTotal2}</div><div class="kpi-sub">/ ${totalPositions2} slot cần tuyển</div></div>
+    <div class="kpi"><div class="kpi-label">Tỉ lệ chuyển đổi</div><div class="kpi-value">${conv2}%</div><div class="kpi-sub">CV → Hired</div></div>
   </div>
 
   <h2>📋 Tổng hợp vị trí tuyển dụng</h2>
@@ -22226,6 +22238,22 @@ applyTheme('dark');
 if(!DB.manningPlan)   DB.manningPlan   = {};
 if(!DB.manningActual) DB.manningActual = {};
 
+function _manningUpdateHC(deptId, titleKey, val){
+  // Remove No manning badge
+  const noEl = document.getElementById('nomanning_'+deptId+'_'+titleKey);
+  if(noEl && val>0) noEl.remove();
+  // Update dept HC count in header
+  const deptRow = document.getElementById('mbudget_'+deptId);
+  if(deptRow){
+    const hcCell = deptRow.querySelector('td:nth-child(2)');
+    if(hcCell){
+      let tot=0;
+      document.querySelectorAll('[data-hc-dept="'+deptId+'"]').forEach(inp=>tot+=parseInt(inp.value)||0);
+      hcCell.textContent=tot||'—';
+    }
+  }
+}
+
 function renderManning(main){
   if(!window.canDo('manning')){
     main.innerHTML='<div class="topbar"><div class="topbar-left"><h1 class="page-title">🔒 Không có quyền</h1><div class="page-sub">Bạn không được cấp quyền truy cập module Manning & Budget</div></div></div>';
@@ -22306,25 +22334,14 @@ function renderManning(main){
         dHC+=hc;dSal+=sal*hc;dBH+=bh*hc;dMeal+=meal*hc;dOth+=oth*hc;dTotHC+=totHC;
         gHC+=hc;gSal+=sal*hc;gBH+=bh*hc;gMeal+=meal*hc;gOth+=oth*hc;gTotHC+=totHC;
         const actHC  = allEmps.filter(e=>e.deptId===dept.id&&(e.role||'').trim()===title.trim()).length;
-        const noM    = !hc?`<span id="nomanning_${dept.id}_${title.replace(/\s/g,'_')}" style="font-size:9px;padding:1px 5px;border-radius:3px;margin-left:4px;background:rgba(232,185,116,.15);color:var(--warning)">No manning</span>`:'';
+        const noM    = !hc?`<span id="nomanning_${dept.id}_${title.replace(/[^a-zA-Z0-9]/g,'_')}" style="font-size:9px;padding:1px 5px;border-radius:3px;margin-left:4px;background:rgba(232,185,116,.15);color:var(--warning)">No manning</span>`:'';
+        const deptIdJ = JSON.stringify(dept.id);
+        const titleKey = title.replace(/[^a-zA-Z0-9]/g,'_');
         const savePos = field=>{
-          const updateDOM = field==='planned' ? `
-            ;(function(){
-              const v=parseFloat(this.value)||0;
-              const noEl=document.getElementById('nomanning_${dept.id}_'+${JSON.stringify(title)}.replace(/\\s/g,'_'));
-              if(noEl){if(v>0)noEl.remove();} 
-              // Update dept HC count
-              const deptRow=document.getElementById('mbudget_${dept.id}');
-              if(deptRow){
-                const hcCell=deptRow.querySelector('td:nth-child(2)');
-                if(hcCell){
-                  let tot=0;
-                  document.querySelectorAll('[data-hc-dept="${dept.id}"]').forEach(inp=>tot+=parseInt(inp.value)||0);
-                  hcCell.textContent=tot||'—';
-                }
-              }
-            }).call(this)` : '';
-          return `(function(v){const p=DB.manningPlan['${curYear}'].depts['${dept.id}'].positions.find(x=>x.title===${JSON.stringify(title)});if(p){p['${field}']=parseFloat(v)||0;if('${field}'==='budgetSalary'&&!p.budgetBH)p.budgetBH=Math.round((parseFloat(v)||0)*${BH_RATE});}saveData(['manningPlan']);}).call(this,this.value)${updateDOM}`;
+          const afterSave = field==='planned'
+            ? `;_manningUpdateHC(${deptIdJ},${JSON.stringify(titleKey)},parseFloat(this.value)||0)`
+            : '';
+          return `(function(v){const dp=DB.manningPlan['${curYear}'].depts[${deptIdJ}];const p=dp&&dp.positions?dp.positions.find(x=>x.title===${JSON.stringify(title)}):null;if(p){p[${JSON.stringify(field)}]=parseFloat(v)||0;if(${JSON.stringify(field)}==='budgetSalary'&&!p.budgetBH)p.budgetBH=Math.round((parseFloat(v)||0)*${BH_RATE});}saveData(['manningPlan']);}).call(this,this.value)${afterSave}`;
         };
 
         return `<tr data-dept-pos="${dept.id}" style="border-bottom:1px solid var(--border)">
@@ -23083,18 +23100,36 @@ function _openPDF(title, bodyHTML, subtitle){
 
 // ── NV ──
 function exportEmployeesPDF(){
-  const emps = (DB.employees||[]).filter(e=>getEffectiveStatus(e)!=='exit').sort((a,b)=>a.name.localeCompare(b.name,'vi'));
   const depts = DB.departments||[];
-  const rows = emps.map((e,i)=>`<tr>
-    <td>${i+1}</td><td>${e.code||'—'}</td><td><b>${escapeHtml(e.name)}</b></td>
-    <td>${escapeHtml(e.role||'—')}</td>
-    <td>${depts.find(d=>d.id===e.deptId)?.name||'—'}</td>
-    <td>${e.startDate||'—'}</td>
-    <td><span class="badge" style="background:${getEffectiveStatus(e)==='active'?'#e8f5e9;color:#2e7d32':getEffectiveStatus(e)==='probation'?'#fff3e0;color:#e65100':'#fce4ec;color:#c62828'}">${getEffectiveStatus(e)}</span></td>
-  </tr>`).join('');
+  const ef = typeof empFilter!=='undefined' ? empFilter : {dept:'', status:'', search:''};
+  let emps = DB.employees||[];
+  // Apply same filters as screen
+  if(ef.dept)   emps = emps.filter(e=>e.deptId===ef.dept);
+  if(ef.status) emps = emps.filter(e=>getEffectiveStatus(e)===ef.status);
+  else          emps = emps.filter(e=>getEffectiveStatus(e)!=='exit');
+  if(ef.search) { const q=ef.search.toLowerCase(); emps=emps.filter(e=>(e.name||'').toLowerCase().includes(q)||(e.code||'').toLowerCase().includes(q)); }
+  emps = emps.sort((a,b)=>{
+    const da=depts.find(d=>d.id===a.deptId)?.name||'';
+    const db2=depts.find(d=>d.id===b.deptId)?.name||'';
+    return da.localeCompare(db2,'vi')||a.name.localeCompare(b.name,'vi');
+  });
+  const deptLabel = ef.dept ? (depts.find(d=>d.id===ef.dept)?.name||'') : 'Tất cả phòng ban';
+  const statusLabel = ef.status||'Tất cả trạng thái';
+  let curDept='';
+  const rows = emps.map((e,i)=>{
+    const dName=depts.find(d=>d.id===e.deptId)?.name||'';
+    let deptRow='';
+    if(!ef.dept&&dName!==curDept){curDept=dName;deptRow=`<tr style="background:#e8eaf6"><td colspan="7" style="font-weight:700;color:#1a237e;padding:6px 8px">📂 ${escapeHtml(dName)}</td></tr>`;}
+    const st=getEffectiveStatus(e);
+    return deptRow+`<tr>
+    <td>${i+1}</td><td style="font-family:monospace;font-size:9pt">${e.code||'—'}</td><td><b>${escapeHtml(e.name)}</b></td>
+    <td>${escapeHtml(e.role||'—')}</td><td>${dName||'—'}</td><td>${e.startDate||'—'}</td>
+    <td><span style="background:${st==='active'?'#e8f5e9;color:#2e7d32':st==='probation'?'#fff3e0;color:#e65100':'#fce4ec;color:#c62828'};padding:2px 8px;border-radius:4px;font-size:8.5pt;font-weight:600">${st}</span></td>
+  </tr>`;
+  }).join('');
   _openPDF('Danh sách Nhân viên',
     `<table><thead><tr><th>#</th><th>Mã NV</th><th>Họ tên</th><th>Chức danh</th><th>Phòng ban</th><th>Ngày vào</th><th>Trạng thái</th></tr></thead><tbody>${rows}</tbody></table>`,
-    `${emps.length} nhân viên đang làm việc`);
+    `${emps.length} nhân viên · ${deptLabel} · ${statusLabel}`);
 }
 
 // ── HỢP ĐỒNG ──
@@ -23103,8 +23138,9 @@ function exportContractPDF(){
   const in30  = new Date(Date.now()+30*864e5).toISOString().slice(0,10);
   const in60  = new Date(Date.now()+60*864e5).toISOString().slice(0,10);
   const depts = DB.departments||[];
+  const cf2 = typeof empFilter!=='undefined' ? empFilter : {};
   const contracts = (DB.contracts||[])
-    .filter(c=>{ const emp=(DB.employees||[]).find(e=>e.id===c.empId); return emp&&getEffectiveStatus(emp)!=='exit'; })
+    .filter(c=>{ const emp=(DB.employees||[]).find(e=>e.id===c.empId); if(!emp||getEffectiveStatus(emp)==='exit') return false; if(cf2.dept&&emp.deptId!==cf2.dept) return false; return true; })
     .sort((a,b)=>(a.endDate||'9999').localeCompare(b.endDate||'9999'));
 
   const rows = contracts.map((c,i)=>{
@@ -23146,14 +23182,20 @@ function exportContractPDF(){
 
 // ── NGHỈ PHÉP ──
 function exportLeavePDF(){
-  const yr = window._leaveYear || new Date().getFullYear();
-  const emps = (DB.employees||[]).filter(e=>getEffectiveStatus(e)!=='exit')
-    .sort((a,b)=>{
-      const da = (DB.departments||[]).find(d=>d.id===a.deptId)?.name||'';
-      const db = (DB.departments||[]).find(d=>d.id===b.deptId)?.name||'';
-      return da.localeCompare(db,'vi') || a.name.localeCompare(b.name,'vi');
-    });
+  const bal = window._leaveBal || {};
+  const yr = parseInt(bal.year) || new Date().getFullYear();
+  const selDept = bal.dept || '';
   const depts = DB.departments||[];
+
+  let emps = (DB.employees||[]).filter(e=>getEffectiveStatus(e)!=='exit');
+  if(selDept) emps = emps.filter(e=>e.deptId===selDept);
+  emps = emps.sort((a,b)=>{
+    const da = depts.find(d=>d.id===a.deptId)?.name||'';
+    const db2 = depts.find(d=>d.id===b.deptId)?.name||'';
+    return da.localeCompare(db2,'vi') || a.name.localeCompare(b.name,'vi');
+  });
+
+  const deptLabel = selDept ? (depts.find(d=>d.id===selDept)?.name||'') : 'Tất cả phòng ban';
 
   let curDept = '';
   const rows = emps.map((e,i)=>{
@@ -23170,7 +23212,7 @@ function exportLeavePDF(){
 
     const deptName  = depts.find(d=>d.id===e.deptId)?.name||'';
     let deptRow = '';
-    if(deptName !== curDept){
+    if(!selDept && deptName !== curDept){
       curDept = deptName;
       deptRow = `<tr style="background:#e8eaf6"><td colspan="9" style="font-weight:700;color:#1a237e;padding:6px 8px">📂 ${escapeHtml(deptName)}</td></tr>`;
     }
@@ -23187,7 +23229,7 @@ function exportLeavePDF(){
     </tr>`;
   }).join('');
 
-  // Tổng
+  // Totals
   const totALEntitle = emps.reduce((s,e)=>{const sh=getLeaveSheet(e.id,'al',yr);return s+(sh.carry||0)+(sh.entitle||[]).reduce((a,b)=>a+b,0);},0);
   const totALTaken   = emps.reduce((s,e)=>{const sh=getLeaveSheet(e.id,'al',yr);return s+(sh.taken||[]).reduce((a,b)=>a+b,0);},0);
   const totCLEntitle = emps.reduce((s,e)=>{const sh=getLeaveSheet(e.id,'cl',yr);return s+(sh.carry||0)+(sh.entitle||[]).reduce((a,b)=>a+b,0);},0);
@@ -23213,12 +23255,18 @@ function exportLeavePDF(){
       <th style="text-align:center;background:#c62828">CL Đã dùng</th>
       <th style="text-align:center;background:#2e7d32">CL Còn lại</th>
     </tr></thead><tbody>${rows}${footerRow}</tbody></table>`,
-    `${emps.length} nhân viên · Năm ${yr}`);
+    `${emps.length} nhân viên · ${deptLabel} · Năm ${yr}`);
 }
 
 // ── CASUAL ──
 function exportCasualPDF(){
-  const casuals = (DB.casuals||[]).sort((a,b)=>{
+  const cf3 = window._casualFilter||{year:new Date().getFullYear(),month:0,dept:''};
+  const allCasuals = DB.casuals||[];
+  let casuals = allCasuals;
+  if(cf3.year) casuals = casuals.filter(c=>!c.year||c.year===cf3.year||c.year===String(cf3.year));
+  if(cf3.month) casuals = casuals.filter(c=>!c.month||c.month===cf3.month||c.month===parseInt(cf3.month));
+  if(cf3.dept) casuals = casuals.filter(c=>c.deptId===cf3.dept);
+  casuals = casuals.sort((a,b)=>{
     if(a.year!==b.year) return (b.year||0)-(a.year||0);
     return (b.month||0)-(a.month||0);
   });
@@ -23259,7 +23307,17 @@ function exportCasualPDF(){
 
 // ── TRAINEE ──
 function exportTraineePDF(){
-  const trainees = (DB.trainees||[]).sort((a,b)=>a.name?.localeCompare(b.name||'','vi')||0);
+  const tsf = window._traineeStatusFilter||'active';
+  const tyf = window._traineeYearFilter||0;
+  const tmf = window._traineeMonthFilter||0;
+  const today2 = new Date().toISOString().slice(0,10);
+  let trainees = DB.trainees||[];
+  if(tsf==='active')   trainees = trainees.filter(t=>!t.endDate||t.endDate>=today2);
+  else if(tsf==='exit') trainees = trainees.filter(t=>t.endDate&&t.endDate<today2);
+  if(tyf) trainees = trainees.filter(t=>t.startDate&&new Date(t.startDate).getFullYear()===tyf);
+  if(tmf) trainees = trainees.filter(t=>t.startDate&&new Date(t.startDate).getMonth()+1===tmf);
+  const statusLabel2 = tsf==='active'?'Đang TTS':tsf==='exit'?'Đã kết thúc':'Tất cả';
+  trainees = trainees.sort((a,b)=>a.name?.localeCompare(b.name||'','vi')||0);
   const depts = DB.departments||[];
   const today = new Date().toISOString().slice(0,10);
   const rows = trainees.map((c,i)=>{
@@ -23273,7 +23331,7 @@ function exportTraineePDF(){
   }).join('');
   _openPDF('Danh sách Thực tập sinh',
     `<table><thead><tr><th>#</th><th>Họ tên</th><th>Trường</th><th>Phòng ban</th><th>Từ ngày</th><th>Đến ngày</th><th>Trạng thái</th></tr></thead><tbody>${rows}</tbody></table>`,
-    `${trainees.length} thực tập sinh`);
+    `${trainees.length} thực tập sinh · ${statusLabel2}`);
 }
 
 // ── MANNING & BUDGET ──
