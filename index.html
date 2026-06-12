@@ -11236,12 +11236,11 @@ function deleteLeave(id, fromModal=false){
    RECRUITMENT — CRUD
    ========================================================= */
 function getJobHired(jobId){
-  const cands = (DB.candidates||[]).filter(a => a.jobId === jobId);
-  if(cands.length === 0){
-    const j = DB.jobs.find(x => x.id === jobId);
-    return j ? (j.hired || 0) : 0;
-  }
-  return cands.filter(a => a.status === 'hired').length;
+  const j = DB.jobs?.find(x => x.id === jobId);
+  const fromCands = (DB.candidates||[]).filter(a => a.jobId === jobId && a.status === 'hired').length;
+  const fromJob   = j ? (j.hired || 0) : 0;
+  // Lấy số lớn hơn — tránh trường hợp candidates chưa sync đủ từ Firestore
+  return Math.max(fromCands, fromJob);
 }
 
 /* ---------- View + period state ---------- */
