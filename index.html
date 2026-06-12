@@ -9266,7 +9266,7 @@ function renderLeaveReports(main){
       })
       .filter(tr => !bal.dept || tr.deptId === bal.dept)
       .map(tr => ({
-        id: tr.id, code: tr.code||'', name: tr.name||'',
+        id: 'tr_'+tr.id, code: tr.code||'', name: tr.name||'',
         role: 'Thực tập sinh', deptId: tr.deptId||'',
         joined: tr.startDate||'', status: 'active', _isTrainee: true,
       }));
@@ -9717,11 +9717,21 @@ function renderLeavePlan(main){
   if(!(window._lpSelMonths instanceof Set) || window._lpSelMonths.size===0)
     window._lpSelMonths = new Set([curMonth]);
   const selMonths = window._lpSelMonths;
-  const activeEmps = lpStatusFilter==='all'
-    ? DB.employees
-    : lpStatusFilter==='exit'
-      ? DB.employees.filter(e=>getEffectiveStatus(e)==='exit')
-      : DB.employees.filter(e=>getEffectiveStatus(e)!=='exit');
+  const activeEmps = (()=>{
+    const emps = lpStatusFilter==='all'
+      ? DB.employees
+      : lpStatusFilter==='exit'
+        ? DB.employees.filter(e=>getEffectiveStatus(e)==='exit')
+        : DB.employees.filter(e=>getEffectiveStatus(e)!=='exit');
+    // Thêm TTS đang hoạt động (dùng key tr_ giống bảng Theo dõi)
+    const now = today.toISOString().slice(0,10);
+    const activeTTS = (DB.trainees||[])
+      .filter(tr => tr.startDate && (!tr.endDate || tr.endDate >= now))
+      .map(tr => ({
+        id: 'tr_'+tr.id, deptId: tr.deptId||'', status:'active', _isTrainee:true
+      }));
+    return [...emps, ...activeTTS];
+  })();
   const depts = DB.departments;
 
   window._saveLeavePlan = (deptId, mi, type, val)=>{
@@ -9749,7 +9759,12 @@ function renderLeavePlan(main){
       + (vsKH!==null?'<div style="font-size:10px;color:'+vsKHC+';font-family:JetBrains Mono,monospace">'+vsKHT+'</div>':'');
     // Update footer totals row
     const allDepts = DB.departments||[];
-    const activeEmpsAll = (DB.employees||[]).filter(e=>e.status==='active');
+    const _now2 = today.toISOString().slice(0,10);
+    const activeEmpsAll = [
+      ...(DB.employees||[]).filter(e=>getEffectiveStatus(e)!=='exit'),
+      ...(DB.trainees||[]).filter(tr=>tr.startDate&&(!tr.endDate||tr.endDate>=_now2))
+        .map(tr=>({id:'tr_'+tr.id, deptId:tr.deptId||'', status:'active'}))
+    ];
     let fTon=0, fKh=0, fReal=0, fConLai=0;
     allDepts.forEach(d=>{
       const p = (DB.leavePlan[curYear]||{})[d.id]||{};
@@ -10178,12 +10193,12 @@ function renderLeaves(main){
 
   if(!DB.leaveSheet) DB.leaveSheet = {};
 
-  const getSheet = (empId) => {
+  const getSheet = (empId, lt='cl') => {
     if(!DB.leaveSheet[empId]) DB.leaveSheet[empId] = {};
-    if(!DB.leaveSheet[empId][bal.year]) DB.leaveSheet[empId][bal.year] = {
-      carry: 0, entitle: Array(12).fill(0), taken: Array(12).fill(0), clearAL: 0,
-    };
-    const sh = DB.leaveSheet[empId][bal.year];
+    if(!DB.leaveSheet[empId][bal.year]) DB.leaveSheet[empId][bal.year] = {};
+    const yr = DB.leaveSheet[empId][bal.year];
+    if(!yr[lt]) yr[lt] = { carry: 0, entitle: Array(12).fill(0), taken: Array(12).fill(0), clearAL: 0 };
+    const sh = yr[lt];
     if(!Array.isArray(sh.entitle)) sh.entitle = Array(12).fill(0);
     if(!Array.isArray(sh.taken))   sh.taken   = Array(12).fill(0);
     while(sh.entitle.length < 12) sh.entitle.push(0);
@@ -10191,8 +10206,8 @@ function renderLeaves(main){
     return sh;
   };
 
-  window.saveLeaveCell = function(empId, type, month, val){
-    const sh = getSheet(empId);
+  window.saveCLCell = function(empId, type, month, val){
+    const sh = getSheet(empId, 'cl');
     const v = parseFloat(val)||0;
     if(type==='carry')        sh.carry   = v;
     else if(type==='entitle') sh.entitle[month] = v;
@@ -10200,7 +10215,8 @@ function renderLeaves(main){
     else if(type==='clearAL') sh.clearAL = v;
     if(!DB.leaveSheet) DB.leaveSheet = {};
     if(!DB.leaveSheet[empId]) DB.leaveSheet[empId] = {};
-    DB.leaveSheet[empId][bal.year] = sh;
+    if(!DB.leaveSheet[empId][bal.year]) DB.leaveSheet[empId][bal.year] = {};
+    DB.leaveSheet[empId][bal.year].cl = sh;
     saveData(['leaveSheet']);
     const totalUsed = sh.taken.reduce((s,x)=>s+x,0);
     const totalEntitle = sh.carry + sh.entitle.reduce((s,x)=>s+x,0);
@@ -10219,7 +10235,7 @@ function renderLeaves(main){
   };
 
   const empMonthData = scopeEmps.map(e=>{
-    const sh = getSheet(e.id);
+    const sh = getSheet(e.id, 'cl');
     const months = Array.from({length:12},(_,i)=>({
       entitle: sh.entitle[i]||0,
       used:    sh.taken[i]||0,
@@ -10310,12 +10326,12 @@ function renderLeaves(main){
               </td>
               <!-- Tồn năm trước — NHẬP TAY -->
               <td style="background:rgba(255,200,0,.08);padding:3px 2px;text-align:center">
-                <input ${inputStyle} value="${carry||0}" oninput="saveLeaveCell('${e.id}','carry',0,this.value)" style="width:40px;padding:2px 3px;background:rgba(255,200,0,.1);border:1px solid rgba(255,200,0,.3);border-radius:3px;color:#FFCC00;font-family:JetBrains Mono,monospace;font-size:11px;text-align:center">
+                <input ${inputStyle} value="${carry||0}" oninput="saveCLCell('${e.id}','carry',0,this.value)" style="width:40px;padding:2px 3px;background:rgba(255,200,0,.1);border:1px solid rgba(255,200,0,.3);border-radius:3px;color:#FFCC00;font-family:JetBrains Mono,monospace;font-size:11px;text-align:center">
               </td>
               <!-- Được hưởng T1-T12 — NHẬP TAY -->
               ${months.map((mo,i)=>`<td style="background:rgba(126,198,153,.05);padding:2px 1px;text-align:center">
                 <input type="text" inputmode="decimal" value="${mo.entitle||''}" placeholder="0"
-                  oninput="saveLeaveCell('${e.id}','entitle',${i},this.value)"
+                  oninput="saveCLCell('${e.id}','entitle',${i},this.value)"
                   style="width:36px;padding:2px 2px;background:rgba(126,198,153,.08);border:1px solid rgba(126,198,153,.2);border-radius:3px;color:var(--success);font-family:JetBrains Mono,monospace;font-size:11px;text-align:center">
               </td>`).join('')}
               <!-- Tồn hiện tại — TỰ ĐỘNG -->
@@ -10327,14 +10343,14 @@ function renderLeaves(main){
                 if(mi==='clear'){
                   return `<td style="background:rgba(255,200,0,.08);padding:2px 1px;text-align:center">
                     <input type="text" inputmode="decimal" value="${clearAL||''}" placeholder="0"
-                      oninput="saveLeaveCell('${e.id}','clearAL',0,this.value)"
+                      oninput="saveCLCell('${e.id}','clearAL',0,this.value)"
                       style="width:36px;padding:2px 2px;background:rgba(255,200,0,.1);border:1px solid rgba(255,200,0,.3);border-radius:3px;color:var(--warning);font-family:JetBrains Mono,monospace;font-size:11px;text-align:center">
                   </td>`;
                 }
                 const v = months[mi].used;
                 return `<td style="background:rgba(212,165,116,.05);padding:2px 1px;text-align:center">
                   <input type="text" inputmode="decimal" value="${v||''}" placeholder="0"
-                    oninput="saveLeaveCell('${e.id}','taken',${mi},this.value)"
+                    oninput="saveCLCell('${e.id}','taken',${mi},this.value)"
                     style="width:36px;padding:2px 2px;background:rgba(212,165,116,.08);border:1px solid rgba(212,165,116,.2);border-radius:3px;color:var(--accent);font-family:JetBrains Mono,monospace;font-size:11px;text-align:center">
                 </td>`;
               }).join('')}
