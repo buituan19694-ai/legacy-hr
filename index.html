@@ -21870,6 +21870,7 @@ fbAuth.onAuthStateChanged(async user => {
               const isRecent = (Date.now()-cloudSyncAt) < 5000;
               if(isSelf && isRecent) return; // chính mình vừa save
               if(change.type === 'removed') return;
+              if(key === 'candidates') console.log('[REALTIME] candidates change:', change.type, 'doc:', docId, 'count:', d[key]?.length);
               if(d[key] && Array.isArray(d[key])){
                 const shardId = d._shard; // year / YYYY_MM / jobId
                 const isMonthShard = typeof shardId==='string' && /^\d{4}_\d{2}$/.test(String(shardId));
