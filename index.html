@@ -6693,6 +6693,75 @@ function exportRecruitmentPDF(){
     `<tr><td>${src}</td><td style="text-align:center;font-weight:600">${cnt}</td><td style="text-align:center">${totalCands>0?Math.round(cnt/totalCands*100):0}%</td></tr>`
   ).join('');
 
+  // ── Chi tiết CV theo từng vị trí ──
+  const CAND_STATUS_LABEL = {
+    new:'Mới nhận', screening:'Đang xét', interview1:'PV vòng 1', interview2:'PV vòng 2',
+    interview3:'PV vòng 3', offer:'Đã offer', hired:'Đã tuyển', rejected:'Từ chối', withdrawn:'Rút hồ sơ'
+  };
+  const CAND_STATUS_COLOR = {
+    new:'#607d8b', screening:'#ff9800', interview1:'#2196f3', interview2:'#3f51b5',
+    interview3:'#673ab7', offer:'#009688', hired:'#4caf50', rejected:'#f44336', withdrawn:'#9e9e9e'
+  };
+
+  const cvDetailBlocks = DB.jobs.map(j=>{
+    const dept = DB.departments.find(d=>d.id===j.deptId);
+    const cands = (DB.candidates||[]).filter(c=>c.jobId===j.id)
+      .sort((a,b)=>{
+        const order = ['hired','offer','interview3','interview2','interview1','screening','new','withdrawn','rejected'];
+        return (order.indexOf(a.status)||99)-(order.indexOf(b.status)||99);
+      });
+    if(!cands.length) return `<div style="break-inside:avoid;margin-bottom:20px">
+      <div style="background:#f8f9fa;border-left:4px solid #ccc;padding:8px 12px;margin-bottom:6px">
+        <span style="font-weight:700;font-size:11pt">${escapeHtml(j.title||'')}</span>
+        <span style="color:#888;font-size:9pt;margin-left:8px">${dept?.name||'—'} · ${j.positions||1} vị trí</span>
+        <span style="color:#999;font-size:9pt;margin-left:8px;font-style:italic">Chưa có CV</span>
+      </div>
+    </div>`;
+
+    const hiredCount = cands.filter(c=>c.status==='hired').length;
+    const statusBadgeColor = j.status==='open'?'#4caf50':j.status==='paused'?'#ff9800':j.status==='closed'?'#9e9e9e':'#2196f3';
+
+    const candRows = cands.map((c,idx)=>{
+      const sc = CAND_STATUS_COLOR[c.status]||'#607d8b';
+      const sl = CAND_STATUS_LABEL[c.status]||c.status||'—';
+      // Vòng phỏng vấn hiện tại
+      const rounds = [c.round1,c.round2,c.round3,c.round4,c.round5].filter(Boolean);
+      const latestRound = rounds[rounds.length-1];
+      const roundNote = latestRound ? `${latestRound.result||''} ${latestRound.note?'· '+latestRound.note:''}`.trim() : '';
+      return `<tr style="background:${idx%2===0?'#fff':'#fafafa'}">
+        <td style="text-align:center;color:#999;font-size:9pt">${idx+1}</td>
+        <td style="font-weight:600">${escapeHtml(c.name||'—')}</td>
+        <td style="color:#555">${escapeHtml(c.phone||'—')}</td>
+        <td style="color:#555;font-size:9pt">${escapeHtml(c.source||'—')}</td>
+        <td>${c.appliedDate?fmtDate(c.appliedDate):'—'}</td>
+        <td><span style="background:${sc}22;color:${sc};padding:2px 7px;border-radius:4px;font-size:8.5pt;font-weight:600;white-space:nowrap">${sl}</span></td>
+        <td style="font-size:9pt;color:#666;max-width:160px">${escapeHtml(roundNote||c.notes||'—')}</td>
+      </tr>`;
+    }).join('');
+
+    return `<div style="break-inside:avoid;margin-bottom:24px">
+      <div style="background:#f0f4ff;border-left:4px solid #1a1a2e;padding:9px 12px;margin-bottom:0;display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+        <span style="font-weight:700;font-size:11.5pt;color:#1a1a2e">${escapeHtml(j.title||'')}</span>
+        <span style="background:#1a1a2e22;color:#1a1a2e;padding:1px 8px;border-radius:4px;font-size:9pt">${dept?.name||'—'}</span>
+        <span style="font-size:9pt;color:#555">HC: <b>${hiredCount}/${j.positions||1}</b></span>
+        <span style="color:${statusBadgeColor};font-size:9pt;font-weight:600">${JOB_STATUS[j.status]||j.status}</span>
+        <span style="font-size:9pt;color:#888;margin-left:auto">${cands.length} CV</span>
+      </div>
+      <table style="width:100%;border-collapse:collapse;font-size:9.5pt">
+        <thead><tr style="background:#e8ecf0">
+          <th style="padding:5px 6px;text-align:center;width:28px">#</th>
+          <th style="padding:5px 8px;text-align:left">Họ tên</th>
+          <th style="padding:5px 8px;text-align:left">SĐT</th>
+          <th style="padding:5px 8px;text-align:left">Nguồn</th>
+          <th style="padding:5px 8px;text-align:left">Ngày nộp</th>
+          <th style="padding:5px 8px;text-align:left">Trạng thái</th>
+          <th style="padding:5px 8px;text-align:left">Ghi chú / PV</th>
+        </tr></thead>
+        <tbody>${candRows}</tbody>
+      </table>
+    </div>`;
+  }).join('');
+
   const html = `<!DOCTYPE html><html lang="vi"><head>
   <meta charset="utf-8">
   <title>Báo cáo Tuyển dụng – ${company}</title>
@@ -6707,19 +6776,22 @@ function exportRecruitmentPDF(){
     <div class="kpi"><div class="kpi-label">Tỉ lệ chuyển đổi</div><div class="kpi-value">${conv}%</div><div class="kpi-sub">CV → Hired</div></div>
   </div>
 
-  <h2>📋 Chi tiết vị trí tuyển dụng</h2>
+  <h2>📋 Tổng hợp vị trí tuyển dụng</h2>
   <table>
     <thead><tr>
-      <th>${_lang==="en"?"Position":"Vị trí"}</th><th>${t('th_dept')}</th><th style="text-align:center">Tuyển</th>
-      <th style="text-align:center">CV</th><th style="text-align:center">${_lang==="en"?"Progress":"Tiến độ"}</th>
-      <th>${_lang==="en"?"Deadline":"Deadline"}</th><th style="text-align:center">${_lang==="en"?"Priority":"Ưu tiên"}</th><th>${_lang==="en"?"Status":"Trạng thái"}</th><th>Lương</th>
+      <th>Vị trí</th><th>Phòng ban</th><th style="text-align:center">Tuyển</th>
+      <th style="text-align:center">CV</th><th style="text-align:center">Tiến độ</th>
+      <th>Deadline</th><th style="text-align:center">Ưu tiên</th><th>Trạng thái</th><th>Lương</th>
     </tr></thead>
     <tbody>${jobTableRows}</tbody>
   </table>
 
+  <h2>👤 Chi tiết CV theo từng vị trí</h2>
+  ${cvDetailBlocks}
+
   <h2>📡 Nguồn ứng viên</h2>
   <table style="width:50%">
-    <thead><tr><th>${_lang==="en"?"Source":"Nguồn"}</th><th style="text-align:center">Số CV</th><th style="text-align:center">Tỉ lệ</th></tr></thead>
+    <thead><tr><th>Nguồn</th><th style="text-align:center">Số CV</th><th style="text-align:center">Tỉ lệ</th></tr></thead>
     <tbody>${sourceRows}</tbody>
   </table>
 
@@ -22019,59 +22091,58 @@ function renderManning(main){
   const renderBudgetTab = ()=>{
     const thS = `padding:8px 6px;font-size:10px;font-weight:700;white-space:nowrap;text-align:right`;
     const thC = `padding:8px 6px;font-size:10px;font-weight:700;white-space:nowrap;text-align:center`;
+    const COL_W = ['auto','60px','110px','110px','95px','95px','115px','125px'];
 
-    let gHC=0,gSal=0,gBH=0,gMeal=0,gOth=0,gTot=0,gTotHC=0;
+    let gHC=0,gSal=0,gBH=0,gMeal=0,gOth=0,gTotHC=0;
 
     const deptBlocks = depts.map(dept=>{
       const dp = getDeptPlan(dept.id);
-      // All roles: union of DB roles + planned positions
       const dbRoles  = [...new Set(allEmps.filter(e=>e.deptId===dept.id).map(e=>e.role||'').filter(Boolean))];
       const planRoles= dp.positions.map(p=>p.title);
       const roles    = [...new Set([...dbRoles,...planRoles])].sort();
 
-      let dHC=0,dSal=0,dBH=0,dMeal=0,dOth=0,dTot=0,dTotHC=0;
+      let dHC=0,dSal=0,dBH=0,dMeal=0,dOth=0,dTotHC=0;
 
       const posRows = roles.map(title=>{
         const p      = getPos(dept.id,title);
         const hc     = parseInt(p.planned)||0;
         const sal    = parseFloat(p.budgetSalary)||0;
         const bh     = parseFloat(p.budgetBH)||(sal?Math.round(sal*BH_RATE):0);
-        const meal   = parseFloat(p.mealRate)||0; // per person per month
+        const meal   = parseFloat(p.mealRate)||0;
         const oth    = parseFloat(p.budgetOther)||0;
-        const tot1   = sal+bh+meal+oth;   // per person
-        const totHC  = tot1*hc;           // * headcount
-        dHC+=hc;dSal+=sal*hc;dBH+=bh*hc;dMeal+=meal*hc;dOth+=oth*hc;dTot+=tot1*hc;
+        const tot1   = sal+bh+meal+oth;
+        const totHC  = tot1*hc;
+        dHC+=hc;dSal+=sal*hc;dBH+=bh*hc;dMeal+=meal*hc;dOth+=oth*hc;dTotHC+=tot1*hc;
         const actHC  = allEmps.filter(e=>e.deptId===dept.id&&(e.role||'').trim()===title.trim()).length;
         const noM    = !hc?`<span style="font-size:9px;padding:1px 5px;border-radius:3px;margin-left:4px;background:rgba(232,185,116,.15);color:var(--warning)">No manning</span>`:'';
-
         const savePos = field=>`(function(v){const p=DB.manningPlan['${curYear}'].depts['${dept.id}'].positions.find(x=>x.title===${JSON.stringify(title)});if(p){p['${field}']=parseFloat(v)||0;if('${field}'==='budgetSalary'&&!p.budgetBH)p.budgetBH=Math.round((parseFloat(v)||0)*${BH_RATE});}saveData(['manningPlan']);}).call(this,this.value)`;
 
-        return `<tr style="border-bottom:1px solid var(--border)">
-          <td style="padding:5px 8px 5px 24px;font-size:12px;font-weight:500;min-width:180px">${escapeHtml(title)}${noM}
-            <div style="font-size:10px;color:var(--ink-muted);margin-top:2px">Actual: ${actHC} NV</div>
+        return `<tr data-dept-pos="${dept.id}" style="border-bottom:1px solid var(--border)">
+          <td style="padding:5px 8px 5px 26px;font-size:12px;font-weight:500">${escapeHtml(title)}${noM}
+            <div style="font-size:10px;color:var(--ink-muted)">Actual: ${actHC} NV</div>
           </td>
-          <td style="padding:3px 6px;text-align:center">${inpNum(savePos('planned'),p.planned,50,'var(--accent)','1')}</td>
-          <td style="padding:3px 6px;text-align:right">${inpNum(savePos('budgetSalary'),p.budgetSalary,95,'var(--success)')}</td>
-          <td style="padding:3px 6px;text-align:right">${inpNum(savePos('budgetBH'),p.budgetBH||(sal?Math.round(sal*BH_RATE):0),95,'var(--purple)')}</td>
-          <td style="padding:3px 6px;text-align:right">${inpNum(savePos('mealRate'),p.mealRate,80,'var(--teal)')}</td>
-          <td style="padding:3px 6px;text-align:right">${inpNum(savePos('budgetOther'),p.budgetOther,80,'var(--warning)')}</td>
-          <td style="padding:5px 8px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--accent)">${fmtVND(tot1)}</td>
-          <td style="padding:5px 8px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:#FFCC00">${fmtVND(totHC)}</td>
+          <td style="padding:3px 6px;text-align:center">${inpNum(savePos('planned'),p.planned,46,'var(--accent)','1')}</td>
+          <td style="padding:3px 6px;text-align:right">${inpNum(savePos('budgetSalary'),p.budgetSalary,98,'var(--success)')}</td>
+          <td style="padding:3px 6px;text-align:right">${inpNum(savePos('budgetBH'),p.budgetBH||(sal?Math.round(sal*BH_RATE):0),98,'var(--purple)')}</td>
+          <td style="padding:3px 6px;text-align:right">${inpNum(savePos('mealRate'),p.mealRate,83,'var(--teal)')}</td>
+          <td style="padding:3px 6px;text-align:right">${inpNum(savePos('budgetOther'),p.budgetOther,83,'var(--warning)')}</td>
+          <td style="padding:5px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:#FFCC00">${fmtVND(totHC)}</td>
         </tr>`;
       }).join('');
 
       dTotHC=dSal+dBH+dMeal+dOth;
       gHC+=dHC;gSal+=dSal;gBH+=dBH;gMeal+=dMeal;gOth+=dOth;gTotHC+=dTotHC;
 
-      const addRow=`<tr><td colspan="8" style="padding:3px 8px 6px 24px">
+      const addRow=`<tr data-dept-pos="${dept.id}"><td colspan="7" style="padding:3px 8px 6px 26px">
         <input type="text" placeholder="+ Thêm vị trí mới (Enter để lưu)..."
           onkeydown="if(event.key==='Enter'&&this.value.trim()){const dp=DB.manningPlan['${curYear}'].depts['${dept.id}'];if(!dp)DB.manningPlan['${curYear}'].depts['${dept.id}']={positions:[]};if(!dp.positions)dp.positions=[];if(!dp.positions.find(p=>p.title===this.value.trim()))dp.positions.push({title:this.value.trim(),planned:0,budgetSalary:0,budgetBH:0,mealRate:0,budgetOther:0,notes:''});saveData(['manningPlan']);this.value='';render();}"
           style="width:280px;padding:4px 8px;background:transparent;border:1px dashed var(--border);border-radius:5px;color:var(--ink-muted);font-size:11px">
       </td></tr>`;
 
+      // Dept summary row
       return `<tr style="background:var(--bg-elev);border-top:2px solid var(--border-strong)" id="mbudget_${dept.id}">
         <td style="padding:8px 14px;font-weight:700;font-size:13px;cursor:pointer;position:sticky;left:0;background:var(--bg-elev);z-index:1"
-          onclick="const t=document.getElementById('mbudget_body_${dept.id}');if(t)t.style.display=t.style.display==='none'?'':'none'">
+          onclick="document.querySelectorAll('[data-dept-pos=\\'${dept.id}\\']').forEach(r=>r.style.display=r.style.display==='none'?'':'none')">
           ▸ ${escapeHtml(dept.name)}
         </td>
         <td style="padding:6px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--accent)">${dHC||'—'}</td>
@@ -22079,26 +22150,31 @@ function renderManning(main){
         <td style="padding:6px 8px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--purple)">${fmtM(dBH)}</td>
         <td style="padding:6px 8px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--teal)">${fmtM(dMeal)}</td>
         <td style="padding:6px 8px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--warning)">${fmtM(dOth)}</td>
-        <td style="padding:6px 8px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--accent)">—</td>
         <td style="padding:6px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:#FFCC00">${fmtM(dTotHC)}</td>
       </tr>
-      <tr id="mbudget_body_${dept.id}"><td colspan="8" style="padding:0">
-        <table style="width:100%;border-collapse:collapse">${posRows}${addRow}</table>
-      </td></tr>`;
+      ${posRows}${addRow}`;
     }).join('');
 
     return `<div class="card" style="padding:0;overflow:hidden">
       <div style="overflow-x:auto">
-        <table style="width:100%;border-collapse:collapse;font-size:12px">
+        <table style="border-collapse:collapse;font-size:12px;width:100%">
+          <colgroup>
+            <col style="min-width:200px">
+            <col style="width:62px">
+            <col style="width:112px">
+            <col style="width:112px">
+            <col style="width:97px">
+            <col style="width:97px">
+            <col style="width:128px">
+          </colgroup>
           <thead><tr style="background:var(--bg-elev);border-bottom:2px solid var(--border-strong)">
-            <th style="padding:10px 14px;text-align:left;position:sticky;left:0;background:var(--bg-elev);z-index:2;min-width:200px">Bộ phận / Vị trí</th>
-            <th style="${thC};min-width:60px;color:var(--accent)">HC<br><span style="font-size:9px;opacity:.6">Planned</span></th>
-            <th style="${thS};min-width:105px;color:var(--success)">Lương/người<br><span style="font-size:9px;opacity:.6">VNĐ/tháng</span></th>
-            <th style="${thS};min-width:105px;color:var(--purple)">BHXH+CĐ<br><span style="font-size:9px;opacity:.6">22.5%</span></th>
-            <th style="${thS};min-width:90px;color:var(--teal)">Meal/người<br><span style="font-size:9px;opacity:.6">ngàycông×rate</span></th>
-            <th style="${thS};min-width:90px;color:var(--warning)">Chi phí khác<br><span style="font-size:9px;opacity:.6">VNĐ/tháng</span></th>
-            <th style="${thS};min-width:110px;color:var(--accent)">Tổng/người<br><span style="font-size:9px;opacity:.6">auto</span></th>
-            <th style="${thS};min-width:120px;color:#FFCC00">Tổng × HC<br><span style="font-size:9px;opacity:.6">auto</span></th>
+            <th style="padding:10px 14px;text-align:left;position:sticky;left:0;background:var(--bg-elev);z-index:2">Bộ phận / Vị trí</th>
+            <th style="${thC};color:var(--accent)">HC<br><span style="font-size:9px;opacity:.6">Planned</span></th>
+            <th style="${thS};color:var(--success)">Lương/người<br><span style="font-size:9px;opacity:.6">VNĐ/tháng</span></th>
+            <th style="${thS};color:var(--purple)">BHXH+CĐ<br><span style="font-size:9px;opacity:.6">22.5%</span></th>
+            <th style="${thS};color:var(--teal)">Meal/người<br><span style="font-size:9px;opacity:.6">rate/ngày</span></th>
+            <th style="${thS};color:var(--warning)">Chi phí khác<br><span style="font-size:9px;opacity:.6">VNĐ/tháng</span></th>
+            <th style="${thS};color:#FFCC00">Tổng × HC<br><span style="font-size:9px;opacity:.6">auto</span></th>
           </tr></thead>
           <tbody>${deptBlocks}</tbody>
           <tfoot><tr style="background:#0f1a28;border-top:2px solid var(--border-strong)">
@@ -22108,7 +22184,6 @@ function renderManning(main){
             <td style="padding:8px;text-align:right;font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--purple)">${fmtM(gBH)}</td>
             <td style="padding:8px;text-align:right;font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--teal)">${fmtM(gMeal)}</td>
             <td style="padding:8px;text-align:right;font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--warning)">${fmtM(gOth)}</td>
-            <td style="padding:8px;text-align:right;color:var(--ink-muted)">—</td>
             <td style="padding:8px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:800;color:#FFCC00">${fmtM(gTotHC)}</td>
           </tr></tfoot>
         </table>
@@ -22122,118 +22197,189 @@ function renderManning(main){
      Cột: Dept | Vị trí | Mã | Tên | Lương CB | Phụ cấp | Tổng lương | BHXH(22.5%) | Ngày công | Meal | Khác | Tổng
      ══════════════════════════════════════════════ */
   const renderActualTab = ()=>{
-    const mi    = curMonth; // 0-indexed
-    if(!DB.manningActual[curYear][mi]) DB.manningActual[curYear][mi]={};
-    const actMo = DB.manningActual[curYear][mi];
+    // Multi-month select
+    if(!window._manningMonths) window._manningMonths = new Set([curMonth]);
+    const selMonths = window._manningMonths;
+    const BH_RATE_LOCAL = BH_RATE;
 
-    const thS = `padding:8px 6px;font-size:10px;font-weight:700;white-space:nowrap;text-align:right`;
+    const monthTabs = MN.map((m,i)=>{
+      const sel = selMonths.has(i);
+      return `<button onclick="(function(){if(window._manningMonths.has(${i})&&window._manningMonths.size>1)window._manningMonths.delete(${i});else window._manningMonths.add(${i});render();})()"
+        style="padding:5px 10px;border-radius:6px;border:1px solid ${sel?'var(--accent)':'var(--border)'};background:${sel?'var(--accent)':'transparent'};color:${sel?'var(--bg)':'var(--ink-dim)'};font-family:inherit;font-size:12px;font-weight:${sel?'700':'400'};cursor:pointer">${m}</button>`;
+    }).join('');
 
-    // Month tabs
-    const monthTabs = MN.map((m,i)=>`<button onclick="window._manningMonth=${i};render()"
-      style="padding:5px 10px;border-radius:6px;border:1px solid ${i===mi?'var(--accent)':'var(--border)'};background:${i===mi?'var(--accent)':'transparent'};color:${i===mi?'var(--bg)':'var(--ink-dim)'};font-family:inherit;font-size:12px;font-weight:${i===mi?'700':'400'};cursor:pointer">${m}</button>`).join('');
+    const sortedMonths = [...selMonths].sort((a,b)=>a-b);
 
-    let gSal=0,gBH=0,gMeal=0,gOth=0,gTot=0,gHC=0;
+    // Build table — one column-group per selected month
+    const thS = `padding:6px 5px;font-size:10px;font-weight:700;white-space:nowrap;text-align:right`;
+    const multiMode = sortedMonths.length > 1;
+
+    // Per-month headers
+    const monthHeaders = multiMode ? sortedMonths.map(mi=>`
+      <th colspan="5" style="padding:6px 8px;text-align:center;font-size:11px;font-weight:700;color:var(--accent);border-left:2px solid var(--border-strong)">${MN[mi]}</th>`).join('') : '';
+    const subHeaders = multiMode ? sortedMonths.map(mi=>`
+      <th style="${thS};border-left:2px solid var(--border-strong);color:var(--success)">Tổng lương</th>
+      <th style="${thS};color:var(--purple)">BHXH+CĐ</th>
+      <th style="padding:6px 5px;text-align:center;font-size:10px;font-weight:700;color:var(--teal)">Ngày công</th>
+      <th style="${thS};color:var(--teal)">Meal</th>
+      <th style="${thS};color:#FFCC00">Tổng CP</th>`).join('') : '';
+
+    // Single month display cols
+    const singleMi = sortedMonths[0];
+
+    let gRows = '';
+    let gTotals = {}; // mi -> {sal,bh,meal,oth,tot}
+    sortedMonths.forEach(mi=>{ gTotals[mi]={sal:0,bh:0,meal:0,oth:0,tot:0,hc:0}; });
 
     const deptBlocks = depts.map(dept=>{
       const deptEmps = allEmps.filter(e=>e.deptId===dept.id);
       if(!deptEmps.length) return '';
       const dp = getDeptPlan(dept.id);
-
-      // Group by role
       const roles = [...new Set(deptEmps.map(e=>e.role||'(Chưa có vị trí)'))].sort();
-      let dSal=0,dBH=0,dMeal=0,dOth=0,dTot=0;
 
       const roleBlocks = roles.map(role=>{
-        const pos       = dp.positions.find(p=>p.title===role)||{};
-        const mealRate  = parseFloat(pos.mealRate)||0; // per person, already monthly total from budget
-        // Actually meal = workDays × daily_rate, but user said meal = ngày công × số tiền (mealRate = rate/ngày)
-        const roleEmps  = deptEmps.filter(e=>(e.role||'(Chưa có vị trí)')===role);
+        const pos = dp.positions.find(p=>p.title===role)||{};
+        const mealRate = parseFloat(pos.mealRate)||0;
+        const roleEmps = deptEmps.filter(e=>(e.role||'(Chưa có vị trí)')===role);
 
         const empRows = roleEmps.map(e=>{
           const cd    = DB.customData[e.id]||{};
-          const base  = parseInt(cd.baseSalary)||0;
-          const bonus = parseInt(cd.bonusSalary)||0;
-          const sal   = base+bonus;
-          const bh    = Math.round(base*BH_RATE); // BH chỉ tính trên lương CB
-          const wdays = parseInt((actMo[e.id]||{}).workDays)||0;
-          const meal  = Math.round(wdays*mealRate);
-          const oth   = parseFloat((actMo[e.id]||{}).other)||0;
-          const tot   = sal+bh+meal+oth;
-          dSal+=sal;dBH+=bh;dMeal+=meal;dOth+=oth;dTot+=tot;
+          // Override lương/BHXH per NV per month từ actMo
+          const empCells = sortedMonths.map(mi=>{
+            const actMo = (DB.manningActual[curYear]||{})[mi]||{};
+            const eact  = actMo[e.id]||{};
+            // Lương: dùng override nếu có, fallback DB
+            const base  = parseFloat(eact.salOverride ?? cd.baseSalary) || (parseInt(cd.baseSalary)||0);
+            const bonus = parseFloat(eact.bonOverride ?? cd.bonusSalary) || (parseInt(cd.bonusSalary)||0);
+            const sal   = base+bonus;
+            // BHXH: override nếu có, fallback auto
+            const bh    = parseFloat(eact.bhOverride) || Math.round(base*BH_RATE_LOCAL);
+            const wdays = parseInt(eact.workDays)||0;
+            const meal  = Math.round(wdays*mealRate);
+            const oth   = parseFloat(eact.other)||0;
+            const tot   = sal+bh+meal+oth;
+            gTotals[mi].sal+=sal;gTotals[mi].bh+=bh;gTotals[mi].meal+=meal;gTotals[mi].oth+=oth;gTotals[mi].tot+=tot;
+            if(mi===sortedMonths[0]) gTotals[mi].hc++;
 
-          const saveAct = field=>`(function(v){if(!DB.manningActual['${curYear}']['${mi}'])DB.manningActual['${curYear}']['${mi}']={};if(!DB.manningActual['${curYear}']['${mi}']['${e.id}'])DB.manningActual['${curYear}']['${mi}']['${e.id}']={};DB.manningActual['${curYear}']['${mi}']['${e.id}']['${field}']=parseFloat(v)||0;saveData(['manningActual']);}).call(this,this.value)`;
+            const saveAct = field=>`(function(v){const yr=DB.manningActual['${curYear}'];if(!yr['${mi}'])yr['${mi}']={};if(!yr['${mi}']['${e.id}'])yr['${mi}']['${e.id}']={};yr['${mi}']['${e.id}']['${field}']=parseFloat(v)||0;saveData(['manningActual']);}).call(this,this.value)`;
+            const inpS = (field,val,w,color)=>`<input type="number" min="0" step="${field.includes('sal')||field.includes('bon')||field.includes('bh')?'100000':'0.5'}" value="${val||''}" placeholder="auto"
+              onchange="${saveAct(field)}"
+              style="width:${w}px;padding:2px 4px;background:var(--bg-elev);border:1px solid ${color}55;border-radius:3px;color:${color};font-family:'JetBrains Mono',monospace;font-size:10px;text-align:right">`;
+
+            if(multiMode){
+              return `<td style="padding:3px 5px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--success);border-left:2px solid var(--border-strong)">${(Math.round(sal)).toLocaleString('vi')}</td>
+                <td style="padding:3px 5px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--purple)">${(Math.round(bh)).toLocaleString('vi')}</td>
+                <td style="padding:2px 4px;text-align:center">${inpS('workDays_'+mi,wdays,44,'var(--teal)')}</td>
+                <td style="padding:3px 5px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--teal)">${meal?meal.toLocaleString('vi'):'—'}</td>
+                <td style="padding:3px 7px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:700;color:#FFCC00">${(Math.round(tot)).toLocaleString('vi')}</td>`;
+            } else {
+              return `<td style="padding:3px 6px;text-align:right">${inpS('salOverride',eact.salOverride,88,'var(--success)')}</td>
+                <td style="padding:3px 6px;text-align:right">${inpS('bonOverride',eact.bonOverride,80,'var(--ink-dim)')}</td>
+                <td style="padding:3px 5px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:600;color:var(--success)">${(Math.round(sal)).toLocaleString('vi')}</td>
+                <td style="padding:3px 6px;text-align:right">${inpS('bhOverride',eact.bhOverride,80,'var(--purple)')}</td>
+                <td style="padding:2px 4px;text-align:center">
+                  <input type="number" min="0" max="31" step="0.5" value="${wdays||''}" placeholder="0"
+                    onchange="${saveAct('workDays')}"
+                    style="width:50px;padding:3px 5px;background:var(--bg-elev);border:1px solid var(--teal)55;border-radius:4px;color:var(--teal);font-family:'JetBrains Mono',monospace;font-size:11px;text-align:center">
+                </td>
+                <td style="padding:3px 5px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--teal)">${meal?meal.toLocaleString('vi'):'—'}</td>
+                <td style="padding:3px 6px;text-align:right">
+                  <input type="number" min="0" step="10000" value="${oth||''}" placeholder="0"
+                    onchange="${saveAct('other')}"
+                    style="width:80px;padding:3px 5px;background:var(--bg-elev);border:1px solid var(--warning)44;border-radius:4px;color:var(--warning);font-family:'JetBrains Mono',monospace;font-size:11px;text-align:right">
+                </td>
+                <td style="padding:3px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:#FFCC00">${(Math.round(tot)).toLocaleString('vi')}</td>`;
+            }
+          }).join('');
 
           return `<tr style="border-bottom:1px solid var(--border)">
             <td style="padding:4px 8px 4px 28px;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--ink-muted)">${e.code||'—'}</td>
             <td style="padding:4px 8px;font-size:12px;font-weight:500">${escapeHtml(e.name)}</td>
-            <td style="padding:4px 8px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px">${fmtVND(base)}</td>
-            <td style="padding:4px 8px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--ink-muted)">${fmtVND(bonus)}</td>
-            <td style="padding:4px 8px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:600;color:var(--success)">${fmtVND(sal)}</td>
-            <td style="padding:4px 8px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--purple)">${fmtVND(bh)}</td>
-            <td style="padding:3px 6px;text-align:center">
-              <input type="number" min="0" max="31" step="0.5" value="${wdays||''}" placeholder="0"
-                onchange="${saveAct('workDays')};(function(){const el=document.getElementById('meal_${e.id}_${mi}');if(el)el.textContent=(Math.round((parseFloat(this.value)||0)*${mealRate})).toLocaleString('vi');}).call(this)"
-                style="width:50px;padding:3px 5px;background:var(--bg-elev);border:1px solid var(--teal)55;border-radius:4px;color:var(--teal);font-family:'JetBrains Mono',monospace;font-size:11px;text-align:center">
-            </td>
-            <td style="padding:4px 8px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--teal)"><span id="meal_${e.id}_${mi}">${fmtVND(meal)}</span></td>
-            <td style="padding:3px 6px;text-align:right">
-              <input type="number" min="0" step="10000" value="${oth||''}" placeholder="0"
-                onchange="${saveAct('other')}"
-                style="width:80px;padding:3px 5px;background:var(--bg-elev);border:1px solid var(--warning)44;border-radius:4px;color:var(--warning);font-family:'JetBrains Mono',monospace;font-size:11px;text-align:right">
-            </td>
-            <td style="padding:4px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:#FFCC00">${fmtVND(tot)}</td>
+            ${empCells}
           </tr>`;
         }).join('');
 
         return `<tr style="background:rgba(212,165,116,.04);border-top:1px solid var(--border)">
           <td colspan="2" style="padding:5px 8px 5px 18px;font-size:11.5px;font-weight:600;color:var(--ink-dim)">${escapeHtml(role)}
-            ${mealRate?`<span style="font-size:9px;padding:1px 5px;border-radius:3px;margin-left:5px;background:rgba(125,211,192,.12);color:var(--teal)">Meal ${fmtVND(mealRate)}/ngày</span>`:''}
+            ${mealRate?`<span style="font-size:9px;padding:1px 5px;border-radius:3px;margin-left:5px;background:rgba(125,211,192,.12);color:var(--teal)">Meal ${(mealRate).toLocaleString('vi')}/ngày</span>`:''}
           </td>
-          <td colspan="8" style="padding:5px 8px;text-align:right;font-size:10px;color:var(--ink-muted)">${roleEmps.length} NV</td>
+          <td colspan="${multiMode?sortedMonths.length*5:8}" style="padding:5px 8px;text-align:right;font-size:10px;color:var(--ink-muted)">${roleEmps.length} NV</td>
         </tr>${empRows}`;
       }).join('');
 
-      gSal+=dSal;gBH+=dBH;gMeal+=dMeal;gOth+=dOth;gTot+=dTot;gHC+=deptEmps.length;
+      const deptSumCells = multiMode
+        ? sortedMonths.map(mi=>{
+            const t=gTotals[mi]; // cumulative — not ideal for dept only, but acceptable
+            return `<td colspan="2" style="padding:5px;border-left:2px solid var(--border-strong)"></td><td></td><td></td><td></td>`;
+          }).join('')
+        : `<td colspan="3" style="padding:7px 8px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:var(--success)"></td>
+           <td colspan="6"></td>`;
 
       return `<tr style="background:var(--bg-elev);border-top:2px solid var(--border-strong)">
         <td colspan="2" style="padding:7px 14px;font-weight:700;font-size:13px;color:var(--accent)">${escapeHtml(dept.name)} <span style="font-size:10px;color:var(--ink-muted);font-weight:400">${deptEmps.length} NV</span></td>
-        <td colspan="3" style="padding:7px 8px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:var(--success)">${fmtM(dSal)}</td>
-        <td style="padding:7px 8px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--purple)">${fmtM(dBH)}</td>
-        <td colspan="2" style="padding:7px 8px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--teal)">${fmtM(dMeal)}</td>
-        <td style="padding:7px 8px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--warning)">${fmtM(dOth)}</td>
-        <td style="padding:7px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:#FFCC00">${fmtM(dTot)}</td>
+        ${multiMode ? sortedMonths.map(()=>'<td colspan="5" style="border-left:2px solid var(--border-strong)"></td>').join('') : '<td colspan="8"></td>'}
       </tr>${roleBlocks}`;
     }).join('');
 
-    return `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px">${monthTabs}</div>
-    <div style="margin-bottom:10px;font-size:11px;color:var(--ink-muted);display:flex;gap:14px;flex-wrap:wrap">
-      <span>Ô trắng = nhập tay &nbsp;|&nbsp; Meal = Ngày công × rate/ngày từ Budget</span>
-      <span style="color:var(--purple)">BHXH+CĐ = Lương cơ bản × 22.5%</span>
+    // thead
+    const singleHeaders = `
+      <th style="${thS};min-width:95px">Lương CB</th>
+      <th style="${thS};min-width:85px">Phụ cấp</th>
+      <th style="${thS};min-width:100px;color:var(--success)">Tổng lương</th>
+      <th style="${thS};min-width:100px;color:var(--purple)">BHXH+CĐ</th>
+      <th style="padding:8px 6px;font-size:10px;font-weight:700;text-align:center;min-width:60px;color:var(--teal)">Ngày công</th>
+      <th style="${thS};min-width:85px;color:var(--teal)">Meal</th>
+      <th style="${thS};min-width:90px;color:var(--warning)">Chi phí khác</th>
+      <th style="${thS};min-width:105px;color:#FFCC00">Tổng chi phí</th>`;
+
+    const footerCells = multiMode
+      ? sortedMonths.map(mi=>{
+          const t=gTotals[mi];
+          return `<td style="padding:6px 5px;text-align:right;font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--success);border-left:2px solid var(--border-strong)">${fmtM(t.sal)}</td>
+            <td style="padding:6px 5px;text-align:right;font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--purple)">${fmtM(t.bh)}</td>
+            <td></td>
+            <td style="padding:6px 5px;text-align:right;font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--teal)">${fmtM(t.meal)}</td>
+            <td style="padding:6px 8px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:800;color:#FFCC00">${fmtM(t.tot)}</td>`;
+        }).join('')
+      : (()=>{const t=gTotals[singleMi];return `<td colspan="3" style="padding:8px;text-align:right;font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--success)">${fmtM(t.sal)}</td>
+          <td style="padding:8px;text-align:right;font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--purple)">${fmtM(t.bh)}</td>
+          <td></td>
+          <td style="padding:8px;text-align:right;font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--teal)">${fmtM(t.meal)}</td>
+          <td style="padding:8px;text-align:right;font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--warning)">${fmtM(t.oth)}</td>
+          <td style="padding:8px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:800;color:#FFCC00">${fmtM(t.tot)}</td>`;})();
+
+    const noteLabel = multiMode
+      ? `Đã chọn ${sortedMonths.length} tháng · Nhấn tháng để bật/tắt`
+      : `Ô trắng = nhập tay · Lương CB/Phụ cấp/BHXH có thể override per NV per tháng (để trống = lấy từ hồ sơ)`;
+
+    return `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;align-items:center">
+      ${monthTabs}
+      <button onclick="window._manningMonths=new Set([0,1,2,3,4,5,6,7,8,9,10,11]);render()"
+        style="padding:5px 10px;border-radius:6px;border:1px solid var(--border);background:transparent;color:var(--ink-dim);font-size:11px;cursor:pointer">Tất cả</button>
+      <button onclick="window._manningMonths=new Set([${(window._manningMonth??new Date().getMonth())}]);render()"
+        style="padding:5px 10px;border-radius:6px;border:1px solid var(--border);background:transparent;color:var(--ink-dim);font-size:11px;cursor:pointer">Reset</button>
+      <button onclick="exportActualSelectedMonths()"
+        style="padding:5px 14px;border-radius:6px;border:1px solid var(--accent);background:rgba(212,165,116,.1);color:var(--accent);font-size:11px;font-weight:700;cursor:pointer;margin-left:8px">⬇ Xuất ${sortedMonths.length} tháng đã chọn</button>
     </div>
+    <div style="margin-bottom:10px;font-size:10.5px;color:var(--ink-muted)">${noteLabel}</div>
     <div class="card" style="padding:0;overflow:hidden">
       <div style="overflow-x:auto">
-        <table style="width:100%;border-collapse:collapse;font-size:12px">
-          <thead><tr style="background:var(--bg-elev);border-bottom:2px solid var(--border-strong)">
-            <th style="padding:8px 14px;text-align:left;position:sticky;left:0;background:var(--bg-elev);z-index:2;min-width:90px">Mã NV</th>
-            <th style="padding:8px 8px;text-align:left;min-width:150px">Họ tên</th>
-            <th style="${thS};min-width:95px">Lương CB</th>
-            <th style="${thS};min-width:90px">Phụ cấp</th>
-            <th style="${thS};min-width:105px;color:var(--success)">Tổng lương</th>
-            <th style="${thS};min-width:105px;color:var(--purple)">BHXH+CĐ</th>
-            <th style="padding:8px 6px;font-size:10px;font-weight:700;text-align:center;min-width:65px;color:var(--teal)">Ngày công</th>
-            <th style="${thS};min-width:90px;color:var(--teal)">Meal</th>
-            <th style="${thS};min-width:95px;color:var(--warning)">Chi phí khác</th>
-            <th style="${thS};min-width:110px;color:#FFCC00">Tổng chi phí</th>
-          </tr></thead>
+        <table style="border-collapse:collapse;font-size:12px">
+          <thead>
+            ${multiMode?`<tr style="background:var(--bg-elev)">
+              <th colspan="2" style="padding:8px 14px;text-align:left;position:sticky;left:0;background:var(--bg-elev);z-index:2;min-width:240px">Nhân viên</th>
+              ${monthHeaders}
+            </tr>`:''}
+            <tr style="background:var(--bg-elev);border-bottom:2px solid var(--border-strong)">
+              <th style="padding:8px 14px;text-align:left;position:sticky;left:0;background:var(--bg-elev);z-index:2;min-width:90px">Mã NV</th>
+              <th style="padding:8px 8px;text-align:left;min-width:150px">Họ tên</th>
+              ${multiMode ? subHeaders : singleHeaders}
+            </tr>
+          </thead>
           <tbody>${deptBlocks}</tbody>
           <tfoot><tr style="background:#0f1a28;border-top:2px solid var(--border-strong)">
-            <td colspan="2" style="padding:10px 14px;font-weight:800;color:#FFCC00;position:sticky;left:0;background:#0f1a28;z-index:1">∑ TỔNG · ${gHC} NV · ${MN_FULL[mi]}</td>
-            <td colspan="3" style="padding:8px;text-align:right;font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--success)">${fmtM(gSal)}</td>
-            <td style="padding:8px;text-align:right;font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--purple)">${fmtM(gBH)}</td>
-            <td></td>
-            <td style="padding:8px;text-align:right;font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--teal)">${fmtM(gMeal)}</td>
-            <td style="padding:8px;text-align:right;font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--warning)">${fmtM(gOth)}</td>
-            <td style="padding:8px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:800;color:#FFCC00">${fmtM(gTot)}</td>
+            <td colspan="2" style="padding:8px 14px;font-weight:800;color:#FFCC00;position:sticky;left:0;background:#0f1a28;z-index:1">∑ TỔNG · ${allEmps.length} NV</td>
+            ${footerCells}
           </tr></tfoot>
         </table>
       </div>
@@ -22329,6 +22475,11 @@ function renderManning(main){
           style="background:var(--bg-card);border:1px solid var(--border);border-radius:7px;padding:8px 12px;color:var(--ink);font-family:inherit;font-size:13px">
           ${years.map(y=>`<option value="${y}" ${y===curYear?'selected':''}>${y}</option>`).join('')}
         </select>
+        <button class="btn" onclick="exportManningXLSX()">${ICONS.download} Xuất Excel</button>
+        <label class="btn" style="cursor:pointer">
+          ${ICONS.upload} Nhập Excel
+          <input type="file" accept=".xlsx,.xls" style="display:none" onchange="importManningXLSX(this)">
+        </label>
       </div>
     </div>
     <div class="tab-bar" style="margin-bottom:20px">
@@ -22341,6 +22492,167 @@ function renderManning(main){
 }
 
 
+
+function exportManningXLSX(){
+  if(typeof XLSX==='undefined'){toast('Thư viện XLSX chưa sẵn sàng','error');return;}
+  const year = window._manningYear || new Date().getFullYear();
+  const depts = DB.departments||[];
+  const allEmps = (DB.employees||[]).filter(e=>getEffectiveStatus(e)!=='exit');
+  const BH_RATE = 0.225;
+  const wb = XLSX.utils.book_new();
+
+  // Sheet 1: BUDGET
+  const budRows = [['Bộ phận','Vị trí','HC Planned','Lương/người (VNĐ)','BHXH+CĐ (VNĐ)','Meal rate/ngày (VNĐ)','Chi phí khác (VNĐ)','Tổng × HC (VNĐ)']];
+  depts.forEach(dept=>{
+    const dp = (DB.manningPlan[year]||{}).depts?.[dept.id]||{positions:[]};
+    const dbRoles = [...new Set(allEmps.filter(e=>e.deptId===dept.id).map(e=>e.role||'').filter(Boolean))];
+    const planRoles = (dp.positions||[]).map(p=>p.title);
+    const roles = [...new Set([...dbRoles,...planRoles])].sort();
+    roles.forEach(title=>{
+      const p = (dp.positions||[]).find(x=>x.title===title)||{planned:0,budgetSalary:0,budgetBH:0,mealRate:0,budgetOther:0};
+      const hc=parseInt(p.planned)||0, sal=parseFloat(p.budgetSalary)||0;
+      const bh=parseFloat(p.budgetBH)||(sal?Math.round(sal*BH_RATE):0);
+      const meal=parseFloat(p.mealRate)||0, oth=parseFloat(p.budgetOther)||0;
+      budRows.push([dept.name, title, hc, sal, bh, meal, oth, (sal+bh+meal+oth)*hc]);
+    });
+  });
+  const wsBud = XLSX.utils.aoa_to_sheet(budRows);
+  wsBud['!cols'] = [20,28,12,18,16,16,16,18].map(w=>({wch:w}));
+  XLSX.utils.book_append_sheet(wb, wsBud, 'Budget_'+year);
+
+  // Sheet 2: ACTUAL tháng đang xem
+  const mi = window._manningMonth ?? new Date().getMonth();
+  const actMo = (DB.manningActual[year]||{})[mi]||{};
+  const MN=['T1','T2','T3','T4','T5','T6','T7','T8','T9','T10','T11','T12'];
+  const actRows = [['Bộ phận','Vị trí','Mã NV','Họ tên','Lương CB (VNĐ)','Phụ cấp (VNĐ)','Tổng lương (VNĐ)','BHXH+CĐ (VNĐ)','Ngày công','Meal (VNĐ)','Chi phí khác (VNĐ)','Tổng chi phí (VNĐ)']];
+  depts.forEach(dept=>{
+    const dp = (DB.manningPlan[year]||{}).depts?.[dept.id]||{positions:[]};
+    allEmps.filter(e=>e.deptId===dept.id).forEach(e=>{
+      const cd=DB.customData[e.id]||{};
+      const base=parseInt(cd.baseSalary)||0, bon=parseInt(cd.bonusSalary)||0, sal=base+bon;
+      const bh=Math.round(base*BH_RATE);
+      const pos=(dp.positions||[]).find(p=>p.title===(e.role||''))||{};
+      const rate=parseFloat(pos.mealRate)||0;
+      const wd=parseInt((actMo[e.id]||{}).workDays)||0;
+      const meal=Math.round(wd*rate), oth=parseFloat((actMo[e.id]||{}).other)||0;
+      actRows.push([dept.name, e.role||'', e.code||'', e.name, base, bon, sal, bh, wd, meal, oth, sal+bh+meal+oth]);
+    });
+  });
+  const wsAct = XLSX.utils.aoa_to_sheet(actRows);
+  wsAct['!cols'] = [20,28,10,24,16,14,16,14,10,12,14,16].map(w=>({wch:w}));
+  XLSX.utils.book_append_sheet(wb, wsAct, 'Actual_'+MN[mi]+'_'+year);
+
+  // Sheet 3: Template nhập Budget (dùng để nhập lại)
+  const tplRows = [
+    ['=== TEMPLATE NHẬP BUDGET — NĂM '+year+' ==='],
+    ['Điền vào các cột từ cột C trở đi. Giữ nguyên tên Bộ phận và Vị trí. Xóa 3 dòng đầu trước khi nhập lại.'],
+    [],
+    ['Bộ phận','Vị trí','HC Planned','Lương/người (VNĐ)','BHXH+CĐ (VNĐ)','Meal rate/ngày (VNĐ)','Chi phí khác (VNĐ)']
+  ];
+  depts.forEach(dept=>{
+    const dp = (DB.manningPlan[year]||{}).depts?.[dept.id]||{positions:[]};
+    const dbRoles = [...new Set(allEmps.filter(e=>e.deptId===dept.id).map(e=>e.role||'').filter(Boolean))];
+    const planRoles = (dp.positions||[]).map(p=>p.title);
+    [...new Set([...dbRoles,...planRoles])].sort().forEach(title=>{
+      const p=(dp.positions||[]).find(x=>x.title===title)||{};
+      tplRows.push([dept.name, title, parseInt(p.planned)||0, parseFloat(p.budgetSalary)||0, parseFloat(p.budgetBH)||0, parseFloat(p.mealRate)||0, parseFloat(p.budgetOther)||0]);
+    });
+  });
+  const wsTpl = XLSX.utils.aoa_to_sheet(tplRows);
+  wsTpl['!cols'] = [20,28,12,18,16,16,16].map(w=>({wch:w}));
+  XLSX.utils.book_append_sheet(wb, wsTpl, 'Template_Budget_'+year);
+
+  XLSX.writeFile(wb, 'Manning_Budget_'+year+'.xlsx');
+  toast('Đã xuất Manning_Budget_'+year+'.xlsx','success');
+}
+
+function importManningXLSX(input){
+  if(typeof XLSX==='undefined'){toast('Thư viện XLSX chưa sẵn sàng','error');return;}
+  const file=input.files[0];
+  if(!file) return;
+  const year=window._manningYear||new Date().getFullYear();
+  const reader=new FileReader();
+  reader.onload=function(e){
+    try{
+      const wb=XLSX.read(e.target.result,{type:'array'});
+      const sheetName=wb.SheetNames.find(n=>n.includes('Template')||n.includes('Budget'))||wb.SheetNames[0];
+      const ws=wb.Sheets[sheetName];
+      const rows=XLSX.utils.sheet_to_json(ws,{header:1,defval:''});
+      const headerIdx=rows.findIndex(r=>String(r[0]).includes('Bộ phận')&&String(r[1]).includes('Vị trí'));
+      if(headerIdx===-1){toast('Không tìm thấy header trong file','error');return;}
+      const dataRows=rows.slice(headerIdx+1).filter(r=>r[0]&&r[1]);
+      if(!dataRows.length){toast('Không có dữ liệu','warning');return;}
+      if(!DB.manningPlan[year])       DB.manningPlan[year]={depts:{}};
+      if(!DB.manningPlan[year].depts) DB.manningPlan[year].depts={};
+      const deptMap=Object.fromEntries((DB.departments||[]).map(d=>[d.name.trim().toLowerCase(),d.id]));
+      let updated=0;
+      dataRows.forEach(r=>{
+        const dName=String(r[0]||'').trim();
+        const title=String(r[1]||'').trim();
+        if(!title) return;
+        const deptId=deptMap[dName.toLowerCase()];
+        if(!deptId){console.warn('Không tìm thấy bộ phận:',dName);return;}
+        const d=DB.manningPlan[year].depts;
+        if(!d[deptId])           d[deptId]={positions:[]};
+        if(!d[deptId].positions) d[deptId].positions=[];
+        let pos=d[deptId].positions.find(p=>p.title===title);
+        if(!pos){pos={title,planned:0,budgetSalary:0,budgetBH:0,mealRate:0,budgetOther:0,notes:''};d[deptId].positions.push(pos);}
+        pos.planned=parseInt(r[2])||0;
+        pos.budgetSalary=parseFloat(r[3])||0;
+        pos.budgetBH=parseFloat(r[4])||0;
+        pos.mealRate=parseFloat(r[5])||0;
+        pos.budgetOther=parseFloat(r[6])||0;
+        updated++;
+      });
+      saveData(['manningPlan']);
+      input.value='';
+      render();
+      toast('✅ Đã nhập '+updated+' vị trí từ '+file.name,'success');
+    }catch(err){toast('Lỗi đọc file: '+err.message,'error');console.error(err);}
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+function exportActualSelectedMonths(){
+  if(typeof XLSX==='undefined'){toast('Thư viện XLSX chưa sẵn sàng','error');return;}
+  const year = window._manningYear || new Date().getFullYear();
+  const selMonths = window._manningMonths || new Set([new Date().getMonth()]);
+  const sortedMonths = [...selMonths].sort((a,b)=>a-b);
+  const depts = DB.departments||[];
+  const allEmps = (DB.employees||[]).filter(e=>getEffectiveStatus(e)!=='exit');
+  const BH_RATE = 0.225;
+  const MN=['T1','T2','T3','T4','T5','T6','T7','T8','T9','T10','T11','T12'];
+  const wb = XLSX.utils.book_new();
+
+  sortedMonths.forEach(mi=>{
+    const actMo = (DB.manningActual[year]||{})[mi]||{};
+    const rows = [['Bộ phận','Vị trí','Mã NV','Họ tên','Lương CB (VNĐ)','Phụ cấp (VNĐ)','Tổng lương (VNĐ)','BHXH+CĐ (VNĐ)','Ngày công','Meal (VNĐ)','Chi phí khác (VNĐ)','Tổng chi phí (VNĐ)']];
+    depts.forEach(dept=>{
+      const dp = ((DB.manningPlan[year]||{}).depts||{})[dept.id]||{positions:[]};
+      allEmps.filter(e=>e.deptId===dept.id).forEach(e=>{
+        const cd=DB.customData[e.id]||{};
+        const eact=actMo[e.id]||{};
+        const base = parseFloat(eact.salOverride??cd.baseSalary)||(parseInt(cd.baseSalary)||0);
+        const bon  = parseFloat(eact.bonOverride??cd.bonusSalary)||(parseInt(cd.bonusSalary)||0);
+        const sal  = base+bon;
+        const bh   = parseFloat(eact.bhOverride)||Math.round(base*BH_RATE);
+        const pos  = (dp.positions||[]).find(p=>p.title===(e.role||''))||{};
+        const rate = parseFloat(pos.mealRate)||0;
+        const wd   = parseInt(eact.workDays)||0;
+        const meal = Math.round(wd*rate);
+        const oth  = parseFloat(eact.other)||0;
+        rows.push([dept.name, e.role||'', e.code||'', e.name, base, bon, sal, bh, wd, meal, oth, sal+bh+meal+oth]);
+      });
+    });
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+    ws['!cols'] = [18,26,10,22,14,12,14,12,10,10,12,14].map(w=>({wch:w}));
+    XLSX.utils.book_append_sheet(wb, ws, 'Actual_'+MN[mi]+'_'+year);
+  });
+
+  const fileName = 'Actual_'+sortedMonths.map(m=>MN[m]).join('_')+'_'+year+'.xlsx';
+  XLSX.writeFile(wb, fileName);
+  toast('Đã xuất '+fileName, 'success');
+}
 
 </script>
 </body>
