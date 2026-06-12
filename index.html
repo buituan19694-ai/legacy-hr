@@ -9233,6 +9233,35 @@ window._leaveEmpSelect=function(id,label){
 function _leaveEmpShowList(){ _leaveEmpFilter(document.getElementById('leaveEmpSearch')?.value||''); }
 function _leaveEmpHideList(){ const l=document.getElementById('leaveEmpList'); if(l) l.style.display='none'; }
 
+// Global helper — dùng chung cho cả bảng Theo dõi và Kế hoạch
+function getLeaveSheet(empId, type, year){
+  if(!DB.leaveSheet) DB.leaveSheet = {};
+  if(!DB.leaveSheet[empId]) DB.leaveSheet[empId] = {};
+  if(!DB.leaveSheet[empId][year]) DB.leaveSheet[empId][year] = {};
+  const yr = DB.leaveSheet[empId][year];
+  if(!yr[type]){
+    let autoCarry = 0;
+    const prevYr = (DB.leaveSheet[empId]||{})[year-1];
+    if(prevYr && prevYr[type] && !prevYr._carryUsed){
+      const ps = prevYr[type];
+      const te = (ps.carry||0) + (ps.entitle||[]).reduce((a,b)=>a+b,0);
+      const tu = (ps.taken||[]).reduce((a,b)=>a+b,0);
+      autoCarry = Math.max(0, Math.round((te-tu)*100)/100);
+    }
+    yr[type] = {carry: autoCarry, entitle:Array(12).fill(0), taken:Array(12).fill(0), clearAL:0};
+  }
+  const sh = yr[type];
+  if(!Array.isArray(sh.entitle)) sh.entitle = Array(12).fill(0);
+  if(!Array.isArray(sh.taken))   sh.taken   = Array(12).fill(0);
+  return sh;
+}
+function calcLeaveTonCuoiNam(empId, type, year){
+  const sh = getLeaveSheet(empId, type, year);
+  const te = sh.carry + sh.entitle.reduce((s,x)=>s+x,0);
+  const tu = sh.taken.reduce((s,x)=>s+x,0);
+  return Math.round((te-tu)*100)/100;
+}
+
 function renderLeaveReports(main){
   const today = new Date(); today.setHours(0,0,0,0);
   if(!window._leaveBal) window._leaveBal = {emp:'', year: today.getFullYear(), dept:''};
@@ -9277,26 +9306,7 @@ function renderLeaveReports(main){
   const scopeEmp = isSingle ? DB.employees.find(e=>e.id===bal.emp) : null;
 
   if(!DB.leaveSheet) DB.leaveSheet = {};
-  const getSheet = (empId, type) => {
-    if(!DB.leaveSheet[empId]) DB.leaveSheet[empId] = {};
-    if(!DB.leaveSheet[empId][bal.year]) DB.leaveSheet[empId][bal.year] = {};
-    const yr = DB.leaveSheet[empId][bal.year];
-    if(!yr[type]){
-      let autoCarry = 0;
-      const prevYr = (DB.leaveSheet[empId]||{})[bal.year-1];
-      if(prevYr && prevYr[type] && !prevYr._carryUsed){
-        const ps = prevYr[type];
-        const totalEntitle = (ps.carry||0) + (ps.entitle||[]).reduce((a,b)=>a+b,0);
-        const totalTaken   = (ps.taken||[]).reduce((a,b)=>a+b,0);
-        autoCarry = Math.max(0, Math.round((totalEntitle - totalTaken)*100)/100);
-      }
-      yr[type] = {carry: autoCarry, entitle:Array(12).fill(0), taken:Array(12).fill(0), clearAL:0};
-    }
-    const _sh = yr[type];
-    if(!Array.isArray(_sh.entitle)) _sh.entitle = Array(12).fill(0);
-    if(!Array.isArray(_sh.taken))   _sh.taken   = Array(12).fill(0);
-    return _sh;
-  };
+  const getSheet = (empId, type) => getLeaveSheet(empId, type, bal.year);
   const curMonth = today.getFullYear()===bal.year ? today.getMonth()+1 : 12;
   const mnShort = ['T1','T2','T3','T4','T5','T6','T7','T8','T9','T10','T11','T12'];
   const thStyle = 'style="text-align:center;font-size:10.5px;padding:5px 4px;white-space:nowrap"';
@@ -9313,6 +9323,7 @@ function renderLeaveReports(main){
     if(!DB.leaveSheet[empId][bal.year]) DB.leaveSheet[empId][bal.year]={};
     DB.leaveSheet[empId][bal.year][leaveType]=sh;
     saveData(['leaveSheet']);
+    window._leaveTrackingData = null; // invalidate cache → bảng Kế hoạch sẽ tính lại
     const totalUsed=sh.taken.reduce((a,b)=>a+b,0);
     const totalEntitle=sh.carry+sh.entitle.reduce((a,b)=>a+b,0);
     const pendingUsed=sh.taken.slice(0,curMonth).reduce((a,b)=>a+b,0);
@@ -9347,6 +9358,12 @@ function renderLeaveReports(main){
     al: calcRow(e.id,'al'),
     cl: calcRow(e.id,'cl'),
   }));
+
+  // Expose để renderLeavePlan dùng cùng số Tồn cuối năm — không tính lại riêng
+  window._leaveTrackingData = {
+    year: bal.year,
+    byEmp: Object.fromEntries(empMonthData.map(x=>[x.e.id, {al: x.al.tonCuoiNam, cl: x.cl.tonCuoiNam}]))
+  };
 
   const empByDept = {};
   empMonthData.forEach(x=>{
@@ -9690,6 +9707,7 @@ function renderLeavePlan(main){
   if(!DB.leaveSheet) DB.leaveSheet={};
   if(!DB.leavePlan)  DB.leavePlan={};
   if(!DB.leavePlan[curYear]) DB.leavePlan[curYear]={};
+
   if(window._lpShowAL === undefined) window._lpShowAL = true;
   if(window._lpShowCL === undefined) window._lpShowCL = true;
   if(window._lpStatusFilter === undefined) window._lpStatusFilter = 'active';
@@ -9801,29 +9819,9 @@ function renderLeavePlan(main){
     if(fDatEl){ fDatEl.textContent=fDatFoot; fDatEl.style.color=fDatCFoot; }
   };
 
-  // Tính "Tồn cuối năm" cho 1 NV — dùng đúng công thức như bảng Theo dõi (calcRow)
-  const getEmpRemain = (empId, mi, type)=>{
-    const empYrData = (DB.leaveSheet[empId]||{})[curYear]||{};
-    let sh = empYrData[type];
-    // Nếu chưa có data năm curYear → tính auto-carry từ năm trước (giống getSheet trong renderLeaveReports)
-    if(!sh){
-      let autoCarry = 0;
-      const prevYr = (DB.leaveSheet[empId]||{})[curYear-1];
-      if(prevYr && prevYr[type]){
-        const ps = prevYr[type];
-        const totalEntitle = (parseFloat(ps.carry)||0) + (Array.isArray(ps.entitle)?ps.entitle:[]).reduce((a,b)=>a+(parseFloat(b)||0),0);
-        const totalTaken   = (Array.isArray(ps.taken)?ps.taken:[]).reduce((a,b)=>a+(parseFloat(b)||0),0);
-        autoCarry = Math.max(0, Math.round((totalEntitle-totalTaken)*100)/100);
-      }
-      sh = {carry: autoCarry, entitle: Array(12).fill(0), taken: Array(12).fill(0)};
-    }
-    const carry   = parseFloat(sh.carry)||0;
-    const entitle = Array.isArray(sh.entitle) ? sh.entitle : Array(12).fill(0);
-    const taken   = Array.isArray(sh.taken)   ? sh.taken   : Array(12).fill(0);
-    const totalEntitle = carry + entitle.reduce((s,x)=>s+(parseFloat(x)||0), 0);
-    const totalUsed    = taken.reduce((s,x)=>s+(parseFloat(x)||0), 0);
-    return Math.round((totalEntitle - totalUsed)*100)/100;
-  };
+  // Tính "Tồn cuối năm" cho 1 NV — ưu tiên dùng số đã tính từ bảng Theo dõi (cùng công thức, cùng getSheet)
+  // Dùng thẳng global function — cùng logic, cùng auto-carry với bảng Theo dõi
+  const getEmpRemain = (empId, mi, type) => calcLeaveTonCuoiNam(empId, type, curYear);
 
   const getBalByDept = (deptId, mi, type)=>{
     // Tồn cuối năm theo bộ phận = Tổng phát sinh - Tổng đã nghỉ
