@@ -1133,11 +1133,22 @@ function _pushDynamicKey(key, meta){
     allYears.forEach(yr=>{
       const payload={...meta, _shard:yr};
       leaveMetaKeys.forEach(k=>{
-        const obj=DB[k]||{}; const sliced={};
-        Object.entries(obj).forEach(([eid,v])=>{
-          if(typeof v==='object'&&v[yr]!==undefined) sliced[eid]={[yr]:v[yr]};
-          else if(typeof v!=='object'&&v!==undefined) sliced[eid]=v;
-        });
+        const obj=DB[k]||{}; let sliced={};
+        if(k==='leavePlan'){
+          // leavePlan structure: {year: {deptId: {mi: {al,cl}}}}
+          // slice trực tiếp theo năm
+          if(obj[yr]!==undefined) sliced={[yr]:obj[yr]};
+        } else if(k==='leaveExtraYears'||k==='salaryYears'||k==='trainingExtraYears'){
+          // array của năm — lưu as-is
+          sliced=obj;
+        } else {
+          // leaveOpening: {empId: {al,cl}} — lưu as-is (không phân năm)
+          Object.entries(obj).forEach(([eid,v])=>{
+            if(typeof v==='object'&&v[yr]!==undefined) sliced[eid]={[yr]:v[yr]};
+            else if(typeof v==='object') sliced[eid]=v; // leaveOpening không có year key
+            else if(typeof v!=='object'&&v!==undefined) sliced[eid]=v;
+          });
+        }
         payload[k]=sliced;
       });
       window.fbDb.collection('hrdata').doc(`leavemeta_${yr}`)
@@ -9726,6 +9737,43 @@ function renderLeavePlan(main){
     const datEl = document.getElementById('plan_dat_'+deptId+'_'+mi+'_'+type);
     if(datEl) datEl.innerHTML = '<span style="font-size:12px;font-weight:700;color:'+datColor+'">'+datText+'</span>'
       + (vsKH!==null?'<div style="font-size:10px;color:'+vsKHC+';font-family:JetBrains Mono,monospace">'+vsKHT+'</div>':'');
+    // Update footer totals row
+    const allDepts = DB.departments||[];
+    const activeEmpsAll = (DB.employees||[]).filter(e=>e.status==='active');
+    let fTon=0, fKh=0, fReal=0, fConLai=0;
+    allDepts.forEach(d=>{
+      const p = (DB.leavePlan[curYear]||{})[d.id]||{};
+      fTon  += getTonDauThang(d.id, mi, type);
+      fKh   += (p[mi]||{})[type]||0;
+      fReal += getRealByDept(d.id, mi, type);
+      if(type==='al'){
+        fConLai += activeEmpsAll.filter(e=>e.deptId===d.id).reduce((s,e)=>{
+          const sh=((DB.leaveSheet[e.id]||{})[curYear]||{}).al||{};
+          const te=(sh.carry||0)+(sh.entitle||[]).reduce((a,b)=>a+(b||0),0);
+          const tu=(sh.taken||[]).reduce((a,b)=>a+(b||0),0);
+          const t=Math.round((te-tu)*100)/100;
+          return s+(curMonth<t ? t-curMonth : 0);
+        },0);
+      }
+    });
+    fTon=Math.round(fTon*10)/10; fKh=Math.round(fKh*10)/10; fReal=Math.round(fReal*10)/10; fConLai=Math.round(fConLai*10)/10;
+    const fDuKienFoot = fKh>0 ? Math.round((fTon-fKh)*10)/10 : null;
+    const fVsKHFoot   = (fKh>0&&fReal>0) ? Math.round((fReal-fKh)*10)/10 : null;
+    const fDatFoot    = fVsKHFoot!==null?(fVsKHFoot<=0?'✅ Đạt':'❌ Vượt'):'—';
+    const fDatCFoot   = fVsKHFoot!==null?(fVsKHFoot<=0?'var(--success)':'var(--danger)'):'var(--ink-muted)';
+    const colFoot = type==='al'?'var(--success)':'var(--info)';
+    const fTonEl=document.getElementById('foot_'+mi+'_'+type+'_ton');
+    if(fTonEl) fTonEl.textContent=fTon||'0';
+    const fConlaiEl=document.getElementById('foot_'+mi+'_'+type+'_conlai');
+    if(fConlaiEl) fConlaiEl.textContent=(type==='al'?(fConLai||'—'):'—');
+    const fKhEl=document.getElementById('foot_'+mi+'_'+type+'_kh');
+    if(fKhEl){ fKhEl.textContent=fKh||'—'; fKhEl.style.color='#ff9f43'; }
+    const fDkEl=document.getElementById('foot_'+mi+'_'+type+'_dk');
+    if(fDkEl){ fDkEl.textContent=fDuKienFoot!==null?fDuKienFoot:'—'; fDkEl.style.color=fDuKienFoot!==null?(fDuKienFoot>=0?'var(--success)':'var(--danger)'):'var(--ink-muted)'; }
+    const fRealEl=document.getElementById('foot_'+mi+'_'+type+'_real');
+    if(fRealEl){ fRealEl.textContent=fReal||'—'; fRealEl.style.color=colFoot; }
+    const fDatEl=document.getElementById('foot_'+mi+'_'+type+'_dat');
+    if(fDatEl){ fDatEl.textContent=fDatFoot; fDatEl.style.color=fDatCFoot; }
   };
 
   // Tính "Tồn cuối năm" cho 1 NV = Tổng phát sinh (carry+ALL entitle) - Tổng đã nghỉ
@@ -9843,12 +9891,12 @@ function renderLeavePlan(main){
       return `<tr style="background:var(--bg-elev);font-weight:700">
         ${ti===0?`<td rowspan="${fRowspan}" style="padding:8px 12px;font-weight:700;color:var(--accent);font-size:12px;position:sticky;left:0;background:var(--bg-elev);z-index:1">TỔNG</td>`:''}
         <td style="padding:4px 8px;font-size:10px;font-weight:700;color:${col};border-right:1px solid var(--border)">${isAL?'AL':'CL'}</td>
-        <td style="padding:6px 8px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--accent)">${fTon}</td>
-        <td style="padding:6px 8px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--purple)">${Math.round(f.conLai*10)/10||'—'}</td>
-        <td style="padding:6px 8px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:12px;color:#ff9f43">${fKh||'—'}</td>
-        <td style="padding:6px 8px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:12px;color:${fDuKien!==null?(fDuKien>=0?'var(--success)':'var(--danger)'):'var(--ink-muted)'}">${fDuKien!==null?fDuKien:'—'}</td>
-        <td style="padding:6px 8px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:12px;color:${col}">${fReal||'—'}</td>
-        <td style="padding:6px 8px;text-align:center;font-size:12px;font-weight:700;color:${fDatC}">${fDat}</td>
+        <td id="foot_${mi}_${type}_ton" style="padding:6px 8px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--accent)">${fTon}</td>
+        <td id="foot_${mi}_${type}_conlai" style="padding:6px 8px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--purple)">${Math.round(f.conLai*10)/10||'—'}</td>
+        <td id="foot_${mi}_${type}_kh" style="padding:6px 8px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:12px;color:#ff9f43">${fKh||'—'}</td>
+        <td id="foot_${mi}_${type}_dk" style="padding:6px 8px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:12px;color:${fDuKien!==null?(fDuKien>=0?'var(--success)':'var(--danger)'):'var(--ink-muted)'}">${fDuKien!==null?fDuKien:'—'}</td>
+        <td id="foot_${mi}_${type}_real" style="padding:6px 8px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:12px;color:${col}">${fReal||'—'}</td>
+        <td id="foot_${mi}_${type}_dat" style="padding:6px 8px;text-align:center;font-size:12px;font-weight:700;color:${fDatC}">${fDat}</td>
       </tr>`;
     }).join('');
 
@@ -15605,6 +15653,8 @@ function applyPromotionToEmployee(p){
   if(p.newDeptId && p.newDeptId.trim()) emp.deptId = p.newDeptId.trim();
   emp.manualRole = false;
   emp.updatedAt = new Date(p.effectiveDate||p.date||Date.now()).getTime();
+  // Persist lên Firestore ngay lập tức
+  saveEmpProfile(emp.id);
   return true;
 }
 
