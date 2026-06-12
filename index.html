@@ -129,6 +129,10 @@
 
     <div class="nav-section">
       <div class="nav-label" data-i18n="sec_system">Hệ thống</div>
+      <div class="nav-item" data-page="manning">
+        <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
+        <span>Manning & Budget</span>
+      </div>
       <div class="nav-item" data-page="settings">
         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
         <span data-i18n="nav_settings">Cấu hình</span>
@@ -920,12 +924,13 @@ function loadData(){
 const FS_DOC_MAP = {
   // Mỗi doc giữ < 500KB để tránh Firestore 1MB limit
   employees:  ['departments'],
-  contracts:  ['contracts'],         // contracts array — 150+ NV × vài HĐ → theo dõi size
-  trainees:   ['trainees','traineeSchedules'],  // tách khỏi workforce — 48+ records
+  contracts:  ['contracts'],
+  trainees:   ['trainees','traineeSchedules'],
   workforce:  ['svcData','courses','casualExtraYears','salaryYears','trainingExtraYears','leaveExtraYears','dormConfig'],
-  resign:     ['resignations'],  // doc riêng — tránh workforce vượt 1MB
+  resign:     ['resignations'],
   jobs:       ['jobs'],
   blacklist:  ['manualBlacklist','blacklistConfig','blacklistReasons','candRequiredFields'],
+  manning:    ['manningPlan','hrBudget'],
   config:     ['customFields','rewardTypes','perfReviewTypes','company',
                'dashboardConfig','brandConfig',
                'disciplineSeverityConfig','requiredFieldsConfig',
@@ -1111,15 +1116,35 @@ function _pushDynamicKey(key, meta){
   if(key === 'leaveSheet'){
     const sheet = DB.leaveSheet || {};
     const allYears = new Set([thisYear]);
-    Object.values(sheet).forEach(empData=>{ Object.keys(empData).forEach(y=>allYears.add(parseInt(y))); });
+    Object.values(sheet).forEach(empData=>{ Object.keys(empData).forEach(y=>{ const yi=parseInt(y); if(!isNaN(yi)) allYears.add(yi); }); });
+
+    // Map empId → deptId (NV dùng id thường, TTS dùng 'tr_'+id)
+    const empDeptMap = {};
+    (DB.employees||[]).forEach(e=>{ empDeptMap[e.id] = e.deptId||'_none'; });
+    (DB.trainees||[]).forEach(t=>{ empDeptMap['tr_'+t.id] = t.deptId||'_none'; });
+
     allYears.forEach(yr=>{
-      const sliced = {};
-      Object.entries(sheet).forEach(([empId,empData])=>{
-        if(empData[yr] !== undefined) sliced[empId]={[yr]:empData[yr]};
+      // Nhóm theo dept
+      const byDept = {};
+      Object.entries(sheet).forEach(([empId, empData])=>{
+        if(empData[yr] === undefined) return;
+        const did = empDeptMap[empId] || '_none';
+        if(!byDept[did]) byDept[did] = {};
+        byDept[did][empId] = {[yr]: empData[yr]};
       });
-      window.fbDb.collection('hrdata').doc(`leavesheet_${yr}`)
-        .set({...meta, leaveSheet:sliced, _shard:yr}, {merge:false})
-        .catch(err=>console.error(`[saveData] ❌ leavesheet_${yr}`, err.message));
+      // Lưu mỗi dept 1 doc: leavesheet_2026_d1, leavesheet_2026__none, ...
+      Object.entries(byDept).forEach(([did, sliced])=>{
+        window.fbDb.collection('hrdata').doc(`leavesheet_${yr}_${did}`)
+          .set({...meta, leaveSheet:sliced, _shard:yr, _dept:did}, {merge:false})
+          .catch(err=>console.error(`[saveData] ❌ leavesheet_${yr}_${did}`, err.message));
+      });
+      // Migration: xóa doc cũ format leavesheet_YYYY (không có dept suffix) nếu tồn tại
+      window.fbDb.collection('hrdata').doc(`leavesheet_${yr}`).get().then(snap=>{
+        if(snap.exists) {
+          snap.ref.delete().then(()=>console.log(`[migrate] 🗑 Deleted old leavesheet_${yr}`))
+            .catch(()=>{});
+        }
+      }).catch(()=>{});
     });
     return;
   }
@@ -1354,6 +1379,8 @@ if(Array.isArray(DB.candidates)&&Array.isArray(DB.jobs)){
 if(!DB.leaveSheet   || Array.isArray(DB.leaveSheet))   DB.leaveSheet   = {};
 if(!DB.leaveOpening || Array.isArray(DB.leaveOpening)) DB.leaveOpening = {};
 if(!DB.leavePlan    || Array.isArray(DB.leavePlan))    DB.leavePlan    = {};
+if(!DB.manningPlan  || Array.isArray(DB.manningPlan))  DB.manningPlan  = {};
+if(!DB.hrBudget     || Array.isArray(DB.hrBudget))     DB.hrBudget     = {};
 window._dirtyKeys = new Set();
 DB = new Proxy(DB, {
   set(target, key, value){
@@ -1853,6 +1880,7 @@ function _doRender(){
       tasks: renderTasks,
       settings: renderSettings,
       accounts: renderAccounts,
+      manning: renderManning,
     };
     (renderers[currentPage] || renderDashboard)(main);
     setTimeout(function(){ initDateInputs(main); }, 20);
@@ -9891,6 +9919,16 @@ function renderLeavePlan(main){
 
     let footAL={ton:0,kh:0,real:0,conLai:0}, footCL={ton:0,kh:0,real:0,conLai:0};
 
+    // Tính ranking top 3 dept theo tổng thực tế AL+CL trong tháng
+    const deptRealTotals = depts.map(dept=>{
+      const realAL = getRealByDept(dept.id, mi, 'al');
+      const realCL = getRealByDept(dept.id, mi, 'cl');
+      return {id: dept.id, total: Math.round((realAL+realCL)*10)/10};
+    }).filter(d=>d.total>0).sort((a,b)=>b.total-a.total);
+    const trophyMap = {};
+    const trophies = ['🏆','🥈','🥉'];
+    deptRealTotals.slice(0,3).forEach((d,i)=>{ trophyMap[d.id]=trophies[i]; });
+
     const rows = depts.map((dept,idx)=>{
       const plan = DB.leavePlan[curYear][dept.id]||{};
       const types=['al','cl'].filter(t=> t==='al'?showAL:showCL);
@@ -9927,7 +9965,7 @@ function renderLeavePlan(main){
 
         const deptCell = ti===0
           ? `<td rowspan="${rowspan}" style="padding:8px 12px;font-weight:600;font-size:12px;border-right:2px solid var(--border-strong);border-bottom:1px solid var(--border-strong);position:sticky;left:0;background:var(--bg-card);z-index:1">
-               <div>${idx+1}. ${escapeHtml(dept.name)}</div>
+               <div>${idx+1}. ${escapeHtml(dept.name)}${trophyMap[dept.id]?` <span style="font-size:14px">${trophyMap[dept.id]}</span>`:''}</div>
              </td>`
           : '';
 
@@ -9962,7 +10000,7 @@ function renderLeavePlan(main){
         const totDat  = totVsKH!==null?(totVsKH<=0?'✅ Đạt':'❌ Vượt'):'—';
         const totDatC = totVsKH!==null?(totVsKH<=0?'var(--success)':'var(--danger)'):'var(--ink-muted)';
         return `<tr style="background:#0f1a28;border-bottom:2px solid var(--border-strong)">
-          <td style="padding:4px 12px;position:sticky;left:0;background:#0f1a28;z-index:1;font-size:10px;font-weight:700;color:#FFCC00;font-family:'JetBrains Mono',monospace">∑ AL+CL</td>
+          <td style="padding:4px 12px;position:sticky;left:0;background:#0f1a28;z-index:1;font-size:10px;font-weight:700;color:#FFCC00;font-family:'JetBrains Mono',monospace">∑ AL+CL${trophyMap[dept.id]?` ${trophyMap[dept.id]}`:''}</td>
           <td style="padding:4px 8px;font-size:10px;color:#FFCC00;border-right:1px solid var(--border)">Tổng</td>
           <td style="padding:4px 8px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:#FFCC00">${totTon||'0'}</td>
           <td style="padding:4px 8px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:12px;color:#FFCC00">—</td>
@@ -9995,7 +10033,25 @@ function renderLeavePlan(main){
         <td id="foot_${mi}_${type}_real" style="padding:6px 8px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:12px;color:${col}">${fReal||'—'}</td>
         <td id="foot_${mi}_${type}_dat" style="padding:6px 8px;text-align:center;font-size:12px;font-weight:700;color:${fDatC}">${fDat}</td>
       </tr>`;
-    }).join('');
+    }).join('') + ((showAL&&showCL) ? (()=>{
+      const totTon  = Math.round((footAL.ton+footCL.ton)*10)/10;
+      const totKh   = Math.round((footAL.kh+footCL.kh)*10)/10;
+      const totReal = Math.round((footAL.real+footCL.real)*10)/10;
+      const totDk   = totKh>0 ? Math.round((totTon-totKh)*10)/10 : null;
+      const totVsKH = totKh>0&&totReal>0 ? Math.round((totReal-totKh)*10)/10 : null;
+      const totDat  = totVsKH!==null?(totVsKH<=0?'✅ Đạt':'❌ Vượt'):'—';
+      const totDatC = totVsKH!==null?(totVsKH<=0?'var(--success)':'var(--danger)'):'var(--ink-muted)';
+      return `<tr style="background:#0f1822;border-top:2px solid rgba(255,200,0,.4);font-weight:800">
+        <td style="padding:6px 12px;font-weight:800;color:#FFCC00;font-size:12px;position:sticky;left:0;background:#0f1822;z-index:1">∑ TỔNG AL+CL</td>
+        <td style="padding:4px 8px;font-size:10px;color:#FFCC00;border-right:1px solid var(--border)">Tổng</td>
+        <td style="padding:6px 8px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:800;color:#FFCC00">${totTon||'0'}</td>
+        <td style="padding:6px 8px;text-align:center;color:#FFCC00">—</td>
+        <td style="padding:6px 8px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:800;color:#FFCC00">${totKh||'—'}</td>
+        <td style="padding:6px 8px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:800;color:${totDk!==null?(totDk>=0?'var(--success)':'var(--danger)'):'var(--ink-muted)'}">${totDk!==null?totDk:'—'}</td>
+        <td style="padding:6px 8px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:800;color:#FFCC00">${totReal||'—'}</td>
+        <td style="padding:6px 8px;text-align:center;font-size:13px;font-weight:800;color:${totDatC}">${totDat}</td>
+      </tr>`;
+    })() : '');
 
     const bgHdr = isCur?'rgba(255,160,80,.12)':isPast?'rgba(255,255,255,.03)':'rgba(255,160,80,.05)';
     return `
@@ -21810,6 +21866,229 @@ function loadUserTheme(){
   applyTheme(saved);
 }
 applyTheme('dark');
+
+/* =========================================================
+   MANNING & BUDGET
+   ========================================================= */
+if(!DB.manningPlan)  DB.manningPlan  = {};  // {year: {deptId: {planned, notes}}}
+if(!DB.hrBudget)     DB.hrBudget     = {};  // {year: {deptId: {m0..m11: {budget, forecast, actual}}}}
+
+function renderManning(main){
+  const today = new Date();
+  const curYear = window._manningYear || today.getFullYear();
+  window._manningYear = curYear;
+  const activeTab = window._manningTab || 'manning';
+  window._manningTab = activeTab;
+
+  if(!DB.manningPlan[curYear])  DB.manningPlan[curYear]  = {};
+  if(!DB.hrBudget[curYear])     DB.hrBudget[curYear]     = {};
+
+  const depts = DB.departments || [];
+  const emps  = DB.employees   || [];
+  const MN = ['T1','T2','T3','T4','T5','T6','T7','T8','T9','T10','T11','T12'];
+
+  // ── Năm picker ──
+  const years = [];
+  for(let y = today.getFullYear()-1; y <= today.getFullYear()+2; y++) years.push(y);
+
+  // ── MANNING TABLE ──
+  const renderManningTab = ()=>{
+    const rows = depts.map(dept=>{
+      const plan = (DB.manningPlan[curYear][dept.id])||{};
+      const planned  = plan.planned || 0;
+      const actual   = emps.filter(e=>e.deptId===dept.id && getEffectiveStatus(e)!=='exit').length;
+      const variance = actual - planned;
+      const varC = variance===0?'var(--ink-dim)':variance>0?'var(--danger)':'var(--success)';
+      const varT = variance===0?'=':variance>0?`+${variance}`:String(variance);
+      // breakdown by contract type
+      const ft  = emps.filter(e=>e.deptId===dept.id && getEffectiveStatus(e)!=='exit' && (e.contractType||'').includes('full')).length;
+      const pt  = emps.filter(e=>e.deptId===dept.id && getEffectiveStatus(e)!=='exit' && (e.contractType||'').includes('part')).length;
+      const cas = emps.filter(e=>e.deptId===dept.id && getEffectiveStatus(e)!=='exit' && (e.contractType||'').includes('casual')).length;
+      const tts = (DB.trainees||[]).filter(tr=>{
+        const now=today.toISOString().slice(0,10);
+        return tr.deptId===dept.id && tr.startDate && (!tr.endDate||tr.endDate>=now);
+      }).length;
+      return `<tr>
+        <td style="padding:10px 14px;font-weight:600;font-size:13px;position:sticky;left:0;background:var(--bg-card);border-right:2px solid var(--border-strong)">${escapeHtml(dept.name)}</td>
+        <td style="padding:8px 10px;text-align:center">
+          <input type="number" min="0" value="${planned||''}" placeholder="0"
+            onchange="(function(){if(!DB.manningPlan['${curYear}'])DB.manningPlan['${curYear}']={};if(!DB.manningPlan['${curYear}']['${dept.id}'])DB.manningPlan['${curYear}']['${dept.id}']={};DB.manningPlan['${curYear}']['${dept.id}'].planned=parseInt(this.value)||0;saveData(['manningPlan']);})();this"
+            style="width:60px;padding:5px 8px;background:var(--bg-elev);border:1px solid var(--accent);border-radius:6px;color:var(--accent);font-family:'JetBrains Mono',monospace;font-size:13px;text-align:center;font-weight:600">
+        </td>
+        <td style="padding:8px 10px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:700;color:var(--success)">${actual}</td>
+        <td style="padding:8px 10px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:700;color:${varC}">${planned?varT:'—'}</td>
+        <td style="padding:8px 10px;text-align:center;font-size:12px;color:var(--ink-dim)">${ft||'—'}</td>
+        <td style="padding:8px 10px;text-align:center;font-size:12px;color:var(--ink-dim)">${pt||'—'}</td>
+        <td style="padding:8px 10px;text-align:center;font-size:12px;color:var(--ink-dim)">${cas||'—'}</td>
+        <td style="padding:8px 10px;text-align:center;font-size:12px;color:var(--info)">${tts||'—'}</td>
+        <td style="padding:8px 10px;text-align:center">
+          <input type="text" value="${plan.notes||''}" placeholder="Ghi chú..."
+            onchange="(function(){if(!DB.manningPlan['${curYear}'])DB.manningPlan['${curYear}']={};if(!DB.manningPlan['${curYear}']['${dept.id}'])DB.manningPlan['${curYear}']['${dept.id}']={};DB.manningPlan['${curYear}']['${dept.id}'].notes=this.value;saveData(['manningPlan']);}).call(this)"
+            style="width:180px;padding:5px 8px;background:var(--bg-elev);border:1px solid var(--border);border-radius:6px;color:var(--ink);font-size:12px">
+        </td>
+      </tr>`;
+    }).join('');
+
+    const totPlanned = depts.reduce((s,d)=>(DB.manningPlan[curYear][d.id]?.planned||0)+s, 0);
+    const totActual  = emps.filter(e=>getEffectiveStatus(e)!=='exit').length;
+    const totVar     = totActual - totPlanned;
+    const totVarC    = totVar===0?'var(--ink-dim)':totVar>0?'var(--danger)':'var(--success)';
+
+    return `<div class="card" style="padding:0;overflow:hidden">
+      <div style="overflow-x:auto">
+        <table style="width:100%;border-collapse:collapse;font-size:13px">
+          <thead>
+            <tr style="background:var(--bg-elev)">
+              <th style="padding:10px 14px;text-align:left;position:sticky;left:0;background:var(--bg-elev);z-index:2;min-width:160px;border-right:2px solid var(--border-strong)">Bộ phận</th>
+              <th style="padding:10px;text-align:center;min-width:80px;color:var(--accent)">Định biên<br><span style="font-size:9px;opacity:.6">Planned</span></th>
+              <th style="padding:10px;text-align:center;min-width:80px;color:var(--success)">Thực tế<br><span style="font-size:9px;opacity:.6">Actual</span></th>
+              <th style="padding:10px;text-align:center;min-width:70px;color:var(--warning)">Chênh lệch<br><span style="font-size:9px;opacity:.6">Variance</span></th>
+              <th style="padding:10px;text-align:center;min-width:60px;color:var(--info)">Full-time</th>
+              <th style="padding:10px;text-align:center;min-width:60px;color:var(--purple)">Part-time</th>
+              <th style="padding:10px;text-align:center;min-width:60px;color:var(--teal)">Casual</th>
+              <th style="padding:10px;text-align:center;min-width:60px;color:var(--info)">TTS</th>
+              <th style="padding:10px;text-align:left;min-width:200px">Ghi chú</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+          <tfoot>
+            <tr style="background:var(--bg-elev);font-weight:700;border-top:2px solid var(--border-strong)">
+              <td style="padding:10px 14px;position:sticky;left:0;background:var(--bg-elev);z-index:1;border-right:2px solid var(--border-strong)">TỔNG</td>
+              <td style="padding:8px 10px;text-align:center;font-family:'JetBrains Mono',monospace;color:var(--accent);font-size:14px">${totPlanned||'—'}</td>
+              <td style="padding:8px 10px;text-align:center;font-family:'JetBrains Mono',monospace;color:var(--success);font-size:14px">${totActual}</td>
+              <td style="padding:8px 10px;text-align:center;font-family:'JetBrains Mono',monospace;color:${totVarC};font-size:14px">${totPlanned?(totVar===0?'=':totVar>0?'+'+totVar:String(totVar)):'—'}</td>
+              <td colspan="5"></td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    </div>`;
+  };
+
+  // ── BUDGET / FORECAST TABLE ──
+  const renderBudgetTab = ()=>{
+    const thStyle = `padding:8px 6px;text-align:center;font-size:10px;font-weight:600;white-space:nowrap`;
+    const rows = depts.map(dept=>{
+      if(!DB.hrBudget[curYear][dept.id]) DB.hrBudget[curYear][dept.id] = {};
+      const dp = DB.hrBudget[curYear][dept.id];
+
+      const makeInput = (mi, field, color)=>{
+        const val = (dp[mi]||{})[field]||'';
+        return `<input type="number" min="0" value="${val}" placeholder="—"
+          onchange="(function(){const d=DB.hrBudget['${curYear}'];if(!d['${dept.id}'])d['${dept.id}']={};if(!d['${dept.id}'][${mi}])d['${dept.id}'][${mi}]={};d['${dept.id}'][${mi}]['${field}']=parseFloat(this.value)||0;saveData(['hrBudget']);}).call(this)"
+          style="width:68px;padding:3px 4px;background:var(--bg-elev);border:1px solid ${color}33;border-radius:4px;color:${color};font-family:'JetBrains Mono',monospace;font-size:11px;text-align:right">`;
+      };
+
+      // Tổng theo năm
+      const totBudget   = Array.from({length:12},(_,i)=>parseFloat((dp[i]||{}).budget  )||0).reduce((a,b)=>a+b,0);
+      const totForecast = Array.from({length:12},(_,i)=>parseFloat((dp[i]||{}).forecast)||0).reduce((a,b)=>a+b,0);
+      const totActual   = Array.from({length:12},(_,i)=>parseFloat((dp[i]||{}).actual  )||0).reduce((a,b)=>a+b,0);
+      const fmtM = v=>v?Math.round(v/1000000*10)/10+'M':'—';
+
+      return `<tr style="border-bottom:1px solid var(--border)">
+        <td style="padding:6px 14px;font-weight:600;font-size:12px;position:sticky;left:0;background:var(--bg-card);z-index:1;border-right:2px solid var(--border-strong);min-width:150px">${escapeHtml(dept.name)}</td>
+        <td style="padding:4px 6px;font-size:10px;color:var(--ink-muted);white-space:nowrap;border-right:1px solid var(--border)">
+          <div style="color:var(--accent);font-weight:600">KH</div>
+          <div style="color:var(--info)">FC</div>
+          <div style="color:var(--success)">AC</div>
+        </td>
+        ${Array.from({length:12},(_,mi)=>`<td style="padding:3px 2px;text-align:center;border-right:1px solid var(--border)">
+          <div>${makeInput(mi,'budget','var(--accent)')}</div>
+          <div style="margin-top:2px">${makeInput(mi,'forecast','var(--info)')}</div>
+          <div style="margin-top:2px">${makeInput(mi,'actual','var(--success)')}</div>
+        </td>`).join('')}
+        <td style="padding:4px 8px;text-align:right;border-left:2px solid var(--border-strong);min-width:80px">
+          <div style="color:var(--accent);font-size:11px;font-family:'JetBrains Mono',monospace">${fmtM(totBudget)}</div>
+          <div style="color:var(--info);font-size:11px;font-family:'JetBrains Mono',monospace">${fmtM(totForecast)}</div>
+          <div style="color:var(--success);font-size:11px;font-family:'JetBrains Mono',monospace">${fmtM(totActual)}</div>
+        </td>
+      </tr>`;
+    }).join('');
+
+    // Footer tổng
+    const grandBudget   = depts.reduce((s,d)=>s+Array.from({length:12},(_,i)=>parseFloat(((DB.hrBudget[curYear][d.id]||{})[i]||{}).budget  )||0).reduce((a,b)=>a+b,0),0);
+    const grandForecast = depts.reduce((s,d)=>s+Array.from({length:12},(_,i)=>parseFloat(((DB.hrBudget[curYear][d.id]||{})[i]||{}).forecast)||0).reduce((a,b)=>a+b,0),0);
+    const grandActual   = depts.reduce((s,d)=>s+Array.from({length:12},(_,i)=>parseFloat(((DB.hrBudget[curYear][d.id]||{})[i]||{}).actual  )||0).reduce((a,b)=>a+b,0),0);
+    const fmtM = v=>v?Math.round(v/1000000*10)/10+'M':'—';
+
+    return `<div style="margin-bottom:10px;font-size:12px;color:var(--ink-muted)">
+      <span style="background:rgba(212,165,116,.1);color:var(--accent);padding:3px 10px;border-radius:4px;font-weight:600;margin-right:8px">KH = Kế hoạch (Budget)</span>
+      <span style="background:rgba(126,182,232,.1);color:var(--info);padding:3px 10px;border-radius:4px;font-weight:600;margin-right:8px">FC = Dự báo (Forecast)</span>
+      <span style="background:rgba(126,198,153,.1);color:var(--success);padding:3px 10px;border-radius:4px;font-weight:600">AC = Thực tế (Actual)</span>
+      <span style="margin-left:12px;color:var(--ink-muted)">Đơn vị: VNĐ</span>
+    </div>
+    <div class="card" style="padding:0;overflow:hidden">
+      <div style="overflow-x:auto">
+        <table style="border-collapse:collapse;font-size:12px">
+          <thead>
+            <tr style="background:var(--bg-elev)">
+              <th style="${thStyle};text-align:left;position:sticky;left:0;background:var(--bg-elev);z-index:2;border-right:2px solid var(--border-strong)">Bộ phận</th>
+              <th style="${thStyle};border-right:1px solid var(--border)">Loại</th>
+              ${MN.map(m=>`<th style="${thStyle};min-width:76px">${m}</th>`).join('')}
+              <th style="${thStyle};border-left:2px solid var(--border-strong);min-width:80px">Cả năm</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+          <tfoot>
+            <tr style="background:var(--bg-elev);border-top:2px solid var(--border-strong)">
+              <td style="padding:8px 14px;font-weight:700;position:sticky;left:0;background:var(--bg-elev);z-index:1;border-right:2px solid var(--border-strong)">TỔNG</td>
+              <td style="padding:4px 6px;font-size:10px;border-right:1px solid var(--border)">
+                <div style="color:var(--accent);font-weight:600">KH</div>
+                <div style="color:var(--info)">FC</div>
+                <div style="color:var(--success)">AC</div>
+              </td>
+              ${Array.from({length:12},(_,mi)=>{
+                const bud = depts.reduce((s,d)=>s+(parseFloat(((DB.hrBudget[curYear][d.id]||{})[mi]||{}).budget  )||0),0);
+                const frc = depts.reduce((s,d)=>s+(parseFloat(((DB.hrBudget[curYear][d.id]||{})[mi]||{}).forecast)||0),0);
+                const act = depts.reduce((s,d)=>s+(parseFloat(((DB.hrBudget[curYear][d.id]||{})[mi]||{}).actual  )||0),0);
+                const fmt = v=>v?Math.round(v/1000000*10)/10+'M':'—';
+                return `<td style="padding:4px 6px;text-align:right;border-right:1px solid var(--border)">
+                  <div style="color:var(--accent);font-family:'JetBrains Mono',monospace;font-size:10px">${fmt(bud)}</div>
+                  <div style="color:var(--info);font-family:'JetBrains Mono',monospace;font-size:10px">${fmt(frc)}</div>
+                  <div style="color:var(--success);font-family:'JetBrains Mono',monospace;font-size:10px">${fmt(act)}</div>
+                </td>`;
+              }).join('')}
+              <td style="padding:6px 10px;text-align:right;border-left:2px solid var(--border-strong)">
+                <div style="color:var(--accent);font-weight:700;font-family:'JetBrains Mono',monospace;font-size:11px">${fmtM(grandBudget)}</div>
+                <div style="color:var(--info);font-weight:700;font-family:'JetBrains Mono',monospace;font-size:11px">${fmtM(grandForecast)}</div>
+                <div style="color:var(--success);font-weight:700;font-family:'JetBrains Mono',monospace;font-size:11px">${fmtM(grandActual)}</div>
+              </td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    </div>`;
+  };
+
+  main.innerHTML = `
+    <div class="topbar">
+      <div class="topbar-left">
+        <div class="crumb">PHÁT TRIỂN · <span>Manning & Budget</span></div>
+        <h1 class="page-title">Manning <em>&</em> Budget</h1>
+        <div class="page-sub">Định biên · Ngân sách · Dự báo chi phí nhân sự</div>
+      </div>
+      <div class="topbar-actions">
+        <select onchange="window._manningYear=parseInt(this.value);render()"
+          style="background:var(--bg-card);border:1px solid var(--border);border-radius:7px;padding:8px 12px;color:var(--ink);font-family:inherit;font-size:13px;cursor:pointer">
+          ${years.map(y=>`<option value="${y}" ${y===curYear?'selected':''}>${y}</option>`).join('')}
+        </select>
+      </div>
+    </div>
+
+    <!-- Tab bar -->
+    <div class="tab-bar" style="margin-bottom:20px">
+      <button class="tab-btn ${activeTab==='manning'?'active':''}" onclick="window._manningTab='manning';render()">
+        👥 Manning — Định biên
+      </button>
+      <button class="tab-btn ${activeTab==='budget'?'active':''}" onclick="window._manningTab='budget';render()">
+        💰 Budget & Forecast
+      </button>
+    </div>
+
+    ${activeTab==='manning' ? renderManningTab() : renderBudgetTab()}
+  `;
+}
+
 
 </script>
 </body>
