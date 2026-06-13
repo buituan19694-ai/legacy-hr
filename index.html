@@ -4438,9 +4438,10 @@ function saveReward(id, isNew){
     period: $s('r_period'),
   };
   if(!DB.rewardRecords) DB.rewardRecords = [];
-  if(isNew) DB.rewardRecords.push(_sanitizeForFirebase(data));
-  else{ const i = (DB.rewardRecords||[]).findIndex(x=>x.id===id); DB.rewardRecords[i] = _sanitizeForFirebase(data); }
-  _saveShardedToast('rewardRecords', isNew?'✅ Đã lưu khen thưởng':'✅ Đã cập nhật'); closeModal(); render();
+  const cleanRw = _sanitizeForFirebase(data);
+  if(isNew) DB.rewardRecords.push(cleanRw);
+  else{ const i=(DB.rewardRecords||[]).findIndex(x=>x.id===id); if(i>=0)DB.rewardRecords[i]=cleanRw; else DB.rewardRecords.push(cleanRw); }
+  _saveSharded('rewardRecords', ()=>{ closeModal(); render(); toast(isNew?'✅ Đã lưu khen thưởng':'✅ Đã cập nhật'); });
 }
 
 function deleteReward(id, fromModal=false){
@@ -4623,9 +4624,10 @@ function saveDiscipline(id, isNew){
     penalty:$('#d_penalty').value.trim(),
   };
   if(!DB.disciplineRecords) DB.disciplineRecords = [];
-  if(isNew) DB.disciplineRecords.push(_sanitizeForFirebase(data));
-  else{ const i = (DB.disciplineRecords||[]).findIndex(x=>x.id===id); DB.disciplineRecords[i] = _sanitizeForFirebase(data); }
-  _saveShardedToast('disciplineRecords', isNew?'✅ Đã lưu kỷ luật':'✅ Đã cập nhật'); closeModal(); render();
+  const cleanD = _sanitizeForFirebase(data);
+  if(isNew) DB.disciplineRecords.push(cleanD);
+  else{ const i=(DB.disciplineRecords||[]).findIndex(x=>x.id===id); if(i>=0)DB.disciplineRecords[i]=cleanD; else DB.disciplineRecords.push(cleanD); }
+  _saveSharded('disciplineRecords', ()=>{ closeModal(); render(); toast(isNew?'✅ Đã lưu kỷ luật':'✅ Đã cập nhật'); });
 }
 
 function deleteDiscipline(id, fromModal=false){
@@ -8884,7 +8886,7 @@ function saveContract(id, isNew){
   };
   if(!data.empId || !data.startDate){ toast('Vui lòng chọn nhân viên và ngày bắt đầu','error'); return; }
   if(isNew) DB.contracts.push(_sanitizeForFirebase(data));
-  else{ const i = DB.contracts.findIndex(x=>x.id===id); DB.contracts[i] = _sanitizeForFirebase(data); }
+  else{ const i = DB.contracts.findIndex(x=>x.id===id); if(i>=0)DB.contracts[i]=_sanitizeForFirebase(data); else DB.contracts.push(_sanitizeForFirebase(data)); }
   saveData(['contracts']); closeModal(); toast(isNew?'Đã thêm hợp đồng':(_lang==="en"?"Updated":"Đã cập nhật")); render();
 }
 
@@ -11228,9 +11230,10 @@ function saveLeave(id, isNew){
     status:$s('f_status'),
   };
   if(!data.empId || !data.startDate || !data.endDate){ toast((_lang==="en"?"Please fill in all required fields":"Vui lòng nhập đủ thông tin"),'error'); return; }
-  if(isNew) DB.leaves.push(_sanitizeForFirebase(data));
-  else{ const i = (DB.leaves||[]).findIndex(x=>x.id===id); DB.leaves[i] = _sanitizeForFirebase(data); }
-  _saveShardedToast('leaves', isNew?'✅ Đã lưu đơn nghỉ':'✅ Đã cập nhật'); closeModal(); render();
+  const cleanL = _sanitizeForFirebase(data);
+  if(isNew) DB.leaves.push(cleanL);
+  else{ const i=(DB.leaves||[]).findIndex(x=>x.id===id); if(i>=0)DB.leaves[i]=cleanL; else DB.leaves.push(cleanL); }
+  _saveSharded('leaves', ()=>{ closeModal(); render(); toast(isNew?'✅ Đã lưu đơn nghỉ':'✅ Đã cập nhật'); });
 }
 
 function approveLeave(id, approve){
@@ -14388,7 +14391,7 @@ function saveJob(id, isNew){
     data.closedDate = new Date().toISOString().slice(0,10);
   }
   if(isNew) DB.jobs.push(_sanitizeForFirebase(data));
-  else{ const i = DB.jobs.findIndex(x=>x.id===id); DB.jobs[i] = _sanitizeForFirebase(data); }
+  else{ const i = DB.jobs.findIndex(x=>x.id===id); if(i>=0)DB.jobs[i]=_sanitizeForFirebase(data); else DB.jobs.push(_sanitizeForFirebase(data)); }
   saveData(['jobs']); closeModal(); toast(isNew?'Đã mở vị trí':(_lang==="en"?"Updated":"Đã cập nhật")); render();
 }
 
@@ -15293,7 +15296,7 @@ function saveCourse(id, isNew){
   }
 
   if(isNew) DB.courses.push(_sanitizeForFirebase(data));
-  else{ const i = DB.courses.findIndex(x=>x.id===id); DB.courses[i] = _sanitizeForFirebase(data); }
+  else{ const i = DB.courses.findIndex(x=>x.id===id); if(i>=0)DB.courses[i]=_sanitizeForFirebase(data); else DB.courses.push(_sanitizeForFirebase(data)); }
   saveData(['courses']); closeModal(); toast(isNew?'Đã thêm khoá học':(_lang==="en"?"Updated":"Đã cập nhật")); render();
 }
 
@@ -15978,11 +15981,14 @@ function _saveSharded(key, onDone){
   const writes = Object.entries(byYear).map(([yr,records])=>
     window.fbDb.collection('hrdata').doc(`${prefix}_${yr}`)
       .set({...meta, [key]:records.map(r=>_sanitizeForFirebase(r)), _shard:parseInt(yr)}, {merge:false})
-      .catch(err=>console.error(`[${key}] ❌ ${prefix}_${yr}:`, err.message))
+      .then(()=>console.log(`[${key}] ✅ ${prefix}_${yr}: ${records.length} records`))
+      .catch(err=>{ console.error(`[${key}] ❌ ${prefix}_${yr}:`, err.message); throw err; })
   );
   Promise.all(writes)
-    .then(()=>{ if(onDone) onDone(); })
-    .catch(err=>toast('❌ Lỗi lưu: '+err.message,'error'));
+    .then(()=>{
+      if(onDone) onDone();
+    })
+    .catch(err=>toast('❌ Lỗi lưu Firestore: '+err.message,'error'));
 }
 
 function _saveShardedToast(key, msg){
@@ -16004,32 +16010,19 @@ function saveReview(id, isNew){
   if(!data.empId || !data.period){ toast((_lang==="en"?"Please fill in all required fields":"Vui lòng nhập đủ thông tin"),'error'); return; }
 
   if(!DB.kpiReviews) DB.kpiReviews = [];
-  if(isNew) DB.kpiReviews.push(_sanitizeForFirebase(data));
-  else{ const i = DB.kpiReviews.findIndex(x=>x.id===id); if(i>=0) DB.kpiReviews[i] = _sanitizeForFirebase(data); }
+  const cleanR = _sanitizeForFirebase(data);
+  if(isNew) DB.kpiReviews.push(cleanR);
+  else{ const i = DB.kpiReviews.findIndex(x=>x.id===id); if(i>=0) DB.kpiReviews[i]=cleanR; else DB.kpiReviews.push(cleanR); }
 
   syncEmployeeKPI(data.empId);
   saveEmpProfile(data.empId);
-  closeModal();
-  render();
 
-  // Direct Firestore write — write ALL year shards
-  if(window.fbDb){
-    const meta3 = {_syncBy:window.currentUser?.uid||'',_syncAt:Date.now()};
-    const byYear3 = {};
-    (DB.kpiReviews||[]).forEach(r=>{ const y=_recYear(r); (byYear3[y]=byYear3[y]||[]).push(r); });
-    const curYr3 = new Date().getFullYear();
-    if(!byYear3[curYr3]) byYear3[curYr3]=[];
-    const writes3 = Object.entries(byYear3).map(([yr,records])=>
-      window.fbDb.collection('hrdata').doc(`kpi_${yr}`)
-        .set({...meta3, kpiReviews:records.map(r=>_sanitizeForFirebase(r)), _shard:parseInt(yr)}, {merge:false})
-        .catch(err=>console.error('[kpiReviews] ❌', err.message))
-    );
-    Promise.all(writes3)
-      .then(()=>toast(isNew?'✅ Đã lưu đánh giá':(_lang==="en"?"✅ Updated":"✅ Đã cập nhật")))
-      .catch(err=>toast('❌ Lỗi lưu: '+err.message,'error'));
-  } else {
-    toast(isNew?'Đã tạo đánh giá':(_lang==="en"?"Updated":"Đã cập nhật"));
-  }
+  // Write Firestore FIRST, then closeModal
+  _saveSharded('kpiReviews', ()=>{
+    closeModal();
+    render();
+    toast(isNew?'✅ Đã lưu đánh giá':'✅ Đã cập nhật');
+  });
 }
 
 function deleteReview(id, fromModal=false){
@@ -16611,38 +16604,56 @@ function savePromotion(id, isNew){
     applyPromotionToEmployee(data);
   }
 
-  if(isNew) DB.promotions.push(_sanitizeForFirebase(data));
-  else{
-    const i = (DB.promotions||[]).findIndex(x => x.id === id);
-    DB.promotions[i] = _sanitizeForFirebase(data);
+  if(!data.date) data.date = new Date().toISOString().slice(0,10);
+  const clean2 = _sanitizeForFirebase(data);
+  if(isNew){
+    DB.promotions.push(clean2);
+  } else {
+    const idx2 = (DB.promotions||[]).findIndex(x => x.id === id);
+    if(idx2 >= 0) DB.promotions[idx2] = clean2;
+    else DB.promotions.push(clean2); // safety: add if not found
   }
   saveEmpProfile(empId);
+  if(window._pendingRender) delete window._pendingRender[currentPage];
 
-  // Save promotions — write ALL year shards to avoid missing records on refresh
-  const meta2 = {_syncBy:window.currentUser?.uid||'',_syncAt:Date.now(),_lastSaved:Date.now()};
+  // Block UI — show saving state IN modal, don't close until Firestore confirms
+  const saveBtn = document.querySelector('#modal .btn-primary');
+  const cancelBtn = document.querySelector('#modal .btn:not(.btn-primary):not(.btn-danger)');
+  if(saveBtn){ saveBtn.disabled=true; saveBtn.textContent='⏳ Đang lưu...'; }
+  if(cancelBtn) cancelBtn.disabled=true;
+
+  if(!window.fbDb){
+    // No Firestore — close immediately
+    saveData(['promotions']);
+    closeModal(); render();
+    toast(isNew?'Đã tạo đề xuất':'Đã cập nhật');
+    return;
+  }
+
+  const meta2 = {_syncBy:window.currentUser?.uid||'',_syncAt:Date.now()};
   const allPromos = DB.promotions || [];
-  // Group by year
   const byYear2 = {};
   allPromos.forEach(r=>{ const y=_recYear(r); (byYear2[y]=byYear2[y]||[]).push(r); });
-  // Always include current year even if empty
-  const curYr2 = new Date().getFullYear();
-  if(!byYear2[curYr2]) byYear2[curYr2]=[];
+  if(!byYear2[new Date().getFullYear()]) byYear2[new Date().getFullYear()]=[];
 
-  const writePromises = Object.entries(byYear2).map(([yr,records])=>{
-    const docId2 = `promos_${yr}`;
-    return window.fbDb?.collection('hrdata').doc(docId2)
-      .set({...meta2, promotions:records.map(r=>_sanitizeForFirebase(r)), _shard:parseInt(yr)}, {merge:false})
-      .catch(err=>{ console.error(`[promotions] ❌ ${docId2}`, err.message); });
-  }).filter(Boolean);
-
-  Promise.all(writePromises).then(()=>{
-    console.log('[promotions] ✅ saved', allPromos.length, 'records across', Object.keys(byYear2).length, 'years');
-    toast(isNew?'✅ Đã tạo đề xuất':(_lang==="en"?"✅ Updated":"✅ Đã cập nhật"));
-  }).catch(err=>{ toast('❌ Lỗi lưu: '+err.message,'error'); });
-
-  if(window._pendingRender) delete window._pendingRender[currentPage];
-  closeModal();
-  render();
+  Promise.all(Object.entries(byYear2).map(([yr,recs])=>
+    window.fbDb.collection('hrdata').doc(`promos_${yr}`)
+      .set({...meta2, promotions:recs.map(r=>_sanitizeForFirebase(r)), _shard:parseInt(yr)}, {merge:false})
+  ))
+  .then(()=>{
+    // Firestore confirmed → NOW close modal and render
+    closeModal();
+    render();
+    toast(isNew?'✅ Đã lưu':'✅ Đã cập nhật', 'success');
+    console.log('[promos] ✅ Firestore confirmed', allPromos.length, 'records');
+  })
+  .catch(err=>{
+    // Write failed — re-enable buttons so user can retry
+    if(saveBtn){ saveBtn.disabled=false; saveBtn.textContent=isNew?'Tạo':'Lưu'; }
+    if(cancelBtn) cancelBtn.disabled=false;
+    toast('❌ Lỗi lưu: '+err.message+' — thử lại!','error');
+    console.error('[promos] ❌', err);
+  });
 }
 
 function deletePromotion(id, fromModal=false){
