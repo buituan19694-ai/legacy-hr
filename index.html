@@ -1901,7 +1901,7 @@ function _doRender(){
       tasks: renderTasks,
       settings: renderSettings,
       accounts: renderAccounts,
-      manning: renderManning,
+      manning: (main)=>renderManning(main),
     };
     (renderers[currentPage] || renderDashboard)(main);
     setTimeout(function(){ initDateInputs(main); }, 20);
