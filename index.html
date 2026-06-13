@@ -22392,6 +22392,21 @@ function _deleteExtraRole(dIdEnc, tempIdEnc, yr, fromMonth){
   render();
 }
 
+function _moveBudgetPos(dIdEnc, titEnc, yr, dir){
+  const deptId = decodeURIComponent(dIdEnc);
+  const title  = decodeURIComponent(titEnc);
+  const dp = DB.manningPlan?.[yr]?.depts?.[deptId];
+  if(!dp?.positions) return;
+  const idx = dp.positions.findIndex(p=>p.title===title);
+  if(idx < 0) return;
+  const newIdx = idx + dir;
+  if(newIdx < 0 || newIdx >= dp.positions.length) return;
+  const [moved] = dp.positions.splice(idx, 1);
+  dp.positions.splice(newIdx, 0, moved);
+  saveData(['manningPlan']);
+  render();
+}
+
 function _deleteBudgetPos(dIdEnc, titEnc, yr){
   const deptId = decodeURIComponent(dIdEnc);
   const title  = decodeURIComponent(titEnc);
@@ -22550,27 +22565,21 @@ function renderManning(main){
         const savePos = field => `_saveBudgetPos(this,'${dIdEnc}','${titEnc}','${field}',${curYear},${BH_RATE});` +
           (field==='planned'?`_manningUpdateHC('${dept.id}','${titleKey}',parseFloat(this.value)||0);`:'');
 
-        return `<tr data-dept-pos="${dept.id}" draggable="true"
-          ondragstart="window._dragPos={deptId:'${dept.id}',title:${JSON.stringify(title)},yr:${curYear}};this.style.opacity='.4';event.dataTransfer.effectAllowed='move'"
-          ondragend="this.style.opacity='1'"
-          ondragover="event.preventDefault();event.dataTransfer.dropEffect='move';this.style.background='rgba(212,165,116,.15)'"
-          ondragleave="this.style.background=''"
-          ondrop="(function(target){
-            target.style.background='';
-            const src=window._dragPos;
-            if(!src||src.deptId!=='${dept.id}')return;
-            const dp2=DB.manningPlan[src.yr].depts[src.deptId];
-            if(!dp2||!dp2.positions)return;
-            const fromIdx=dp2.positions.findIndex(p=>p.title===src.title);
-            const toIdx=dp2.positions.findIndex(p=>p.title===${JSON.stringify(title)});
-            if(fromIdx<0||toIdx<0||fromIdx===toIdx)return;
-            const [moved]=dp2.positions.splice(fromIdx,1);
-            dp2.positions.splice(toIdx,0,moved);
-            saveData(['manningPlan']);render();
-          })(this)"
-          style="border-bottom:1px solid var(--border);cursor:default">
-          <td style="padding:5px 8px 5px 14px;font-size:12px;font-weight:500">
-            <span draggable="false" style="color:var(--ink-muted);font-size:16px;cursor:grab;margin-right:6px;user-select:none;display:inline-block;vertical-align:middle" title="Kéo để sắp xếp thứ tự">⠿</span>${escapeHtml(title)}${noM}
+        const posIdx = roles.indexOf(title); // index trong sorted roles
+        const planIdx = dp.positions.findIndex(p=>p.title===title); // index trong positions array
+        const canUp   = planIdx > 0;
+        const canDown = planIdx < dp.positions.length - 1;
+
+        return `<tr data-dept-pos="${dept.id}" style="border-bottom:1px solid var(--border)">
+          <td style="padding:5px 8px 5px 10px;font-size:12px;font-weight:500">
+            <span style="display:inline-flex;flex-direction:column;gap:1px;margin-right:6px;vertical-align:middle">
+              <button onclick="_moveBudgetPos('${encodeURIComponent(dept.id)}','${encodeURIComponent(title)}',${curYear},-1)"
+                ${canUp?'':'disabled'}
+                style="padding:0 4px;line-height:13px;font-size:10px;background:transparent;border:1px solid ${canUp?'var(--border)':'transparent'};border-radius:2px;color:${canUp?'var(--ink-muted)':'transparent'};cursor:${canUp?'pointer':'default'}">▲</button>
+              <button onclick="_moveBudgetPos('${encodeURIComponent(dept.id)}','${encodeURIComponent(title)}',${curYear},1)"
+                ${canDown?'':'disabled'}
+                style="padding:0 4px;line-height:13px;font-size:10px;background:transparent;border:1px solid ${canDown?'var(--border)':'transparent'};border-radius:2px;color:${canDown?'var(--ink-muted)':'transparent'};cursor:${canDown?'pointer':'default'}">▼</button>
+            </span>${escapeHtml(title)}${noM}
             <div style="font-size:10px;color:var(--ink-muted);display:flex;align-items:center;gap:6px;margin-top:2px">
               <span>Actual: ${actHC} NV</span>
               <button onclick="_deleteBudgetPos('${encodeURIComponent(dept.id)}','${encodeURIComponent(title)}',${curYear})"
