@@ -6113,6 +6113,8 @@ function exportEmployeesXLSX(){
   if(typeof XLSX === 'undefined'){ toast('SheetJS chưa tải, thử lại sau','error'); return; }
   const canSalary = window.canSeeSalary();
   const SALARY_KEYS = ['baseSalary','bonusSalary'];
+  // Apply same filters as screen
+  const _ef = typeof empFilter!=='undefined' ? empFilter : {dept:'',status:'',search:''};
 
   const stdHeaders = [(_lang==="en"?"Employee ID":"Mã NV"),(_lang==="en"?"Full name":"Họ tên"),'Email',(_lang==="en"?"Phone":"SĐT"),(_lang==="en"?"Date of birth":"Ngày sinh"),(_lang==="en"?"Gender":"Giới tính"),(_lang==="en"?"Department":"Phòng ban"),(_lang==="en"?"Position":"Chức vụ (EN)"),'Chức vụ (VI)',(_lang==="en"?"Level":"Cấp bậc"),(_lang==="en"?"Join date":"Vào làm"),(_lang==="en"?"Status":"Trạng thái"),'Điểm Performance'];
   const customHeaders = DB.customFields
@@ -6608,7 +6610,15 @@ function exportRecruitmentXLSX(){
   const wb = XLSX.utils.book_new();
 
   const jobHeaders = [(_lang==="en"?"Position":"Vị trí"),(_lang==="en"?"Department":"Phòng ban"),'Cần tuyển',(_lang==="en"?"Hired":"Đã tuyển"),(_lang==="en"?"Remaining":"Còn thiếu"),(_lang==="en"?"Candidate":"Ứng viên"),'Tiến độ (%)',(_lang==="en"?"Start date":"Ngày bắt đầu"),'Deadline',(_lang==="en"?"Priority":"Ưu tiên"),(_lang==="en"?"Status":"Trạng thái"),'Lương CB (VNĐ)','${_lang==="en"?"Perf. Bonus":"Bổ sung KQCV"} (VNĐ)','${_lang==="en"?"Total salary":"Tổng lương"} (VNĐ)','Loại công việc',(_lang==="en"?"Notes":"Ghi chú")];
-  const jobRows = DB.jobs.map(j => {
+  // Apply screen filters
+  const _rf3 = window._recFilter||{};
+  let _filtJobs = DB.jobs||[];
+  if(_rf3.status)   _filtJobs=_filtJobs.filter(j=>j.status===_rf3.status);
+  if(_rf3.priority) _filtJobs=_filtJobs.filter(j=>j.priority===_rf3.priority);
+  if(_rf3.dept)     _filtJobs=_filtJobs.filter(j=>j.deptId===_rf3.dept);
+  if(_rf3.month){ const [fy3,fm3]=_rf3.month.split('-').map(Number); _filtJobs=_filtJobs.filter(j=>{if(!j.startDate)return true;const d3=new Date(j.startDate);return d3.getFullYear()===fy3&&d3.getMonth()+1===fm3;}); }
+
+  const jobRows = _filtJobs.map(j => {
     const dept = DB.departments.find(d=>d.id===j.deptId);
     const hired = (DB.candidates||[]).filter(c=>c.jobId===j.id&&c.status==='hired').length;
     const remain = Math.max(0,(j.positions||1)-hired);
@@ -7260,7 +7270,9 @@ function exportContractExcel(){
   const wb = XLSX.utils.book_new();
 
   // Sheet 1: HĐ hiện tại (NV đang làm)
-  const activeEmps = DB.employees.filter(e => e.status !== 'exit');
+  const _cf2 = typeof empFilter!=='undefined' ? empFilter : {};
+  let activeEmps = (DB.employees||[]).filter(e=>getEffectiveStatus(e)!=='exit');
+  if(_cf2.dept) activeEmps = activeEmps.filter(e=>e.deptId===_cf2.dept);
   const rows1 = [];
   rows1.push(['Mã NV','Họ tên','Phòng ban','Chức vụ','Loại HĐ','Ngày bắt đầu','Ngày kết thúc','Còn lại (ngày)','Trạng thái','Ghi chú']);
   activeEmps.forEach(emp => {
@@ -21168,7 +21180,18 @@ function exportTraineeXLSX(){
     'Ngày công',                    // 19
     'Ghi chú',                      // 20
   ];
-  const rows = (DB.trainees||[]).map((tr,i)=>[
+  // Apply screen filters
+  const _tsf = window._traineeStatusFilter||'active';
+  const _tyf = window._traineeYearFilter||0;
+  const _tmf = window._traineeMonthFilter||0;
+  const _td2 = new Date().toISOString().slice(0,10);
+  let _trainees2 = DB.trainees||[];
+  if(_tsf==='active')    _trainees2=_trainees2.filter(t=>!t.endDate||t.endDate>=_td2);
+  else if(_tsf==='exit') _trainees2=_trainees2.filter(t=>t.endDate&&t.endDate<_td2);
+  if(_tyf) _trainees2=_trainees2.filter(t=>t.startDate&&new Date(t.startDate).getFullYear()===_tyf);
+  if(_tmf) _trainees2=_trainees2.filter(t=>t.startDate&&new Date(t.startDate).getMonth()+1===_tmf);
+
+  const rows = _trainees2.map((tr,i)=>[
     i+1,
     tr.name||'',
     tr.code||'',
@@ -22473,10 +22496,32 @@ function _manningUpdateHC(deptId, titleKey, val){
 }
 
 function renderYoYTab(curYear, depts, allEmps, BH_RATE){
-  const prevYear = curYear - 1;
+  // Available years with data
+  const availYears = Object.keys(DB.manningPlan||{}).map(Number).filter(y=>y!==curYear).sort((a,b)=>b-a);
+  // Default prevYear = curYear-1, but user can pick
+  const prevYear = window._yoyCompareYear || (availYears.includes(curYear-1) ? curYear-1 : (availYears[0]||curYear-1));
+  window._yoyCompareYear = prevYear;
+
   const planCur  = (DB.manningPlan[curYear]||{}).depts||{};
   const planPrev = (DB.manningPlan[prevYear]||{}).depts||{};
   const hasPrev  = Object.keys(planPrev).length > 0;
+
+  // Year selector UI — rendered at top
+  const yearSelectorHtml = `<div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;padding:12px 16px;background:var(--bg-card);border-radius:10px;border:1px solid var(--border)">
+    <span style="font-size:13px;font-weight:600;color:var(--ink)">So sánh</span>
+    <span style="font-size:14px;font-weight:800;color:var(--accent)">${curYear}</span>
+    <span style="font-size:13px;color:var(--ink-muted)">với</span>
+    <select onchange="window._yoyCompareYear=parseInt(this.value);render()"
+      style="padding:6px 12px;border-radius:7px;border:1px solid var(--accent);background:var(--bg-elev);color:var(--accent);font-family:inherit;font-size:14px;font-weight:700;cursor:pointer">
+      ${availYears.length
+        ? availYears.map(y=>`<option value="${y}" ${y===prevYear?'selected':''}>${y}</option>`).join('')
+        : `<option value="${curYear-1}">${curYear-1}</option>`
+      }
+    </select>
+    ${!hasPrev ? `<span style="font-size:11px;padding:4px 10px;border-radius:5px;background:rgba(255,165,0,.15);color:var(--warning)">
+      ⚠️ Chưa có data Budget ${prevYear} — vào tab Budget, chọn năm ${prevYear} và nhập số liệu
+    </span>` : `<span style="font-size:11px;color:var(--success)">✅ Có data Budget ${prevYear}</span>`}
+  </div>`;
 
   const fmtM = v => !v ? '—' : v>=1e9 ? (v/1e9).toFixed(1)+'B' : v>=1e6 ? (v/1e6).toFixed(1)+'M' : v.toLocaleString('vi');
   const calcDeptTotal = (plan, deptId) => {
@@ -22586,7 +22631,7 @@ function renderYoYTab(curYear, depts, allEmps, BH_RATE){
     });
   });
 
-  return kpiCards + `
+  return yearSelectorHtml + kpiCards + `
   <div class="card" style="padding:0;overflow:hidden">
     <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px;flex-wrap:wrap">
       <span style="font-weight:700;font-size:13px">📊 Chi tiết Budget ${curYear} vs ${prevYear} theo từng vị trí</span>
@@ -22905,7 +22950,9 @@ function renderManning(main){
       // Roles từ NV đang làm + roles từ budget plan (chức danh chưa có NV)
       const empRoles = deptEmps.map(e=>e.role||'(Chưa có vị trí)');
       const planRoles = (dp.positions||[]).map(p=>p.title).filter(Boolean);
-      const roles = [...new Set([...empRoles, ...planRoles])].sort();
+      // Thứ tự theo dp.positions (user sắp xếp), active roles không trong plan thêm cuối
+      const extraEmp = empRoles.filter(r=>!planRoles.includes(r));
+      const roles = [...new Set([...planRoles, ...extraEmp])];
       if(!roles.length) return '';
 
       // Dept-level totals
@@ -23466,8 +23513,10 @@ function exportManningXLSX(){
   depts.forEach(dept=>{
     const dp = (DB.manningPlan[year]||{}).depts?.[dept.id]||{positions:[]};
     const dbRoles = [...new Set(allEmps.filter(e=>e.deptId===dept.id).map(e=>e.role||'').filter(Boolean))];
-    const planRoles = (dp.positions||[]).map(p=>p.title);
-    const roles = [...new Set([...dbRoles,...planRoles])].sort();
+    const planTitles = (dp.positions||[]).map(p=>p.title);
+    const extraActive = dbRoles.filter(r=>!planTitles.includes(r));
+    // Dùng cùng thứ tự với web: dp.positions order, active roles không trong plan thêm cuối
+    const roles = [...new Set([...planTitles, ...extraActive])];
     roles.forEach(title=>{
       const p = (dp.positions||[]).find(x=>x.title===title)||{planned:0,budgetSalary:0,budgetBH:0,mealRate:0,budgetOther:0};
       const hc=parseInt(p.planned)||0, sal=parseFloat(p.budgetSalary)||0;
@@ -23512,9 +23561,10 @@ function exportManningXLSX(){
   ];
   depts.forEach(dept=>{
     const dp = (DB.manningPlan[year]||{}).depts?.[dept.id]||{positions:[]};
-    const dbRoles = [...new Set(allEmps.filter(e=>e.deptId===dept.id).map(e=>e.role||'').filter(Boolean))];
-    const planRoles = (dp.positions||[]).map(p=>p.title);
-    [...new Set([...dbRoles,...planRoles])].sort().forEach(title=>{
+    const dbRoles2 = [...new Set(allEmps.filter(e=>e.deptId===dept.id).map(e=>e.role||'').filter(Boolean))];
+    const planRoles2 = (dp.positions||[]).map(p=>p.title);
+    const extra2 = dbRoles2.filter(r=>!planRoles2.includes(r));
+    [...new Set([...planRoles2, ...extra2])].forEach(title=>{
       const p=(dp.positions||[]).find(x=>x.title===title)||{};
       tplRows.push([dept.name, title, parseInt(p.planned)||0, parseFloat(p.budgetSalary)||0, parseFloat(p.budgetBH)||0, parseFloat(p.mealRate)||0, parseFloat(p.budgetOther)||0]);
     });
