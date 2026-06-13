@@ -1073,7 +1073,7 @@ function _pushDynamicKey(key, meta){
     if(!byYear[thisYear]) byYear[thisYear]=[];
     Object.entries(byYear).forEach(([yr,records])=>{
       window.fbDb.collection('hrdata').doc(`${prefix}_${yr}`)
-        .set({...meta, [key]:records, _shard:yr}, {merge:false})
+        .set({...meta, [key]:records.map(r=>_sanitizeForFirebase(r)), _shard:parseInt(yr)}, {merge:false})
         .catch(err=>console.error(`[saveData] ❌ ${prefix}_${yr}`, err.message));
     });
     return;
@@ -15978,17 +15978,13 @@ function _saveSharded(key, onDone){
   if(!byYear[curYr]) byYear[curYr]=[];
 
   const meta = {_syncBy:window.currentUser?.uid||'',_syncAt:Date.now()};
-  const writes = Object.entries(byYear).map(([yr,records])=>
+  // Fire-and-forget writes — instant UX
+  Object.entries(byYear).forEach(([yr,records])=>
     window.fbDb.collection('hrdata').doc(`${prefix}_${yr}`)
       .set({...meta, [key]:records.map(r=>_sanitizeForFirebase(r)), _shard:parseInt(yr)}, {merge:false})
-      .then(()=>console.log(`[${key}] ✅ ${prefix}_${yr}: ${records.length} records`))
-      .catch(err=>{ console.error(`[${key}] ❌ ${prefix}_${yr}:`, err.message); throw err; })
+      .catch(err=>console.error(`[${key}] ❌ ${prefix}_${yr}:`, err.message))
   );
-  Promise.all(writes)
-    .then(()=>{
-      if(onDone) onDone();
-    })
-    .catch(err=>toast('❌ Lỗi lưu Firestore: '+err.message,'error'));
+  if(onDone) onDone();
 }
 
 function _saveShardedToast(key, msg){
@@ -16616,44 +16612,10 @@ function savePromotion(id, isNew){
   saveEmpProfile(empId);
   if(window._pendingRender) delete window._pendingRender[currentPage];
 
-  // Block UI — show saving state IN modal, don't close until Firestore confirms
-  const saveBtn = document.querySelector('#modal .btn-primary');
-  const cancelBtn = document.querySelector('#modal .btn:not(.btn-primary):not(.btn-danger)');
-  if(saveBtn){ saveBtn.disabled=true; saveBtn.textContent='⏳ Đang lưu...'; }
-  if(cancelBtn) cancelBtn.disabled=true;
-
-  if(!window.fbDb){
-    // No Firestore — close immediately
-    saveData(['promotions']);
-    closeModal(); render();
-    toast(isNew?'Đã tạo đề xuất':'Đã cập nhật');
-    return;
-  }
-
-  const meta2 = {_syncBy:window.currentUser?.uid||'',_syncAt:Date.now()};
-  const allPromos = DB.promotions || [];
-  const byYear2 = {};
-  allPromos.forEach(r=>{ const y=_recYear(r); (byYear2[y]=byYear2[y]||[]).push(r); });
-  if(!byYear2[new Date().getFullYear()]) byYear2[new Date().getFullYear()]=[];
-
-  Promise.all(Object.entries(byYear2).map(([yr,recs])=>
-    window.fbDb.collection('hrdata').doc(`promos_${yr}`)
-      .set({...meta2, promotions:recs.map(r=>_sanitizeForFirebase(r)), _shard:parseInt(yr)}, {merge:false})
-  ))
-  .then(()=>{
-    // Firestore confirmed → NOW close modal and render
-    closeModal();
-    render();
-    toast(isNew?'✅ Đã lưu':'✅ Đã cập nhật', 'success');
-    console.log('[promos] ✅ Firestore confirmed', allPromos.length, 'records');
-  })
-  .catch(err=>{
-    // Write failed — re-enable buttons so user can retry
-    if(saveBtn){ saveBtn.disabled=false; saveBtn.textContent=isNew?'Tạo':'Lưu'; }
-    if(cancelBtn) cancelBtn.disabled=false;
-    toast('❌ Lỗi lưu: '+err.message+' — thử lại!','error');
-    console.error('[promos] ❌', err);
-  });
+  saveData(['promotions']);
+  closeModal();
+  render();
+  toast(isNew?'Đã tạo đề xuất':'Đã cập nhật');
 }
 
 function deletePromotion(id, fromModal=false){
@@ -22589,9 +22551,9 @@ function renderManning(main){
           (field==='planned'?`_manningUpdateHC('${dept.id}','${titleKey}',parseFloat(this.value)||0);`:'');
 
         return `<tr data-dept-pos="${dept.id}" draggable="true"
-          ondragstart="window._dragPos={deptId:'${dept.id}',title:${JSON.stringify(title)},yr:${curYear}};this.style.opacity='.4'"
+          ondragstart="window._dragPos={deptId:'${dept.id}',title:${JSON.stringify(title)},yr:${curYear}};this.style.opacity='.4';event.dataTransfer.effectAllowed='move'"
           ondragend="this.style.opacity='1'"
-          ondragover="event.preventDefault();this.style.background='rgba(212,165,116,.12)'"
+          ondragover="event.preventDefault();event.dataTransfer.dropEffect='move';this.style.background='rgba(212,165,116,.15)'"
           ondragleave="this.style.background=''"
           ondrop="(function(target){
             target.style.background='';
@@ -22608,7 +22570,7 @@ function renderManning(main){
           })(this)"
           style="border-bottom:1px solid var(--border);cursor:default">
           <td style="padding:5px 8px 5px 14px;font-size:12px;font-weight:500">
-            <span style="color:var(--ink-muted);font-size:14px;cursor:grab;margin-right:6px;user-select:none" title="Kéo để sắp xếp">⠿</span>${escapeHtml(title)}${noM}
+            <span draggable="false" style="color:var(--ink-muted);font-size:16px;cursor:grab;margin-right:6px;user-select:none;display:inline-block;vertical-align:middle" title="Kéo để sắp xếp thứ tự">⠿</span>${escapeHtml(title)}${noM}
             <div style="font-size:10px;color:var(--ink-muted);display:flex;align-items:center;gap:6px;margin-top:2px">
               <span>Actual: ${actHC} NV</span>
               <button onclick="_deleteBudgetPos('${encodeURIComponent(dept.id)}','${encodeURIComponent(title)}',${curYear})"
@@ -22753,9 +22715,12 @@ function renderManning(main){
 
     const deptBlocks = depts.map(dept=>{
       const deptEmps = allEmps.filter(e=>e.deptId===dept.id);
-      if(!deptEmps.length) return '';
       const dp = getDeptPlan(dept.id);
-      const roles = [...new Set(deptEmps.map(e=>e.role||'(Chưa có vị trí)'))].sort();
+      // Roles từ NV đang làm + roles từ budget plan (chức danh chưa có NV)
+      const empRoles = deptEmps.map(e=>e.role||'(Chưa có vị trí)');
+      const planRoles = (dp.positions||[]).map(p=>p.title).filter(Boolean);
+      const roles = [...new Set([...empRoles, ...planRoles])].sort();
+      if(!roles.length) return '';
 
       // Dept-level totals
       const dTotals = {};
