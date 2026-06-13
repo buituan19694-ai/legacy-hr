@@ -23508,26 +23508,31 @@ function exportManningXLSX(){
   const BH_RATE = 0.225;
   const wb = XLSX.utils.book_new();
 
-  // Sheet 1: BUDGET
-  const budRows = [['Bộ phận','Vị trí','HC Planned','Lương/người (VNĐ)','BHXH+CĐ (VNĐ)','Meal rate/ngày (VNĐ)','Chi phí khác (VNĐ)','Tổng × HC (VNĐ)']];
+
+  // Sheet 1: BUDGET — cột khớp hệt web
+  const budRows = [['Bộ phận','Vị trí','HC Planned','Lương CB (VNĐ)','Phụ cấp (VNĐ)','Tổng lương (VNĐ)','BHXH+CĐ (22.5%)','Meal/ngày (VNĐ)','Chi phí khác (VNĐ)','Tổng × HC (VNĐ)']];
   depts.forEach(dept=>{
     const dp = (DB.manningPlan[year]||{}).depts?.[dept.id]||{positions:[]};
-    const dbRoles = [...new Set(allEmps.filter(e=>e.deptId===dept.id).map(e=>e.role||'').filter(Boolean))];
-    const planTitles = (dp.positions||[]).map(p=>p.title);
-    const extraActive = dbRoles.filter(r=>!planTitles.includes(r));
-    // Dùng cùng thứ tự với web: dp.positions order, active roles không trong plan thêm cuối
-    const roles = [...new Set([...planTitles, ...extraActive])];
+    // Thứ tự theo dp.positions (giống web), active roles không trong plan thêm cuối
+    const _dbR = [...new Set(allEmps.filter(e=>e.deptId===dept.id).map(e=>e.role||'').filter(Boolean))];
+    const _plT = (dp.positions||[]).map(p=>p.title);
+    const _exR = _dbR.filter(r=>!_plT.includes(r));
+    const roles = [...new Set([..._plT,..._exR])];
     roles.forEach(title=>{
-      const p = (dp.positions||[]).find(x=>x.title===title)||{planned:0,budgetSalary:0,budgetBH:0,mealRate:0,budgetOther:0};
-      const hc=parseInt(p.planned)||0, sal=parseFloat(p.budgetSalary)||0;
-      const bh=sal ? (parseFloat(p.budgetBH)||Math.round(sal*BH_RATE)) : 0;
-      const meal=parseFloat(p.mealRate)||0, oth=parseFloat(p.budgetOther)||0;
-      const total = sal ? (sal+bh+meal+oth)*hc : 0;
-      budRows.push([dept.name, title, hc||'', sal||'', bh||'', meal||'', oth||'', total||'']);
+      const p = (dp.positions||[]).find(x=>x.title===title)||{};
+      const hc     = parseInt(p.planned)||0;
+      const salCB  = parseFloat(p.budgetSalary)||0;
+      const salBon = parseFloat(p.budgetBonus)||0;
+      const salTot = salCB+salBon;
+      const bh     = salCB ? (parseFloat(p.budgetBH)||Math.round(salCB*BH_RATE)) : 0;
+      const meal   = parseFloat(p.mealRate)||0;
+      const oth    = parseFloat(p.budgetOther)||0;
+      const total  = salCB ? (salTot+bh+meal+oth)*hc : 0;
+      budRows.push([dept.name, title, hc||'', salCB||'', salBon||'', salTot||'', bh||'', meal||'', oth||'', total||'']);
     });
   });
   const wsBud = XLSX.utils.aoa_to_sheet(budRows);
-  wsBud['!cols'] = [20,28,12,18,16,16,16,18].map(w=>({wch:w}));
+  wsBud['!cols'] = [20,28,12,16,14,16,14,14,14,18].map(w=>({wch:w}));
   XLSX.utils.book_append_sheet(wb, wsBud, 'Budget_'+year);
 
   // Sheet 2: ACTUAL tháng đang xem
