@@ -22527,7 +22527,9 @@ function renderManning(main){
       // Roles đã thêm thủ công vào plan (kể cả chưa có NV — để kế hoạch tuyển)
       const planRoles = dp.positions.map(p=>p.title);
       // Merge: active roles + plan-only roles, không có role nào của NV đã nghỉ
-      const roles = [...new Set([...activeRoles, ...planRoles])].sort();
+      // Thứ tự theo dp.positions (user đã sắp xếp), active roles không trong plan thêm cuối
+      const planTitles = dp.positions.map(p=>p.title);
+      const extraActive = activeRoles.filter(r=>!planTitles.includes(r));
 
       // Tự thêm active roles vào plan nếu chưa có (để có thể nhập budget)
       activeRoles.forEach(r=>{
@@ -22541,6 +22543,8 @@ function renderManning(main){
         const hasData = (p.planned||0)>0 || (p.budgetSalary||0)>0 || (p.budgetBH||0)>0 || (p.mealRate||0)>0 || (p.budgetOther||0)>0;
         return hasEmp || hasData; // giữ nếu còn NV HOẶC đã nhập số
       });
+
+      const roles = [...new Set([...planTitles, ...extraActive])];
 
       let dHC=0,dSal=0,dBH=0,dMeal=0,dOth=0,dTotHC=0;
 
