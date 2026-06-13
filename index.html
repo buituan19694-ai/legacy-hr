@@ -15702,6 +15702,23 @@ function renderPerformance(main){
           <button class="btn btn-primary" onclick="editPromotion()">${ICONS.plus} Tạo đề xuất đầu tiên</button>
         </div>
       ` : `
+        ${(()=>{
+          const psf = window._promoStatusFilter||'all';
+          const pending2  = allPromotions.filter(p=>!['completed','approved','rejected'].includes(p.status)).length;
+          const approved2 = allPromotions.filter(p=>['completed','approved'].includes(p.status)).length;
+          const rejected2 = allPromotions.filter(p=>p.status==='rejected').length;
+          return `<div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap">
+            ${[
+              {k:'all',     label:`Tất cả`,       count:allPromotions.length, color:'var(--ink)'},
+              {k:'pending', label:`Chưa duyệt`,   count:pending2,  color:'var(--warning)'},
+              {k:'approved',label:`Đã duyệt`,     count:approved2, color:'var(--success)'},
+              {k:'rejected',label:`Từ chối`,      count:rejected2, color:'var(--danger)'},
+            ].map(f=>`<button onclick="window._promoStatusFilter='${f.k}';render()"
+              style="padding:5px 14px;border-radius:20px;font-size:12px;font-weight:600;cursor:pointer;border:1.5px solid ${psf===f.k?f.color:'var(--border)'};background:${psf===f.k?f.color+'18':'transparent'};color:${psf===f.k?f.color:'var(--ink-muted)'};transition:all .15s">
+              ${f.label} <span style="font-family:'JetBrains Mono',monospace;font-size:11px">${f.count}</span>
+            </button>`).join('')}
+          </div>`;
+        })()}
         <div style="overflow-x:auto">
         <table class="tbl">
           <thead><tr>
@@ -15709,7 +15726,16 @@ function renderPerformance(main){
             <th>Vị trí cũ → mới</th><th>Lương</th><th>${_lang==="en"?"Reason":"Lý do"}</th><th>Người duyệt</th><th>${_lang==="en"?"Status":"Trạng thái"}</th><th></th>
           </tr></thead>
           <tbody>
-            ${[...allPromotions].sort((a,b) => new Date(b.date) - new Date(a.date)).map(p => {
+            ${[...allPromotions]
+              .filter(p=>{
+                const psf2=window._promoStatusFilter||'all';
+                if(psf2==='all') return true;
+                if(psf2==='pending') return !['completed','approved','rejected'].includes(p.status);
+                if(psf2==='approved') return ['completed','approved'].includes(p.status);
+                if(psf2==='rejected') return p.status==='rejected';
+                return true;
+              })
+              .sort((a,b) => new Date(b.date) - new Date(a.date)).map(p => {
               const emp = empById(p.empId); if(!emp) return '';
               const statusColor = p.status==='completed'?'var(--success)':p.status==='approved'?'var(--info)':p.status==='rejected'?'var(--danger)':p.status==='reviewing'?'var(--warning)':'var(--ink-muted)';
               const statusIcon = p.status==='completed'?'✓':p.status==='approved'?'✓':p.status==='rejected'?'✗':p.status==='reviewing'?'⏳':'📝';
