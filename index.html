@@ -22814,13 +22814,14 @@ function renderManning(main){
                 <td style="padding:3px 5px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--teal)">${meal?meal.toLocaleString('vi'):'—'}</td>
                 <td style="padding:3px 7px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:700;color:#FFCC00">${(Math.round(tot)).toLocaleString('vi')}</td>`;
             } else {
-              // Tổng CP Budget cho NV này (từ manningPlan của vị trí)
+              // Tổng CP Budget cho NV này — chỉ hiện khi đã nhập budgetSalary
               const budSal  = parseFloat(pos.budgetSalary)||0;
-              const budBH   = parseFloat(pos.budgetBH)||(budSal?Math.round(budSal*BH_RATE_LOCAL):0);
-              const budMeal = parseFloat(pos.mealRate)||0;
-              const budOth  = parseFloat(pos.budgetOther)||0;
-              const budTot  = budSal+budBH+budMeal+budOth;
-              const diff    = tot - budTot;
+              const hasBudget = budSal > 0; // chưa nhập lương = chưa có budget
+              const budBH   = hasBudget ? (parseFloat(pos.budgetBH)||Math.round(budSal*BH_RATE_LOCAL)) : 0;
+              const budMeal = hasBudget ? (parseFloat(pos.mealRate)||0) : 0;
+              const budOth  = hasBudget ? (parseFloat(pos.budgetOther)||0) : 0;
+              const budTot  = hasBudget ? (budSal+budBH+budMeal+budOth) : 0;
+              const diff    = hasBudget ? (tot - budTot) : 0;
               const diffColor = diff > 0 ? 'var(--danger)' : diff < 0 ? 'var(--success)' : 'var(--ink-muted)';
 
               return `<td style="padding:3px 6px;text-align:right">${inpS('salOverride',eact.salOverride,88,'var(--success)','sal')}</td>
@@ -22934,7 +22935,7 @@ function renderManning(main){
                 <td style="padding:5px 7px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:800;color:#FFCC00">${fmtM(t.tot)}</td>`;
             }).join('')
           : (()=>{const t=dTotals[singleMi]; 
-            const dBudTot=(((DB.manningPlan[curYear]||{}).depts||{})[dept.id]?.positions||[]).reduce((s,p)=>{const bs=parseFloat(p.budgetSalary)||0;const bb=parseFloat(p.budgetBH)||(bs?Math.round(bs*BH_RATE_LOCAL):0);return s+(bs+bb+(parseFloat(p.mealRate)||0)+(parseFloat(p.budgetOther)||0))*(parseInt(p.planned)||0);},0);
+            const dBudTot=(((DB.manningPlan[curYear]||{}).depts||{})[dept.id]?.positions||[]).reduce((s,p)=>{const bs=parseFloat(p.budgetSalary)||0;if(!bs)return s;const bb=parseFloat(p.budgetBH)||Math.round(bs*BH_RATE_LOCAL);return s+(bs+bb+(parseFloat(p.mealRate)||0)+(parseFloat(p.budgetOther)||0))*(parseInt(p.planned)||0);},0);
             const dDiff=t.tot-dBudTot;const dc=dDiff>0?'var(--danger)':dDiff<0?'var(--success)':'var(--ink-muted)';
             return `
             <td colspan="3" style="padding:5px 8px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:var(--success)">${fmtM(t.sal)}</td>
@@ -22990,7 +22991,8 @@ function renderManning(main){
             const grandBudget = Object.values(allDepts2).reduce((s2,dp2)=>{
               return s2+(dp2.positions||[]).reduce((s3,p2)=>{
                 const bs=parseFloat(p2.budgetSalary)||0;
-                const bb=parseFloat(p2.budgetBH)||(bs?Math.round(bs*BH_RATE_LOCAL):0);
+                if(!bs) return s3; // skip if no salary entered
+                const bb=parseFloat(p2.budgetBH)||Math.round(bs*BH_RATE_LOCAL);
                 const bm=parseFloat(p2.mealRate)||0;
                 const bo=parseFloat(p2.budgetOther)||0;
                 return s3+(bs+bb+bm+bo)*(parseInt(p2.planned)||0);
@@ -23003,7 +23005,8 @@ function renderManning(main){
             const grandBud3 = Object.values(allDepts3).reduce((s2,dp2)=>{
               return s2+(dp2.positions||[]).reduce((s3,p2)=>{
                 const bs=parseFloat(p2.budgetSalary)||0;
-                const bb=parseFloat(p2.budgetBH)||(bs?Math.round(bs*BH_RATE_LOCAL):0);
+                if(!bs) return s3;
+                const bb=parseFloat(p2.budgetBH)||Math.round(bs*BH_RATE_LOCAL);
                 const bm=parseFloat(p2.mealRate)||0;
                 const bo=parseFloat(p2.budgetOther)||0;
                 return s3+(bs+bb+bm+bo)*(parseInt(p2.planned)||0);
@@ -23076,7 +23079,8 @@ function renderManning(main){
         (dp.positions||[]).forEach(p=>{
           const hc=parseInt(p.planned)||0;
           budSal +=((parseFloat(p.budgetSalary)||0)*hc);
-          budBH  +=((parseFloat(p.budgetBH)||(parseFloat(p.budgetSalary)||0)*BH_RATE)*hc);
+          if(!(parseFloat(p.budgetSalary)||0)) return; // skip if no salary entered
+        budBH  +=((parseFloat(p.budgetBH)||Math.round((parseFloat(p.budgetSalary)||0)*BH_RATE))*hc);
           budMeal+=((parseFloat(p.mealRate)||0)*hc); // already per person per month
           budOth +=((parseFloat(p.budgetOther)||0)*hc);
           budHC  +=hc;
@@ -23158,6 +23162,7 @@ function renderManning(main){
       (dp.positions||[]).forEach(p=>{
         const hc=parseInt(p.planned)||0;
         const bs=parseFloat(p.budgetSalary)||0;
+        if(!bs) return; // skip if budgetSalary not entered
         dBudTot+=(bs+(parseFloat(p.budgetBH)||Math.round(bs*BH_RATE))+(parseFloat(p.mealRate)||0)+(parseFloat(p.budgetOther)||0))*hc;
       });
       // Actual YTD for dept
