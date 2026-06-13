@@ -4440,14 +4440,14 @@ function saveReward(id, isNew){
   if(!DB.rewardRecords) DB.rewardRecords = [];
   if(isNew) DB.rewardRecords.push(_sanitizeForFirebase(data));
   else{ const i = (DB.rewardRecords||[]).findIndex(x=>x.id===id); DB.rewardRecords[i] = _sanitizeForFirebase(data); }
-  saveData(['rewardRecords']); closeModal(); toast(isNew?'Đã ghi nhận khen thưởng':(_lang==="en"?"Updated":"Đã cập nhật")); render();
+  _saveShardedToast('rewardRecords', isNew?'✅ Đã lưu khen thưởng':'✅ Đã cập nhật'); closeModal(); render();
 }
 
 function deleteReward(id, fromModal=false){
   if(fromModal) closeModal();
   confirmDialog('Xoá ghi nhận khen thưởng?', (_lang==="en"?"This action cannot be undone.":"Hành động này không thể hoàn tác."), ()=>{
     DB.rewardRecords = (DB.rewardRecords||[]).filter(x=>x.id!==id);
-    saveData(['rewardRecords']); toast((_lang==="en"?"Deleted":"Đã xoá")); render();
+    _saveShardedToast('rewardRecords', _lang==="en"?'✅ Deleted':'✅ Đã xoá'); render();
   });
 }
 
@@ -4625,14 +4625,14 @@ function saveDiscipline(id, isNew){
   if(!DB.disciplineRecords) DB.disciplineRecords = [];
   if(isNew) DB.disciplineRecords.push(_sanitizeForFirebase(data));
   else{ const i = (DB.disciplineRecords||[]).findIndex(x=>x.id===id); DB.disciplineRecords[i] = _sanitizeForFirebase(data); }
-  saveData(['disciplineRecords']); closeModal(); toast(isNew?'Đã ghi nhận kỷ luật':(_lang==="en"?"Updated":"Đã cập nhật")); render();
+  _saveShardedToast('disciplineRecords', isNew?'✅ Đã lưu kỷ luật':'✅ Đã cập nhật'); closeModal(); render();
 }
 
 function deleteDiscipline(id, fromModal=false){
   if(fromModal) closeModal();
   confirmDialog((_lang==="en"?"Delete discipline record?":"Xoá bản ghi kỷ luật?"), 'Đây là tài liệu có giá trị pháp lý. Bạn có chắc muốn xoá?', ()=>{
     DB.disciplineRecords = (DB.disciplineRecords||[]).filter(x=>x.id!==id);
-    saveData(['disciplineRecords']); toast((_lang==="en"?"Deleted":"Đã xoá")); render();
+    _saveShardedToast('disciplineRecords', _lang==="en"?'✅ Deleted':'✅ Đã xoá'); render();
   });
 }
 
@@ -11230,20 +11230,20 @@ function saveLeave(id, isNew){
   if(!data.empId || !data.startDate || !data.endDate){ toast((_lang==="en"?"Please fill in all required fields":"Vui lòng nhập đủ thông tin"),'error'); return; }
   if(isNew) DB.leaves.push(_sanitizeForFirebase(data));
   else{ const i = (DB.leaves||[]).findIndex(x=>x.id===id); DB.leaves[i] = _sanitizeForFirebase(data); }
-  saveData(['leaves']); closeModal(); toast(isNew?'Đã tạo đơn':(_lang==="en"?"Updated":"Đã cập nhật")); render();
+  _saveShardedToast('leaves', isNew?'✅ Đã lưu đơn nghỉ':'✅ Đã cập nhật'); closeModal(); render();
 }
 
 function approveLeave(id, approve){
   const l = (DB.leaves||[]).find(x=>x.id===id); if(!l) return;
   l.status = approve ? 'approved' : 'rejected';
-  saveData(['leaves']); toast(approve?'Đã duyệt đơn':'Đã từ chối đơn'); render();
+  _saveShardedToast('leaves', approve?'✅ Đã duyệt':'✅ Đã từ chối'); render();
 }
 
 function deleteLeave(id, fromModal=false){
   if(fromModal) closeModal();
   confirmDialog('Xoá đơn nghỉ?', (_lang==="en"?"This action cannot be undone.":"Hành động này không thể hoàn tác."), ()=>{
     DB.leaves = (DB.leaves||[]).filter(x=>x.id!==id);
-    saveData(['leaves']); toast((_lang==="en"?"Deleted":"Đã xoá")); render();
+    _saveShardedToast('leaves', _lang==="en"?'✅ Deleted':'✅ Đã xoá'); render();
   });
 }
 
@@ -13828,8 +13828,8 @@ function acceptOffer(id){
       }
     }
   }
-  saveData(['candidates','jobs']);
-  toast('✓ ' + a.name + ' đã chính thức nhận việc!', 'success');
+  saveData(['jobs']); // jobs not sharded — OK
+  _saveShardedToast('candidates', '✓ ' + a.name + ' đã chính thức nhận việc!');
   render();
   setTimeout(()=>{
     const existing = (DB.employees||[]).find(emp =>
@@ -14260,7 +14260,8 @@ function deleteCandidate(id, fromModal=false){
       j.applicants = Math.max(0, (j.applicants||0) - 1);
       if(a.status === 'hired') j.hired = Math.max(0, (j.hired||0) - 1);
     }
-    saveData(['candidates','jobs']); toast('Đã xoá ứng viên'); render();
+    saveData(['jobs']); // jobs not sharded
+    _saveShardedToast('candidates', 'Đã xoá ứng viên'); render();
   });
 }
 
@@ -14408,8 +14409,8 @@ function deleteJob(id, fromModal=false){
       window.fbDb.collection('hrdata').doc('cand_'+id).delete()
         .catch(e=>console.warn('[deleteJob] cand shard delete:', e.message));
     }
-    saveData(['jobs','candidates']);
-    toast('Đã xoá vị trí'+(candCount?' và '+candCount+' ứng viên':''));
+    saveData(['jobs']); // jobs not sharded
+    _saveShardedToast('candidates', 'Đã xoá vị trí'+(candCount?' và '+candCount+' ứng viên':''));
     render();
   });
 }
@@ -15957,6 +15958,38 @@ function editReview(id){
   `);
 }
 
+// ─── Helper: save sharded key to Firestore with confirmation ───────────────
+// Replaces fire-and-forget saveData(['key']) for all sharded collections
+function _saveSharded(key, onDone){
+  const prefixMap = {
+    kpiReviews:'kpi', rewardRecords:'rewards', disciplineRecords:'discipline',
+    leaves:'leaves', promotions:'promos', casuals:'casuals', candidates:'cand'
+  };
+  const prefix = prefixMap[key];
+  if(!prefix || !window.fbDb){ saveData([key]); if(onDone) onDone(); return; }
+
+  const arr = DB[key] || [];
+  const byYear = {};
+  arr.forEach(r=>{ const y=_recYear(r); (byYear[y]=byYear[y]||[]).push(r); });
+  const curYr = new Date().getFullYear();
+  if(!byYear[curYr]) byYear[curYr]=[];
+
+  const meta = {_syncBy:window.currentUser?.uid||'',_syncAt:Date.now()};
+  const writes = Object.entries(byYear).map(([yr,records])=>
+    window.fbDb.collection('hrdata').doc(`${prefix}_${yr}`)
+      .set({...meta, [key]:records.map(r=>_sanitizeForFirebase(r)), _shard:parseInt(yr)}, {merge:false})
+      .catch(err=>console.error(`[${key}] ❌ ${prefix}_${yr}:`, err.message))
+  );
+  Promise.all(writes)
+    .then(()=>{ if(onDone) onDone(); })
+    .catch(err=>toast('❌ Lỗi lưu: '+err.message,'error'));
+}
+
+function _saveShardedToast(key, msg){
+  _saveSharded(key, ()=>toast(msg||'✅ Đã lưu'));
+}
+// ────────────────────────────────────────────────────────────────────────────
+
 function saveReview(id, isNew){
   const reviewerVal = $('#f_reviewer').value.trim();
   const reviewerEmp = reviewerVal ? (DB.employees||[]).find(e=>e.id===reviewerVal) : null;
@@ -15966,13 +15999,37 @@ function saveReview(id, isNew){
     score: $sf('f_score'),
     reviewer: reviewerEmp ? reviewerEmp.name : reviewerVal,
     notes:$('#f_notes').value.trim(),
+    date: new Date().toISOString().slice(0,10), // ensure _recYear works
   };
   if(!data.empId || !data.period){ toast((_lang==="en"?"Please fill in all required fields":"Vui lòng nhập đủ thông tin"),'error'); return; }
-  if(isNew) (DB.kpiReviews||[]).push(data);
-  else{ const i = (DB.kpiReviews||[]).findIndex(x=>x.id===id); if(i>=0) DB.kpiReviews[i] = _sanitizeForFirebase(data); }
+
+  if(!DB.kpiReviews) DB.kpiReviews = [];
+  if(isNew) DB.kpiReviews.push(_sanitizeForFirebase(data));
+  else{ const i = DB.kpiReviews.findIndex(x=>x.id===id); if(i>=0) DB.kpiReviews[i] = _sanitizeForFirebase(data); }
+
   syncEmployeeKPI(data.empId);
   saveEmpProfile(data.empId);
-  saveData(['kpiReviews']); closeModal(); toast(isNew?'Đã tạo đánh giá':(_lang==="en"?"Updated":"Đã cập nhật")); render();
+  closeModal();
+  render();
+
+  // Direct Firestore write — write ALL year shards
+  if(window.fbDb){
+    const meta3 = {_syncBy:window.currentUser?.uid||'',_syncAt:Date.now()};
+    const byYear3 = {};
+    (DB.kpiReviews||[]).forEach(r=>{ const y=_recYear(r); (byYear3[y]=byYear3[y]||[]).push(r); });
+    const curYr3 = new Date().getFullYear();
+    if(!byYear3[curYr3]) byYear3[curYr3]=[];
+    const writes3 = Object.entries(byYear3).map(([yr,records])=>
+      window.fbDb.collection('hrdata').doc(`kpi_${yr}`)
+        .set({...meta3, kpiReviews:records.map(r=>_sanitizeForFirebase(r)), _shard:parseInt(yr)}, {merge:false})
+        .catch(err=>console.error('[kpiReviews] ❌', err.message))
+    );
+    Promise.all(writes3)
+      .then(()=>toast(isNew?'✅ Đã lưu đánh giá':(_lang==="en"?"✅ Updated":"✅ Đã cập nhật")))
+      .catch(err=>toast('❌ Lỗi lưu: '+err.message,'error'));
+  } else {
+    toast(isNew?'Đã tạo đánh giá':(_lang==="en"?"Updated":"Đã cập nhật"));
+  }
 }
 
 function deleteReview(id, fromModal=false){
@@ -15982,7 +16039,25 @@ function deleteReview(id, fromModal=false){
     const empId = review?.empId;
     DB.kpiReviews = (DB.kpiReviews||[]).filter(x=>x.id!==id);
     if(empId){ syncEmployeeKPI(empId); saveEmpProfile(empId); }
-    saveData(['kpiReviews']); toast((_lang==="en"?"Deleted":"Đã xoá")); render();
+    render();
+    // Direct Firestore write all shards
+    if(window.fbDb){
+      const meta4 = {_syncBy:window.currentUser?.uid||'',_syncAt:Date.now()};
+      const byYear4 = {};
+      (DB.kpiReviews||[]).forEach(r=>{ const y=_recYear(r); (byYear4[y]=byYear4[y]||[]).push(r); });
+      const curYr4 = new Date().getFullYear();
+      if(!byYear4[curYr4]) byYear4[curYr4]=[];
+      const writes4 = Object.entries(byYear4).map(([yr,records])=>
+        window.fbDb.collection('hrdata').doc(`kpi_${yr}`)
+          .set({...meta4, kpiReviews:records.map(r=>_sanitizeForFirebase(r)), _shard:parseInt(yr)}, {merge:false})
+          .catch(err=>console.error('[kpiReviews delete] ❌', err.message))
+      );
+      Promise.all(writes4)
+        .then(()=>toast(_lang==="en"?"✅ Deleted":"✅ Đã xoá"))
+        .catch(err=>toast('❌ Lỗi xoá: '+err.message,'error'));
+    } else {
+      toast(_lang==="en"?"Deleted":"Đã xoá");
+    }
   });
 }
 
@@ -16543,20 +16618,27 @@ function savePromotion(id, isNew){
   }
   saveEmpProfile(empId);
 
-  // Save promotions với confirmation
-  const yr2 = _recYear(data);
-  const records2 = DB.promotions.filter(r=>_recYear(r)===yr2);
+  // Save promotions — write ALL year shards to avoid missing records on refresh
   const meta2 = {_syncBy:window.currentUser?.uid||'',_syncAt:Date.now(),_lastSaved:Date.now()};
-  const docId2 = `promos_${yr2}`;
-  if(window.fbDb){
-    window.fbDb.collection('hrdata').doc(docId2)
-      .set({...meta2, promotions:records2.map(r=>_sanitizeForFirebase(r)), _shard:yr2}, {merge:false})
-      .then(()=>{
-        console.log('[promotions] ✅ saved', records2.length, 'records to', docId2);
-        toast(isNew?'✅ Đã tạo đề xuất':(_lang==="en"?"✅ Updated":"✅ Đã cập nhật"));
-      })
-      .catch(err=>{ toast('❌ Lỗi lưu: '+err.message,'error'); console.error(err); });
-  }
+  const allPromos = DB.promotions || [];
+  // Group by year
+  const byYear2 = {};
+  allPromos.forEach(r=>{ const y=_recYear(r); (byYear2[y]=byYear2[y]||[]).push(r); });
+  // Always include current year even if empty
+  const curYr2 = new Date().getFullYear();
+  if(!byYear2[curYr2]) byYear2[curYr2]=[];
+
+  const writePromises = Object.entries(byYear2).map(([yr,records])=>{
+    const docId2 = `promos_${yr}`;
+    return window.fbDb?.collection('hrdata').doc(docId2)
+      .set({...meta2, promotions:records.map(r=>_sanitizeForFirebase(r)), _shard:parseInt(yr)}, {merge:false})
+      .catch(err=>{ console.error(`[promotions] ❌ ${docId2}`, err.message); });
+  }).filter(Boolean);
+
+  Promise.all(writePromises).then(()=>{
+    console.log('[promotions] ✅ saved', allPromos.length, 'records across', Object.keys(byYear2).length, 'years');
+    toast(isNew?'✅ Đã tạo đề xuất':(_lang==="en"?"✅ Updated":"✅ Đã cập nhật"));
+  }).catch(err=>{ toast('❌ Lỗi lưu: '+err.message,'error'); });
 
   if(window._pendingRender) delete window._pendingRender[currentPage];
   closeModal();
@@ -16572,8 +16654,7 @@ function deletePromotion(id, fromModal=false){
     DB.promotions = (DB.promotions||[]).filter(x => x.id !== id);
     if(empId && !delPromo?.isHistorical) syncEmployeeFromPromotions(empId);
     if(empId) saveEmpProfile(empId);
-    saveData(['promotions']);
-    toast((_lang==="en"?"Deleted":"Đã xoá"));
+    _saveShardedToast('promotions', _lang==="en"?'✅ Deleted':'✅ Đã xoá');
     render();
   });
 }
@@ -16894,8 +16975,7 @@ function editAwardRecord(recordId, empId){
 function deleteAwardRecord(recordId){
   confirmDialog('Xoá khen thưởng này?', (_lang==="en"?"Cannot be undone.":"Không thể hoàn tác."), ()=>{
     DB.rewardRecords = (DB.rewardRecords||[]).filter(r=>r.id!==recordId);
-    saveData(['rewardRecords']);
-    toast((_lang==="en"?"Deleted":"Đã xoá"));
+    _saveShardedToast('rewardRecords', _lang==="en"?'✅ Deleted':'✅ Đã xoá');
     render();
   });
 }
@@ -17258,8 +17338,7 @@ function editWarnRecord(recordId, empId){
 function deleteWarnRecord(recordId){
   confirmDialog((_lang==="en"?"Delete discipline record?":"Xoá bản ghi kỷ luật?"), (_lang==="en"?"Cannot be undone.":"Không thể hoàn tác."), ()=>{
     DB.disciplineRecords = (DB.disciplineRecords||[]).filter(r=>r.id!==recordId);
-    saveData(['disciplineRecords']);
-    toast((_lang==="en"?"Deleted":"Đã xoá"));
+    _saveShardedToast('disciplineRecords', _lang==="en"?'✅ Deleted':'✅ Đã xoá');
     render();
   });
 }
@@ -20223,7 +20302,7 @@ function saveCasual(id, isNew){
   if(!DB.casuals) DB.casuals=[];
   if(isNew) DB.casuals.push(_sanitizeForFirebase(data));
   else { const i=(DB.casuals||[]).findIndex(x=>x.id===id); if(i>=0) DB.casuals[i]=data; }
-  saveData(['casuals']); closeModal();
+  _saveShardedToast('casuals', '✅ Đã lưu'); closeModal();
   toast(isNew?'Đã thêm bản ghi casual':(_lang==="en"?"Updated":"Đã cập nhật"));
   render();
 }
@@ -20231,7 +20310,7 @@ function saveCasual(id, isNew){
 function deleteCasual(id, fromModal=false){
   confirmDialog('Xoá bản ghi?',(_lang==="en"?"This action cannot be undone.":"Hành động này không thể hoàn tác."),()=>{
     DB.casuals=(DB.casuals||[]).filter(x=>x.id!==id);
-    saveData(['casuals']); if(fromModal) closeModal();
+    _saveShardedToast('casuals', '✅ Đã lưu'); if(fromModal) closeModal();
     toast((_lang==="en"?"Deleted":"Đã xoá")); render();
   });
 }
@@ -20320,7 +20399,7 @@ function importCasualXLSX(){
       }
     });
 
-    saveData(['casuals']);
+    saveData(['casuals']); // bulk import — fire-and-forget acceptable here
     render();
 
     let msg = (_lang==="en"?"Import successful: ":"Import thành công: ") + added + ' ${_lang==="en"?"records":"bản ghi"}';
