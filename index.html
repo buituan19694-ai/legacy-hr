@@ -22835,8 +22835,10 @@ function renderManning(main){
                 </td>
                 <td style="padding:3px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:#FFCC00"><span data-tot="">${(Math.round(tot)).toLocaleString('vi')}</span></td>
                 <td style="padding:3px 8px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;color:rgba(212,165,116,.7)">
-                  ${budTot ? `<div>${(Math.round(budTot)).toLocaleString('vi')}</div>
-                  <div style="font-size:9px;color:${diffColor}">${diff>0?'+':''}${diff!==0?(Math.round(diff)).toLocaleString('vi'):''}</div>` : '<span style="color:var(--ink-muted)">—</span>'}
+                  ${budTot ? (Math.round(budTot)).toLocaleString('vi') : '<span style="color:var(--ink-muted)">—</span>'}
+                </td>
+                <td style="padding:3px 8px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:600">
+                  ${budTot ? `<span style="color:${diffColor}">${diff===0?'=':(diff>0?'+':'')+fmtM(diff)}</span>` : '<span style="color:var(--ink-muted)">—</span>'}
                 </td>
                 <td style="padding:2px 4px">
                   <input type="text" value="${escapeHtml(eact.note||'')}" placeholder="Ghi chú..."
@@ -22931,12 +22933,17 @@ function renderManning(main){
                 <td style="padding:5px 5px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--teal)">${fmtM(t.meal)}</td>
                 <td style="padding:5px 7px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:800;color:#FFCC00">${fmtM(t.tot)}</td>`;
             }).join('')
-          : (()=>{const t=dTotals[singleMi]; return `
+          : (()=>{const t=dTotals[singleMi]; 
+            const dBudTot=(((DB.manningPlan[curYear]||{}).depts||{})[dept.id]?.positions||[]).reduce((s,p)=>{const bs=parseFloat(p.budgetSalary)||0;const bb=parseFloat(p.budgetBH)||(bs?Math.round(bs*BH_RATE_LOCAL):0);return s+(bs+bb+(parseFloat(p.mealRate)||0)+(parseFloat(p.budgetOther)||0))*(parseInt(p.planned)||0);},0);
+            const dDiff=t.tot-dBudTot;const dc=dDiff>0?'var(--danger)':dDiff<0?'var(--success)':'var(--ink-muted)';
+            return `
             <td colspan="3" style="padding:5px 8px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:var(--success)">${fmtM(t.sal)}</td>
             <td style="padding:5px 8px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:var(--purple)">${fmtM(t.bh)}</td>
             <td style="padding:5px 8px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--teal)">${fmtM(t.meal)}</td>
             <td style="padding:5px 8px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--warning)">${fmtM(t.oth)}</td>
             <td style="padding:5px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:800;color:#FFCC00">${fmtM(t.tot)}</td>
+            <td style="padding:5px 8px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;color:rgba(212,165,116,.7)">${dBudTot?fmtM(dBudTot):'—'}</td>
+            <td style="padding:5px 8px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:600">${dBudTot?`<span style="color:${dc}">${dDiff===0?'=':(dDiff>0?'+':'')+fmtM(dDiff)}</span>`:'—'}</td>
             <td></td>`;})()
         }
       </tr>${roleBlocks}${extraRows}
@@ -22958,8 +22965,9 @@ function renderManning(main){
       <th style="${thS};min-width:100px;color:var(--purple)">BHXH+CĐ</th>
       <th style="${thS};min-width:85px;color:var(--teal)">Meal</th>
       <th style="${thS};min-width:90px;color:var(--warning)">Chi phí khác</th>
-      <th style="${thS};min-width:105px;color:#FFCC00">Tổng CP Forecast</th>
-      <th style="${thS};min-width:105px;color:rgba(212,165,116,.7)">Tổng CP Budget</th>
+      <th style="${thS};min-width:110px;color:#FFCC00">Tổng CP Forecast</th>
+      <th style="${thS};min-width:110px;color:rgba(212,165,116,.7)">Tổng CP Budget</th>
+      <th style="${thS};min-width:90px;color:var(--ink-muted)">± Diff</th>
       <th style="padding:8px 6px;font-size:10px;font-weight:700;text-align:left;min-width:130px;color:var(--ink-muted)">Ghi chú</th>`;
 
     const footerCells = multiMode
@@ -22978,7 +22986,6 @@ function renderManning(main){
           <td style="padding:8px;text-align:right;font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--warning)">${fmtM(t.oth)}</td>
           <td style="padding:8px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:800;color:#FFCC00">${fmtM(t.tot)}</td>
           <td style="padding:8px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:rgba(212,165,116,.6)">${(()=>{
-            // Grand total Budget từ tất cả depts
             const allDepts2 = (DB.manningPlan[curYear]||{}).depts||{};
             const grandBudget = Object.values(allDepts2).reduce((s2,dp2)=>{
               return s2+(dp2.positions||[]).reduce((s3,p2)=>{
@@ -22990,6 +22997,21 @@ function renderManning(main){
               },0);
             },0);
             return grandBudget ? fmtM(grandBudget) : '—';
+          })()}</td>
+          <td style="padding:8px 8px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700">${(()=>{
+            const allDepts3 = (DB.manningPlan[curYear]||{}).depts||{};
+            const grandBud3 = Object.values(allDepts3).reduce((s2,dp2)=>{
+              return s2+(dp2.positions||[]).reduce((s3,p2)=>{
+                const bs=parseFloat(p2.budgetSalary)||0;
+                const bb=parseFloat(p2.budgetBH)||(bs?Math.round(bs*BH_RATE_LOCAL):0);
+                const bm=parseFloat(p2.mealRate)||0;
+                const bo=parseFloat(p2.budgetOther)||0;
+                return s3+(bs+bb+bm+bo)*(parseInt(p2.planned)||0);
+              },0);
+            },0);
+            const diff3 = t.tot - grandBud3;
+            const c3 = diff3>0?'var(--danger)':diff3<0?'var(--success)':'var(--ink-muted)';
+            return grandBud3 ? `<span style="color:${c3}">${diff3===0?'=':(diff3>0?'+':'')+fmtM(diff3)}</span>` : '—';
           })()}</td>
           <td></td>`;})();
 
