@@ -22247,6 +22247,112 @@ applyTheme('dark');
 if(!DB.manningPlan)   DB.manningPlan   = {};
 if(!DB.manningActual) DB.manningActual = {};
 
+function _addExtraRole(inputEl, dIdEnc, yr, fromMonth){
+  const deptId = decodeURIComponent(dIdEnc);
+  const title  = inputEl.value.trim();
+  if(!title) return;
+  if(!DB.manningActual[yr]) DB.manningActual[yr]={};
+  // Tạo 1 tempId gốc, dùng chung cho tất cả tháng để dễ track
+  const baseId = 'extra_'+deptId.slice(-4)+'_'+Date.now();
+  for(let mo=fromMonth; mo<=11; mo++){
+    if(!DB.manningActual[yr][mo]) DB.manningActual[yr][mo]={};
+    const exists = Object.values(DB.manningActual[yr][mo]).some(v=>v&&v._isExtra&&v._dept===deptId&&v._label===title);
+    if(!exists){
+      // Copy data từ tháng fromMonth (tháng gốc), các tháng sau inherit
+      DB.manningActual[yr][mo][baseId+'_m'+mo]={
+        _label:title, _dept:deptId, _isExtra:true,
+        _baseId: baseId, // track để cascade
+        salOverride:0, bonOverride:0, bhOverride:0, other:0, note:''
+      };
+    }
+  }
+  saveData(['manningActual']);
+  inputEl.value='';
+  render();
+}
+
+function _saveExtraActual(el, dIdEnc, tempIdEnc, yr, mo, field){
+  const deptId = decodeURIComponent(dIdEnc);
+  const tempId = decodeURIComponent(tempIdEnc);
+  const val    = field==='note' ? el.value : (parseFloat(el.value)||0);
+  if(!DB.manningActual[yr]) return;
+  if(!DB.manningActual[yr][mo]) return;
+  if(!DB.manningActual[yr][mo][tempId]) return;
+
+  const row = DB.manningActual[yr][mo][tempId];
+  row[field] = val;
+
+  // Cascade về các tháng SAU: chỉ update tháng chưa được sửa thủ công
+  // (tháng được coi là "chưa sửa" nếu field đó = 0 hoặc bằng tháng trước)
+  const baseId = row._baseId;
+  const label  = row._label;
+  if(baseId && field !== 'note'){
+    for(let m2=mo+1; m2<=11; m2++){
+      const moData = DB.manningActual[yr][m2]||{};
+      // Tìm row cùng label+dept trong tháng m2
+      const entry = Object.entries(moData).find(([id,v])=>v&&v._isExtra&&v._dept===deptId&&v._label===label);
+      if(entry){
+        const [id2, v2] = entry;
+        // Chỉ cascade nếu tháng m2 chưa có giá trị khác (= 0 hoặc chưa được sửa)
+        if(!v2._manualEdit || !v2._manualEdit[field]){
+          moData[id2][field] = val;
+        }
+      }
+    }
+  }
+  // Đánh dấu tháng này đã edit thủ công
+  if(!row._manualEdit) row._manualEdit = {};
+  row._manualEdit[field] = true;
+
+  saveData(['manningActual']);
+  // Update DOM total
+  const tr = el.closest('tr');
+  if(tr){
+    const salEl=tr.querySelector('[data-sal]'), bonEl=tr.querySelector('[data-bon]');
+    const bhEl=tr.querySelector('[data-bh]');
+    const sal=(parseFloat(salEl?.value)||0)+(parseFloat(bonEl?.value)||0);
+    const bh=parseFloat(bhEl?.value)||Math.round(sal*0.225);
+    const oth=field==='other'?val:(parseFloat(tr.querySelector('[data-oth]')?.value)||0);
+    const tot=sal+bh+oth;
+    const totEl=tr.querySelector('[data-tot]');
+    if(totEl) totEl.textContent=tot.toLocaleString('vi');
+  }
+}
+
+function _deleteExtraRole(dIdEnc, tempIdEnc, yr, fromMonth){
+  const deptId = decodeURIComponent(dIdEnc);
+  const tempId = decodeURIComponent(tempIdEnc);
+  const mo = fromMonth;
+  if(!DB.manningActual[yr]||!DB.manningActual[yr][mo]) return;
+  const label = DB.manningActual[yr][mo][tempId]?._label;
+  // Xóa tháng hiện tại
+  delete DB.manningActual[yr][mo][tempId];
+  // Xóa tất cả tháng SAU đó có cùng label+dept
+  if(label){
+    for(let m2=fromMonth+1; m2<=11; m2++){
+      const moData = DB.manningActual[yr][m2]||{};
+      Object.entries(moData).forEach(([id,v])=>{
+        if(v&&v._isExtra&&v._dept===deptId&&v._label===label) delete moData[id];
+      });
+    }
+  }
+  saveData(['manningActual']);
+  render();
+}
+
+function _deleteBudgetPos(dIdEnc, titEnc, yr){
+  const deptId = decodeURIComponent(dIdEnc);
+  const title  = decodeURIComponent(titEnc);
+  confirmDialog(`Xóa vị trí "${title}" khỏi budget?`, 'Dữ liệu budget của vị trí này sẽ bị xóa. Nhân viên không bị ảnh hưởng.', ()=>{
+    const dp = DB.manningPlan?.[yr]?.depts?.[deptId];
+    if(dp && dp.positions){
+      dp.positions = dp.positions.filter(p=>p.title!==title);
+      saveData(['manningPlan']);
+      render();
+    }
+  }, true);
+}
+
 function _saveBudgetPos(el, dIdEnc, titEnc, field, yr, bhRate){
   const deptId = decodeURIComponent(dIdEnc);
   const title  = decodeURIComponent(titEnc);
@@ -22258,7 +22364,7 @@ function _saveBudgetPos(el, dIdEnc, titEnc, field, yr, bhRate){
   const dp = DB.manningPlan[yr].depts[deptId];
   if(!dp.positions) dp.positions=[];
   let p = dp.positions.find(x=>x.title===title);
-  if(!p){ p={title,planned:0,budgetSalary:0,budgetBH:0,mealRate:0,budgetOther:0,notes:''}; dp.positions.push(p); }
+  if(!p){ p={title,planned:0,budgetSalary:0,budgetBonus:0,budgetBH:0,mealRate:0,budgetOther:0,notes:''}; dp.positions.push(p); }
   p[field] = val;
   if(field==='budgetSalary' && !p.budgetBH) p.budgetBH = Math.round(val*bhRate);
   saveData(['manningPlan']);
@@ -22304,7 +22410,9 @@ function renderManning(main){
   ])].sort((a,b)=>b-a);
   const depts = DB.departments||[];
   const allEmps = (DB.employees||[]).filter(e=>getEffectiveStatus(e)!=='exit');
-  const BH_RATE = 0.225;
+  if(!DB.manningConfig) DB.manningConfig={};
+  const BH_RATE = parseFloat(DB.manningConfig.bhRate)||0.225;
+  const BH_PCT  = Math.round(BH_RATE*1000)/10; // 22.5
 
   if(!DB.manningPlan[curYear]) DB.manningPlan[curYear]={depts:{}};
   if(!DB.manningPlan[curYear].depts) DB.manningPlan[curYear].depts={};
@@ -22325,7 +22433,7 @@ function renderManning(main){
   const getPos = (deptId,title)=>{
     const dp=getDeptPlan(deptId);
     let p=dp.positions.find(x=>x.title===title);
-    if(!p){p={title,planned:0,budgetSalary:0,budgetBH:0,mealRate:0,budgetOther:0,notes:''};dp.positions.push(p);}
+    if(!p){p={title,planned:0,budgetSalary:0,budgetBonus:0,budgetBH:0,mealRate:0,budgetOther:0,notes:''};dp.positions.push(p);}
     return p;
   };
   const saveM = ()=>saveData(['manningPlan','manningActual']);
@@ -22344,17 +22452,38 @@ function renderManning(main){
 
     const deptBlocks = depts.map(dept=>{
       const dp = getDeptPlan(dept.id);
-      const dbRoles  = [...new Set(allEmps.filter(e=>e.deptId===dept.id).map(e=>e.role||'').filter(Boolean))];
-      const planRoles= dp.positions.map(p=>p.title);
-      const roles    = [...new Set([...dbRoles,...planRoles])].sort();
+      // Roles từ NV đang làm trong bộ phận
+      const activeRoles = [...new Set(
+        allEmps.filter(e=>e.deptId===dept.id && (e.role||'').trim())
+               .map(e=>e.role.trim())
+      )];
+      // Roles đã thêm thủ công vào plan (kể cả chưa có NV — để kế hoạch tuyển)
+      const planRoles = dp.positions.map(p=>p.title);
+      // Merge: active roles + plan-only roles, không có role nào của NV đã nghỉ
+      const roles = [...new Set([...activeRoles, ...planRoles])].sort();
+
+      // Tự thêm active roles vào plan nếu chưa có (để có thể nhập budget)
+      activeRoles.forEach(r=>{
+        if(!dp.positions.find(p=>p.title===r)){
+          dp.positions.push({title:r,planned:0,budgetSalary:0,budgetBH:0,mealRate:0,budgetOther:0,notes:''});
+        }
+      });
+      // Tự xóa plan roles không còn NV nào làm VÀ planned=0 VÀ không có số budget
+      dp.positions = dp.positions.filter(p=>{
+        const hasEmp = allEmps.some(e=>e.deptId===dept.id && (e.role||'').trim()===p.title);
+        const hasData = (p.planned||0)>0 || (p.budgetSalary||0)>0 || (p.budgetBH||0)>0 || (p.mealRate||0)>0 || (p.budgetOther||0)>0;
+        return hasEmp || hasData; // giữ nếu còn NV HOẶC đã nhập số
+      });
 
       let dHC=0,dSal=0,dBH=0,dMeal=0,dOth=0,dTotHC=0;
 
       const posRows = roles.map(title=>{
         const p      = getPos(dept.id,title);
         const hc     = parseInt(p.planned)||0;
-        const sal    = parseFloat(p.budgetSalary)||0;
-        const bh     = parseFloat(p.budgetBH)||(sal?Math.round(sal*BH_RATE):0);
+        const salCB  = parseFloat(p.budgetSalary)||0;          // Lương CB
+        const salBon = parseFloat(p.budgetBonus)||0;           // Phụ cấp/khoản khác
+        const sal    = salCB+salBon;                           // Tổng lương = CB + Bonus
+        const bh     = Math.round(salCB*BH_RATE);             // BHXH auto = CB × %
         const meal   = parseFloat(p.mealRate)||0;
         const oth    = parseFloat(p.budgetOther)||0;
         const tot1   = sal+bh+meal+oth;
@@ -22392,7 +22521,7 @@ function renderManning(main){
             <span style="color:var(--ink-muted);font-size:14px;cursor:grab;margin-right:6px;user-select:none" title="Kéo để sắp xếp">⠿</span>${escapeHtml(title)}${noM}
             <div style="font-size:10px;color:var(--ink-muted);display:flex;align-items:center;gap:6px;margin-top:2px">
               <span>Actual: ${actHC} NV</span>
-              <button onclick="(function(){if(!confirm('Xóa vị trí &quot;${escapeHtml(title).replace(/'/g,"\\'")} &quot; khỏi budget?'))return;const dp=DB.manningPlan['${curYear}'].depts['${dept.id}'];if(dp&&dp.positions){dp.positions=dp.positions.filter(p=>p.title!==${JSON.stringify(title)});saveData(['manningPlan']);render();}})()"
+              <button onclick="_deleteBudgetPos('${encodeURIComponent(dept.id)}','${encodeURIComponent(title)}',${curYear})"
                 style="padding:0px 6px;background:transparent;border:1px solid rgba(229,115,115,.3);border-radius:3px;color:var(--danger);font-size:10px;cursor:pointer;line-height:16px"
                 title="Xóa vị trí này">✕</button>
             </div>
@@ -22401,7 +22530,9 @@ function renderManning(main){
             onchange="${savePos('planned')}"
             style="width:46px;padding:3px 5px;background:var(--bg-elev);border:1px solid var(--accent);border-radius:4px;color:var(--accent);font-family:'JetBrains Mono',monospace;font-size:11px;text-align:right"></td>
           <td style="padding:3px 6px;text-align:right">${inpNum(savePos('budgetSalary'),p.budgetSalary,98,'var(--success)')}</td>
-          <td style="padding:3px 6px;text-align:right">${inpNum(savePos('budgetBH'),p.budgetBH||(sal?Math.round(sal*BH_RATE):0),98,'var(--purple)')}</td>
+          <td style="padding:3px 6px;text-align:right">${inpNum(savePos('budgetBonus'),p.budgetBonus||0,90,'var(--info)')}</td>
+          <td style="padding:3px 8px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--success);font-weight:600">${salCB||salBon?fmtVND(salCB+salBon):'—'}</td>
+          <td style="padding:3px 8px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--purple)">${salCB?fmtVND(bh):'—'}</td>
           <td style="padding:3px 6px;text-align:right">${inpNum(savePos('mealRate'),p.mealRate,83,'var(--teal)')}</td>
           <td style="padding:3px 6px;text-align:right">${inpNum(savePos('budgetOther'),p.budgetOther,83,'var(--warning)')}</td>
           <td style="padding:5px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:#FFCC00">${fmtVND(totHC)}</td>
@@ -22434,6 +22565,8 @@ function renderManning(main){
         </td>
         <td style="padding:6px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--accent)">${dHC||'—'}</td>
         <td style="padding:6px 8px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--success)">${fmtM(dSal)}</td>
+        <td style="padding:6px 8px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--info)">—</td>
+        <td style="padding:6px 8px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--success)">${fmtM(dSal)}</td>
         <td style="padding:6px 8px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--purple)">${fmtM(dBH)}</td>
         <td style="padding:6px 8px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--teal)">${fmtM(dMeal)}</td>
         <td style="padding:6px 8px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--warning)">${fmtM(dOth)}</td>
@@ -22458,8 +22591,15 @@ function renderManning(main){
           <thead><tr style="background:var(--bg-elev);border-bottom:2px solid var(--border-strong)">
             <th style="padding:10px 14px;text-align:left;position:sticky;left:0;background:var(--bg-elev);z-index:2">Bộ phận / Vị trí</th>
             <th style="${thC};color:var(--accent)">HC<br><span style="font-size:9px;opacity:.6">Planned</span></th>
-            <th style="${thS};color:var(--success)">Lương/người<br><span style="font-size:9px;opacity:.6">VNĐ/tháng</span></th>
-            <th style="${thS};color:var(--purple)">BHXH+CĐ<br><span style="font-size:9px;opacity:.6">22.5%</span></th>
+            <th style="${thS};color:var(--success)">Lương CB<br><span style="font-size:9px;opacity:.6">VNĐ/tháng</span></th>
+            <th style="${thS};color:var(--info)">Phụ cấp<br><span style="font-size:9px;opacity:.6">VNĐ/tháng</span></th>
+            <th style="${thS};color:var(--success)">Tổng lương<br><span style="font-size:9px;opacity:.6">auto CB+PC</span></th>
+            <th style="${thS};color:var(--purple)">BHXH+CĐ<br>
+              <input type="number" min="0" max="100" step="0.5" value="${BH_PCT}"
+                onchange="(function(v){if(!DB.manningConfig)DB.manningConfig={};DB.manningConfig.bhRate=parseFloat(v)/100;saveData(['manningPlan']);render();})(this.value)"
+                style="width:52px;padding:1px 4px;background:var(--bg-card);border:1px solid var(--purple)55;border-radius:3px;color:var(--purple);font-family:'JetBrains Mono',monospace;font-size:10px;text-align:center"
+                onclick="event.stopPropagation()" title="Nhập % BHXH+CĐ">%
+            </th>
             <th style="${thS};color:var(--teal)">Meal/người<br><span style="font-size:9px;opacity:.6">rate/ngày</span></th>
             <th style="${thS};color:var(--warning)">Chi phí khác<br><span style="font-size:9px;opacity:.6">VNĐ/tháng</span></th>
             <th style="${thS};color:#FFCC00">Tổng × HC<br><span style="font-size:9px;opacity:.6">auto</span></th>
@@ -22468,6 +22608,8 @@ function renderManning(main){
           <tfoot><tr style="background:#0f1a28;border-top:2px solid var(--border-strong)">
             <td style="padding:10px 14px;font-weight:800;color:#FFCC00;position:sticky;left:0;background:#0f1a28;z-index:1">∑ TỔNG</td>
             <td style="padding:8px 6px;text-align:center;font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--accent)">${gHC||'—'}</td>
+            <td style="padding:8px;text-align:right;font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--success)">${fmtM(gSal)}</td>
+            <td style="padding:8px;text-align:right;font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--info)">—</td>
             <td style="padding:8px;text-align:right;font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--success)">${fmtM(gSal)}</td>
             <td style="padding:8px;text-align:right;font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--purple)">${fmtM(gBH)}</td>
             <td style="padding:8px;text-align:right;font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--teal)">${fmtM(gMeal)}</td>
@@ -22662,26 +22804,26 @@ function renderManning(main){
           return `<tr data-dept-actual="${dept.id}" ${isCollapsed?'style="display:none"':''} class="actual-emp-row" style="border-bottom:1px solid var(--border);background:rgba(212,165,116,.03)">
             <td style="padding:4px 8px 4px 28px;font-size:10px;color:var(--warning);font-style:italic">mới</td>
             <td style="padding:4px 8px;font-size:12px;font-weight:500;color:var(--warning)">${escapeHtml(eact._label||'—')}
-              <button onclick="if(confirm('Xóa dòng này?')){delete DB.manningActual['${curYear}']['${singleMi}']['${tempId}'];saveData(['manningActual']);render();}"
+              <button onclick="_deleteExtraRole('${encodeURIComponent(dept.id)}','${encodeURIComponent(tempId)}',${curYear},${singleMi})"
                 style="margin-left:6px;padding:1px 6px;background:transparent;border:1px solid rgba(229,115,115,.3);border-radius:3px;color:var(--danger);font-size:10px;cursor:pointer">✕</button>
             </td>
             <td style="padding:3px 6px"><input type="number" min="0" step="100000" value="${eact.salOverride||''}" placeholder="0" data-sal=""
-              onchange="(function(v){const mo=DB.manningActual['${curYear}']['${singleMi}'];if(mo['${tempId}'])mo['${tempId}'].salOverride=parseFloat(v)||0;saveData(['manningActual']);}).call(this,this.value)"
+              onchange="_saveExtraActual(this,'${encodeURIComponent(dept.id)}','${encodeURIComponent(tempId)}',${curYear},${singleMi},'salOverride')"
               style="width:88px;padding:2px 4px;background:var(--bg-elev);border:1px solid var(--success)55;border-radius:3px;color:var(--success);font-family:'JetBrains Mono',monospace;font-size:10px;text-align:right"></td>
             <td><input type="number" min="0" step="100000" value="${eact.bonOverride||''}" placeholder="0" data-bon=""
-              onchange="(function(v){const mo=DB.manningActual['${curYear}']['${singleMi}'];if(mo['${tempId}'])mo['${tempId}'].bonOverride=parseFloat(v)||0;saveData(['manningActual']);}).call(this,this.value)"
+              onchange="_saveExtraActual(this,'${encodeURIComponent(dept.id)}','${encodeURIComponent(tempId)}',${curYear},${singleMi},'bonOverride')"
               style="width:80px;padding:2px 4px;background:var(--bg-elev);border:1px solid var(--border)55;border-radius:3px;color:var(--ink-dim);font-family:'JetBrains Mono',monospace;font-size:10px;text-align:right"></td>
             <td style="padding:3px 5px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:600;color:var(--success)"><span data-saltot="">${sal.toLocaleString('vi')}</span></td>
             <td><input type="number" min="0" step="100000" value="${eact.bhOverride||''}" placeholder="auto" data-bh=""
-              onchange="(function(v){const mo=DB.manningActual['${curYear}']['${singleMi}'];if(mo['${tempId}'])mo['${tempId}'].bhOverride=parseFloat(v)||0;saveData(['manningActual']);}).call(this,this.value)"
+              onchange="_saveExtraActual(this,'${encodeURIComponent(dept.id)}','${encodeURIComponent(tempId)}',${curYear},${singleMi},'bhOverride')"
               style="width:80px;padding:2px 4px;background:var(--bg-elev);border:1px solid var(--purple)55;border-radius:3px;color:var(--purple);font-family:'JetBrains Mono',monospace;font-size:10px;text-align:right"></td>
             <td style="text-align:right;color:var(--teal);font-family:'JetBrains Mono',monospace;font-size:11px"><span data-meal="">—</span></td>
             <td><input type="number" min="0" step="10000" value="${oth||''}" placeholder="0" data-oth=""
-              onchange="(function(v){const mo=DB.manningActual['${curYear}']['${singleMi}'];if(mo['${tempId}'])mo['${tempId}'].other=parseFloat(v)||0;saveData(['manningActual']);}).call(this,this.value)"
+              onchange="_saveExtraActual(this,'${encodeURIComponent(dept.id)}','${encodeURIComponent(tempId)}',${curYear},${singleMi},'other')"
               style="width:80px;padding:3px 5px;background:var(--bg-elev);border:1px solid var(--warning)44;border-radius:4px;color:var(--warning);font-family:'JetBrains Mono',monospace;font-size:11px;text-align:right"></td>
             <td style="padding:3px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:#FFCC00"><span data-tot="">${tot.toLocaleString('vi')}</span></td>
             <td><input type="text" value="${escapeHtml(eact.note||'')}" placeholder="Ghi chú..."
-              onchange="(function(v){const mo=DB.manningActual['${curYear}']['${singleMi}'];if(mo['${tempId}'])mo['${tempId}'].note=v;saveData(['manningActual']);}).call(this,this.value)"
+              onchange="_saveExtraActual(this,'${encodeURIComponent(dept.id)}','${encodeURIComponent(tempId)}',${curYear},${singleMi},'note')"
               style="width:120px;padding:3px 6px;background:var(--bg-elev);border:1px solid var(--border);border-radius:4px;color:var(--ink-muted);font-size:11px"></td>
           </tr>`;
         }).join('') : '';
@@ -22711,14 +22853,7 @@ function renderManning(main){
       ${!multiMode ? `<tr data-dept-actual="${dept.id}" ${isCollapsed?'style="display:none"':''} class="actual-emp-row">
         <td colspan="2" style="padding:4px 8px 6px 20px">
           <input type="text" placeholder="+ Thêm chức danh mới trong tháng này (Enter)..."
-            onkeydown="if(event.key==='Enter'&&this.value.trim()){
-              const deptId=${JSON.stringify(dept.id)},yr=${curYear},mo=${singleMi};
-              const title=this.value.trim();
-              const tempId='extra_'+deptId.slice(-4)+'_'+Date.now();
-              if(!DB.manningActual[yr])DB.manningActual[yr]={};
-              if(!DB.manningActual[yr][mo])DB.manningActual[yr][mo]={};
-              DB.manningActual[yr][mo][tempId]={_label:title,_dept:deptId,_isExtra:true,salOverride:0,bhOverride:0,other:0,note:''};
-              saveData(['manningActual']);this.value='';render();}"
+            onkeydown="if(event.key==='Enter'&&this.value.trim()){_addExtraRole(this,'${encodeURIComponent(dept.id)}',${curYear},${singleMi});}"
             style="width:300px;padding:4px 8px;background:transparent;border:1px dashed rgba(212,165,116,.4);border-radius:5px;color:var(--ink-muted);font-size:11px">
         </td>
         <td colspan="8"></td>
@@ -22870,19 +23005,141 @@ function renderManning(main){
       </tr>`;
     }).join('');
 
-    return `<div class="card" style="padding:0;overflow:hidden">
+    // ── Grand total năm ──
+    let ytdBudTot=0, ytdActTot=0;
+    MN.forEach((m,mi)=>{
+      const isPast = mi<=lastMonth;
+      let bTot=0,aTot=0;
+      depts.forEach(d=>{
+        const dp=getDeptPlan(d.id);
+        (dp.positions||[]).forEach(p=>{
+          const hc=parseInt(p.planned)||0;
+          const bs=parseFloat(p.budgetSalary)||0;
+          bTot+=((bs+(parseFloat(p.budgetBH)||Math.round(bs*BH_RATE))+(parseFloat(p.mealRate)||0)+(parseFloat(p.budgetOther)||0))*hc);
+        });
+      });
+      ytdBudTot+=bTot;
+      if(isPast){
+        const actMo2=(DB.manningActual[curYear]||{})[mi]||{};
+        allEmps.forEach(e=>{
+          const cd=DB.customData[e.id]||{};
+          const base=parseInt(cd.baseSalary)||0, bonus=parseInt(cd.bonusSalary)||0;
+          const sal=base+bonus, bh=Math.round(base*BH_RATE);
+          const dp2=getDeptPlan(e.deptId);
+          const pos2=(dp2.positions||[]).find(p=>p.title===(e.role||''));
+          const wd=parseInt((actMo2[e.id]||{}).workDays)||0;
+          const meal=Math.round(wd*(parseFloat(pos2?.mealRate)||0));
+          const oth=parseFloat((actMo2[e.id]||{}).other)||0;
+          aTot+=sal+bh+meal+oth;
+        });
+        ytdActTot+=aTot;
+      }
+    });
+    const ytdVar=ytdActTot-ytdBudTot;
+    const ytdVarC=ytdVar===0?'var(--ink-dim)':ytdVar>0?'var(--danger)':'var(--success)';
+    const ytdPct=ytdBudTot?Math.round(ytdActTot/ytdBudTot*100):0;
+
+    // ── Dept breakdown ──
+    const deptRows = depts.map(d=>{
+      const dp=getDeptPlan(d.id);
+      let dBudTot=0;
+      (dp.positions||[]).forEach(p=>{
+        const hc=parseInt(p.planned)||0;
+        const bs=parseFloat(p.budgetSalary)||0;
+        dBudTot+=(bs+(parseFloat(p.budgetBH)||Math.round(bs*BH_RATE))+(parseFloat(p.mealRate)||0)+(parseFloat(p.budgetOther)||0))*hc;
+      });
+      // Actual YTD for dept
+      let dActTot=0;
+      const deptEmpList=allEmps.filter(e=>e.deptId===d.id);
+      MN.forEach((m,mi)=>{
+        if(mi>lastMonth) return;
+        const actMo3=(DB.manningActual[curYear]||{})[mi]||{};
+        deptEmpList.forEach(e=>{
+          const cd=DB.customData[e.id]||{};
+          const base=parseInt(cd.baseSalary)||0, bonus=parseInt(cd.bonusSalary)||0;
+          const sal=base+bonus, bh=Math.round(base*BH_RATE);
+          const pos3=(dp.positions||[]).find(p=>p.title===(e.role||''));
+          const wd=parseInt((actMo3[e.id]||{}).workDays)||0;
+          const meal=Math.round(wd*(parseFloat(pos3?.mealRate)||0));
+          const oth=parseFloat((actMo3[e.id]||{}).other)||0;
+          dActTot+=sal+bh+meal+oth;
+        });
+      });
+      if(!dBudTot && !dActTot) return '';
+      const dVar=dActTot-dBudTot;
+      const dVarC=dVar===0?'var(--ink-dim)':dVar>0?'var(--danger)':'var(--success)';
+      const dPct=dBudTot?Math.round(dActTot/dBudTot*100):0;
+      return `<tr style="border-bottom:1px solid var(--border)">
+        <td style="padding:6px 12px;font-weight:600;color:var(--accent)">${escapeHtml(d.name)}</td>
+        <td style="padding:6px 8px;text-align:center;color:var(--ink-muted)">${deptEmpList.length}</td>
+        <td style="padding:6px 8px;text-align:center;color:var(--ink-muted)">${deptEmpList.length}</td>
+        <td style="padding:6px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--accent)">${fmtM(dBudTot)}</td>
+        <td style="padding:6px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--success)">${fmtM(dActTot)}</td>
+        <td style="padding:6px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:700;color:${dVarC}">${dVar===0?'=':(dVar>0?'+':'')+fmtM(dVar)}</td>
+        <td style="padding:6px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--ink-muted)">${dBudTot?dPct+'%':'—'}</td>
+      </tr>`;
+    }).join('');
+
+    return `
+    <!-- KPI Summary -->
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px">
+      ${[
+        {label:'Tổng Budget (năm)',  val:fmtM(ytdBudTot),  color:'var(--accent)',  icon:'📋'},
+        {label:'Tổng Forecast (YTD)',val:fmtM(ytdActTot),  color:'var(--success)', icon:'📊'},
+        {label:'Variance (Budget−Forecast)', val:(ytdVar<=0?'+':'')+fmtM(-ytdVar), color:ytdVar>0?'var(--danger)':'var(--success)', icon:'⚖️'},
+        {label:'% Thực hiện vs KH',  val:ytdBudTot?ytdPct+'%':'—', color:ytdPct>100?'var(--danger)':ytdPct>=90?'var(--success)':'var(--warning)', icon:'📈'},
+      ].map(k=>`<div class="card" style="padding:14px 16px;display:flex;align-items:center;gap:12px">
+        <span style="font-size:22px">${k.icon}</span>
+        <div>
+          <div style="font-size:10px;color:var(--ink-muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:3px">${k.label}</div>
+          <div style="font-size:22px;font-weight:800;color:${k.color};font-family:'Fraunces',serif">${k.val}</div>
+        </div>
+      </div>`).join('')}
+    </div>
+
+    <!-- Monthly comparison -->
+    <div class="card" style="padding:0;overflow:hidden;margin-bottom:16px">
+      <div style="padding:12px 16px;border-bottom:1px solid var(--border);font-weight:600;font-size:13px">📅 So sánh theo tháng</div>
       <div style="overflow-x:auto">
         <table style="width:100%;border-collapse:collapse;font-size:12px">
           <thead><tr style="background:var(--bg-elev);border-bottom:2px solid var(--border-strong)">
             <th style="padding:10px 12px;text-align:left;min-width:80px">Tháng</th>
             <th style="padding:10px 8px;text-align:center;min-width:70px;color:var(--accent)">HC Budget</th>
-            <th style="padding:10px 8px;text-align:center;min-width:70px;color:var(--success)">HC Actual</th>
+            <th style="padding:10px 8px;text-align:center;min-width:70px;color:var(--success)">HC Forecast</th>
             <th style="padding:10px 8px;text-align:right;min-width:110px;color:var(--accent)">Tổng Budget</th>
-            <th style="padding:10px 8px;text-align:right;min-width:110px;color:var(--success)">Tổng Actual</th>
-            <th style="padding:10px 8px;text-align:right;min-width:110px;color:var(--warning)">Variance</th>
+            <th style="padding:10px 8px;text-align:right;min-width:110px;color:var(--success)">Tổng Forecast</th>
+            <th style="padding:10px 8px;text-align:right;min-width:110px;color:var(--warning)">Budget − Forecast</th>
             <th style="padding:10px 8px;text-align:right;min-width:70px;color:var(--info)">% vs KH</th>
           </tr></thead>
-          <tbody>${monthRows}</tbody>
+          <tbody>${monthRows}
+            <tr style="background:#0d1520;border-top:2px solid var(--border-strong)">
+              <td style="padding:8px 12px;font-weight:700;color:#FFCC00">∑ Cả năm</td>
+              <td colspan="2" style="padding:8px;text-align:center;color:var(--ink-muted)">—</td>
+              <td style="padding:8px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--accent)">${fmtM(ytdBudTot)}</td>
+              <td style="padding:8px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--success)">${fmtM(ytdActTot)}</td>
+              <td style="padding:8px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-weight:800;color:${ytdVarC}">${ytdVar===0?'=':(ytdVar>0?'+':'')+fmtM(ytdVar)}</td>
+              <td style="padding:8px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-weight:700;color:${ytdVarC}">${ytdBudTot?ytdPct+'%':'—'}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Dept breakdown -->
+    <div class="card" style="padding:0;overflow:hidden">
+      <div style="padding:12px 16px;border-bottom:1px solid var(--border);font-weight:600;font-size:13px">🏢 So sánh theo bộ phận (YTD)</div>
+      <div style="overflow-x:auto">
+        <table style="width:100%;border-collapse:collapse;font-size:12px">
+          <thead><tr style="background:var(--bg-elev);border-bottom:2px solid var(--border-strong)">
+            <th style="padding:10px 12px;text-align:left">Bộ phận</th>
+            <th style="padding:10px 8px;text-align:center;color:var(--accent)">HC Budget</th>
+            <th style="padding:10px 8px;text-align:center;color:var(--success)">HC Actual</th>
+            <th style="padding:10px 8px;text-align:right;color:var(--accent)">Tổng Budget</th>
+            <th style="padding:10px 8px;text-align:right;color:var(--success)">Tổng Forecast</th>
+            <th style="padding:10px 8px;text-align:right;color:var(--warning)">Budget − Forecast</th>
+            <th style="padding:10px 8px;text-align:right;color:var(--info)">% vs KH</th>
+          </tr></thead>
+          <tbody>${deptRows}</tbody>
         </table>
       </div>
     </div>`;
