@@ -22210,15 +22210,20 @@ if(!DB.manningActual) DB.manningActual = {};
 function _saveBudgetPos(el, dIdEnc, titEnc, field, yr, bhRate){
   const deptId = decodeURIComponent(dIdEnc);
   const title  = decodeURIComponent(titEnc);
-  const val    = parseFloat(el.value)||0;
+  const val    = field==='planned' ? (parseInt(el.value)||0) : (parseFloat(el.value)||0);
+  if(!DB.manningPlan) DB.manningPlan={};
   if(!DB.manningPlan[yr]) DB.manningPlan[yr]={depts:{}};
+  if(!DB.manningPlan[yr].depts) DB.manningPlan[yr].depts={};
   if(!DB.manningPlan[yr].depts[deptId]) DB.manningPlan[yr].depts[deptId]={positions:[]};
   const dp = DB.manningPlan[yr].depts[deptId];
+  if(!dp.positions) dp.positions=[];
   let p = dp.positions.find(x=>x.title===title);
   if(!p){ p={title,planned:0,budgetSalary:0,budgetBH:0,mealRate:0,budgetOther:0,notes:''}; dp.positions.push(p); }
   p[field] = val;
   if(field==='budgetSalary' && !p.budgetBH) p.budgetBH = Math.round(val*bhRate);
   saveData(['manningPlan']);
+  // Re-render để tổng được tính lại
+  render();
 }
 
 function _manningUpdateHC(deptId, titleKey, val){
@@ -23367,8 +23372,7 @@ function exportTrainingPDF(){
   const MN_FULL=['','Tháng 1','Tháng 2','Tháng 3','Tháng 4','Tháng 5','Tháng 6','Tháng 7','Tháng 8','Tháng 9','Tháng 10','Tháng 11','Tháng 12'];
   const depts = DB.departments||[];
 
-  function courseInPeriod(c){
-    if(p.mode === 'all') return true;
+  function courseInPdfPeriod(c){
     if(!c.startDate) return false;
     const start = new Date(c.startDate);
     const end = c.endDate ? new Date(c.endDate) : start;
@@ -23382,7 +23386,7 @@ function exportTrainingPDF(){
   const COURSE_STATUS_COLOR = {upcoming:'#1565c0', running:'#2e7d32', completed:'#555', cancelled:'#c62828'};
   const CATEGORY = {hard:'Kỹ năng cứng', soft:'Kỹ năng mềm', compliance:'Tuân thủ', leadership:'Lãnh đạo', safety:'An toàn', other:'Khác'};
 
-  const courses = (DB.courses||[]).filter(courseInPeriod).sort((a,b)=>(a.startDate||'').localeCompare(b.startDate||''));
+  const courses = (DB.courses||[]).filter(courseInPdfPeriod).sort((a,b)=>(a.startDate||'').localeCompare(b.startDate||''));
 
   const totalCost = courses.reduce((s,c)=>s+(c.cost||0),0);
   const totalHours = courses.reduce((s,c)=>s+(c.hours||0),0);
