@@ -22989,9 +22989,9 @@ function renderManning(main){
             const bh    = parseFloat(eact.bhOverride) || Math.round(base*BH_RATE_LOCAL);
             const wdays = parseInt(eact.workDays)||0;
             const meal  = Math.round(wdays*mealRate);
-            // Chi phí khác: auto từ budgetOther, có thể override
-            const budOthAuto = parseFloat(pos.budgetOther)||0;
-            const oth   = eact.other !== undefined ? (parseFloat(eact.other)||0) : budOthAuto;
+            // Chi phí khác: nhập tay, cascade giữa các tháng (không auto từ Budget)
+            const budOthAuto = 0;
+            const oth   = eact.other !== undefined ? (parseFloat(eact.other)||0) : 0;
             const tot   = sal+bh+meal+oth;
             gTotals[mi].sal+=sal;gTotals[mi].bh+=bh;gTotals[mi].meal+=meal;gTotals[mi].oth+=oth;gTotals[mi].tot+=tot;
             dTotals[mi].sal+=sal;dTotals[mi].bh+=bh;dTotals[mi].meal+=meal;dTotals[mi].oth+=oth;dTotals[mi].tot+=tot;
@@ -23045,7 +23045,32 @@ function renderManning(main){
                 <td style="padding:3px 5px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--teal)"><span data-meal="">${meal?meal.toLocaleString('vi'):'—'}</span></td>
                 <td style="padding:3px 6px;text-align:right">
                   <input type="number" min="0" step="10000" value="${eact.other!==undefined?(eact.other||''):''}" placeholder="${budOthAuto?budOthAuto.toLocaleString('vi'):'0'}" data-oth=""
-                    onchange="${saveAct('other')};(function(){const row=this.closest('tr');const totEl=row.querySelector('[data-tot]');const salTotEl=row.querySelector('[data-saltot]');const bhEl=row.querySelector('[data-bh]');const mealEl=row.querySelector('[data-meal]');const sal=parseFloat(salTotEl?.textContent?.replace(/[^\\d.]/g,''))||${Math.round(sal)};const bh=parseFloat(bhEl?.value)||${bh};const meal=parseFloat(mealEl?.textContent?.replace(/[^\\d]/g,''))||0;const oth=this.value!==''?(parseFloat(this.value)||0):${budOthAuto};if(totEl)totEl.textContent=(sal+bh+meal+oth).toLocaleString('vi');}).call(this)"
+                    onchange="(function(){
+                      const v=this.value;
+                      const newVal=v===''?undefined:(parseFloat(v)||0);
+                      const yr=DB.manningActual['${curYear}'];
+                      const empId='${e.id}';
+                      // cascade từ tháng ${mi} → 12
+                      for(let m=${mi};m<=12;m++){
+                        const mk=String(m);
+                        if(!yr[mk])yr[mk]={};
+                        if(!yr[mk][empId])yr[mk][empId]={};
+                        if(newVal===undefined) delete yr[mk][empId].other;
+                        else yr[mk][empId].other=newVal;
+                      }
+                      saveData(['manningActual']);
+                      // recalc tot hiện tại
+                      const row=this.closest('tr');
+                      const totEl=row.querySelector('[data-tot]');
+                      const salTotEl=row.querySelector('[data-saltot]');
+                      const bhEl=row.querySelector('[data-bh]');
+                      const mealEl=row.querySelector('[data-meal]');
+                      const sal=parseFloat(salTotEl?.textContent?.replace(/[^\\d.]/g,''))||${Math.round(sal)};
+                      const bh=parseFloat(bhEl?.value)||${bh};
+                      const meal=parseFloat(mealEl?.textContent?.replace(/[^\\d]/g,''))||0;
+                      const oth=newVal!==undefined?newVal:${budOthAuto};
+                      if(totEl)totEl.textContent=(sal+bh+meal+oth).toLocaleString('vi');
+                    }).call(this)"
                     style="width:80px;padding:3px 5px;background:var(--bg-elev);border:1px solid var(--warning)${eact.other!==undefined?'aa':'33'};border-radius:4px;color:var(--warning);font-family:'JetBrains Mono',monospace;font-size:11px;text-align:right">
                 </td>
                 <td style="padding:3px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:#FFCC00"><span data-tot="">${(Math.round(tot)).toLocaleString('vi')}</span></td>
