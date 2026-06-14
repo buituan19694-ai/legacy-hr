@@ -22712,6 +22712,12 @@ function renderManning(main){
 
   const fmtVND = v=>v?Math.round(v).toLocaleString('vi'):'—';
   const fmtM   = v=>v?(Math.round(v/1e6*10)/10).toLocaleString('vi')+'M':'—';
+  const fmtInp = v => {
+    if(v===undefined||v===null||v==='') return '';
+    const num = typeof v==='number' ? v : parseFloat(String(v)) || 0;
+    if(!num) return '';
+    return Math.round(num).toLocaleString('vi-VN').replace(/,/g,'.');
+  };
   const inpNum = (onch,val,w,color,step)=>`<input type="text" inputmode="numeric" value="${fmtInp(val)}" placeholder="0"
     onfocus="this.value=this.value.replace(/\\./g,'')"
     onblur="const n=parseFloat(this.value.replace(/\\.(?=\\d{3}(?:\\.|$))/g,'').replace(/,/g,'.'))||0;this.value=n?Math.round(n).toLocaleString('vi-VN').replace(/,/g,'.'):'';${onch}"
