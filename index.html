@@ -22337,7 +22337,7 @@ function _addExtraRole(inputEl, dIdEnc, yr, fromMonth){
       DB.manningActual[yr][mo][baseId+'_m'+mo]={
         _label:title, _dept:deptId, _isExtra:true,
         _baseId: baseId, // track để cascade
-        salOverride:0, bonOverride:0, bhOverride:0, other:0, note:''
+        note:''
       };
     }
   }
@@ -22738,7 +22738,7 @@ function renderManning(main){
     const thC = `padding:8px 6px;font-size:10px;font-weight:700;white-space:nowrap;text-align:center`;
     const COL_W = ['auto','60px','110px','110px','95px','95px','115px','125px'];
 
-    let gHC=0,gSal=0,gBH=0,gMeal=0,gOth=0,gTotHC=0;
+    let gHC=0,gSalCB=0,gBon=0,gSal=0,gBH=0,gMeal=0,gOth=0,gTotHC=0;
 
     const deptBlocks = depts.map(dept=>{
       const dp = getDeptPlan(dept.id);
@@ -22772,7 +22772,7 @@ function renderManning(main){
 
       const roles = [...new Set([...planTitles, ...extraActive])];
 
-      let dHC=0,dSal=0,dBH=0,dMeal=0,dOth=0,dTotHC=0;
+      let dHC=0,dSalCB=0,dBon=0,dSal=0,dBH=0,dMeal=0,dOth=0,dTotHC=0;
 
       const posRows = roles.map(title=>{
         const p      = getPos(dept.id,title);
@@ -22785,8 +22785,8 @@ function renderManning(main){
         const oth    = parseFloat(p.budgetOther)||0;
         const tot1   = sal+bh+meal+oth;
         const totHC  = tot1*hc;
-        dHC+=hc;dSal+=sal*hc;dBH+=bh*hc;dMeal+=meal*hc;dOth+=oth*hc;dTotHC+=totHC;
-        gHC+=hc;gSal+=sal*hc;gBH+=bh*hc;gMeal+=meal*hc;gOth+=oth*hc;gTotHC+=totHC;
+        dHC+=hc;dSalCB+=salCB*hc;dBon+=salBon*hc;dSal+=sal*hc;dBH+=bh*hc;dMeal+=meal*hc;dOth+=oth*hc;dTotHC+=totHC;
+        gHC+=hc;gSalCB+=salCB*hc;gBon+=salBon*hc;gSal+=sal*hc;gBH+=bh*hc;gMeal+=meal*hc;gOth+=oth*hc;gTotHC+=totHC;
         const actHC  = allEmps.filter(e=>e.deptId===dept.id&&(e.role||'').trim()===title.trim()).length;
         const noM    = !hc?`<span id="nomanning_${dept.id}_${title.replace(/[^a-zA-Z0-9]/g,'_')}" style="font-size:9px;padding:1px 5px;border-radius:3px;margin-left:4px;background:rgba(232,185,116,.15);color:var(--warning)">No manning</span>`:'';
         const dIdEnc  = encodeURIComponent(dept.id);
@@ -22858,8 +22858,8 @@ function renderManning(main){
           <span style="font-size:10px;color:var(--ink-muted);font-weight:400;margin-left:6px">${dp.positions?.length||0} vị trí</span>
         </td>
         <td style="padding:6px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--accent)">${dHC||'—'}</td>
-        <td style="padding:6px 8px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--success)">${fmtM(dSal)}</td>
-        <td style="padding:6px 8px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--info)">—</td>
+        <td style="padding:6px 8px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--success)">${fmtM(dSalCB)}</td>
+        <td style="padding:6px 8px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--info)">${dBon?fmtM(dBon):'—'}</td>
         <td style="padding:6px 8px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--success)">${fmtM(dSal)}</td>
         <td style="padding:6px 8px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--purple)">${fmtM(dBH)}</td>
         <td style="padding:6px 8px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--teal)">${fmtM(dMeal)}</td>
@@ -22903,8 +22903,8 @@ function renderManning(main){
           <tfoot><tr style="background:#0f1a28;border-top:2px solid var(--border-strong)">
             <td style="padding:10px 14px;font-weight:800;color:#FFCC00;position:sticky;left:0;background:#0f1a28;z-index:1">∑ TỔNG</td>
             <td style="padding:8px 6px;text-align:center;font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--accent)">${gHC||'—'}</td>
-            <td style="padding:8px;text-align:right;font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--success)">${fmtM(gSal)}</td>
-            <td style="padding:8px;text-align:right;font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--info)">—</td>
+            <td style="padding:8px;text-align:right;font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--success)">${fmtM(gSalCB)}</td>
+            <td style="padding:8px;text-align:right;font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--info)">${gBon?fmtM(gBon):'—'}</td>
             <td style="padding:8px;text-align:right;font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--success)">${fmtM(gSal)}</td>
             <td style="padding:8px;text-align:right;font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--purple)">${fmtM(gBH)}</td>
             <td style="padding:8px;text-align:right;font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--teal)">${fmtM(gMeal)}</td>
@@ -22983,10 +22983,11 @@ function renderManning(main){
           const empCells = sortedMonths.map(mi=>{
             const actMo = (DB.manningActual[curYear]||{})[mi]||{};
             const eact  = actMo[e.id]||{};
-            const base  = parseFloat(eact.salOverride ?? cd.baseSalary) || (parseInt(cd.baseSalary)||0);
-            const bonus = parseFloat(eact.bonOverride ?? cd.bonusSalary) || (parseInt(cd.bonusSalary)||0);
+            const _pn = v=>{ if(v===undefined||v===null||v==='') return 0; if(typeof v==='number') return v; return parseFloat(String(v).replace(/\./g,'').replace(/,/g,'.'))||0; };
+            const base  = _pn(eact.salOverride) || _pn(cd.baseSalary);
+            const bonus = _pn(eact.bonOverride) || _pn(cd.bonusSalary);
             const sal   = base+bonus;
-            const bh    = parseFloat(eact.bhOverride) || Math.round(base*BH_RATE_LOCAL);
+            const bh    = _pn(eact.bhOverride) || Math.round(base*BH_RATE_LOCAL);
             const wdays = parseInt(eact.workDays)||0;
             const meal  = Math.round(wdays*mealRate);
             // Chi phí khác: nhập tay, cascade giữa các tháng (không auto từ Budget)
@@ -23800,11 +23801,12 @@ function exportActualSelectedMonths(){
     const rows = [['Bộ phận','Vị trí','Mã NV','Họ tên','Lương CB (VNĐ)','Phụ cấp (VNĐ)','Tổng lương (VNĐ)','BHXH+CĐ (VNĐ)','Ngày công','Meal (VNĐ)','Chi phí khác (VNĐ)','Tổng chi phí (VNĐ)']];
     depts.forEach(dept=>{
       const dp = ((DB.manningPlan[year]||{}).depts||{})[dept.id]||{positions:[]};
+      const _pn2 = v=>{ if(!v&&v!==0) return 0; if(typeof v==='number') return v; return parseFloat(String(v).replace(/\./g,'').replace(/,/g,'.'))||0; };
       allEmps.filter(e=>e.deptId===dept.id).forEach(e=>{
         const cd=DB.customData[e.id]||{};
         const eact=actMo[e.id]||{};
-        const base = parseFloat(eact.salOverride??cd.baseSalary)||(parseInt(cd.baseSalary)||0);
-        const bon  = parseFloat(eact.bonOverride??cd.bonusSalary)||(parseInt(cd.bonusSalary)||0);
+        const base = _pn2(eact.salOverride) || _pn2(cd.baseSalary);
+        const bon  = _pn2(eact.bonOverride) || _pn2(cd.bonusSalary);
         const sal  = base+bon;
         const bh   = parseFloat(eact.bhOverride)||Math.round(base*BH_RATE);
         const pos  = (dp.positions||[]).find(p=>p.title===(e.role||''))||{};
