@@ -22463,7 +22463,9 @@ function _deleteBudgetPos(dIdEnc, titEnc, yr){
 function _saveBudgetPos(el, dIdEnc, titEnc, field, yr, bhRate){
   const deptId = decodeURIComponent(dIdEnc);
   const title  = decodeURIComponent(titEnc);
-  const val    = field==='planned' ? (parseInt(el.value)||0) : (parseFloat(el.value)||0);
+  // Strip dấu chấm ngăn cách (11.000.000 → 11000000) trước khi parse
+  const rawVal = String(el.value||'').replace(/\./g,'').replace(/,/g,'.');
+  const val    = field==='planned' ? (parseInt(rawVal)||0) : (parseFloat(rawVal)||0);
   if(!DB.manningPlan) DB.manningPlan={};
   if(!DB.manningPlan[yr]) DB.manningPlan[yr]={depts:{}};
   if(!DB.manningPlan[yr].depts) DB.manningPlan[yr].depts={};
@@ -22705,8 +22707,12 @@ function renderManning(main){
 
   const fmtVND = v=>v?Math.round(v).toLocaleString('vi'):'—';
   const fmtM   = v=>v?(Math.round(v/1e6*10)/10).toLocaleString('vi')+'M':'—';
-  const inpNum = (onch,val,w,color,step)=>`<input type="number" min="0" step="${step||'500000'}" value="${(parseFloat(val)||0)||''}" placeholder="0"
-    onchange="${onch}"
+  // fmtInp: format số có dấu chấm ngăn cách để hiển thị trong input (11.000.000)
+  const fmtInp = v => { const n=parseFloat(String(v||'').replace(/\./g,'').replace(/,/g,'.'))||0; return n ? Math.round(n).toLocaleString('vi-VN').replace(/,/g,'.') : ''; };
+  const inpNum = (onch,val,w,color,step)=>`<input type="text" inputmode="numeric" value="${fmtInp(val)}" placeholder="0"
+    onfocus="this.value=this.value.replace(/\\./g,'')"
+    onblur="const n=parseFloat(this.value.replace(/\\./g,'').replace(/,/g,'.'))||0;this.value=n?Math.round(n).toLocaleString('vi-VN').replace(/,/g,'.'):'';${onch}"
+    onkeydown="if(event.key==='Enter'){const n=parseFloat(this.value.replace(/\\./g,'').replace(/,/g,'.'))||0;this.value=n?Math.round(n).toLocaleString('vi-VN').replace(/,/g,'.'):'';${onch}this.blur();}"
     style="width:${w||90}px;padding:3px 5px;background:var(--bg-elev);border:1px solid ${color||'var(--border)'};border-radius:4px;color:${color||'var(--ink)'};font-family:'JetBrains Mono',monospace;font-size:11px;text-align:right">`;
 
   const getDeptPlan = deptId=>{
@@ -23021,8 +23027,8 @@ function renderManning(main){
               const budMeal = hasBudget ? (parseFloat(pos.mealRate)||0) : 0;
               const budOth  = hasBudget ? (parseFloat(pos.budgetOther)||0) : 0;
               const budTot  = hasBudget ? (budSal+budBH+budMeal+budOth) : 0;
-              const diff    = hasBudget ? (tot - budTot) : 0;
-              const diffColor = diff > 0 ? 'var(--danger)' : diff < 0 ? 'var(--success)' : 'var(--ink-muted)';
+              const diff    = hasBudget ? (budTot - tot) : 0;  // Budget - Forecast: dương = tiết kiệm (xanh), âm = vượt (đỏ)
+              const diffColor = diff > 0 ? 'var(--success)' : diff < 0 ? 'var(--danger)' : 'var(--ink-muted)';
 
               return `<td style="padding:3px 6px;text-align:right">${inpS('salOverride',eact.salOverride,88,'var(--success)','sal')}</td>
                 <td style="padding:3px 6px;text-align:right">${inpS('bonOverride',eact.bonOverride,80,'var(--ink-dim)','bon')}</td>
@@ -23136,7 +23142,7 @@ function renderManning(main){
             }).join('')
           : (()=>{const t=dTotals[singleMi]; 
             const dBudTot=(((DB.manningPlan[curYear]||{}).depts||{})[dept.id]?.positions||[]).reduce((s,p)=>{const bs=parseFloat(p.budgetSalary)||0;if(!bs)return s;const bb=parseFloat(p.budgetBH)||Math.round(bs*BH_RATE_LOCAL);return s+(bs+bb+(parseFloat(p.mealRate)||0)+(parseFloat(p.budgetOther)||0))*(parseInt(p.planned)||0);},0);
-            const dDiff=t.tot-dBudTot;const dc=dDiff>0?'var(--danger)':dDiff<0?'var(--success)':'var(--ink-muted)';
+            const dDiff=dBudTot-t.tot;const dc=dDiff>0?'var(--success)':dDiff<0?'var(--danger)':'var(--ink-muted)';
             return `
             <td colspan="3" style="padding:5px 8px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:var(--success)">${fmtM(t.sal)}</td>
             <td style="padding:5px 8px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:var(--purple)">${fmtM(t.bh)}</td>
@@ -23654,6 +23660,8 @@ function importManningXLSX(input){
       // Đọc header để map cột đúng (tránh lệch khi cột thay đổi)
       const hdr = rows[headerIdx].map(h=>String(h||'').trim());
       const ci = name => hdr.findIndex(h=>h.toLowerCase().includes(name.toLowerCase()));
+      // parseNum: xử lý cả number (xlsx trả về) lẫn string có dấu phẩy "5,427,138"
+      const parseNum = v => { if(typeof v==='number') return v; return parseFloat(String(v||'').replace(/,/g,''))||0; };
       const iHC     = ci('HC');
       const iSalCB  = ci('Lương CB');
       const iBonus  = ci('Phụ cấp');
@@ -23686,11 +23694,11 @@ function importManningXLSX(input){
         newPositions[deptId].push({
           title,
           planned:     parseInt(r[iHC])||0,
-          budgetSalary:parseFloat(r[iSalCB])||0,
-          budgetBonus: iBonus>=0 ? (parseFloat(r[iBonus])||0) : 0,
-          budgetBH:    iBH>=0   ? (parseFloat(r[iBH])||0)    : 0,
-          mealRate:    iMeal>=0 ? (parseFloat(r[iMeal])||0)  : 0,
-          budgetOther: iOth>=0  ? (parseFloat(r[iOth])||0)   : 0,
+          budgetSalary:parseNum(r[iSalCB]),
+          budgetBonus: iBonus>=0 ? parseNum(r[iBonus]) : 0,
+          budgetBH:    iBH>=0   ? parseNum(r[iBH])    : 0,
+          mealRate:    iMeal>=0 ? parseNum(r[iMeal])  : 0,
+          budgetOther: iOth>=0  ? parseNum(r[iOth])   : 0,
           notes:''
         });
         updated++;
