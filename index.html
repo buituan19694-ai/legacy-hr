@@ -23738,6 +23738,7 @@ function importManningXLSX(input){
       const iHC     = ci('HC');
       const iSalCB  = ci('Lương CB');
       const iBonus  = ci('Phụ cấp');
+      const iSalTot = ci('Tổng lương');
       const iBH     = ci('BHXH');
       const iMeal   = ci('Meal');
       const iOth    = ci('Chi phí khác');
@@ -23764,14 +23765,20 @@ function importManningXLSX(input){
         // Tránh trùng
         if(newPositions[deptId].find(p=>p.title===title)) return;
 
+        const salCB_v  = parseNum(r[iSalCB]);
+        const bonus_v  = iBonus>=0 ? parseNum(r[iBonus]) : 0;
+        const salTot_v = iSalTot>=0 ? parseNum(r[iSalTot]) : 0;
+        // Nếu salTot(file) khác salCB+bonus → Excel đã override Tổng lương
+        // → lưu salTot vào budgetSalary, budgetBonus=0 để tổng khớp Excel
+        const useOverride = salTot_v > 0 && Math.abs(salTot_v - (salCB_v+bonus_v)) > 1;
         newPositions[deptId].push({
           title,
-          planned:     parseInt(r[iHC])||0,
-          budgetSalary:parseNum(r[iSalCB]),
-          budgetBonus: iBonus>=0 ? parseNum(r[iBonus]) : 0,
-          budgetBH:    iBH>=0   ? parseNum(r[iBH])    : 0,
-          mealRate:    iMeal>=0 ? parseNum(r[iMeal])  : 0,
-          budgetOther: iOth>=0  ? parseNum(r[iOth])   : 0,
+          planned:      parseInt(r[iHC])||0,
+          budgetSalary: useOverride ? salTot_v : salCB_v,
+          budgetBonus:  useOverride ? 0 : bonus_v,
+          budgetBH:     iBH>=0   ? parseNum(r[iBH])   : 0,
+          mealRate:     iMeal>=0 ? parseNum(r[iMeal]) : 0,
+          budgetOther:  iOth>=0  ? parseNum(r[iOth])  : 0,
           notes:''
         });
         updated++;
