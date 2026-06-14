@@ -22984,7 +22984,9 @@ function renderManning(main){
             const bh    = parseFloat(eact.bhOverride) || Math.round(base*BH_RATE_LOCAL);
             const wdays = parseInt(eact.workDays)||0;
             const meal  = Math.round(wdays*mealRate);
-            const oth   = parseFloat(eact.other)||0;
+            // Chi phí khác: auto từ budgetOther, có thể override
+            const budOthAuto = parseFloat(pos.budgetOther)||0;
+            const oth   = eact.other !== undefined ? (parseFloat(eact.other)||0) : budOthAuto;
             const tot   = sal+bh+meal+oth;
             gTotals[mi].sal+=sal;gTotals[mi].bh+=bh;gTotals[mi].meal+=meal;gTotals[mi].oth+=oth;gTotals[mi].tot+=tot;
             dTotals[mi].sal+=sal;dTotals[mi].bh+=bh;dTotals[mi].meal+=meal;dTotals[mi].oth+=oth;dTotals[mi].tot+=tot;
@@ -23022,11 +23024,12 @@ function renderManning(main){
             } else {
               // Tổng CP Budget cho NV này — chỉ hiện khi đã nhập budgetSalary
               const budSal  = parseFloat(pos.budgetSalary)||0;
-              const hasBudget = budSal > 0; // chưa nhập lương = chưa có budget
+              const hasBudget = budSal > 0;
+              const budBon  = hasBudget ? (parseFloat(pos.budgetBonus)||0) : 0;
               const budBH   = hasBudget ? (parseFloat(pos.budgetBH)||Math.round(budSal*BH_RATE_LOCAL)) : 0;
               const budMeal = hasBudget ? (parseFloat(pos.mealRate)||0) : 0;
               const budOth  = hasBudget ? (parseFloat(pos.budgetOther)||0) : 0;
-              const budTot  = hasBudget ? (budSal+budBH+budMeal+budOth) : 0;
+              const budTot  = hasBudget ? (budSal+budBon+budBH+budMeal+budOth) : 0;
               const diff    = hasBudget ? (budTot - tot) : 0;  // Budget - Forecast: dương = tiết kiệm (xanh), âm = vượt (đỏ)
               const diffColor = diff > 0 ? 'var(--success)' : diff < 0 ? 'var(--danger)' : 'var(--ink-muted)';
 
@@ -23036,9 +23039,9 @@ function renderManning(main){
                 <td style="padding:3px 6px;text-align:right">${inpS('bhOverride',eact.bhOverride,80,'var(--purple)','bh')}</td>
                 <td style="padding:3px 5px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--teal)"><span data-meal="">${meal?meal.toLocaleString('vi'):'—'}</span></td>
                 <td style="padding:3px 6px;text-align:right">
-                  <input type="number" min="0" step="10000" value="${oth||''}" placeholder="0" data-oth=""
-                    onchange="${saveAct('other')};(function(){const row=this.closest('tr');const totEl=row.querySelector('[data-tot]');const salTotEl=row.querySelector('[data-saltot]');const bhEl=row.querySelector('[data-bh]');const mealEl=row.querySelector('[data-meal]');const sal=parseFloat(salTotEl?.textContent?.replace(/[^\\d.]/g,''))||${Math.round(sal)};const bh=parseFloat(bhEl?.value)||${bh};const meal=parseFloat(mealEl?.textContent?.replace(/[^\\d]/g,''))||0;const oth=parseFloat(this.value)||0;if(totEl)totEl.textContent=(sal+bh+meal+oth).toLocaleString('vi');}).call(this)"
-                    style="width:80px;padding:3px 5px;background:var(--bg-elev);border:1px solid var(--warning)44;border-radius:4px;color:var(--warning);font-family:'JetBrains Mono',monospace;font-size:11px;text-align:right">
+                  <input type="number" min="0" step="10000" value="${eact.other!==undefined?(eact.other||''):''}" placeholder="${budOthAuto?budOthAuto.toLocaleString('vi'):'0'}" data-oth=""
+                    onchange="${saveAct('other')};(function(){const row=this.closest('tr');const totEl=row.querySelector('[data-tot]');const salTotEl=row.querySelector('[data-saltot]');const bhEl=row.querySelector('[data-bh]');const mealEl=row.querySelector('[data-meal]');const sal=parseFloat(salTotEl?.textContent?.replace(/[^\\d.]/g,''))||${Math.round(sal)};const bh=parseFloat(bhEl?.value)||${bh};const meal=parseFloat(mealEl?.textContent?.replace(/[^\\d]/g,''))||0;const oth=this.value!==''?(parseFloat(this.value)||0):${budOthAuto};if(totEl)totEl.textContent=(sal+bh+meal+oth).toLocaleString('vi');}).call(this)"
+                    style="width:80px;padding:3px 5px;background:var(--bg-elev);border:1px solid var(--warning)${eact.other!==undefined?'aa':'33'};border-radius:4px;color:var(--warning);font-family:'JetBrains Mono',monospace;font-size:11px;text-align:right">
                 </td>
                 <td style="padding:3px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:#FFCC00"><span data-tot="">${(Math.round(tot)).toLocaleString('vi')}</span></td>
                 <td style="padding:3px 8px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;color:rgba(212,165,116,.7)">
@@ -23062,6 +23065,33 @@ function renderManning(main){
           </tr>`;
         }).join('');
 
+        // Vacant row: vị trí có budget nhưng không có NV thực tế (single month only)
+        const vacantRow = (()=>{
+          if(multiMode || roleEmps.length > 0) return '';
+          const pos2 = ((DB.manningPlan[curYear]||{}).depts||{})[dept.id]?.positions?.find(p=>p.title===role);
+          if(!pos2) return '';
+          const bs = parseFloat(pos2.budgetSalary)||0; if(!bs) return '';
+          const bon = parseFloat(pos2.budgetBonus)||0;
+          const bh  = parseFloat(pos2.budgetBH)||Math.round(bs*BH_RATE_LOCAL);
+          const bm  = parseFloat(pos2.mealRate)||0;
+          const bo  = parseFloat(pos2.budgetOther)||0;
+          const bTot = bs+bon+bh+bm+bo;
+          return `<tr data-dept-actual="${dept.id}" ${isCollapsed?'style="display:none"':''} class="actual-emp-row" style="border-bottom:1px solid var(--border);opacity:.55">
+            <td style="padding:4px 8px 4px 28px;font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--ink-muted);font-style:italic">—</td>
+            <td style="padding:4px 8px;font-size:11px;font-style:italic;color:var(--ink-muted)">Vacant</td>
+            <td style="padding:3px 6px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--ink-muted)">—</td>
+            <td style="padding:3px 6px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--ink-muted)">—</td>
+            <td style="padding:3px 5px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--ink-muted)">—</td>
+            <td style="padding:3px 6px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--ink-muted)">—</td>
+            <td style="text-align:right;font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--ink-muted)">—</td>
+            <td style="padding:3px 6px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--ink-muted)">—</td>
+            <td style="padding:3px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:700;color:#FFCC00">—</td>
+            <td style="padding:3px 8px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;color:rgba(212,165,116,.7)">${Math.round(bTot).toLocaleString('vi')}</td>
+            <td style="padding:3px 8px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:600;color:var(--success)">+${fmtM(bTot)}</td>
+            <td></td>
+          </tr>`;
+        })();
+
         return `<tr style="background:rgba(212,165,116,.04);border-top:1px solid var(--border)" class="actual-role-row" data-dept-actual="${dept.id}" ${isCollapsed?'style="display:none"':''}>
           <td colspan="2" style="padding:5px 8px 5px 18px;font-size:11.5px;font-weight:600;color:var(--ink-dim)">${escapeHtml(role)}
             ${(()=>{
@@ -23079,7 +23109,7 @@ function renderManning(main){
             ${mealRate?`<span style="font-size:9px;padding:1px 5px;border-radius:3px;margin-left:5px;background:rgba(125,211,192,.12);color:var(--teal)">Meal ${(mealRate).toLocaleString('vi')}/ngày</span>`:''}
           </td>
           <td colspan="${multiMode?sortedMonths.length*5:8}" style="padding:5px 8px;text-align:right;font-size:10px;color:var(--ink-muted)">${roleEmps.length} NV</td>
-        </tr>${empRows.replace(/<tr style="border-bottom/g, `<tr data-dept-actual="${dept.id}" ${isCollapsed?'style="display:none"':''} class="actual-emp-row" style="border-bottom`)}`;
+        </tr>${empRows.replace(/<tr style="border-bottom/g, `<tr data-dept-actual="${dept.id}" ${isCollapsed?'style="display:none"':''} class="actual-emp-row" style="border-bottom`)}${vacantRow}`;
       }).join('');
 
       const deptSumCells = multiMode
@@ -23141,7 +23171,7 @@ function renderManning(main){
                 <td style="padding:5px 7px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:800;color:#FFCC00">${fmtM(t.tot)}</td>`;
             }).join('')
           : (()=>{const t=dTotals[singleMi]; 
-            const dBudTot=(((DB.manningPlan[curYear]||{}).depts||{})[dept.id]?.positions||[]).reduce((s,p)=>{const bs=parseFloat(p.budgetSalary)||0;if(!bs)return s;const bb=parseFloat(p.budgetBH)||Math.round(bs*BH_RATE_LOCAL);return s+(bs+bb+(parseFloat(p.mealRate)||0)+(parseFloat(p.budgetOther)||0))*(parseInt(p.planned)||0);},0);
+            const dBudTot=(((DB.manningPlan[curYear]||{}).depts||{})[dept.id]?.positions||[]).reduce((s,p)=>{const bs=parseFloat(p.budgetSalary)||0;if(!bs)return s;const bon=parseFloat(p.budgetBonus)||0;const bb=parseFloat(p.budgetBH)||Math.round(bs*BH_RATE_LOCAL);return s+(bs+bon+bb+(parseFloat(p.mealRate)||0)+(parseFloat(p.budgetOther)||0))*(parseInt(p.planned)||0);},0);
             const dDiff=dBudTot-t.tot;const dc=dDiff>0?'var(--success)':dDiff<0?'var(--danger)':'var(--ink-muted)';
             return `
             <td colspan="3" style="padding:5px 8px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:var(--success)">${fmtM(t.sal)}</td>
