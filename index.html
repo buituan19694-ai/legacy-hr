@@ -23596,34 +23596,67 @@ function importManningXLSX(input){
       const rows=XLSX.utils.sheet_to_json(ws,{header:1,defval:''});
       const headerIdx=rows.findIndex(r=>String(r[0]).includes('Bộ phận')&&String(r[1]).includes('Vị trí'));
       if(headerIdx===-1){toast('Không tìm thấy header trong file','error');return;}
+
+      // Đọc header để map cột đúng (tránh lệch khi cột thay đổi)
+      const hdr = rows[headerIdx].map(h=>String(h||'').trim());
+      const ci = name => hdr.findIndex(h=>h.toLowerCase().includes(name.toLowerCase()));
+      const iHC     = ci('HC');
+      const iSalCB  = ci('Lương CB');
+      const iBonus  = ci('Phụ cấp');
+      const iBH     = ci('BHXH');
+      const iMeal   = ci('Meal');
+      const iOth    = ci('Chi phí khác');
+
       const dataRows=rows.slice(headerIdx+1).filter(r=>r[0]&&r[1]);
       if(!dataRows.length){toast('Không có dữ liệu','warning');return;}
+
       if(!DB.manningPlan[year])       DB.manningPlan[year]={depts:{}};
       if(!DB.manningPlan[year].depts) DB.manningPlan[year].depts={};
       const deptMap=Object.fromEntries((DB.departments||[]).map(d=>[d.name.trim().toLowerCase(),d.id]));
-      let updated=0;
+
+      // Reset positions để giữ đúng thứ tự từ Excel
+      const newPositions = {}; // deptId → positions[]
+
+      let updated=0, skipped=0;
       dataRows.forEach(r=>{
         const dName=String(r[0]||'').trim();
         const title=String(r[1]||'').trim();
         if(!title) return;
         const deptId=deptMap[dName.toLowerCase()];
-        if(!deptId){console.warn('Không tìm thấy bộ phận:',dName);return;}
-        const d=DB.manningPlan[year].depts;
-        if(!d[deptId])           d[deptId]={positions:[]};
-        if(!d[deptId].positions) d[deptId].positions=[];
-        let pos=d[deptId].positions.find(p=>p.title===title);
-        if(!pos){pos={title,planned:0,budgetSalary:0,budgetBH:0,mealRate:0,budgetOther:0,notes:''};d[deptId].positions.push(pos);}
-        pos.planned=parseInt(r[2])||0;
-        pos.budgetSalary=parseFloat(r[3])||0;
-        pos.budgetBH=parseFloat(r[4])||0;
-        pos.mealRate=parseFloat(r[5])||0;
-        pos.budgetOther=parseFloat(r[6])||0;
+        if(!deptId){console.warn('Không tìm thấy bộ phận:',dName);skipped++;return;}
+
+        if(!newPositions[deptId]) newPositions[deptId]=[];
+        // Tránh trùng
+        if(newPositions[deptId].find(p=>p.title===title)) return;
+
+        newPositions[deptId].push({
+          title,
+          planned:     parseInt(r[iHC])||0,
+          budgetSalary:parseFloat(r[iSalCB])||0,
+          budgetBonus: iBonus>=0 ? (parseFloat(r[iBonus])||0) : 0,
+          budgetBH:    iBH>=0   ? (parseFloat(r[iBH])||0)    : 0,
+          mealRate:    iMeal>=0 ? (parseFloat(r[iMeal])||0)  : 0,
+          budgetOther: iOth>=0  ? (parseFloat(r[iOth])||0)   : 0,
+          notes:''
+        });
         updated++;
       });
+
+      // Ghi lại positions theo thứ tự Excel, giữ data cũ nếu không có trong file
+      Object.entries(newPositions).forEach(([deptId,newPos])=>{
+        if(!DB.manningPlan[year].depts[deptId]) DB.manningPlan[year].depts[deptId]={positions:[]};
+        const oldPos = DB.manningPlan[year].depts[deptId].positions||[];
+        // Merge: positions từ Excel theo thứ tự Excel,
+        // positions trong DB nhưng không có trong file (NV đang làm) thêm vào cuối
+        const inFile = new Set(newPos.map(p=>p.title));
+        const notInFile = oldPos.filter(p=>!inFile.has(p.title));
+        DB.manningPlan[year].depts[deptId].positions = [...newPos, ...notInFile];
+      });
+
       saveData(['manningPlan']);
       input.value='';
       render();
-      toast('✅ Đã nhập '+updated+' vị trí từ '+file.name,'success');
+      toast(`✅ Đã nhập ${updated} vị trí từ ${file.name}${skipped?' (bỏ qua '+skipped+' dòng không tìm thấy bộ phận)':''}`, 'success');
     }catch(err){toast('Lỗi đọc file: '+err.message,'error');console.error(err);}
   };
   reader.readAsArrayBuffer(file);
