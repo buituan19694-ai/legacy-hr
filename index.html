@@ -22463,8 +22463,11 @@ function _deleteBudgetPos(dIdEnc, titEnc, yr){
 function _saveBudgetPos(el, dIdEnc, titEnc, field, yr, bhRate){
   const deptId = decodeURIComponent(dIdEnc);
   const title  = decodeURIComponent(titEnc);
-  // Strip dấu chấm ngăn cách (11.000.000 → 11000000) trước khi parse
-  const rawVal = String(el.value||'').replace(/\./g,'').replace(/,/g,'.');
+  // Strip dấu chấm ngàn (11.000.000 → 11000000) nhưng giữ số thập phân
+  // Nếu là số JS (từ Firestore) thì không cần xử lý string
+  const rawStr = String(el.value||'').trim();
+  // Xóa dấu chấm ngàn: chỉ xóa dấu chấm theo sau bởi đúng 3 chữ số
+  const rawVal = rawStr.replace(/\.(?=\d{3}(?:\.|$))/g, '').replace(/,/g,'.');
   const val    = field==='planned' ? (parseInt(rawVal)||0) : field==='notes' ? el.value : (parseFloat(rawVal)||0);
   if(!DB.manningPlan) DB.manningPlan={};
   if(!DB.manningPlan[yr]) DB.manningPlan[yr]={depts:{}};
@@ -22707,8 +22710,17 @@ function renderManning(main){
 
   const fmtVND = v=>v?Math.round(v).toLocaleString('vi'):'—';
   const fmtM   = v=>v?(Math.round(v/1e6*10)/10).toLocaleString('vi')+'M':'—';
-  // fmtInp: format số có dấu chấm ngăn cách để hiển thị trong input (11.000.000)
-  const fmtInp = v => { const n=parseFloat(String(v||'').replace(/\./g,'').replace(/,/g,'.'))||0; return n ? Math.round(n).toLocaleString('vi-VN').replace(/,/g,'.') : ''; };
+  // fmtInp: format số có dấu chấm ngăn cách (11.000.000). Phân biệt dấu chấm thập phân vs ngàn.
+  const fmtInp = v => {
+    if(v===undefined||v===null||v==='') return '';
+    const n = typeof v==='number' ? v : parseFloat(String(v).replace(/\./g, m => {
+      // nếu là dấu chấm ngàn (sau nó có đúng 3 chữ số rồi hết hoặc lại có dấu chấm) thì xóa
+      return '';
+    })) || parseFloat(String(v)) || 0;
+    const num = typeof v==='number' ? v : parseFloat(String(v)) || 0;
+    if(!num) return '';
+    return Math.round(num).toLocaleString('vi-VN').replace(/,/g,'.');
+  };
   const inpNum = (onch,val,w,color,step)=>`<input type="text" inputmode="numeric" value="${fmtInp(val)}" placeholder="0"
     onfocus="this.value=this.value.replace(/\\./g,'')"
     onblur="const n=parseFloat(this.value.replace(/\\./g,'').replace(/,/g,'.'))||0;this.value=n?Math.round(n).toLocaleString('vi-VN').replace(/,/g,'.'):'';${onch}"
@@ -22780,7 +22792,7 @@ function renderManning(main){
         const salCB  = parseFloat(p.budgetSalary)||0;          // Lương CB
         const salBon = parseFloat(p.budgetBonus)||0;           // Phụ cấp/khoản khác
         const sal    = salCB+salBon;                           // Tổng lương = CB + Bonus
-        const bh     = Math.round(salCB*BH_RATE);             // BHXH auto = CB × %
+        const bh     = salCB ? (parseFloat(p.budgetBH)||Math.round(salCB*BH_RATE)) : 0; // ưu tiên budgetBH, fallback auto
         const meal   = parseFloat(p.mealRate)||0;
         const oth    = parseFloat(p.budgetOther)||0;
         const tot1   = sal+bh+meal+oth;
