@@ -23269,17 +23269,23 @@ function renderManning(main){
           <td style="padding:8px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:800;color:#FFCC00">${fmtM(t.tot)}</td>
           <td style="padding:8px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:rgba(212,165,116,.6)">${(()=>{
             const allDepts2 = (DB.manningPlan[curYear]||{}).depts||{};
-            const grandBudget = Object.values(allDepts2).reduce((s2,dp2)=>{
-              return s2+(dp2.positions||[]).reduce((s3,p2)=>{
+            let grandBudget = 0;
+            const deptMap2 = Object.fromEntries((DB.departments||[]).map(d=>[d.id,d.name]));
+            Object.entries(allDepts2).forEach(([dId,dp2])=>{
+              let dSum = (dp2.positions||[]).reduce((s3,p2)=>{
                 const bs=parseFloat(p2.budgetSalary)||0;
                 if(!bs) return s3;
+                const bon=parseFloat(p2.budgetBonus)||0;
                 const bb=parseFloat(p2.budgetBH)||Math.round(bs*BH_RATE_LOCAL);
                 const bm=parseFloat(p2.mealRate)||0;
                 const bo=parseFloat(p2.budgetOther)||0;
                 const hc=parseInt(p2.planned)||0;
-                return s3+(bs+(parseFloat(p2.budgetBonus)||0)+bb+bm+bo)*hc;
+                return s3+(bs+bon+bb+bm+bo)*hc;
               },0);
-            },0);
+              console.log(`[grandBudget] ${deptMap2[dId]||dId}: ${Math.round(dSum).toLocaleString('vi')}`);
+              grandBudget += dSum;
+            });
+            console.log(`[grandBudget] TOTAL: ${Math.round(grandBudget).toLocaleString('vi')}`);
             return grandBudget ? fmtM(grandBudget) : '—';
           })()}</td>
           <td style="padding:8px 8px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700">${(()=>{
