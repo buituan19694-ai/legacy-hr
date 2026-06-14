@@ -22465,7 +22465,7 @@ function _saveBudgetPos(el, dIdEnc, titEnc, field, yr, bhRate){
   const title  = decodeURIComponent(titEnc);
   // Strip dấu chấm ngăn cách (11.000.000 → 11000000) trước khi parse
   const rawVal = String(el.value||'').replace(/\./g,'').replace(/,/g,'.');
-  const val    = field==='planned' ? (parseInt(rawVal)||0) : (parseFloat(rawVal)||0);
+  const val    = field==='planned' ? (parseInt(rawVal)||0) : field==='notes' ? el.value : (parseFloat(rawVal)||0);
   if(!DB.manningPlan) DB.manningPlan={};
   if(!DB.manningPlan[yr]) DB.manningPlan[yr]={depts:{}};
   if(!DB.manningPlan[yr].depts) DB.manningPlan[yr].depts={};
@@ -22827,6 +22827,9 @@ function renderManning(main){
           <td style="padding:3px 6px;text-align:right">${inpNum(savePos('mealRate'),p.mealRate,83,'var(--teal)')}</td>
           <td style="padding:3px 6px;text-align:right">${inpNum(savePos('budgetOther'),p.budgetOther,83,'var(--warning)')}</td>
           <td style="padding:5px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:#FFCC00">${fmtVND(totHC)}</td>
+          <td style="padding:3px 6px"><input type="text" value="${escapeHtml(p.notes||'')}" placeholder="Ghi chú..."
+            onchange="_saveBudgetPos(this,'${dIdEnc}','${titEnc}','notes',${curYear},${BH_RATE})"
+            style="width:160px;padding:3px 6px;background:var(--bg-elev);border:1px solid var(--border);border-radius:4px;color:var(--ink-muted);font-size:11px"></td>
         </tr>`;
       }).join('');
 
@@ -22894,6 +22897,7 @@ function renderManning(main){
             <th style="${thS};color:var(--teal)">Meal/người<br><span style="font-size:9px;opacity:.6">rate/ngày</span></th>
             <th style="${thS};color:var(--warning)">Chi phí khác<br><span style="font-size:9px;opacity:.6">VNĐ/tháng</span></th>
             <th style="${thS};color:#FFCC00">Tổng × HC<br><span style="font-size:9px;opacity:.6">auto</span></th>
+            <th style="padding:10px 8px;text-align:left;font-size:10px;font-weight:700;color:var(--ink-muted)">Ghi chú</th>
           </tr></thead>
           <tbody>${deptBlocks}</tbody>
           <tfoot><tr style="background:#0f1a28;border-top:2px solid var(--border-strong)">
@@ -22906,6 +22910,7 @@ function renderManning(main){
             <td style="padding:8px;text-align:right;font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--teal)">${fmtM(gMeal)}</td>
             <td style="padding:8px;text-align:right;font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--warning)">${fmtM(gOth)}</td>
             <td style="padding:8px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:800;color:#FFCC00">${fmtM(gTotHC)}</td>
+            <td></td>
           </tr></tfoot>
         </table>
       </div>
