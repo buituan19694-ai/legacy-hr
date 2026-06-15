@@ -23387,150 +23387,156 @@ function renderManning(main){
     const ytdVarC=ytdVar===0?'var(--ink-dim)':ytdVar>0?'var(--success)':'var(--danger)';
     const ytdPct=ytdBudTot?Math.round(ytdActTot/ytdBudTot*100):0;
 
-    // ── Dept breakdown với position detail ──
-    const nMonths = lastMonth + 1; // số tháng YTD
-    const deptRows = depts.map(d=>{
+    // ── Helper tính chi phí 1 NV 1 tháng từ hồ sơ ──
+    const calcEmpMonthCost = (e, dp) => {
+      const cd=DB.customData[e.id]||{};
+      const base=parseInt(cd.baseSalary)||0, bonus=parseInt(cd.bonusSalary)||0;
+      const sal=base+bonus, bh=Math.round(base*BH_RATE);
+      const pos=(dp.positions||[]).find(p=>p.title===(e.role||''));
+      const meal=Math.round(26*(parseFloat(pos?.mealRate)||0));
+      return sal+bh+meal;
+    };
+
+    // ── 1 bảng duy nhất: per tháng + cả năm forecast ──
+    const grandHCBud=depts.reduce((s,d)=>s+(getDeptPlan(d.id).positions||[]).reduce((s2,p)=>s2+(parseInt(p.planned)||0),0),0);
+    const actMoCur=(DB.manningActual[curYear]||{})[lastMonth]||{};
+
+    const deptRows=depts.map(d=>{
       const dp=getDeptPlan(d.id);
-      // Tất cả roles: từ budget + từ actual (NV có role không có trong budget)
-      const budgetTitles = (dp.positions||[]).map(p=>p.title);
-      const deptEmpList=allEmps.filter(e=>e.deptId===d.id);
-      const actualTitles = [...new Set(deptEmpList.map(e=>e.role||'').filter(Boolean))];
-      const allTitles = [...new Set([...budgetTitles, ...actualTitles])];
+      const el=allEmps.filter(e=>e.deptId===d.id);
+      const budTitles=(dp.positions||[]).map(p=>p.title);
+      const actTitles=[...new Set(el.map(e=>e.role||'').filter(Boolean))];
+      const allTitles=[...new Set([...budTitles,...actTitles])];
+      const dHCBud=(dp.positions||[]).reduce((s,p)=>s+(parseInt(p.planned)||0),0);
 
-      let dBudTot=0;
+      // Budget per tháng
+      let dBudM=0;
       (dp.positions||[]).forEach(p=>{
-        const hc=parseInt(p.planned)||0;
-        const bs=parseFloat(p.budgetSalary)||0;
-        const bonD=parseFloat(p.budgetBonus)||0;
-        if(!bs&&!bonD) return;
-        dBudTot+=(bs+bonD+getBH(p,bs,BH_RATE)+(parseFloat(p.mealRate)||0)+(parseFloat(p.budgetOther)||0))*hc*nMonths;
+        const hc=parseInt(p.planned)||0,bs=parseFloat(p.budgetSalary)||0,bon=parseFloat(p.budgetBonus)||0;
+        if(!bs&&!bon) return;
+        dBudM+=(bs+bon+getBH(p,bs,BH_RATE)+(parseFloat(p.mealRate)||0)+(parseFloat(p.budgetOther)||0))*hc;
       });
-      // Actual YTD for dept
-      let dActTot=0;
-      MN.forEach((m,mi)=>{
-        if(mi>lastMonth) return;
-        const actMo3=(DB.manningActual[curYear]||{})[mi]||{};
-        deptEmpList.forEach(e=>{
-          const cd=DB.customData[e.id]||{};
-          const base=parseInt(cd.baseSalary)||0, bonus=parseInt(cd.bonusSalary)||0;
-          const sal=base+bonus, bh=Math.round(base*BH_RATE);
-          const pos3=(dp.positions||[]).find(p=>p.title===(e.role||''));
-          const wd=parseInt((actMo3[e.id]||{}).workDays)||0;
-          const meal=Math.round(wd*(parseFloat(pos3?.mealRate)||0));
-          const oth=parseFloat((actMo3[e.id]||{}).other)||0;
-          dActTot+=sal+bh+meal+oth;
-        });
-      });
-      if(!dBudTot && !dActTot) return '';
-      const dVar=dBudTot-dActTot;
-      const dVarC=dVar===0?'var(--ink-dim)':dVar>0?'var(--success)':'var(--danger)';
-      const dPct=dBudTot?Math.round(dActTot/dBudTot*100):0;
-      const deptHCBud = (dp.positions||[]).reduce((s,p)=>s+(parseInt(p.planned)||0),0);
 
-      // Position rows — tất cả roles (budget + actual)
-      const positionRows = allTitles.map(title=>{
-        const pos = (dp.positions||[]).find(p=>p.title===title)||{};
-        const bs=parseFloat(pos.budgetSalary)||0;
-        const bonR=parseFloat(pos.budgetBonus)||0;
-        const bb=getBH(pos,bs,BH_RATE);
-        const bm=parseFloat(pos.mealRate)||0, bo=parseFloat(pos.budgetOther)||0;
-        const hc=parseInt(pos.planned)||0;
-        const posBudSal = (bs+bonR)*hc*nMonths;  // Tổng lương Budget YTD
-        const posBudTot = (bs+bonR+bb+bm+bo)*hc*nMonths;
-        // Actual YTD for this position
-        const posEmps=deptEmpList.filter(e=>(e.role||'').trim()===title);
-        let posActTot=0, posActSal=0;
-        MN.forEach((m,mi)=>{
-          if(mi>lastMonth) return;
-          const actMo4=(DB.manningActual[curYear]||{})[mi]||{};
-          posEmps.forEach(e=>{
+      // Actual tháng hiện tại
+      let dActM=0;
+      el.forEach(e=>{
+        const cd=DB.customData[e.id]||{};
+        const base=parseInt(cd.baseSalary)||0,bonus=parseInt(cd.bonusSalary)||0;
+        const pos=(dp.positions||[]).find(p=>p.title===(e.role||''));
+        const wd=parseInt((actMoCur[e.id]||{}).workDays)||0;
+        const meal=Math.round(wd*(parseFloat(pos?.mealRate)||0));
+        dActM+=base+bonus+Math.round(base*BH_RATE)+meal+(parseFloat((actMoCur[e.id]||{}).other)||0);
+      });
+
+      // Full year: actual nếu có, không thì forecast từ hồ sơ
+      let dForeY=0;
+      MN.forEach((m,mi)=>{
+        const actMo=(DB.manningActual[curYear]||{})[mi]||{};
+        const hasA=Object.keys(actMo).some(k=>!k.startsWith('_'));
+        if(hasA){
+          el.forEach(e=>{
             const cd=DB.customData[e.id]||{};
-            const base=parseInt(cd.baseSalary)||0, bonus=parseInt(cd.bonusSalary)||0;
-            const sal=base+bonus, bh2=Math.round(base*BH_RATE);
-            const wd=parseInt((actMo4[e.id]||{}).workDays)||0;
-            const meal2=Math.round(wd*bm);
-            const oth2=parseFloat((actMo4[e.id]||{}).other)||0;
-            posActSal+=sal;
-            posActTot+=sal+bh2+meal2+oth2;
+            const base=parseInt(cd.baseSalary)||0,bonus=parseInt(cd.bonusSalary)||0;
+            const pos=(dp.positions||[]).find(p=>p.title===(e.role||''));
+            const wd=parseInt((actMo[e.id]||{}).workDays)||0;
+            const meal=Math.round(wd*(parseFloat(pos?.mealRate)||0));
+            dForeY+=base+bonus+Math.round(base*BH_RATE)+meal+(parseFloat((actMo[e.id]||{}).other)||0);
           });
+        } else {
+          el.forEach(e=>{ dForeY+=calcEmpMonthCost(e,dp); });
+        }
+      });
+
+      if(!dBudM && !dActM && !dForeY) return '';
+      const dBudY=dBudM*12;
+      const dVarM=dBudM-dActM,dVarCM=dVarM>0?'var(--success)':dVarM<0?'var(--danger)':' var(--ink-dim)';
+      const dVarY=dBudY-dForeY,dVarCY=dVarY>0?'var(--success)':dVarY<0?'var(--danger)':' var(--ink-dim)';
+
+      const posRows=allTitles.map(title=>{
+        const pos=(dp.positions||[]).find(p=>p.title===title)||{};
+        const bs=parseFloat(pos.budgetSalary)||0,bonR=parseFloat(pos.budgetBonus)||0;
+        const hc=parseInt(pos.planned)||0,bm=parseFloat(pos.mealRate)||0,bo=parseFloat(pos.budgetOther)||0;
+        const posBudM=hc?(bs+bonR+getBH(pos,bs,BH_RATE)+bm+bo)*hc:0;
+        const posEmps=el.filter(e=>(e.role||'').trim()===title);
+
+        // Actual tháng hiện tại per position
+        let pActM=0;
+        posEmps.forEach(e=>{
+          const cd=DB.customData[e.id]||{};
+          const base=parseInt(cd.baseSalary)||0,bonus=parseInt(cd.bonusSalary)||0;
+          const wd=parseInt((actMoCur[e.id]||{}).workDays)||0;
+          pActM+=base+bonus+Math.round(base*BH_RATE)+Math.round(wd*bm)+(parseFloat((actMoCur[e.id]||{}).other)||0);
         });
-        if(!posBudTot && !posActTot) return '';
-        const pVar=posBudTot-posActTot;
-        const pVarC=pVar===0?'var(--ink-dim)':pVar>0?'var(--success)':'var(--danger)';
-        const pPct=posBudTot?Math.round(posActTot/posBudTot*100):0;
-        const inBudget = budgetTitles.includes(title);
+
+        // Full year per position
+        let pForeY=0;
+        MN.forEach((m,mi)=>{
+          const actMo=(DB.manningActual[curYear]||{})[mi]||{};
+          const hasA=Object.keys(actMo).some(k=>!k.startsWith('_'));
+          if(hasA){
+            posEmps.forEach(e=>{
+              const cd=DB.customData[e.id]||{};
+              const base=parseInt(cd.baseSalary)||0,bonus=parseInt(cd.bonusSalary)||0;
+              const wd=parseInt((actMo[e.id]||{}).workDays)||0;
+              pForeY+=base+bonus+Math.round(base*BH_RATE)+Math.round(wd*bm)+(parseFloat((actMo[e.id]||{}).other)||0);
+            });
+          } else {
+            posEmps.forEach(e=>{ pForeY+=calcEmpMonthCost(e,dp); });
+          }
+        });
+
+        if(!posBudM&&!pActM&&!pForeY) return '';
+        const posBudY=posBudM*12;
+        const pVarM=posBudM-pActM,pVarCM=pVarM>0?'var(--success)':pVarM<0?'var(--danger)':' var(--ink-dim)';
+        const pVarY=posBudY-pForeY,pVarCY=pVarY>0?'var(--success)':pVarY<0?'var(--danger)':' var(--ink-dim)';
+        const inB=budTitles.includes(title);
         return `<tr style="border-bottom:1px solid var(--border)">
-          <td style="padding:5px 10px 5px 28px;font-size:11px;color:var(--ink)">${escapeHtml(title)}${!inBudget?'<span style="font-size:9px;padding:1px 5px;border-radius:3px;margin-left:5px;background:rgba(126,198,153,.15);color:var(--success)">Ngoài KH</span>':''}</td>
-          <td style="padding:5px 8px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--accent)">${hc||'—'}</td>
-          <td style="padding:5px 8px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--success)">${posEmps.length||'—'}</td>
-          <td style="padding:5px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--success)">${posBudSal?fmtM(posBudSal):'—'}</td>
-          <td style="padding:5px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--success)">${posActSal?fmtM(posActSal):'—'}</td>
-          <td style="padding:5px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--accent)">${posBudTot?fmtM(posBudTot):'—'}</td>
-          <td style="padding:5px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--success)">${posActTot?fmtM(posActTot):'—'}</td>
-          <td style="padding:5px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:600;color:${pVarC}">${pVar===0?'=':(pVar>0?'+':'')+fmtM(pVar)}</td>
-          <td style="padding:5px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:10px;color:${pVarC}">${posBudTot?pPct+'%':'—'}</td>
+          <td style="padding:5px 10px 5px 28px;font-size:11px;color:var(--ink)">${escapeHtml(title)}${!inB?'<span style="font-size:9px;padding:1px 5px;border-radius:3px;margin-left:5px;background:rgba(126,198,153,.15);color:var(--success)">Ngoài KH</span>':''}
+          </td>
+          <td style="padding:5px 8px;text-align:center;font-size:11px;color:var(--accent)">${hc||'—'}</td>
+          <td style="padding:5px 8px;text-align:center;font-size:11px;color:var(--success)">${posEmps.length||'—'}</td>
+          <td style="padding:5px 8px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--accent);border-left:2px solid var(--border-strong)">${posBudM?fmtM(posBudM):'—'}</td>
+          <td style="padding:5px 8px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--success)">${pActM?fmtM(pActM):'—'}</td>
+          <td style="padding:5px 8px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:600;color:${pVarCM}">${pVarM===0?'=':(pVarM>0?'+':'')+fmtM(pVarM)}</td>
+          <td style="padding:5px 8px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--accent);border-left:2px solid var(--border-strong)">${posBudY?fmtM(posBudY):'—'}</td>
+          <td style="padding:5px 8px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--success)">${pForeY?fmtM(pForeY):'—'}</td>
+          <td style="padding:5px 8px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:600;color:${pVarCY}">${pVarY===0?'=':(pVarY>0?'+':'')+fmtM(pVarY)}</td>
         </tr>`;
       }).join('');
 
-      const deptId4 = `cmp_dept_${d.id}`;
+      const dId=`cmp_${d.id}`;
       return `<tr style="background:var(--bg-elev);border-top:2px solid var(--border-strong);cursor:pointer"
-        onclick="(function(){const tb=document.getElementById('${deptId4}');if(tb)tb.style.display=tb.style.display==='none'?'':'none';})()">
+        onclick="(function(){const tb=document.getElementById('${dId}');if(tb)tb.style.display=tb.style.display==='none'?'':'none';})()">
         <td style="padding:7px 12px;font-weight:700;font-size:12px;color:var(--accent)">▸ ${escapeHtml(d.name)}
-          <span style="font-size:9px;color:var(--ink-muted);font-weight:400;margin-left:6px">${deptHCBud} HC budget · ${deptEmpList.length} NV thực tế</span>
+          <span style="font-size:9px;color:var(--ink-muted);font-weight:400;margin-left:6px">${dHCBud} HC KH · ${el.length} NV</span>
         </td>
-        <td style="padding:7px 8px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:700;color:var(--accent)">${deptHCBud||'—'}</td>
-        <td style="padding:7px 8px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--success)">${deptEmpList.length||'—'}</td>
-        <td colspan="2" style="padding:7px 10px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--ink-muted)">—</td>
-        <td style="padding:7px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:var(--accent)">${fmtM(dBudTot)}</td>
-        <td style="padding:7px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:var(--success)">${fmtM(dActTot)}</td>
-        <td style="padding:7px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:${dVarC}">${dVar===0?'=':(dVar>0?'+':'')+fmtM(dVar)}</td>
-        <td style="padding:7px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:700;color:${dVarC}">${dBudTot?dPct+'%':'—'}</td>
-      </tr>
-      <tbody id="${deptId4}" style="display:none">${positionRows}</tbody>`;
+        <td style="padding:7px 8px;text-align:center;font-weight:700;color:var(--accent)">${dHCBud||'—'}</td>
+        <td style="padding:7px 8px;text-align:center;color:var(--success)">${el.length||'—'}</td>
+        <td style="padding:7px 8px;text-align:right;font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--accent);border-left:2px solid var(--border-strong)">${fmtM(dBudM)}</td>
+        <td style="padding:7px 8px;text-align:right;font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--success)">${fmtM(dActM)}</td>
+        <td style="padding:7px 8px;text-align:right;font-family:'JetBrains Mono',monospace;font-weight:700;color:${dVarCM}">${dVarM===0?'=':(dVarM>0?'+':'')+fmtM(dVarM)}</td>
+        <td style="padding:7px 8px;text-align:right;font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--accent);border-left:2px solid var(--border-strong)">${fmtM(dBudY)}</td>
+        <td style="padding:7px 8px;text-align:right;font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--success)">${fmtM(dForeY)}</td>
+        <td style="padding:7px 8px;text-align:right;font-family:'JetBrains Mono',monospace;font-weight:700;color:${dVarCY}">${dVarY===0?'=':(dVarY>0?'+':'')+fmtM(dVarY)}</td>
+      </tr><tbody id="${dId}" style="display:none">${posRows}</tbody>`;
     }).join('');
 
-    // Tổng row cuối bảng dept
-    const grandBudDept = depts.reduce((s,d)=>{
-      const dp=getDeptPlan(d.id);
-      return s+(dp.positions||[]).reduce((s2,p)=>{
-        const bs=parseFloat(p.budgetSalary)||0; const bon=parseFloat(p.budgetBonus)||0;
-        if(!bs&&!bon) return s2;
-        return s2+(bs+bon+getBH(p,bs,BH_RATE)+(parseFloat(p.mealRate)||0)+(parseFloat(p.budgetOther)||0))*(parseInt(p.planned)||0)*nMonths;
-      },0);
-    },0);
-    const grandActDept = depts.reduce((s,d)=>{
-      const deptEmpList2=allEmps.filter(e=>e.deptId===d.id);
-      const dp=getDeptPlan(d.id);
-      let tot=0;
-      MN.forEach((m,mi)=>{
-        if(mi>lastMonth) return;
-        const actMo5=(DB.manningActual[curYear]||{})[mi]||{};
-        deptEmpList2.forEach(e=>{
-          const cd=DB.customData[e.id]||{};
-          const base=parseInt(cd.baseSalary)||0, bonus=parseInt(cd.bonusSalary)||0;
-          const sal=base+bonus, bh5=Math.round(base*BH_RATE);
-          const pos5=(dp.positions||[]).find(p=>p.title===(e.role||''));
-          const wd=parseInt((actMo5[e.id]||{}).workDays)||0;
-          const meal5=Math.round(wd*(parseFloat(pos5?.mealRate)||0));
-          const oth5=parseFloat((actMo5[e.id]||{}).other)||0;
-          tot+=sal+bh5+meal5+oth5;
-        });
-      });
-      return s+tot;
-    },0);
-    const grandVarDept = grandBudDept - grandActDept;  // Budget - Forecast: dương = tiết kiệm (xanh)
-    const grandVarC = grandVarDept===0?'var(--ink-dim)':grandVarDept>0?'var(--success)':'var(--danger)';
-    const grandPctDept = grandBudDept ? Math.round(grandActDept/grandBudDept*100) : 0;
-    const grandHCBud = depts.reduce((s,d)=>s+(getDeptPlan(d.id).positions||[]).reduce((s2,p)=>s2+(parseInt(p.planned)||0),0),0);
-    const deptTotalRow = `<tr style="background:#0f1a28;border-top:2px solid var(--border-strong)">
+    // Grand totals
+    const gBudM=depts.reduce((s,d)=>{const dp=getDeptPlan(d.id);return s+(dp.positions||[]).reduce((s2,p)=>{const bs=parseFloat(p.budgetSalary)||0,bon=parseFloat(p.budgetBonus)||0;if(!bs&&!bon)return s2;return s2+(bs+bon+getBH(p,bs,BH_RATE)+(parseFloat(p.mealRate)||0)+(parseFloat(p.budgetOther)||0))*(parseInt(p.planned)||0);},0);},0);
+    const gForeY=depts.reduce((s,d)=>{const dp=getDeptPlan(d.id);const el=allEmps.filter(e=>e.deptId===d.id);let t=0;MN.forEach((m,mi)=>{const am=(DB.manningActual[curYear]||{})[mi]||{};const hasA=Object.keys(am).some(k=>!k.startsWith('_'));if(hasA){el.forEach(e=>{const cd=DB.customData[e.id]||{};const base=parseInt(cd.baseSalary)||0,bonus=parseInt(cd.bonusSalary)||0;const pos=(dp.positions||[]).find(p=>p.title===(e.role||'')); const wd=parseInt((am[e.id]||{}).workDays)||0;const meal=Math.round(wd*(parseFloat(pos?.mealRate)||0));t+=base+bonus+Math.round(base*BH_RATE)+meal+(parseFloat((am[e.id]||{}).other)||0);});}else{el.forEach(e=>{t+=calcEmpMonthCost(e,dp);});}});return s+t;},0);
+    const gBudY=gBudM*12,gVarY=gBudY-gForeY,gVarCY=gVarY>0?'var(--success)':gVarY<0?'var(--danger)':' var(--ink-dim)';
+    const gActM=allEmps.reduce((s,e)=>{const dp=getDeptPlan(e.deptId||'')||{positions:[]};const cd=DB.customData[e.id]||{};const base=parseInt(cd.baseSalary)||0,bonus=parseInt(cd.bonusSalary)||0;const pos=(dp.positions||[]).find(p=>p.title===(e.role||'')); const wd=parseInt((actMoCur[e.id]||{}).workDays)||0;const meal=Math.round(wd*(parseFloat(pos?.mealRate)||0));return s+base+bonus+Math.round(base*BH_RATE)+meal+(parseFloat((actMoCur[e.id]||{}).other)||0);},0);
+    const gVarM=gBudM-gActM,gVarCM=gVarM>0?'var(--success)':gVarM<0?'var(--danger)':' var(--ink-dim)';
+    const deptTotalRow=`<tr style="background:#0f1a28;border-top:2px solid var(--border-strong)">
       <td style="padding:8px 12px;font-weight:800;color:#FFCC00">∑ TỔNG</td>
-      <td style="padding:8px;text-align:center;font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--accent)">${grandHCBud}</td>
-      <td style="padding:8px;text-align:center;font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--success)">${allEmps.length}</td>
-      <td colspan="2" style="padding:8px;text-align:center;color:var(--ink-muted)">—</td>
-      <td style="padding:8px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:800;color:var(--accent)">${fmtM(grandBudDept)}</td>
-      <td style="padding:8px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:800;color:var(--success)">${fmtM(grandActDept)}</td>
-      <td style="padding:8px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:800;color:${grandVarC}">${grandVarDept===0?'=':(grandVarDept>0?'+':'')+fmtM(grandVarDept)}</td>
-      <td style="padding:8px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:${grandVarC}">${grandBudDept?grandPctDept+'%':'—'}</td>
+      <td style="padding:8px;text-align:center;font-weight:700;color:var(--accent)">${grandHCBud}</td>
+      <td style="padding:8px;text-align:center;font-weight:700;color:var(--success)">${allEmps.length}</td>
+      <td style="padding:8px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:800;color:var(--accent);border-left:2px solid var(--border-strong)">${fmtM(gBudM)}</td>
+      <td style="padding:8px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:800;color:var(--success)">${fmtM(gActM)}</td>
+      <td style="padding:8px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:800;color:${gVarCM}">${gVarM===0?'=':(gVarM>0?'+':'')+fmtM(gVarM)}</td>
+      <td style="padding:8px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:800;color:var(--accent);border-left:2px solid var(--border-strong)">${fmtM(gBudY)}</td>
+      <td style="padding:8px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:800;color:var(--success)">${fmtM(gForeY)}</td>
+      <td style="padding:8px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:800;color:${gVarCY}">${gVarY===0?'=':(gVarY>0?'+':'')+fmtM(gVarY)}</td>
     </tr>`;
 
     return `
@@ -23577,22 +23583,31 @@ function renderManning(main){
       </div>
     </div>
 
-    <!-- Dept breakdown -->
+    <!-- Bảng so sánh bộ phận -->
     <div class="card" style="padding:0;overflow:hidden">
-      <div style="padding:12px 16px;border-bottom:1px solid var(--border);font-weight:600;font-size:13px">🏢 So sánh theo bộ phận (YTD)</div>
+      <div style="padding:12px 16px;border-bottom:1px solid var(--border);font-weight:600;font-size:13px">
+        🏢 So sánh theo bộ phận
+        <span style="font-size:10px;font-weight:400;color:var(--ink-muted);margin-left:8px">Per tháng = Budget vs Actual T${curMi+1} · Cả năm = Budget×12 vs Actual+Forecast (tự update theo NV thực tế)</span>
+      </div>
       <div style="overflow-x:auto">
         <table style="width:100%;border-collapse:collapse;font-size:12px">
-          <thead><tr style="background:var(--bg-elev);border-bottom:2px solid var(--border-strong)">
-            <th style="padding:10px 12px;text-align:left">Bộ phận / Vị trí</th>
-            <th style="padding:10px 8px;text-align:center;color:var(--accent)">HC Budget</th>
-            <th style="padding:10px 8px;text-align:center;color:var(--success)">HC Actual</th>
-            <th style="padding:10px 8px;text-align:right;color:var(--success);font-size:10px">Tổng lương<br>Budget</th>
-            <th style="padding:10px 8px;text-align:right;color:var(--success);font-size:10px">Tổng lương<br>Forecast</th>
-            <th style="padding:10px 8px;text-align:right;color:var(--accent)">Tổng Budget</th>
-            <th style="padding:10px 8px;text-align:right;color:var(--success)">Tổng Forecast</th>
-            <th style="padding:10px 8px;text-align:right;color:var(--warning)">Budget − Forecast</th>
-            <th style="padding:10px 8px;text-align:right;color:var(--info)">% vs KH</th>
-          </tr></thead>
+          <thead>
+            <tr style="background:var(--bg-elev)">
+              <th rowspan="2" style="padding:8px 12px;text-align:left;border-bottom:2px solid var(--border-strong)">Bộ phận / Vị trí</th>
+              <th rowspan="2" style="padding:8px;text-align:center;color:var(--accent);border-bottom:2px solid var(--border-strong)">HC<br>Budget</th>
+              <th rowspan="2" style="padding:8px;text-align:center;color:var(--success);border-bottom:2px solid var(--border-strong)">HC<br>Actual</th>
+              <th colspan="3" style="padding:6px 8px;text-align:center;color:var(--accent);border-bottom:1px solid var(--border);border-left:2px solid var(--border-strong)">Per tháng (T${curMi+1})</th>
+              <th colspan="3" style="padding:6px 8px;text-align:center;color:var(--success);border-bottom:1px solid var(--border);border-left:2px solid var(--border-strong)">Cả năm 2026</th>
+            </tr>
+            <tr style="background:var(--bg-elev);border-bottom:2px solid var(--border-strong)">
+              <th style="padding:6px 8px;text-align:right;color:var(--accent);font-size:10px;border-left:2px solid var(--border-strong)">Budget</th>
+              <th style="padding:6px 8px;text-align:right;color:var(--success);font-size:10px">Actual</th>
+              <th style="padding:6px 8px;text-align:right;color:var(--warning);font-size:10px">B−F</th>
+              <th style="padding:6px 8px;text-align:right;color:var(--accent);font-size:10px;border-left:2px solid var(--border-strong)">Budget×12</th>
+              <th style="padding:6px 8px;text-align:right;color:var(--success);font-size:10px">Forecast</th>
+              <th style="padding:6px 8px;text-align:right;color:var(--warning);font-size:10px">B−F</th>
+            </tr>
+          </thead>
           <tbody>${deptRows}${deptTotalRow}</tbody>
         </table>
       </div>
