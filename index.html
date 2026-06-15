@@ -22526,6 +22526,11 @@ function renderYoYTab(curYear, depts, allEmps, BH_RATE){
   </div>`;
 
   const fmtM = v => !v ? '—' : v>=1e9 ? (v/1e9).toFixed(1)+'B' : v>=1e6 ? (v/1e6).toFixed(1)+'M' : v.toLocaleString('vi');
+  // getBH global: phân biệt budgetBH=0 (explicit) vs undefined (auto-calc)
+  const getBH = (p, salCB, rate) => {
+    if(p.budgetBH !== undefined && p.budgetBH !== null && p.budgetBH !== '') return parseFloat(p.budgetBH)||0;
+    return Math.round((parseFloat(salCB)||0) * (rate||0.225));
+  };
   const calcDeptTotal = (plan, deptId) => {
     const dp = plan[deptId]||{positions:[]};
     return (dp.positions||[]).reduce((s,p)=>{
@@ -22695,14 +22700,9 @@ function renderManning(main){
   const depts = DB.departments||[];
   const allEmps = (DB.employees||[]).filter(e=>getEffectiveStatus(e)!=='exit');
   if(!DB.manningConfig) DB.manningConfig={};
-  const BH_RATE = parseFloat(DB.manningConfig.bhRate)||0.225;
-  const BH_PCT  = Math.round(BH_RATE*1000)/10; // 22.5
-
-  // getBH: lấy budgetBH từ data, phân biệt 0 (explicit) vs undefined (auto-calc)
-  const getBH = (p, salCB, rate) => {
-    if(p.budgetBH !== undefined && p.budgetBH !== null && p.budgetBH !== '') return parseFloat(p.budgetBH)||0;
-    return Math.round((parseFloat(salCB)||0) * rate);
-  };
+  const BH_RATE_LOCAL = parseFloat(DB.manningConfig.bhRate)||0.225;
+  const BH_RATE = BH_RATE_LOCAL;
+  const BH_PCT  = Math.round(BH_RATE_LOCAL*1000)/10;
 
 
   if(!DB.manningPlan[curYear]) DB.manningPlan[curYear]={depts:{}};
