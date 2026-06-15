@@ -23227,11 +23227,12 @@ function renderManning(main){
             const grandBud3 = Object.values(allDepts3).reduce((s2,dp2)=>{
               return s2+(dp2.positions||[]).reduce((s3,p2)=>{
                 const bs=parseFloat(p2.budgetSalary)||0;
-                if(!bs) return s3;
-                const bb=parseFloat(p2.budgetBH)||Math.round(bs*BH_RATE_LOCAL);
+                const bon3=parseFloat(p2.budgetBonus)||0;
+                if(!bs&&!bon3) return s3;
+                const bb=getBH(p2,bs,BH_RATE_LOCAL);
                 const bm=parseFloat(p2.mealRate)||0;
                 const bo=parseFloat(p2.budgetOther)||0;
-                return s3+(bs+bb+bm+bo)*(parseInt(p2.planned)||0);
+                return s3+(bs+bon3+bb+bm+bo)*(parseInt(p2.planned)||0);
               },0);
             },0);
             const diff3 = grandBud3 - t.tot;  // Budget - Forecast: dương = tiết kiệm (xanh)
