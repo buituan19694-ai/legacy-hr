@@ -21462,6 +21462,11 @@ render();
 
 <!-- Firebase init + Auth logic -->
 <script>
+// getBH: global helper - phân biệt budgetBH=0 (explicit) vs undefined (auto-calc)
+function getBH(p, salCB, rate) {
+  if(p.budgetBH !== undefined && p.budgetBH !== null && p.budgetBH !== '') return parseFloat(p.budgetBH)||0;
+  return Math.round((parseFloat(salCB)||0) * (rate||0.225));
+}
 window.addEventListener('load', function() {
 const ADMIN_EMAIL = window.ADMIN_EMAIL || 'buituan19694@gmail.com';
 const firebaseConfig = {
@@ -22526,11 +22531,6 @@ function renderYoYTab(curYear, depts, allEmps, BH_RATE){
   </div>`;
 
   const fmtM = v => !v ? '—' : v>=1e9 ? (v/1e9).toFixed(1)+'B' : v>=1e6 ? (v/1e6).toFixed(1)+'M' : v.toLocaleString('vi');
-  // getBH global: phân biệt budgetBH=0 (explicit) vs undefined (auto-calc)
-  const getBH = (p, salCB, rate) => {
-    if(p.budgetBH !== undefined && p.budgetBH !== null && p.budgetBH !== '') return parseFloat(p.budgetBH)||0;
-    return Math.round((parseFloat(salCB)||0) * (rate||0.225));
-  };
   const calcDeptTotal = (plan, deptId) => {
     const dp = plan[deptId]||{positions:[]};
     const rate = parseFloat((DB.manningConfig||{}).bhRate)||0.225;
