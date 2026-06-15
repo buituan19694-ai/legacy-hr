@@ -22560,7 +22560,7 @@ function renderYoYTab(curYear, depts, allEmps, BH_RATE){
   const grandHCCur  = depts.reduce((s,d)=>s+calcHC(planCur,d.id),0);
   const grandHCPrev = depts.reduce((s,d)=>s+calcHC(planPrev,d.id),0);
 
-  const diffColor = v => v>0?'var(--danger)':v<0?'var(--success)':'var(--ink-muted)';
+  const diffColor = v => v>0?'var(--success)':v<0?'var(--danger)':'var(--ink-muted)';
   const diffStr   = v => v===0?'=':((v>0?'+':'')+fmtM(v));
   const pctStr    = (cur,prev) => !prev?'—':((cur-prev)/prev*100).toFixed(1)+'%';
 
@@ -22592,9 +22592,12 @@ function renderYoYTab(curYear, depts, allEmps, BH_RATE){
     const diff    = totCur - totPrev;
     if(!totCur && !totPrev) return;
 
-    // Dept header row
-    allRows.push(`<tr style="background:var(--bg-elev);border-top:2px solid var(--border-strong)">
-      <td style="padding:8px 10px;font-weight:700;font-size:12px;color:var(--accent)" colspan="2">📂 ${escapeHtml(d.name)}</td>
+    const tbId = `yoy_${d.id}`;
+    // Dept header row — clickable collapse
+    allRows.push(`<tr class="yoy-dept-row" style="background:var(--bg-elev);border-top:2px solid var(--border-strong);cursor:pointer"
+      onclick="(function(){const tb=document.getElementById('${tbId}');if(tb){const h=tb.style.display==='none';tb.style.display=h?'':'none';this.querySelector('.yoy-arrow').textContent=h?'▼':'▶';}}).call(this)">
+      <td style="padding:8px 6px;text-align:center;font-size:11px;color:var(--ink-muted)"><span class="yoy-arrow">▶</span></td>
+      <td style="padding:8px 10px;font-weight:700;font-size:12px;color:var(--accent)">📂 ${escapeHtml(d.name)}</td>
       <td style="padding:8px 8px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:700;color:var(--accent)">${hcCur||'—'}</td>
       <td style="padding:8px 8px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--ink-muted)">${hcPrev||'—'}</td>
       <td colspan="2"></td>
@@ -22602,9 +22605,10 @@ function renderYoYTab(curYear, depts, allEmps, BH_RATE){
       <td style="padding:8px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--ink-muted)">${fmtM(totPrev)}</td>
       <td style="padding:8px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:800;color:${diffColor(diff)}">${diff===0?'=':diffStr(diff)}</td>
       <td style="padding:8px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:700;color:${diffColor(diff)}">${pctStr(totCur,totPrev)}</td>
-    </tr>`);
+    </tr>
+    <tbody id="${tbId}" style="display:none">`);
 
-    // Position rows — flat, always visible
+    // Position rows
     const allTitles = [...new Set([
       ...((planCur[d.id]||{}).positions||[]).map(p=>p.title),
       ...((planPrev[d.id]||{}).positions||[]).map(p=>p.title),
@@ -22638,6 +22642,7 @@ function renderYoYTab(curYear, depts, allEmps, BH_RATE){
         <td style="padding:6px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:600;color:${diffColor(dif)}">${pctStr(tCur,tPrev)}</td>
       </tr>`);
     });
+    allRows.push('</tbody>');
   });
 
   return yearSelectorHtml + kpiCards + `
@@ -22647,6 +22652,12 @@ function renderYoYTab(curYear, depts, allEmps, BH_RATE){
       ${!hasPrev?`<span style="font-size:11px;padding:3px 10px;border-radius:4px;background:rgba(255,165,0,.15);color:var(--warning)">⚠️ Chưa có data Budget ${prevYear}</span>`:''}
       <span style="font-size:10px;color:var(--success);margin-left:4px">● Mới = vị trí năm nay</span>
       <span style="font-size:10px;color:var(--danger)">● Bỏ = không còn năm nay</span>
+      <div style="margin-left:auto;display:flex;gap:6px">
+        <button onclick="document.querySelectorAll('[id^=yoy_]').forEach(tb=>{tb.style.display='';});document.querySelectorAll('.yoy-arrow').forEach(a=>a.textContent='▼')"
+          style="padding:4px 12px;border-radius:5px;border:1px solid var(--border);background:transparent;color:var(--ink-dim);font-size:11px;cursor:pointer">▼ Mở tất cả</button>
+        <button onclick="document.querySelectorAll('[id^=yoy_]').forEach(tb=>{tb.style.display='none';});document.querySelectorAll('.yoy-arrow').forEach(a=>a.textContent='▶')"
+          style="padding:4px 12px;border-radius:5px;border:1px solid var(--border);background:transparent;color:var(--ink-dim);font-size:11px;cursor:pointer">▶ Đóng tất cả</button>
+      </div>
     </div>
     <div style="overflow-x:auto">
       <table style="width:100%;border-collapse:collapse;font-size:12px">
