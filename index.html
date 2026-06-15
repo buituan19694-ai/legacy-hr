@@ -23293,6 +23293,7 @@ function renderManning(main){
      ══════════════════════════════════════════════ */
   const renderCompareTab = ()=>{
     const lastMonth = today.getFullYear()===curYear ? today.getMonth() : 11; // 0-indexed
+    const curMi = lastMonth; // tháng hiện tại (alias)
 
     // Per-month comparison
     const monthRows = MN.map((m,mi)=>{
