@@ -22533,9 +22533,10 @@ function renderYoYTab(curYear, depts, allEmps, BH_RATE){
   };
   const calcDeptTotal = (plan, deptId) => {
     const dp = plan[deptId]||{positions:[]};
+    const rate = parseFloat((DB.manningConfig||{}).bhRate)||0.225;
     return (dp.positions||[]).reduce((s,p)=>{
       const bs=parseFloat(p.budgetSalary)||0; const bon=parseFloat(p.budgetBonus)||0; if(!bs&&!bon) return s;
-      const bb=getBH(p,bs,BH_RATE);
+      const bb=getBH(p,bs,rate);
       const bm=parseFloat(p.mealRate)||0, bo=parseFloat(p.budgetOther)||0;
       const hc=parseInt(p.planned)||0;
       return s+(bs+bon+bb+bm+bo)*hc;
@@ -22545,7 +22546,8 @@ function renderYoYTab(curYear, depts, allEmps, BH_RATE){
   const calcPosTotal = (plan, deptId, title) => {
     const p = ((plan[deptId]||{}).positions||[]).find(x=>x.title===title)||{};
     const bs=parseFloat(p.budgetSalary)||0; const bon=parseFloat(p.budgetBonus)||0; if(!bs&&!bon) return 0;
-    const bb=getBH(p,bs,BH_RATE);
+    const rate = parseFloat((DB.manningConfig||{}).bhRate)||0.225;
+    const bb=getBH(p,bs,rate);
     const bm=parseFloat(p.mealRate)||0, bo=parseFloat(p.budgetOther)||0;
     return (bs+bon+bb+bm+bo)*(parseInt(p.planned)||0);
   };
