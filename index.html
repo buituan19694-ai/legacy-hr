@@ -3632,18 +3632,21 @@ function renderDashboardCharts(){
 
   const salTrendEl = $('#chartSalaryTrend');
   if(salTrendEl && !hiddenCharts.has('salaryTrend')){
+    setTimeout(()=>{
     if(Chart.getChart(salTrendEl)) Chart.getChart(salTrendEl).destroy();
     const salByMonth = mnL.map((_,mi)=>{
       if(isFut2(mi)) return null;
       const emps = (DB.employees||[]).filter(e=>e.status!=='exit');
       let total = 0;
       emps.forEach(e=>{
+        const cd = (DB.customData||{})[e.id]||{};
         const sal = (DB.salaryData||{})[e.id]||{};
         const mKey = `${yr2}-${String(mi+1).padStart(2,'0')}`;
         const ms = (sal.monthly||{})[mKey]||{};
-        total += (parseFloat(ms.base)||parseFloat(e.baseSalary)||0) + (parseFloat(ms.bonus)||0);
+        total += (parseFloat(ms.base)||parseFloat(cd.baseSalary)||parseFloat(e.baseSalary)||0)
+               + (parseFloat(ms.bonus)||parseFloat(cd.bonusSalary)||0);
       });
-      return Math.round(total/1e6*10)/10; // triệu đồng
+      return Math.round(total/1e6*10)/10;
     });
     if(Chart.getChart(salTrendEl)) Chart.getChart(salTrendEl).destroy();
     new Chart(salTrendEl, {
@@ -3651,6 +3654,7 @@ function renderDashboardCharts(){
       data:{labels:mnL, datasets:[{data:salByMonth, backgroundColor:'rgba(212,165,116,.7)', borderRadius:4}]},
       options: chartOpts('#d4a574')
     });
+    }, 100);
   }
 
   const salDeptAvgEl = $('#chartSalaryDeptAvg');
@@ -3704,6 +3708,7 @@ function renderDashboardCharts(){
     new Chart(trainingEl, {type:'bar', data:{labels:mnL,datasets:[{data:tData,backgroundColor:'rgba(232,185,116,.7)',borderRadius:3}]}, options:chartOpts('#e8b974')});
   }
 
+  setTimeout(()=>{
   const perfEl = $('#chartDashPerf');
   if(perfEl && !hiddenCharts.has('perf')){
     if(Chart.getChart(perfEl)) Chart.getChart(perfEl).destroy();
@@ -3741,6 +3746,7 @@ function renderDashboardCharts(){
     if(Chart.getChart(warnEl)) Chart.getChart(warnEl).destroy();
     new Chart(warnEl, {type:'bar', data:{labels:mnL,datasets:[{data:wData,backgroundColor:'rgba(229,115,115,.7)',borderRadius:3}]}, options:chartOpts('#e57373')});
   }
+  }, 800);
 }
 
 function renderDeptPerformance(){
@@ -7703,7 +7709,11 @@ function renderContracts(main){
     </div>
   `;
 
-  { const _e=$('#chartContract'); if(_e&&Chart.getChart(_e)) Chart.getChart(_e).destroy(); } new Chart($('#chartContract'), {
+  setTimeout(()=>{
+    const _ce = $('#chartContract');
+    if(!_ce) return;
+    if(Chart.getChart(_ce)) Chart.getChart(_ce).destroy();
+    new Chart(_ce, {
     type: 'doughnut',
     data: {
       labels: Object.keys(typeCount).map(k => CONTRACT_TYPE[k]),
@@ -7719,6 +7729,7 @@ function renderContracts(main){
       plugins: { legend: { position: 'right', labels: { usePointStyle: true, padding: 10, boxWidth: 8 } } }
     }
   });
+  }, 50);
 
   const el = $('#expiringList');
   const sortedExp = [...expiringIn60].sort((a,b) => new Date(a.endDate) - new Date(b.endDate));
@@ -19737,10 +19748,10 @@ function renderSalaryAnalysis(main){
     <!-- KPI cards -->
     <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px">
       ${[
-        {label:(_lang==="en"?"Salary fund":"Quỹ lương"), value:fmtMoney(kpi.totalFund)+' đ', sub:kpi.headcount+' NV trong kỳ', color:'var(--accent)', cmpVal:cmpKPI?.totalFund, inv:true, key:'totalFund'},
-        {label:(_lang==="en"?"Base salary":"Lương cơ bản")+' (Fixed)', value:fmtMoney(kpi.totalBase)+' đ', sub:fixedRatio+'% tổng quỹ', color:'var(--success)', cmpVal:cmpKPI?.totalBase, inv:true, key:'totalBase'},
-        {label:(_lang==="en"?"Perf. Bonus":"Bổ sung KQCV")+' (Variable)', value:fmtMoney(kpi.totalBonus)+' đ', sub:(100-fixedRatio)+'% tổng quỹ', color:'var(--info)', cmpVal:cmpKPI?.totalBonus, inv:true, key:'totalBonus'},
-        {label:(_lang==="en"?"Avg cost/staff":"Chi phí bình quân/NV"), value:kpi.avgSalary?fmtMoney(kpi.avgSalary)+' đ':'—', sub:kpi.withSal.length+' NV có lương', color:'var(--purple)', cmpVal:cmpKPI?.avgSalary, inv:true, key:'avgSalary'},
+        {label:(_lang==="en"?"Salary fund":"Quỹ lương"), value:fmtMoney(kpi.totalFund)+' đ', sub:kpi.headcount+' NV trong kỳ', color:'var(--accent)', cmpVal:cmpKPI?.totalFund, inv:false, key:'totalFund'},
+        {label:(_lang==="en"?"Base salary":"Lương cơ bản")+' (Fixed)', value:fmtMoney(kpi.totalBase)+' đ', sub:fixedRatio+'% tổng quỹ', color:'var(--success)', cmpVal:cmpKPI?.totalBase, inv:false, key:'totalBase'},
+        {label:(_lang==="en"?"Perf. Bonus":"Bổ sung KQCV")+' (Variable)', value:fmtMoney(kpi.totalBonus)+' đ', sub:(100-fixedRatio)+'% tổng quỹ', color:'var(--info)', cmpVal:cmpKPI?.totalBonus, inv:false, key:'totalBonus'},
+        {label:(_lang==="en"?"Avg cost/staff":"Chi phí bình quân/NV"), value:kpi.avgSalary?fmtMoney(kpi.avgSalary)+' đ':'—', sub:kpi.withSal.length+' NV có lương', color:'var(--purple)', cmpVal:cmpKPI?.avgSalary, inv:false, key:'avgSalary'},
       ].map(k=>`
         <div class="card" style="padding:16px 20px">
           <div style="font-size:11px;color:var(--ink-muted);letter-spacing:.08em;text-transform:uppercase;margin-bottom:6px">${k.label}</div>
@@ -19784,12 +19795,12 @@ function renderSalaryAnalysis(main){
               </td>
               <td style="text-align:right;font-family:'JetBrains Mono',monospace;padding:7px 10px">${d.hc}</td>
               <td style="text-align:right;font-family:'JetBrains Mono',monospace;padding:7px 10px;font-weight:600;color:var(--accent)">${fM.toLocaleString('vi-VN')}</td>
-              <td style="text-align:right;padding:7px 10px;color:${mom===null?'var(--ink-muted)':mom>0?'var(--danger)':mom<0?'var(--success)':'var(--ink-muted)'}">
+              <td style="text-align:right;padding:7px 10px;color:${mom===null?'var(--ink-muted)':mom>0?'var(--success)':mom<0?'var(--danger)':'var(--ink-muted)'}">
                 ${mom===null?'—':mom>0?'+'+mom+'%':mom+'%'}${mom!==null&&Math.abs(mom)>=5?' ⚠️':''}
               </td>
               ${F.showCmp&&cmpRow?`
               <td style="text-align:right;font-family:'JetBrains Mono',monospace;padding:7px 10px;color:var(--ink-muted)">${Math.round(cmpRow.fund/1e6).toLocaleString('vi-VN')}</td>
-              <td style="text-align:right;padding:7px 10px;color:${yoy===null?'var(--ink-muted)':yoy>0?'var(--danger)':yoy<0?'var(--success)':'var(--ink-muted)'}">
+              <td style="text-align:right;padding:7px 10px;color:${yoy===null?'var(--ink-muted)':yoy>0?'var(--success)':yoy<0?'var(--danger)':'var(--ink-muted)'}">
                 ${yoy===null?'—':yoy>0?'+'+yoy+'%':yoy+'%'}
               </td>`:''}
             </tr>`;
@@ -19805,7 +19816,7 @@ function renderSalaryAnalysis(main){
       </table>
       </div>
       <div style="padding:8px 14px;font-size:11px;color:var(--ink-muted)">
-        Δ MoM = % thay đổi so tháng trước · <span style="color:var(--danger)">Đỏ = tăng chi phí</span> · <span style="color:var(--success)">Xanh = giảm chi phí</span> · ⚠️ biến động &gt;5%${F.showCmp?' · YoY = so sánh cùng tháng năm trước':''}
+        Δ MoM = % thay đổi so tháng trước · <span style="color:var(--success)">Xanh = tăng</span> · <span style="color:var(--danger)">Đỏ = giảm</span> · ⚠️ biến động &gt;5%${F.showCmp?' · YoY = so sánh cùng tháng năm trước':''}
       </div>
     </div>`:''}
 
@@ -20144,12 +20155,25 @@ function renderBonusInline(yr, curYear, curMonth){
           data:{
             labels:MNs,
             datasets:[
-              {label:(bName||'Thưởng')+' '+yr, data:bD.map(v=>v||0),
-               backgroundColor:'rgba(126,198,153,.75)', borderColor:'rgba(126,198,153,.9)',
-               borderWidth:1.5, borderRadius:4},
-              {label:(DB.bonusName?.[cyr]||'Thưởng')+' '+cyr, data:cD.map(v=>v||0),
-               backgroundColor:'rgba(126,182,232,.45)', borderColor:'rgba(126,182,232,.8)',
-               borderWidth:1.5, borderRadius:4},
+              {
+                label:(bName||'Thưởng')+' '+yr,
+                data:bD.map(v=>v||0),
+                backgroundColor:'rgba(126,198,153,.75)',
+                borderColor:'rgba(126,198,153,.9)',
+                borderWidth:1.5, borderRadius:4,
+                type:'bar', order:2,
+              },
+              {
+                label:(DB.bonusName?.[cyr]||'Thưởng')+' '+cyr,
+                data:cD.map(v=>v||0),
+                type:'line',
+                borderColor:'rgba(126,182,232,.85)',
+                backgroundColor:'rgba(126,182,232,.08)',
+                borderWidth:2, borderDash:[4,3],
+                pointRadius:3,
+                pointBackgroundColor:'rgba(126,182,232,.85)',
+                tension:0.3, order:1,
+              },
             ]
           },
           options:{
@@ -20295,18 +20319,25 @@ function renderSvcTab(){
       label: `SVC ${yr}`,
       data: data.map(v=>v||0),
       backgroundColor: 'rgba(212,165,116,.75)',
-      borderColor: 'var(--accent)',
-      borderWidth: 2,
+      borderColor: 'rgba(212,165,116,.9)',
+      borderWidth: 1.5,
       borderRadius: 4,
+      type: 'bar',
+      order: 2,
       yAxisID: 'y',
     }];
     if(showCmp && cdata) ds.push({
       label: `SVC ${cyr}`,
       data: cdata.map(v=>v||0),
-      backgroundColor: 'rgba(126,182,232,.35)',
-      borderColor: 'var(--info)',
-      borderWidth: 1.5,
-      borderRadius: 4,
+      type: 'line',
+      borderColor: 'rgba(126,182,232,.85)',
+      backgroundColor: 'rgba(126,182,232,.08)',
+      borderWidth: 2,
+      borderDash: [4,3],
+      pointRadius: 3,
+      pointBackgroundColor: 'rgba(126,182,232,.85)',
+      tension: 0.3,
+      order: 1,
       yAxisID: 'y',
     });
     if(Chart.getChart(el)) Chart.getChart(el).destroy();
@@ -20805,7 +20836,7 @@ function renderCasualAnalysis(){
   const tot  = curM.reduce((a,x)=>({qty:a.qty+x.qty,hours:a.hours+x.hours,cost:a.cost+x.cost}),{qty:0,hours:0,cost:0});
   const cTot = cmpM ? cmpM.reduce((a,x)=>({qty:a.qty+x.qty,hours:a.hours+x.hours,cost:a.cost+x.cost}),{qty:0,hours:0,cost:0}) : null;
 
-  function pct(cur,cmp){ if(!cmp) return ''; const p=cmp?Math.round((cur-cmp)/cmp*100):null; if(p===null)return''; const c=p>0?'var(--danger)':'var(--success)';const bg=p>0?'rgba(239,68,68,.12)':'rgba(34,197,94,.12)'; return `<span style="font-size:10.5px;padding:1px 6px;border-radius:4px;font-weight:700;background:${bg};color:${c}">${p>0?'+':''}${p}%</span>`;}
+  function pct(cur,cmp){ if(!cmp) return ''; const p=cmp?Math.round((cur-cmp)/cmp*100):null; if(p===null)return''; const c=p>0?'var(--success)':'var(--danger)';const bg=p>0?'rgba(34,197,94,.12)':'rgba(239,68,68,.12)'; return `<span style="font-size:10.5px;padding:1px 6px;border-radius:4px;font-weight:700;background:${bg};color:${c}">${p>0?'+':''}${p}%</span>`;}
 
   const kpiCards = [
     {label:(_lang==="en"?"Total cost":"Tổng chi phí"),     cur:tot.cost,  cmp:cTot?.cost,  fmt:fmtN, unit:(_lang==="en"?"VND":"VNĐ"), color:'var(--accent)'},
@@ -23642,7 +23673,7 @@ function renderYoYTab(curYear, depts, allEmps, BH_RATE){
       {label:`Tổng Budget ${curYear}`,  val:fmtM(grandCur),  color:'var(--accent)',  icon:'📋'},
       {label:`Tổng Budget ${prevYear}`, val:fmtM(grandPrev), color:'var(--ink-dim)', icon:'📁'},
       {label:'Tăng/Giảm YoY',          val:diffStr(grandDiff), color:diffColor(grandDiff), icon:'📈'},
-      {label:'% Thay đổi',             val:grandPrev?grandPct+'%':'—', color:grandDiff>0?'var(--danger)':grandDiff<0?'var(--success)':'var(--ink-muted)', icon:'🎯'},
+      {label:'% Thay đổi',             val:grandPrev?grandPct+'%':'—', color:grandDiff>0?'var(--success)':grandDiff<0?'var(--danger)':'var(--ink-muted)', icon:'🎯'},
     ].map(k=>`<div class="card" style="padding:14px 16px;display:flex;align-items:center;gap:12px">
       <span style="font-size:22px">${k.icon}</span>
       <div>
