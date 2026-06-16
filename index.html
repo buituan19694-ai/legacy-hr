@@ -15888,14 +15888,14 @@ function renderPerformance(main){
     <div class="card" style="margin-top:16px">
       ${(()=>{
         const allYears = [...new Set((DB.kpiReviews||[]).map(k=>(k.period||'').slice(-4)).filter(y=>/^\d{4}$/.test(y)))].sort((a,b)=>b-a);
-        if(!window._perfHistYear) window._perfHistYear = sessionStorage.getItem('_perfHistYear') || String(new Date().getFullYear());
+        if(!window._perfHistYear) window._perfHistYear = localStorage.getItem('_perfHistYear') || String(new Date().getFullYear());
         const selYear = window._perfHistYear;
         const filtered = (DB.kpiReviews||[]).filter(k=>!selYear||(k.period||'').includes(selYear));
         return `
       <div class="card-head" style="display:flex;align-items:center;justify-content:space-between">
         <div><div class="card-title">Lịch sử <em>đánh giá</em></div><div class="card-sub">${filtered.length} bản ghi${selYear?' · Năm '+selYear:''}</div></div>
         <div style="display:flex;gap:8px;align-items:center">
-          <select class="filter-select" onchange="window._perfHistYear=this.value;sessionStorage.setItem('_perfHistYear',this.value);render()">
+          <select class="filter-select" onchange="window._perfHistYear=this.value;localStorage.setItem('_perfHistYear',this.value);render()">
             <option value="">Tất cả năm</option>
             ${allYears.map(y=>`<option value="${y}" ${selYear===y?'selected':''}>${y}</option>`).join('')}
           </select>
