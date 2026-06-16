@@ -21259,11 +21259,13 @@ function renderTraineeSchedule(main){
 
           <!-- Date picker -->
           <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-            <input type="date" value="${fromStr}" style="background:var(--bg-elev);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--ink);font-size:12px;font-family:inherit"
-              onchange="window._traineeRangeFrom=this.value;if(window._traineeRangeTo<this.value)window._traineeRangeTo=this.value;render()">
+            <input type="date" value="${fromStr}" id="tr_range_from"
+              style="background:var(--bg-elev);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--ink);font-size:12px;font-family:inherit"
+              onchange="(function(v){if(!v)return;if(window._traineeRangeTo&&v>window._traineeRangeTo){window._traineeRangeTo=v;}window._traineeRangeFrom=v;render();})(this.value)">
             <span style="font-size:12px;color:var(--ink-muted)">→</span>
-            <input type="date" value="${toStr}" style="background:var(--bg-elev);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--ink);font-size:12px;font-family:inherit"
-              onchange="window._traineeRangeTo=this.value;if(window._traineeRangeTo<window._traineeRangeFrom)window._traineeRangeFrom=this.value;render()">
+            <input type="date" value="${toStr}" id="tr_range_to"
+              style="background:var(--bg-elev);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--ink);font-size:12px;font-family:inherit"
+              onchange="(function(v){if(!v)return;if(window._traineeRangeFrom&&v<window._traineeRangeFrom){window._traineeRangeFrom=v;}window._traineeRangeTo=v;render();})(this.value)">
             <button onclick="window._traineeRangeFrom='${todayStr}';window._traineeRangeTo='${todayStr}';render()"
               style="padding:5px 10px;border-radius:6px;border:1px solid var(--border);background:${fromStr===todayStr&&toStr===todayStr?'var(--accent)':'var(--bg-elev)'};color:${fromStr===todayStr&&toStr===todayStr?'#1a1a1a':'var(--ink-muted)'};font-size:11px;cursor:pointer;font-family:inherit;font-weight:600">
               Hôm nay
@@ -21272,9 +21274,9 @@ function renderTraineeSchedule(main){
               const f=new Date(today); f.setDate(f.getDate()-n+1);
               const fs=f.toISOString().slice(0,10);
               const active=fromStr===fs&&toStr===todayStr;
-              return `<button onclick="const f=new Date('${todayStr}');f.setDate(f.getDate()-${n-1});window._traineeRangeFrom=f.toISOString().slice(0,10);window._traineeRangeTo='${todayStr}';render()"
+              return `<button onclick="(function(){const f=new Date('${todayStr}');f.setDate(f.getDate()-${n-1});window._traineeRangeFrom=f.toISOString().slice(0,10);window._traineeRangeTo='${todayStr}';render();})()"
                 style="padding:5px 10px;border-radius:6px;border:1px solid var(--border);background:${active?'var(--accent)':'var(--bg-elev)'};color:${active?'#1a1a1a':'var(--ink-muted)'};font-size:11px;cursor:pointer;font-family:inherit;font-weight:600">
-                ${n} ngày
+                ${n} ngày qua
               </button>`;
             }).join('')}
           </div>
