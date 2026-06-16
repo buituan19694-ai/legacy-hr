@@ -2017,17 +2017,17 @@ function _doRender(){
     updateBadges();
     const main = $('#mainContent');
 
-    // ── Salary render guard: chỉ render 1 lần sau navigate ──
-    // Tránh chart bị destroy/rebuild liên tục do snapshot callbacks
-    // NHƯNG cho phép re-render khi user thay đổi filter/tab
+    // ── Salary render guard: chặn mọi re-render trừ navigate/filter ──
     if(currentPage === 'salary'){
       const now = Date.now();
       const last = window._salaryLastRender || 0;
       const curHash = JSON.stringify(window._salF||{});
       const changed = curHash !== window._salaryFilterHash;
-      if(window._salaryRendered && !changed && (now - last) < 3000){
-        return; // salary đã render, filter không đổi → skip
+      if(window._salaryRendered && !changed){
+        console.log('[Salary guard] ⛔ BLOCKED re-render at', now-last, 'ms since last');
+        return;
       }
+      console.log('[Salary guard] ✅ ALLOWED render', changed ? '(filter changed)' : '(first render)');
       window._salaryLastRender = now;
       window._salaryRendered = true;
       window._salaryFilterHash = curHash;
@@ -23219,16 +23219,10 @@ fbAuth.onAuthStateChanged(async user => {
                   if(currentPage === 'employees' && window._empSearchActive){
                     updateBadges(); return;
                   }
-                  // Salary page: KHÔNG re-render từ snapshot tự động (gây chart loop)
-                  // Nhưng vẫn update badges
+                  // Salary page: TUYỆT ĐỐI không re-render từ bất kỳ Firestore snapshot nào
+                  // Data đã được merge vào DB rồi — chỉ cần update badges
                   if(currentPage === 'salary'){
                     updateBadges();
-                    // Chỉ re-render nếu data thực sự thay đổi (không phải self-save)
-                    if(!isSelf){
-                      const fn = RENDER_MAP[currentPage];
-                      const main = document.getElementById('mainContent');
-                      if(fn && main) fn(main);
-                    }
                     return;
                   }
                   // Contracts page: chỉ re-render khi data thay đổi từ account khác
