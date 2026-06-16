@@ -19520,6 +19520,12 @@ function confirmAddSalaryYear(){
 }
 
 function renderSalaryAnalysis(main){
+  // Hủy tất cả Chart.js instances trước khi render lại để tránh resize loop
+  if(typeof Chart !== 'undefined'){
+    Object.keys(Chart.instances||{}).forEach(key=>{
+      try { Chart.instances[key].destroy(); } catch(e){}
+    });
+  }
   if(!window.canDo('salary') && !window.isAdmin()){
     main.innerHTML='<div class="topbar"><div class="topbar-left"><h1 class="page-title">🔒 Không có quyền</h1><div class="page-sub">Bạn không được cấp quyền truy cập module Phân tích Lương</div></div></div>';
     return;
@@ -19982,15 +19988,14 @@ function renderSvcInline(svcYr, curYear, curMonth){
   const cid = 'chartSvcInline_'+svcYr;
   setTimeout(()=>{
     const el = document.getElementById(cid);
-    if(!el || el._ci) return; el._ci = true;
+    if(!el || !el.isConnected) return;
     if(Chart.getChart(el)) Chart.getChart(el).destroy();
     const ch = new Chart(el,{type:'bar',data:{labels:MNs,datasets:[{
       label:'SVC '+svcYr, data:svcD.map(v=>v||0),
       backgroundColor:MNs.map((_,i)=>i===svcMaxIdx?'rgba(212,165,116,.95)':'rgba(212,165,116,.5)'),
       borderColor:'rgba(212,165,116,.8)',borderWidth:1.5,borderRadius:5
-    }]},options:{responsive:true,maintainAspectRatio:false,
-      animation:{duration:400},
-      resizeDelay:100,
+    }]},options:{responsive:false,maintainAspectRatio:false,animation:false,
+      animation:false,
       plugins:{legend:{display:false},tooltip:{callbacks:{label:ctx=>fmtN(ctx.raw)+' đ'}}},
       scales:{x:{grid:{display:false}},y:{beginAtZero:true,
         grid:{color:'rgba(255,255,255,.04)'},
@@ -20045,7 +20050,7 @@ function renderSvcInline(svcYr, curYear, curMonth){
     <div style="display:grid;grid-template-columns:3fr 2fr;gap:14px;padding:0 16px 16px">
       <div>
         <div style="font-size:10.5px;color:var(--ink-muted);font-weight:600;text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Biểu đồ SVC</div>
-        <div style="height:190px;position:relative;overflow:hidden"><canvas id="${cid}"></canvas></div>
+        <div style="height:190px;position:relative;overflow:hidden"><canvas style="width:100%;height:190px" id="${cid}"></canvas></div>
       </div>
       <div>
         <div style="font-size:10.5px;color:var(--ink-muted);font-weight:600;text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Nhập số liệu</div>
@@ -20107,15 +20112,14 @@ function renderBonusInline(yr, curYear, curMonth){
 
   setTimeout(()=>{
     const el = document.getElementById(cid);
-    if(!el||el._ci) return; el._ci=true;
+    if(!el||!el.isConnected) return;
     if(Chart.getChart(el)) Chart.getChart(el).destroy();
     const ch = new Chart(el,{type:'bar',data:{labels:MNs,datasets:[{
       label:(bName||'Thưởng')+' '+yr, data:bD.map(v=>v||0),
       backgroundColor:MNs.map((_,i)=>i===mxI?'rgba(126,198,153,.95)':'rgba(126,198,153,.45)'),
       borderColor:'rgba(126,198,153,.8)',borderWidth:1.5,borderRadius:5
-    }]},options:{responsive:true,maintainAspectRatio:false,
-      animation:{duration:400},
-      resizeDelay:100,
+    }]},options:{responsive:false,maintainAspectRatio:false,animation:false,
+      animation:false,
       plugins:{legend:{display:false},tooltip:{callbacks:{label:ctx=>fmtN(ctx.raw)+' đ'}}},
       scales:{x:{grid:{display:false}},y:{beginAtZero:true,
         grid:{color:'rgba(255,255,255,.04)'},
@@ -20178,7 +20182,7 @@ function renderBonusInline(yr, curYear, curMonth){
     <div style="display:grid;grid-template-columns:3fr 2fr;gap:14px;padding:0 16px 16px">
       <div>
         <div style="font-size:10.5px;color:var(--ink-muted);font-weight:600;text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Biểu đồ</div>
-        <div style="height:190px;position:relative;overflow:hidden"><canvas id="${cid}"></canvas></div>
+        <div style="height:190px;position:relative;overflow:hidden"><canvas style="width:100%;height:190px" id="${cid}"></canvas></div>
       </div>
       <div>
         <div style="font-size:10.5px;color:var(--ink-muted);font-weight:600;text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Nhập số liệu</div>
@@ -20235,8 +20239,7 @@ function renderSvcTab(){
 
   setTimeout(()=>{
     const el = document.getElementById(chartId);
-    if(!el || el._chartInited) return;
-    el._chartInited = true;
+    if(!el || !el.isConnected) return;
     const ds = [{
       label: `SVC ${yr}`,
       data: data.map(v=>v||0),
@@ -20319,7 +20322,7 @@ function renderSvcTab(){
           <div class="card-title">📊 SVC theo tháng — ${yr}${showCmp?' vs '+cyr:''}</div>
           <div class="card-sub">Nhấp vào ô để chỉnh sửa số liệu trực tiếp</div>
         </div></div>
-        <div class="chart-wrap" style="height:220px"><canvas id="${chartId}"></canvas></div>
+        <div class="chart-wrap" style="height:220px"><canvas style="width:100%;height:220px" id="${chartId}"></canvas></div>
       </div>
 
       <!-- Input table -->
@@ -20695,7 +20698,7 @@ function renderCasual(main){
         ]
       },
       options:{
-        responsive:true,maintainAspectRatio:false,
+        responsive:false,maintainAspectRatio:false,animation:false,
         plugins:{legend:{position:'top',labels:{usePointStyle:true,padding:12}},tooltip:{mode:'index',intersect:false}},
         scales:{
           x:{grid:{display:false}},
@@ -20809,12 +20812,12 @@ function renderCasualAnalysis(){
     const ds1=[{label:`Chi phí ${yr}`,data:curM.map(x=>x.cost),backgroundColor:'rgba(212,165,116,.7)',borderRadius:4,yAxisID:'y',order:2},{label:`Lượt ${yr}`,type:'line',data:curM.map(x=>x.qty),borderColor:'#7eb6e8',backgroundColor:'rgba(126,182,232,.1)',borderWidth:2,pointRadius:3,yAxisID:'y1',order:1}];
     if(showCmp&&cmpM){ds1.push({label:`Chi phí ${cyr}`,data:cmpM.map(x=>x.cost),backgroundColor:'rgba(126,198,153,.4)',borderRadius:4,yAxisID:'y',order:3});ds1.push({label:`Lượt ${cyr}`,type:'line',data:cmpM.map(x=>x.qty),borderColor:'rgba(126,182,232,.4)',borderWidth:1.5,borderDash:[4,3],pointRadius:2,yAxisID:'y1',order:4});}
     if(Chart.getChart(el1)) Chart.getChart(el1).destroy();
-    new Chart(el1,{type:'bar',data:{labels:MN,datasets:ds1},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'top',labels:{usePointStyle:true,padding:10}},tooltip:{mode:'index',intersect:false,callbacks:{label:ctx=>ctx.dataset.yAxisID==='y1'?`${ctx.dataset.label}: ${fmtN(ctx.raw)} lượt`:`${ctx.dataset.label}: ${fmtN(ctx.raw)} VNĐ`}}},scales:{x:{grid:{display:false}},y:{beginAtZero:true,grid:{color:'rgba(255,255,255,.04)'},ticks:{callback:v=>v>=1e9?(v/1e9).toFixed(1)+'B':v>=1e6?(v/1e6).toFixed(0)+'M':fmtN(v)}},y1:{position:'right',beginAtZero:true,grid:{display:false}}}}});
+    new Chart(el1,{type:'bar',data:{labels:MN,datasets:ds1},options:{responsive:false,maintainAspectRatio:false,animation:false,plugins:{legend:{position:'top',labels:{usePointStyle:true,padding:10}},tooltip:{mode:'index',intersect:false,callbacks:{label:ctx=>ctx.dataset.yAxisID==='y1'?`${ctx.dataset.label}: ${fmtN(ctx.raw)} lượt`:`${ctx.dataset.label}: ${fmtN(ctx.raw)} VNĐ`}}},scales:{x:{grid:{display:false}},y:{beginAtZero:true,grid:{color:'rgba(255,255,255,.04)'},ticks:{callback:v=>v>=1e9?(v/1e9).toFixed(1)+'B':v>=1e6?(v/1e6).toFixed(0)+'M':fmtN(v)}},y1:{position:'right',beginAtZero:true,grid:{display:false}}}}});
     const dLabels=Object.keys(curD).map(d=>deptName(d));
     const dData=Object.values(curD).map(x=>x.cost);
     const colors=['#d4a574','#7ec699','#7eb6e8','#b794d4','#f6a35a','#e87e7e','#7accc8','#f0c75a','#a0c4ff','#ffd6a5'];
     if(Chart.getChart(el2)) Chart.getChart(el2).destroy();
-    new Chart(el2,{type:'doughnut',data:{labels:dLabels,datasets:[{data:dData,backgroundColor:colors,borderWidth:0,hoverOffset:6}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'right',labels:{usePointStyle:true,padding:10}},tooltip:{callbacks:{label:ctx=>`${ctx.label}: ${fmtN(ctx.raw)} VNĐ (${tot.cost?Math.round(ctx.raw/tot.cost*100):0}%)`}},datalabels:{display:false}}}});
+    new Chart(el2,{type:'doughnut',data:{labels:dLabels,datasets:[{data:dData,backgroundColor:colors,borderWidth:0,hoverOffset:6}]},options:{responsive:false,maintainAspectRatio:false,animation:false,plugins:{legend:{position:'right',labels:{usePointStyle:true,padding:10}},tooltip:{callbacks:{label:ctx=>`${ctx.label}: ${fmtN(ctx.raw)} VNĐ (${tot.cost?Math.round(ctx.raw/tot.cost*100):0}%)`}},datalabels:{display:false}}}});
   },0);
 
   return `
@@ -20844,14 +20847,14 @@ function renderCasualAnalysis(){
           <div class="card-title">📈 Chi phí & Lượt người theo tháng${showCmp?` — ${yr} vs ${cyr}`:` — ${yr}`}</div>
           <div class="card-sub">So sánh chi phí (bar) và lượt người (line)</div>
         </div></div>
-        <div class="chart-wrap" style="height:220px"><canvas id="chartCasualAnal1"></canvas></div>
+        <div class="chart-wrap" style="height:220px"><canvas style="width:100%;height:220px" id="chartCasualAnal1"></canvas></div>
       </div>
       <div class="card">
         <div class="card-head"><div>
           <div class="card-title">🍩 Tỷ trọng theo Phòng ban — ${yr}</div>
           <div class="card-sub">% chi phí casual mỗi phòng ban</div>
         </div></div>
-        <div class="chart-wrap" style="height:220px"><canvas id="chartCasualAnal2"></canvas></div>
+        <div class="chart-wrap" style="height:220px"><canvas style="width:100%;height:220px" id="chartCasualAnal2"></canvas></div>
       </div>
     </div>
 
