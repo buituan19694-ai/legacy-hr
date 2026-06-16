@@ -14785,7 +14785,7 @@ function renderTraining(main){
     : `${_lang==="en"?"Month":"Tháng"} ${p.month}/${p.year}`;
 
   main.innerHTML = `
-        <div class="page-sub">${DB.courses.length} khoá học · ${totalAttendees} lượt tham gia · ${fmtMoney(totalCost/1000000)} triệu đầu tư</div>
+        <div class="page-sub">${periodCourses.length} khoá học · ${periodAttendees} lượt tham gia · ${fmtMoney(periodCost/1000000)} triệu đầu tư · <span style="color:var(--ink-muted)">${periodLabel}</span></div>
       </div>
       <div class="topbar-actions">
         <button class="btn" onclick="exportCSV('courses')">${ICONS.download} Xuất CSV</button>
