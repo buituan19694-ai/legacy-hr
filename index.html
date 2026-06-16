@@ -13951,7 +13951,8 @@ function acceptOffer(id){
     }
   }
   saveData(['jobs']); // jobs not sharded — OK
-  _saveShardedToast('candidates', '✓ ' + a.name + ' đã chính thức nhận việc!');
+  saveData(['candidates']); // candidates shard theo jobId — đúng format
+  toast('✓ ' + a.name + ' đã chính thức nhận việc!');
   render();
   setTimeout(()=>{
     const existing = (DB.employees||[]).find(emp =>
@@ -14383,7 +14384,7 @@ function deleteCandidate(id, fromModal=false){
       if(a.status === 'hired') j.hired = Math.max(0, (j.hired||0) - 1);
     }
     saveData(['jobs']); // jobs not sharded
-    _saveShardedToast('candidates', 'Đã xoá ứng viên'); render();
+    saveData(['candidates']); toast('Đã xoá ứng viên'); render();
   });
 }
 
@@ -14412,7 +14413,7 @@ function markJobHired(id){
     }
   }
   saveData(['jobs']);
-  _saveSharded('candidates');
+  saveData(['candidates']);
   toast(`Đã ghi nhận tuyển được người thứ ${newHired}/${j.positions}`);
   render();
 }
@@ -14543,7 +14544,7 @@ function deleteJob(id, fromModal=false){
         .catch(e=>console.warn('[deleteJob] cand shard delete:', e.message));
     }
     saveData(['jobs']); // jobs not sharded
-    _saveShardedToast('candidates', 'Đã xoá vị trí'+(candCount?' và '+candCount+' ứng viên':''));
+    saveData(['candidates']); toast('Đã xoá vị trí'+(candCount?' và '+candCount+' ứng viên':''));
     render();
   });
 }
@@ -21365,11 +21366,13 @@ function renderTraineeSchedule(main){
           <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
             <input type="date" value="${fromStr}" id="tr_range_from"
               style="background:var(--bg-elev);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--ink);font-size:12px;font-family:inherit"
-              onchange="(function(v){if(!v)return;if(window._traineeRangeTo&&v>window._traineeRangeTo){window._traineeRangeTo=v;}window._traineeRangeFrom=v;render();})(this.value)">
+              onchange="(function(v){if(!v)return;if(window._traineeRangeTo&&v>window._traineeRangeTo){window._traineeRangeTo=v;}window._traineeRangeFrom=v;render();})(this.value)"
+              onkeydown="if(event.key==='Enter'){(function(v){if(!v)return;if(window._traineeRangeTo&&v>window._traineeRangeTo){window._traineeRangeTo=v;}window._traineeRangeFrom=v;render();})(this.value)}">
             <span style="font-size:12px;color:var(--ink-muted)">→</span>
             <input type="date" value="${toStr}" id="tr_range_to"
               style="background:var(--bg-elev);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--ink);font-size:12px;font-family:inherit"
-              onchange="(function(v){if(!v)return;if(window._traineeRangeFrom&&v<window._traineeRangeFrom){window._traineeRangeFrom=v;}window._traineeRangeTo=v;render();})(this.value)">
+              onchange="(function(v){if(!v)return;if(window._traineeRangeFrom&&v<window._traineeRangeFrom){window._traineeRangeFrom=v;}window._traineeRangeTo=v;render();})(this.value)"
+              onkeydown="if(event.key==='Enter'){(function(v){if(!v)return;if(window._traineeRangeFrom&&v<window._traineeRangeFrom){window._traineeRangeFrom=v;}window._traineeRangeTo=v;render();})(this.value)}">
             <button onclick="window._traineeRangeFrom='${todayStr}';window._traineeRangeTo='${todayStr}';render()"
               style="padding:5px 10px;border-radius:6px;border:1px solid var(--border);background:${fromStr===todayStr&&toStr===todayStr?'var(--accent)':'var(--bg-elev)'};color:${fromStr===todayStr&&toStr===todayStr?'#1a1a1a':'var(--ink-muted)'};font-size:11px;cursor:pointer;font-family:inherit;font-weight:600">
               Hôm nay
