@@ -19987,7 +19987,7 @@ function renderSvcInline(svcYr, curYear, curMonth){
 
   const cid = 'chartSvcInline_'+svcYr;
   // Init chart ngay — không dùng setTimeout
-  (()=>{
+  requestAnimationFrame(()=>{
     const el = document.getElementById(cid);
     if(!el) return;
     if(Chart.getChart(el)) Chart.getChart(el).destroy();
@@ -20001,7 +20001,7 @@ function renderSvcInline(svcYr, curYear, curMonth){
         grid:{color:'rgba(255,255,255,.04)'},
         ticks:{callback:v=>v>=1e9?(v/1e9).toFixed(1)+'B':v>=1e6?(v/1e6).toFixed(0)+'M':fmtN(v)}}}}});
     el._chart = ch;
-  })();
+  });
 
   const rows2 = [];
   for(let i=0;i<12;i+=2){
@@ -20111,7 +20111,7 @@ function renderBonusInline(yr, curYear, curMonth){
   };
 
   // Init chart ngay — không dùng setTimeout
-  (()=>{
+  requestAnimationFrame(()=>{
     const el = document.getElementById(cid);
     if(!el) return;
     if(Chart.getChart(el)) Chart.getChart(el).destroy();
@@ -20125,7 +20125,7 @@ function renderBonusInline(yr, curYear, curMonth){
         grid:{color:'rgba(255,255,255,.04)'},
         ticks:{callback:v=>v>=1e6?(v/1e6).toFixed(0)+'M':fmtN(v)}}}}});
     el._chart=ch;
-  })();
+  });
 
   const rows2=[];
   for(let i=0;i<12;i+=2){
@@ -20237,7 +20237,7 @@ function renderSvcTab(){
 
   const chartId = 'chartSvc_'+yr+(showCmp?'_'+cyr:'');
 
-  (()=>{
+  requestAnimationFrame(()=>{
     const el = document.getElementById(chartId);
     if(!el || !el.isConnected) return;
     const ds = [{
@@ -20676,7 +20676,7 @@ function renderCasual(main){
   `;
 
   if(cf.tab!=='analysis'){
-  (()=>{
+  requestAnimationFrame(()=>{
     const el = document.getElementById('chartCasualTrend');
     if(!el) return;
     const monthlyData = Array(12).fill(0);
@@ -20707,7 +20707,7 @@ function renderCasual(main){
         }
       }
     });
-  })();
+  });
   } // end if tab!==analysis
 }
 
@@ -20803,7 +20803,7 @@ function renderCasualAnalysis(){
 
   const uniqueId = 'cca_'+Date.now();
 
-  (()=>{
+  requestAnimationFrame(()=>{
     const el1=document.getElementById('chartCasualAnal1');
     const el2=document.getElementById('chartCasualAnal2');
     if(!el1||!el2) return;
@@ -20818,7 +20818,7 @@ function renderCasualAnalysis(){
     const colors=['#d4a574','#7ec699','#7eb6e8','#b794d4','#f6a35a','#e87e7e','#7accc8','#f0c75a','#a0c4ff','#ffd6a5'];
     if(Chart.getChart(el2)) Chart.getChart(el2).destroy();
     new Chart(el2,{type:'doughnut',data:{labels:dLabels,datasets:[{data:dData,backgroundColor:colors,borderWidth:0,hoverOffset:6}]},options:{responsive:false,maintainAspectRatio:false,animation:false,plugins:{legend:{position:'right',labels:{usePointStyle:true,padding:10}},tooltip:{callbacks:{label:ctx=>`${ctx.label}: ${fmtN(ctx.raw)} VNĐ (${tot.cost?Math.round(ctx.raw/tot.cost*100):0}%)`}},datalabels:{display:false}}}});
-  })();
+  });
 
   return `
     <!-- Analysis filter bar -->
@@ -22939,7 +22939,7 @@ fbAuth.onAuthStateChanged(async user => {
               }
 
               const isSelf = cloudSyncBy === window.currentUser.uid;
-              const isRecent = (Date.now()-cloudSyncAt) < 5000;
+              const isRecent = (Date.now()-cloudSyncAt) < 15000;
               if(isSelf && isRecent){
                 _lastSyncAt[docId] = cloudSyncAt;
                 return;
@@ -22962,6 +22962,10 @@ fbAuth.onAuthStateChanged(async user => {
                   if(!window._pendingRender) window._pendingRender = {};
                   affectedPages.forEach(p=>{ window._pendingRender[p]=true; });
                 } else if(affectedPages.includes(currentPage)){
+                  // Salary page: chỉ render khi không phải self-save vừa xong
+                  if(currentPage === 'salary' && isSelf && (Date.now()-cloudSyncAt) < 10000){
+                    updateBadges(); return;
+                  }
                   const fn = RENDER_MAP[currentPage];
                   const main = document.getElementById('mainContent');
                   if(fn && main) fn(main);
