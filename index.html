@@ -2015,6 +2015,13 @@ function _doRender(){
   requestAnimationFrame(()=>{
     updateBadges();
     const main = $('#mainContent');
+    // ── Destroy ALL Chart.js instances TRƯỚC khi xóa DOM ──
+    // Tránh orphan ResizeObserver callbacks từ charts mất canvas gây flicker loop
+    if(typeof Chart !== 'undefined' && Chart.instances){
+      Object.keys(Chart.instances).forEach(key=>{
+        try { Chart.instances[key].destroy(); } catch(e){}
+      });
+    }
     main.innerHTML = '';
     const renderers = {
       dashboard: renderDashboard,
@@ -3249,6 +3256,8 @@ function renderDashboardCharts(){
   Chart.defaults.font.family = "'Inter Tight', sans-serif";
   Chart.defaults.font.size = 11.5;
   Chart.defaults.color = '#8b949e';
+  Chart.defaults.responsive = false;       // Tắt ResizeObserver toàn cục — tránh flicker loop
+  Chart.defaults.animation = false;        // Tắt animation toàn cục — tránh rAF loop
   Chart.defaults.layout = Chart.defaults.layout || {};
   Chart.defaults.layout.padding = {top: 18, right: 12, bottom: 0, left: 4};
 
@@ -7817,9 +7826,27 @@ function setContractFilterCurrent(){
    Mở trong tab mới, có thể chỉnh sửa, in hoặc lưu PDF
    ========================================================= */
 function renewContract(contractId, empId){
-  const c = (DB.contracts||[]).find(x=>x.id===contractId);
+  let c = (DB.contracts||[]).find(x=>x.id===contractId);
   const emp = DB.employees.find(x=>x.id===empId);
-  if(!c || !emp){ toast('Không tìm thấy dữ liệu','error'); return; }
+  if(!emp){ toast('Không tìm thấy nhân viên','error'); return; }
+
+  // Nếu contractId là cf_xxx (từ customData, không có trong DB.contracts) → build object từ customData
+  if(!c && contractId.startsWith('cf_')){
+    const cd = DB.customData[empId]||{};
+    const ctRaw = (cd.currentContractType||'').toLowerCase();
+    let type = 'unknown';
+    if(ctRaw.includes('thử việc') || ctRaw.includes('probation') || ctRaw.includes('học việc')) type = 'probation';
+    else if(ctRaw.includes('không xác định') || ctRaw.includes('vô thời hạn') || ctRaw.includes('indefinite')) type = 'indefinite';
+    else if(ctRaw.includes('khoán việc') || ctRaw.includes('contractor')) type = 'contractor';
+    else if(ctRaw.includes('02 năm') || ctRaw.includes('24 tháng') || ctRaw.includes('2 năm')) type = 'term24';
+    else if(ctRaw.includes('01 năm') || ctRaw.includes('12 tháng') || ctRaw.includes('1 năm')) type = 'term12';
+    const endRaw = cd.contractEnd||cd.currentContractEnd||'';
+    const endISO = endRaw && /^\d{2}\/\d{2}\/\d{4}$/.test(endRaw) ? endRaw.split('/').reverse().join('-') : endRaw;
+    const startRaw = cd.contractStart||cd.currentContractStart||'';
+    const startISO = startRaw && /^\d{2}\/\d{2}\/\d{4}$/.test(startRaw) ? startRaw.split('/').reverse().join('-') : startRaw;
+    c = { id:contractId, empId, type, startDate:startISO, endDate:endISO, _fromCustom:true };
+  }
+  if(!c){ toast('Không tìm thấy dữ liệu hợp đồng','error'); return; }
 
   const ORDER = ['probation','term12','term24','indefinite'];
   const curIdx = ORDER.indexOf(c.type);
@@ -8026,7 +8053,25 @@ function confirmExitFromContract(empId){
 }
 
 function generateContract(contractId){
-  const c = (DB.contracts||[]).find(x => x.id === contractId);
+  let c = (DB.contracts||[]).find(x => x.id === contractId);
+  // Fallback: nếu contractId là cf_xxx (từ customData) → build từ customData
+  if(!c && contractId.startsWith('cf_')){
+    const eid = contractId.slice(3);
+    const emp = empById(eid);
+    const cd = DB.customData[eid]||{};
+    if(!emp){ toast('Không tìm thấy nhân viên', 'error'); return; }
+    const ctRaw = (cd.currentContractType||'').toLowerCase();
+    let type = 'term12';
+    if(ctRaw.includes('thử việc') || ctRaw.includes('probation')) type = 'probation';
+    else if(ctRaw.includes('không xác định') || ctRaw.includes('vô thời hạn') || ctRaw.includes('indefinite')) type = 'indefinite';
+    else if(ctRaw.includes('02 năm') || ctRaw.includes('24 tháng')) type = 'term24';
+    else if(ctRaw.includes('01 năm') || ctRaw.includes('12 tháng')) type = 'term12';
+    const endRaw = cd.contractEnd||cd.currentContractEnd||'';
+    const endISO = endRaw && /^\d{2}\/\d{2}\/\d{4}$/.test(endRaw) ? endRaw.split('/').reverse().join('-') : endRaw;
+    const startRaw = cd.contractStart||cd.currentContractStart||'';
+    const startISO = startRaw && /^\d{2}\/\d{2}\/\d{4}$/.test(startRaw) ? startRaw.split('/').reverse().join('-') : startRaw;
+    c = { id:contractId, empId:eid, type, startDate:startISO, endDate:endISO, _fromCustom:true };
+  }
   if(!c){ toast('Không tìm thấy hợp đồng', 'error'); return; }
   const emp = empById(c.empId);
   if(!emp){ toast((_lang==="en"?"No employee found":"Không tìm thấy nhân viên"), 'error'); return; }
@@ -9102,7 +9147,29 @@ ${body}
 
 function editContract(id){
   const isNew = !id;
-  const c = isNew ? {id:uid(), empId:DB.employees[0]?.id||'', type:'term12', startDate:new Date().toISOString().slice(0,10), endDate:'', signedDate:new Date().toISOString().slice(0,10), notes:''} : {...(DB.contracts||[]).find(x=>x.id===id)};
+  let c;
+  if(isNew){
+    c = {id:uid(), empId:DB.employees[0]?.id||'', type:'term12', startDate:new Date().toISOString().slice(0,10), endDate:'', signedDate:new Date().toISOString().slice(0,10), notes:''};
+  } else {
+    c = (DB.contracts||[]).find(x=>x.id===id);
+    // Fallback cho cf_ contracts từ customData
+    if(!c && id.startsWith('cf_')){
+      const eid = id.slice(3);
+      const cd = DB.customData[eid]||{};
+      const ctRaw = (cd.currentContractType||'').toLowerCase();
+      let type = 'term12';
+      if(ctRaw.includes('thử việc') || ctRaw.includes('probation')) type = 'probation';
+      else if(ctRaw.includes('không xác định') || ctRaw.includes('vô thời hạn') || ctRaw.includes('indefinite')) type = 'indefinite';
+      else if(ctRaw.includes('02 năm') || ctRaw.includes('24 tháng')) type = 'term24';
+      else if(ctRaw.includes('01 năm') || ctRaw.includes('12 tháng')) type = 'term12';
+      const endRaw = cd.contractEnd||cd.currentContractEnd||'';
+      const endISO = endRaw && /^\d{2}\/\d{2}\/\d{4}$/.test(endRaw) ? endRaw.split('/').reverse().join('-') : endRaw;
+      const startRaw = cd.contractStart||cd.currentContractStart||'';
+      const startISO = startRaw && /^\d{2}\/\d{2}\/\d{4}$/.test(startRaw) ? startRaw.split('/').reverse().join('-') : startRaw;
+      c = {id:uid(), empId:eid, type, startDate:startISO||new Date().toISOString().slice(0,10), endDate:endISO, signedDate:'', notes:''};
+    }
+    if(c) c = {...c};
+  }
   if(!c) return;
   openModal(`
     <div class="modal-head">
@@ -19581,11 +19648,6 @@ function confirmAddSalaryYear(){
 }
 
 function renderSalaryAnalysis(main){
-  // Hủy chart.js instances BÊN TRONG main content (không destroy charts ở trang khác)
-  if(typeof Chart !== 'undefined'){
-    const canvases = main.querySelectorAll('canvas');
-    canvases.forEach(c => { try { const ch = Chart.getChart(c); if(ch) ch.destroy(); } catch(e){} });
-  }
   if(!window.canDo('salary') && !window.isAdmin()){
     main.innerHTML='<div class="topbar"><div class="topbar-left"><h1 class="page-title">🔒 Không có quyền</h1><div class="page-sub">Bạn không được cấp quyền truy cập module Phân tích Lương</div></div></div>';
     return;
