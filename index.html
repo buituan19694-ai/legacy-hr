@@ -5568,12 +5568,12 @@ function editEmployee(id, prefill = null){
           <div class="field" style="margin:0">
             <label>💰 ${_lang==="en"?"Base salary":"Lương cơ bản"} (VNĐ)</label>
             <input type="number" id="cf_baseSalary" value="${base}" min="0" step="500000"
-              oninput="(function(){ var b=parseInt(document.getElementById('cf_baseSalary').value)||0; var x=parseInt(document.getElementById('cf_bonusSalary').value)||0; document.getElementById('cf_totalSalary').value=(b+x).toLocaleString('vi-VN'); })()">
+              oninput="(function(){ var b=parseInt(document.getElementById('cf_baseSalary').value.replace(/\./g,'')||'0')||0; var x=parseInt(document.getElementById('cf_bonusSalary').value.replace(/\./g,'')||'0')||0; document.getElementById('cf_totalSalary').value=(b+x).toLocaleString('vi-VN'); })()">
           </div>
           <div class="field" style="margin:0">
             <label>🎯 Khoản bổ sung theo KQCV (VNĐ)</label>
             <input type="number" id="cf_bonusSalary" value="${bonus}" min="0" step="500000"
-              oninput="(function(){ var b=parseInt(document.getElementById('cf_baseSalary').value)||0; var x=parseInt(document.getElementById('cf_bonusSalary').value)||0; document.getElementById('cf_totalSalary').value=(b+x).toLocaleString('vi-VN'); })()">
+              oninput="(function(){ var b=parseInt(document.getElementById('cf_baseSalary').value.replace(/\./g,'')||'0')||0; var x=parseInt(document.getElementById('cf_bonusSalary').value.replace(/\./g,'')||'0')||0; document.getElementById('cf_totalSalary').value=(b+x).toLocaleString('vi-VN'); })()">
           </div>
           <div class="field" style="margin:0">
             <label>📊 ${_lang==="en"?"Total salary":"Tổng lương"} (tự động)</label>
@@ -14522,12 +14522,12 @@ function editJob(id){
           <div class="field" style="margin:0">
             <label>💰 ${_lang==="en"?"Base salary":"Lương cơ bản"} (VNĐ)</label>
             <input type="number" id="f_baseSalary" value="${j.baseSalary||j.salary||0}" min="0" step="500000"
-              oninput="(function(){ var b=parseInt(document.getElementById('f_baseSalary').value)||0; var x=parseInt(document.getElementById('f_bonusSalary').value)||0; document.getElementById('f_totalSalary').value=(b+x).toLocaleString('vi-VN'); })()">
+              oninput="(function(){ var b=parseInt(document.getElementById('f_baseSalary').value.replace(/\./g,'')||'0')||0; var x=parseInt(document.getElementById('f_bonusSalary').value.replace(/\./g,'')||'0')||0; document.getElementById('f_totalSalary').value=(b+x).toLocaleString('vi-VN'); })()">
           </div>
           <div class="field" style="margin:0">
             <label>🎯 Khoản bổ sung theo KQCV (VNĐ)</label>
             <input type="number" id="f_bonusSalary" value="${j.bonusSalary||0}" min="0" step="500000"
-              oninput="(function(){ var b=parseInt(document.getElementById('f_baseSalary').value)||0; var x=parseInt(document.getElementById('f_bonusSalary').value)||0; document.getElementById('f_totalSalary').value=(b+x).toLocaleString('vi-VN'); })()">
+              oninput="(function(){ var b=parseInt(document.getElementById('f_baseSalary').value.replace(/\./g,'')||'0')||0; var x=parseInt(document.getElementById('f_bonusSalary').value.replace(/\./g,'')||'0')||0; document.getElementById('f_totalSalary').value=(b+x).toLocaleString('vi-VN'); })()">
           </div>
           <div class="field" style="margin:0">
             <label>📊 ${_lang==="en"?"Total salary":"Tổng lương"} (tự động)</label>
@@ -16115,12 +16115,12 @@ function renderPerformance(main){
         </div>
         <div style="display:flex;align-items:flex-end;gap:6px;height:140px;padding:0 4px">
           ${byMonth.map((cnt,i)=>{
-            const pct = Math.round(cnt/maxM*100);
+            const barH = Math.round(cnt/maxM*100); // px out of 100px max bar area
             const isCur = chartYr===new Date().getFullYear() && i===new Date().getMonth();
             return `<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px">
-              <div style="font-size:11px;font-weight:700;color:${cnt?'var(--accent)':'transparent'}">${cnt||''}</div>
-              <div style="width:100%;flex:1;display:flex;align-items:flex-end">
-                <div style="width:100%;height:${Math.max(pct,cnt?4:0)}%;background:${isCur?'var(--success)':cnt?'var(--accent)':'var(--border)'};border-radius:4px 4px 0 0;transition:height .3s;min-height:${cnt?4:0}px"></div>
+              <div style="font-size:11px;font-weight:700;color:${cnt?'var(--accent)':'transparent'};min-height:16px;line-height:16px">${cnt||''}</div>
+              <div style="width:100%;height:100px;display:flex;align-items:flex-end">
+                <div style="width:100%;height:${Math.max(barH,cnt?4:0)}px;background:${isCur?'var(--success)':cnt?'var(--accent)':'var(--border)'};border-radius:4px 4px 0 0;transition:height .3s"></div>
               </div>
               <div style="font-size:10px;color:${isCur?'var(--success)':'var(--ink-muted)'};font-weight:${isCur?700:400}">${MN_SHORT[i]}</div>
             </div>`;
@@ -19940,7 +19940,9 @@ function renderSvcInline(svcYr, curYear, curMonth){
   window.saveSvcCell = function(yr,m,val){
     if(!DB.svcData) DB.svcData={};
     if(!DB.svcData[yr]) DB.svcData[yr]=Array(12).fill(0);
-    DB.svcData[yr][m] = parseFloat(String(val).replace(/[^0-9.]/g,''))||0;
+    // Xử lý format số kiểu VN: "2.263.485" → 2263485
+    const cleaned = String(val).replace(/\./g,'').replace(/[^0-9]/g,'');
+    DB.svcData[yr][m] = parseInt(cleaned)||0;
     saveData(['svcData']);
     // Update chart
     const el = document.getElementById('chartSvcInline_'+yr);
@@ -19976,6 +19978,8 @@ function renderSvcInline(svcYr, curYear, curMonth){
       backgroundColor:MNs.map((_,i)=>i===svcMaxIdx?'rgba(212,165,116,.95)':'rgba(212,165,116,.5)'),
       borderColor:'rgba(212,165,116,.8)',borderWidth:1.5,borderRadius:5
     }]},options:{responsive:true,maintainAspectRatio:false,
+      animation:{duration:400},
+      resizeDelay:100,
       plugins:{legend:{display:false},tooltip:{callbacks:{label:ctx=>fmtN(ctx.raw)+' đ'}}},
       scales:{x:{grid:{display:false}},y:{beginAtZero:true,
         grid:{color:'rgba(255,255,255,.04)'},
@@ -20030,7 +20034,7 @@ function renderSvcInline(svcYr, curYear, curMonth){
     <div style="display:grid;grid-template-columns:3fr 2fr;gap:14px;padding:0 16px 16px">
       <div>
         <div style="font-size:10.5px;color:var(--ink-muted);font-weight:600;text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Biểu đồ SVC</div>
-        <div style="height:190px"><canvas id="${cid}"></canvas></div>
+        <div style="height:190px;position:relative;overflow:hidden"><canvas id="${cid}"></canvas></div>
       </div>
       <div>
         <div style="font-size:10.5px;color:var(--ink-muted);font-weight:600;text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Nhập số liệu</div>
@@ -20060,7 +20064,7 @@ function renderBonusInline(yr, curYear, curMonth){
   window.saveBonusCell = function(y,m,val){
     if(!DB.bonusData) DB.bonusData={};
     if(!DB.bonusData[y]) DB.bonusData[y]=Array(12).fill(0);
-    DB.bonusData[y][m] = parseFloat(String(val).replace(/[^0-9.]/g,''))||0;
+    DB.bonusData[y][m] = parseInt(String(val).replace(/\./g,'').replace(/[^0-9]/g,''))||0;
     saveData(['bonusData']);
     const el = document.getElementById(cid);
     if(el && el._chart){ el._chart.data.datasets[0].data[m]=DB.bonusData[y][m]; el._chart.update(); }
@@ -20097,10 +20101,12 @@ function renderBonusInline(yr, curYear, curMonth){
       backgroundColor:MNs.map((_,i)=>i===mxI?'rgba(126,198,153,.95)':'rgba(126,198,153,.45)'),
       borderColor:'rgba(126,198,153,.8)',borderWidth:1.5,borderRadius:5
     }]},options:{responsive:true,maintainAspectRatio:false,
+      animation:{duration:400},
+      resizeDelay:100,
       plugins:{legend:{display:false},tooltip:{callbacks:{label:ctx=>fmtN(ctx.raw)+' đ'}}},
       scales:{x:{grid:{display:false}},y:{beginAtZero:true,
         grid:{color:'rgba(255,255,255,.04)'},
-        ticks:{callback:v=>v>=1e6?(v/1e6).toFixed(0)+'M':fmtN(v)}}}}});
+        ticks:{callback:v=>v>=1e6?(v/1e6).toFixed(0)+'M':fmtN(v)}}}}}); 
     el._chart=ch;
   },60);
 
@@ -20159,7 +20165,7 @@ function renderBonusInline(yr, curYear, curMonth){
     <div style="display:grid;grid-template-columns:3fr 2fr;gap:14px;padding:0 16px 16px">
       <div>
         <div style="font-size:10.5px;color:var(--ink-muted);font-weight:600;text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Biểu đồ</div>
-        <div style="height:190px"><canvas id="${cid}"></canvas></div>
+        <div style="height:190px;position:relative;overflow:hidden"><canvas id="${cid}"></canvas></div>
       </div>
       <div>
         <div style="font-size:10.5px;color:var(--ink-muted);font-weight:600;text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Nhập số liệu</div>
@@ -20207,7 +20213,7 @@ function renderSvcTab(){
   window.saveSvcCell = function(yr, m, val){
     if(!DB.svcData) DB.svcData = {};
     if(!DB.svcData[yr]) DB.svcData[yr] = Array(12).fill(0);
-    DB.svcData[yr][m] = parseFloat(val.replace(/[^0-9.]/g,''))||0;
+    DB.svcData[yr][m] = parseInt(val.replace(/\./g,'').replace(/[^0-9]/g,''))||0;
     saveData(['svcData']);
   };
 
@@ -22223,8 +22229,8 @@ window.processTraineeImport = function(input){
           cccdPlace:    C.cccdPlace>=0 ? String(r[C.cccdPlace]||'').trim() : '',
           bank:         String(r[C.bank]||'').trim(),
           bankName:     String(r[C.bankName]||'').trim(),
-          salary:       C.salary>=0 ? (parseFloat(String(r[C.salary]||'').replace(/[^0-9.]/g,''))||0) : 0,
-          workDays:     C.workDays>=0 ? (parseFloat(String(r[C.workDays]||'').replace(/[^0-9.]/g,''))||0) : 0,
+          salary:       C.salary>=0 ? (parseInt(String(r[C.salary]||'').replace(/\./g,'').replace(/[^0-9]/g,''))||0) : 0,
+          workDays:     C.workDays>=0 ? (parseFloat(String(r[C.workDays]||'').replace(/,/g,'.'))||0) : 0,
           notes:        String(r[C.notes]||'').trim(),
         };
         imported.push(traineeObj);
