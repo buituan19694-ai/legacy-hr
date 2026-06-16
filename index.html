@@ -11403,9 +11403,12 @@ function deleteLeave(id, fromModal=false){
    RECRUITMENT — CRUD
    ========================================================= */
 function getJobHired(jobId){
-  // Source of truth duy nhất: đếm candidates có status='hired' cho jobId này
-  // j.hired (counter cũ) bị lỗi vì không giảm khi candidate bị xóa/đổi status
-  return (DB.candidates||[]).filter(a => a.jobId === jobId && a.status === 'hired').length;
+  // Source of truth: đếm candidates có status='hired'
+  const fromCandidates = (DB.candidates||[]).filter(a => a.jobId === jobId && a.status === 'hired').length;
+  if(fromCandidates > 0) return fromCandidates;
+  // Fallback: nếu candidates chưa sync đúng, dùng j.hired
+  const job = (DB.jobs||[]).find(j=>j.id===jobId);
+  return Math.max(fromCandidates, parseInt(job?.hired)||0);
 }
 
 /* ---------- View + period state ---------- */
@@ -13970,8 +13973,9 @@ function acceptOffer(id){
   a.hiredDate = new Date().toISOString().slice(0,10);
   const j = DB.jobs ? DB.jobs.find(j=>j.id===a.jobId) : null;
   if(j){
-    // j.hired bỏ - dùng candidate count làm source of truth
-    const hiredCount = (DB.candidates||[]).filter(c=>c.jobId===j.id&&c.status==='hired').length + 1; // +1 vì a chưa save
+    // Update j.hired counter (dùng làm fallback khi candidates chưa sync)
+    j.hired = (DB.candidates||[]).filter(c=>c.jobId===j.id&&c.status==='hired').length; // đã include a vì đã set trên
+    const hiredCount = j.hired;
     if(hiredCount >= j.positions){
       if(confirm('Đã tuyển đủ ' + j.positions + ' người cho "' + j.title + '". Đánh dấu vị trí "Đã đủ"?')){
         j.status = 'filled';
@@ -13979,8 +13983,10 @@ function acceptOffer(id){
       }
     }
   }
-  saveData(['jobs']); // jobs not sharded — OK
-  saveData(['candidates']); // candidates shard theo jobId — đúng format
+  // Block snapshot 10s để tránh bị overwrite ngay sau save
+  window._selfSaveAt = Date.now();
+  saveData(['jobs']);
+  saveData(['candidates']);
   toast('✓ ' + a.name + ' đã chính thức nhận việc!');
   render();
   setTimeout(()=>{
@@ -22467,9 +22473,10 @@ fbAuth.onAuthStateChanged(async user => {
             }
 
             // ── Cleanup cand_YEAR shards (bug từ _saveSharded) ──────────────────
-            // Xóa các doc cand_2020..2030 và re-save candidates đúng format (theo jobId)
-            if(!DB._cleanedCandYearShards && window.fbDb){
-              DB._cleanedCandYearShards = true;
+            // Xóa các doc cand_2020..2030 mỗi lần login (không dùng flag vì flag có thể bị set sai)
+            if(window.fbDb){
+              console.log('[DEBUG] candidates loaded:', (DB.candidates||[]).length,
+                'hired:', (DB.candidates||[]).filter(c=>c.status==='hired').length);
               const curYr = new Date().getFullYear();
               const deletePromises = [];
               for(let y = 2020; y <= curYr + 1; y++){
@@ -22739,7 +22746,7 @@ fbAuth.onAuthStateChanged(async user => {
               const cloudSyncBy = d._syncBy||'';
               const cloudSyncAt = d._syncAt||0;
               const isSelf = cloudSyncBy === window.currentUser.uid;
-              const isRecent = (Date.now()-cloudSyncAt) < 5000;
+              const isRecent = (Date.now()-cloudSyncAt) < 15000; // 15s để chắc chắn
               if(isSelf && isRecent) return; // chính mình vừa save
               if(change.type === 'removed') return;
               if(d[key] && Array.isArray(d[key])){
