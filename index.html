@@ -1015,7 +1015,7 @@ const FS_DOC_MAP = {
                'dashboardConfig','brandConfig',
                'disciplineSeverityConfig','requiredFieldsConfig',
                'contractTemplates','quickFilterPrefs','recReportConfig','perfReportConfig',
-               '_rewardTypesV2','_levelReset2026','_removedProbationStatus','_normalizedDates2026'],
+               '_rewardTypesV2','_levelReset2026','_removedProbationStatus','_normalizedDates2026','_cleanedCandYearShards'],
 };
 // manningPlan + manningActual được shard theo năm qua _pushDynamicKey → KHÔNG để trong FS_DOC_MAP
 const FS_DYNAMIC_KEYS = ['leaves','kpiReviews','rewardRecords','casuals','candidates',
@@ -1945,6 +1945,35 @@ function updateBadges(){
    ========================================================= */
 window._renderCache = {};
 window._renderDebounceTimer = null;
+
+// ── Trainee date range helpers ───────────────────────
+window._parseTraineeDate = function(raw){
+  var v = (raw||'').trim();
+  if(!v) return '';
+  // dd/mm/yyyy hoặc dd-mm-yyyy
+  var m1 = v.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+  if(m1) return m1[3]+'-'+m1[2].padStart(2,'0')+'-'+m1[1].padStart(2,'0');
+  // yyyy-mm-dd
+  var m2 = v.match(/^(\d{4})[\/\-](\d{2})[\/\-](\d{2})$/);
+  if(m2) return m2[1]+'-'+m2[2]+'-'+m2[3];
+  return '';
+};
+window._applyTraineeFrom = function(raw){
+  var iso = window._parseTraineeDate(raw);
+  if(!iso) return;
+  var d = new Date(iso); if(isNaN(d.getTime())) return;
+  if(window._traineeRangeTo && iso > window._traineeRangeTo) window._traineeRangeTo = iso;
+  window._traineeRangeFrom = iso;
+  render();
+};
+window._applyTraineeTo = function(raw){
+  var iso = window._parseTraineeDate(raw);
+  if(!iso) return;
+  var d = new Date(iso); if(isNaN(d.getTime())) return;
+  if(window._traineeRangeFrom && iso < window._traineeRangeFrom) window._traineeRangeFrom = iso;
+  window._traineeRangeTo = iso;
+  render();
+};
 
 function render(){
   if(window._renderDebounceTimer) clearTimeout(window._renderDebounceTimer);
@@ -21367,35 +21396,14 @@ function renderTraineeSchedule(main){
             <input type="text" value="${fromStr.split('-').reverse().join('/')}" id="tr_range_from"
               placeholder="dd/mm/yyyy"
               style="background:var(--bg-elev);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--ink);font-size:12px;font-family:'JetBrains Mono',monospace;width:110px"
-              onkeydown="if(event.key==='Enter'){(function(raw){
-                var v=raw.trim();
-                // Chấp nhận dd/mm/yyyy hoặc yyyy-mm-dd
-                var iso='';
-                var m1=v.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
-                var m2=v.match(/^(\d{4})[\/\-](\d{2})[\/\-](\d{2})$/);
-                if(m1) iso=m1[3]+'-'+m1[2].padStart(2,'0')+'-'+m1[1].padStart(2,'0');
-                else if(m2) iso=v.replace(/\//g,'-');
-                if(!iso||isNaN(new Date(iso))) return;
-                if(window._traineeRangeTo&&iso>window._traineeRangeTo) window._traineeRangeTo=iso;
-                window._traineeRangeFrom=iso;
-                render();
-              })(this.value)}">
+              onkeydown="if(event.key==='Enter'){event.preventDefault();window._applyTraineeFrom(this.value);}"
+              onblur="window._applyTraineeFrom(this.value);">
             <span style="font-size:12px;color:var(--ink-muted)">→</span>
             <input type="text" value="${toStr.split('-').reverse().join('/')}" id="tr_range_to"
               placeholder="dd/mm/yyyy"
               style="background:var(--bg-elev);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--ink);font-size:12px;font-family:'JetBrains Mono',monospace;width:110px"
-              onkeydown="if(event.key==='Enter'){(function(raw){
-                var v=raw.trim();
-                var iso='';
-                var m1=v.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
-                var m2=v.match(/^(\d{4})[\/\-](\d{2})[\/\-](\d{2})$/);
-                if(m1) iso=m1[3]+'-'+m1[2].padStart(2,'0')+'-'+m1[1].padStart(2,'0');
-                else if(m2) iso=v.replace(/\//g,'-');
-                if(!iso||isNaN(new Date(iso))) return;
-                if(window._traineeRangeFrom&&iso<window._traineeRangeFrom) window._traineeRangeFrom=iso;
-                window._traineeRangeTo=iso;
-                render();
-              })(this.value)}">
+              onkeydown="if(event.key==='Enter'){event.preventDefault();window._applyTraineeTo(this.value);}"
+              onblur="window._applyTraineeTo(this.value);">
             <button onclick="window._traineeRangeFrom='${todayStr}';window._traineeRangeTo='${todayStr}';render()"
               style="padding:5px 10px;border-radius:6px;border:1px solid var(--border);background:${fromStr===todayStr&&toStr===todayStr?'var(--accent)':'var(--bg-elev)'};color:${fromStr===todayStr&&toStr===todayStr?'#1a1a1a':'var(--ink-muted)'};font-size:11px;cursor:pointer;font-family:inherit;font-weight:600">
               Hôm nay
@@ -22455,7 +22463,31 @@ fbAuth.onAuthStateChanged(async user => {
               DB._removedProbationStatus = true;
               saveData(['employees','_removedProbationStatus']);
             }
-          }
+
+            // ── Cleanup cand_YEAR shards (bug từ _saveSharded) ──────────────────
+            // Xóa các doc cand_2020..2030 và re-save candidates đúng format (theo jobId)
+            if(!DB._cleanedCandYearShards && window.fbDb){
+              DB._cleanedCandYearShards = true;
+              const curYr = new Date().getFullYear();
+              const deletePromises = [];
+              for(let y = 2020; y <= curYr + 1; y++){
+                deletePromises.push(
+                  window.fbDb.collection('hrdata').doc(`cand_${y}`)
+                    .delete()
+                    .then(()=>console.log(`[cleanup] ✅ Deleted cand_${y}`))
+                    .catch(()=>{}) // doc không tồn tại thì ignore
+                );
+              }
+              Promise.all(deletePromises).then(()=>{
+                // Re-save candidates đúng format theo jobId
+                if((DB.candidates||[]).length > 0){
+                  saveData(['candidates']);
+                  console.log('[cleanup] ✅ Re-saved candidates by jobId format');
+                }
+                saveData(['_cleanedCandYearShards']);
+              });
+            }
+          } // end if(hasCloud)
         }catch(cloudErr){ console.warn('Cloud load warn:',cloudErr.message); }
         document.getElementById('authScreen').style.display = 'none';
         document.getElementById('app').style.display = '';
