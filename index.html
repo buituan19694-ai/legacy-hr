@@ -15630,7 +15630,23 @@ function renderPerformance(main){
     return;
   }
   // Dọn duplicate records (do bug shard sai năm trước đây)
-  if(dedupeKpiReviews()) _saveSharded('kpiReviews');
+  if(dedupeKpiReviews()){
+    // Ghi lại TẤT CẢ shards (kể cả rỗng) để xóa orphan records trên Firestore
+    if(window.fbDb && window.currentUser){
+      const meta={_syncBy:window.currentUser.uid,_syncAt:Date.now()};
+      const byY={};
+      (DB.kpiReviews||[]).forEach(r=>{ const y=_recYear(r); (byY[y]=byY[y]||[]).push(r); });
+      const curY=new Date().getFullYear();
+      for(let y=2020;y<=curY+1;y++){ if(!byY[y]) byY[y]=[]; }
+      Object.entries(byY).forEach(([yr,recs])=>
+        window.fbDb.collection('hrdata').doc(`kpi_${yr}`)
+          .set({...meta,kpiReviews:recs.map(r=>_sanitizeForFirebase(r)),_shard:parseInt(yr)},{merge:false})
+          .catch(e=>console.warn('[dedup] kpi_'+yr,e.message))
+      );
+    } else {
+      _saveSharded('kpiReviews');
+    }
+  }
   if(!window._perfView) window._perfView = sessionStorage.getItem('_perfView')||'list';
   if(window._perfView === 'reports') return renderPerformanceReports(main);
   if(window._perfView === 'history') return renderPerformanceHistory(main);
@@ -15743,6 +15759,46 @@ function renderPerformance(main){
         </div>`;
     })()}
 
+    ${(()=>{
+      if(!allPromotions.length) return '';
+      // Biểu đồ theo tháng — năm được chọn
+      if(!window._promoChartYear) window._promoChartYear = new Date().getFullYear();
+      const chartYr = window._promoChartYear;
+      const allYearsPromo = [...new Set(allPromotions.map(p=>p.date?new Date(p.date).getFullYear():null).filter(Boolean))].sort((a,b)=>b-a);
+      const MN_SHORT = ['T1','T2','T3','T4','T5','T6','T7','T8','T9','T10','T11','T12'];
+      const byMonth = Array(12).fill(0);
+      allPromotions.forEach(p=>{
+        if(!p.date) return;
+        const d = new Date(p.date);
+        if(d.getFullYear()===chartYr) byMonth[d.getMonth()]++;
+      });
+      const maxM = Math.max(...byMonth, 1);
+      return `
+      <div class="card" style="margin-top:16px">
+        <div class="card-head">
+          <div>
+            <div class="card-title">📅 Thăng chức <em>theo tháng</em></div>
+            <div class="card-sub">Phân bố đề xuất trong năm ${chartYr}</div>
+          </div>
+          <select class="filter-select" style="font-size:12px" onchange="window._promoChartYear=parseInt(this.value);render()">
+            ${allYearsPromo.map(y=>`<option value="${y}" ${y===chartYr?'selected':''}>${y}</option>`).join('')}
+          </select>
+        </div>
+        <div style="display:flex;align-items:flex-end;gap:6px;height:140px;padding:0 4px">
+          ${byMonth.map((cnt,i)=>{
+            const pct = Math.round(cnt/maxM*100);
+            const isCur = chartYr===new Date().getFullYear() && i===new Date().getMonth();
+            return `<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px">
+              <div style="font-size:11px;font-weight:700;color:${cnt?'var(--accent)':'transparent'}">${cnt||''}</div>
+              <div style="width:100%;flex:1;display:flex;align-items:flex-end">
+                <div style="width:100%;height:${Math.max(pct,cnt?4:0)}%;background:${isCur?'var(--success)':cnt?'var(--accent)':'var(--border)'};border-radius:4px 4px 0 0;transition:height .3s;min-height:${cnt?4:0}px"></div>
+              </div>
+              <div style="font-size:10px;color:${isCur?'var(--success)':'var(--ink-muted)'};font-weight:${isCur?700:400}">${MN_SHORT[i]}</div>
+            </div>`;
+          }).join('')}
+        </div>
+      </div>`;
+    })()}
 
     <!-- PROMOTE SECTION -->
     <div class="card" style="margin-top:16px">
@@ -16174,13 +16230,15 @@ function deleteReview(id, fromModal=false){
     DB.kpiReviews = (DB.kpiReviews||[]).filter(x=>x.id!==id);
     if(empId){ syncEmployeeKPI(empId); saveEmpProfile(empId); }
     render();
-    // Direct Firestore write all shards
+    // Direct Firestore write ALL known kpi shards (không chỉ shards có data hiện tại)
+    // để đảm bảo xóa sạch kể cả record bị lưu nhầm shard
     if(window.fbDb){
       const meta4 = {_syncBy:window.currentUser?.uid||'',_syncAt:Date.now()};
       const byYear4 = {};
       (DB.kpiReviews||[]).forEach(r=>{ const y=_recYear(r); (byYear4[y]=byYear4[y]||[]).push(r); });
+      // Đảm bảo tất cả năm từ 2020-năm hiện tại đều được ghi lại (xóa sạch orphan shards)
       const curYr4 = new Date().getFullYear();
-      if(!byYear4[curYr4]) byYear4[curYr4]=[];
+      for(let y=2020; y<=curYr4+1; y++){ if(!byYear4[y]) byYear4[y]=[]; }
       const writes4 = Object.entries(byYear4).map(([yr,records])=>
         window.fbDb.collection('hrdata').doc(`kpi_${yr}`)
           .set({...meta4, kpiReviews:records.map(r=>_sanitizeForFirebase(r)), _shard:parseInt(yr)}, {merge:false})
@@ -21122,54 +21180,164 @@ function renderTraineeSchedule(main){
     ${tabsHTML}
 
     ${(()=>{
-      // Panel "Hôm nay" — dùng cùng logic với KPI "Đang thực tập"
-      // status='active' → luôn đang TTS; status='exit'/'early_exit' → đã nghỉ; không có status → dựa vào ngày
-      const actualToday = (DB.trainees||[]).filter(tr=>{
-        if(tr.status==='active') return true;
-        if(tr.status==='exit'||tr.status==='early_exit') return false;
-        // Không có status → dùng ngày
-        const s = tr.startDate||'';
-        const e = tr.endDate||'';
-        return s && s <= todayStr && (!e || e >= todayStr);
-      });
-      const qty = actualToday.reduce((s,tr)=>s+(parseInt(tr.qty)||1),0);
-
-      // Breakdown theo bộ phận
-      const byDept = {};
-      actualToday.forEach(tr=>{
-        const deptId = tr.deptId||'';
-        const dName  = (DB.departments||[]).find(d=>d.id===deptId)?.name || (deptId?deptId:'Chưa phân bổ');
-        if(!byDept[dName]) byDept[dName]=0;
-        byDept[dName] += parseInt(tr.qty)||1;
-      });
-      const deptEntries = Object.entries(byDept).sort((a,b)=>b[1]-a[1]);
-
       const CHIP_COLORS = ['#185FA5','#0F6E56','#854F0B','#993556','#534AB7','#A32D2D','#1D9E75','#3B6D11','#5C6BC0','#00838F'];
 
-      return `<div style="background:var(--bg-card);border:1px solid var(--border);border-radius:12px;padding:16px 20px;margin-bottom:14px;display:flex;align-items:center;gap:20px;flex-wrap:wrap">
-        <!-- KPI số lớn -->
-        <div style="display:flex;align-items:center;gap:14px;flex-shrink:0">
-          <div style="background:rgba(126,198,153,.12);border:1.5px solid rgba(126,198,153,.3);border-radius:10px;padding:10px 18px;text-align:center;min-width:80px">
-            <div style="font-size:30px;font-weight:800;color:var(--success);font-family:'Fraunces',serif;line-height:1">${qty}</div>
-            <div style="font-size:10px;color:var(--ink-muted);text-transform:uppercase;letter-spacing:.07em;margin-top:3px">SV hôm nay</div>
+      // State: ngày xem (mặc định hôm nay)
+      if(!window._traineeRangeFrom) window._traineeRangeFrom = todayStr;
+      if(!window._traineeRangeTo)   window._traineeRangeTo   = todayStr;
+      if(!window._traineeRangeMode) window._traineeRangeMode = 'day'; // 'day' | 'range'
+
+      const fromStr = window._traineeRangeFrom;
+      const toStr   = window._traineeRangeTo;
+      const isRange = window._traineeRangeMode === 'range' || fromStr !== toStr;
+
+      // Hàm đếm SV active cho 1 ngày cụ thể
+      const countForDay = (dayStr) => {
+        const trainees = DB.trainees||[];
+        const byDept = {};
+        let total = 0;
+        trainees.forEach(tr=>{
+          if(tr.status==='exit'||tr.status==='early_exit') return;
+          const s = tr.startDate||'';
+          const e = tr.endDate||'';
+          const active = tr.status==='active' ? true : (s && s<=dayStr && (!e||e>=dayStr));
+          if(!active) return;
+          const q = parseInt(tr.qty)||1;
+          total += q;
+          const dn = (DB.departments||[]).find(d=>d.id===tr.deptId)?.name||'Khác';
+          byDept[dn] = (byDept[dn]||0)+q;
+        });
+        return {total, byDept};
+      };
+
+      // Data cho ngày/khoảng được chọn
+      const fromDate = new Date(fromStr);
+      const toDate   = new Date(toStr > fromStr ? toStr : fromStr);
+
+      // Tạo array các ngày trong range
+      const days = [];
+      const cur = new Date(fromDate);
+      while(cur <= toDate && days.length < 90) { // max 90 ngày
+        days.push(cur.toISOString().slice(0,10));
+        cur.setDate(cur.getDate()+1);
+      }
+
+      // Lấy tất cả dept có SV trong range
+      const allDeptNames = new Set();
+      days.forEach(d=>Object.keys(countForDay(d).byDept).forEach(k=>allDeptNames.add(k)));
+      const deptList = [...allDeptNames].sort();
+
+      // Dữ liệu cho ngày hiển thị chính (from date nếu single, toStr nếu range xem cuối)
+      const mainDay = isRange ? toStr : fromStr;
+      const mainData = countForDay(mainDay);
+      const mainDeptEntries = Object.entries(mainData.byDept).sort((a,b)=>b[1]-a[1]);
+
+      // Tính max cho chart
+      const dayTotals = days.map(d=>countForDay(d).total);
+      const maxTotal = Math.max(...dayTotals, 1);
+
+      const showChart = days.length > 1;
+
+      return `
+      <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:12px;padding:16px 20px;margin-bottom:14px">
+
+        <!-- Row 1: KPI + date picker -->
+        <div style="display:flex;align-items:center;gap:20px;flex-wrap:wrap;margin-bottom:${showChart?'16px':'0'}">
+          <!-- KPI -->
+          <div style="display:flex;align-items:center;gap:14px;flex-shrink:0">
+            <div style="background:rgba(126,198,153,.12);border:1.5px solid rgba(126,198,153,.3);border-radius:10px;padding:10px 18px;text-align:center;min-width:80px">
+              <div style="font-size:30px;font-weight:800;color:var(--success);font-family:'Fraunces',serif;line-height:1">${mainData.total}</div>
+              <div style="font-size:10px;color:var(--ink-muted);text-transform:uppercase;letter-spacing:.07em;margin-top:3px">SV ${isRange?'('+new Date(mainDay).toLocaleDateString('vi-VN',{day:'2-digit',month:'2-digit'})+')':'hôm nay'}</div>
+            </div>
+            <div style="font-size:11px;color:var(--ink-muted)">
+              <div style="font-weight:600;color:var(--ink);margin-bottom:3px">
+                ${isRange ? `📅 ${new Date(fromStr).toLocaleDateString('vi-VN',{day:'2-digit',month:'2-digit',year:'numeric'})} → ${new Date(toStr).toLocaleDateString('vi-VN',{day:'2-digit',month:'2-digit',year:'numeric'})}` : `📅 ${new Date(fromStr).toLocaleDateString('vi-VN',{weekday:'long',day:'2-digit',month:'2-digit',year:'numeric'})}`}
+              </div>
+              <div>${mainDeptEntries.length} bộ phận · ${mainData.total} sinh viên</div>
+            </div>
           </div>
-          <div style="color:var(--ink-muted);font-size:11px">
-            <div style="font-weight:600;color:var(--ink);margin-bottom:3px">📅 ${today.toLocaleDateString('vi-VN',{weekday:'long',day:'2-digit',month:'2-digit',year:'numeric'})}</div>
-            <div>${deptEntries.length} bộ phận · ${actualToday.length} sinh viên</div>
+
+          <!-- Date picker -->
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+            <input type="date" value="${fromStr}" style="background:var(--bg-elev);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--ink);font-size:12px;font-family:inherit"
+              onchange="window._traineeRangeFrom=this.value;if(window._traineeRangeTo<this.value)window._traineeRangeTo=this.value;render()">
+            <span style="font-size:12px;color:var(--ink-muted)">→</span>
+            <input type="date" value="${toStr}" style="background:var(--bg-elev);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--ink);font-size:12px;font-family:inherit"
+              onchange="window._traineeRangeTo=this.value;if(window._traineeRangeTo<window._traineeRangeFrom)window._traineeRangeFrom=this.value;render()">
+            <button onclick="window._traineeRangeFrom='${todayStr}';window._traineeRangeTo='${todayStr}';render()"
+              style="padding:5px 10px;border-radius:6px;border:1px solid var(--border);background:${fromStr===todayStr&&toStr===todayStr?'var(--accent)':'var(--bg-elev)'};color:${fromStr===todayStr&&toStr===todayStr?'#1a1a1a':'var(--ink-muted)'};font-size:11px;cursor:pointer;font-family:inherit;font-weight:600">
+              Hôm nay
+            </button>
+            ${[7,30].map(n=>{
+              const f=new Date(today); f.setDate(f.getDate()-n+1);
+              const fs=f.toISOString().slice(0,10);
+              const active=fromStr===fs&&toStr===todayStr;
+              return `<button onclick="const f=new Date('${todayStr}');f.setDate(f.getDate()-${n-1});window._traineeRangeFrom=f.toISOString().slice(0,10);window._traineeRangeTo='${todayStr}';render()"
+                style="padding:5px 10px;border-radius:6px;border:1px solid var(--border);background:${active?'var(--accent)':'var(--bg-elev)'};color:${active?'#1a1a1a':'var(--ink-muted)'};font-size:11px;cursor:pointer;font-family:inherit;font-weight:600">
+                ${n} ngày
+              </button>`;
+            }).join('')}
           </div>
+
+          <!-- Chips phân bổ BP -->
+          ${mainDeptEntries.length ? `
+          <div style="display:flex;flex-wrap:wrap;gap:6px;flex:1">
+            ${mainDeptEntries.map(([name,cnt],i)=>`
+              <div style="display:flex;align-items:center;gap:5px;background:${CHIP_COLORS[i%CHIP_COLORS.length]}22;border:1px solid ${CHIP_COLORS[i%CHIP_COLORS.length]}55;border-radius:20px;padding:3px 10px 3px 7px">
+                <span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:${CHIP_COLORS[i%CHIP_COLORS.length]};flex-shrink:0"></span>
+                <span style="font-size:12px;font-weight:600;color:${CHIP_COLORS[i%CHIP_COLORS.length]}">${cnt}</span>
+                <span style="font-size:11px;color:var(--ink)">${escapeHtml(name)}</span>
+              </div>`).join('')}
+          </div>` : ''}
         </div>
-        <!-- Divider -->
-        <div style="width:1px;height:48px;background:var(--border);flex-shrink:0;display:${deptEntries.length?'block':'none'}"></div>
-        <!-- Breakdown chips -->
-        <div style="display:flex;flex-wrap:wrap;gap:7px;flex:1">
-          ${deptEntries.length ? deptEntries.map(([name,cnt],i)=>`
-            <div style="display:flex;align-items:center;gap:6px;background:${CHIP_COLORS[i%CHIP_COLORS.length]}22;border:1px solid ${CHIP_COLORS[i%CHIP_COLORS.length]}55;border-radius:20px;padding:4px 12px 4px 8px">
-              <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${CHIP_COLORS[i%CHIP_COLORS.length]};flex-shrink:0"></span>
-              <span style="font-size:12px;font-weight:600;color:${CHIP_COLORS[i%CHIP_COLORS.length]}">${cnt}</span>
-              <span style="font-size:12px;color:var(--ink)">${escapeHtml(name)}</span>
-            </div>`).join('')
-          : '<span style="font-size:12px;color:var(--ink-muted);font-style:italic">Không có sinh viên thực tập hôm nay</span>'}
-        </div>
+
+        ${showChart ? `
+        <!-- Biểu đồ theo ngày -->
+        <div style="border-top:1px solid var(--border);padding-top:14px">
+          <div style="font-size:12px;font-weight:600;color:var(--ink-muted);margin-bottom:10px;letter-spacing:.05em;text-transform:uppercase">SV theo ngày · ${days.length} ngày</div>
+
+          <!-- Stacked bar chart -->
+          <div style="position:relative">
+            <!-- Y labels -->
+            <div style="display:flex;gap:0;align-items:flex-end;height:120px;padding:0 2px">
+              ${days.map((d,i)=>{
+                const {total, byDept} = countForDay(d);
+                const isToday2 = d===todayStr;
+                const dateLabel = new Date(d).toLocaleDateString('vi-VN',{day:'2-digit',month:'2-digit'});
+                const showLabel = days.length<=14 || i===0 || i===days.length-1 || (days.length<=31&&i%2===0) || (days.length>31&&i%7===0);
+
+                // Build stacked segments
+                const segments = deptList.filter(dn=>byDept[dn]).map((dn,di)=>{
+                  const dIdx = [...allDeptNames].sort().indexOf(dn);
+                  const pct = Math.round((byDept[dn]||0)/maxTotal*100);
+                  return `<div title="${dn}: ${byDept[dn]||0}" style="width:100%;height:${pct}%;background:${CHIP_COLORS[dIdx%CHIP_COLORS.length]};${di===0?'border-radius:3px 3px 0 0':''}"></div>`;
+                }).reverse();
+
+                return `<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:1px;height:100%;position:relative" title="${dateLabel}: ${total} SV">
+                  <div style="font-size:9.5px;font-weight:700;color:${isToday2?'var(--success)':total?'var(--ink-dim)':'transparent'};margin-bottom:2px;line-height:1">${total||''}</div>
+                  <div style="flex:1;width:${days.length>60?'90%':'80%'};display:flex;flex-direction:column;justify-content:flex-end;background:var(--bg-elev);border-radius:3px;overflow:hidden;border:${isToday2?'1.5px solid var(--success)':'1px solid transparent'}">
+                    ${total ? segments.join('') : ''}
+                  </div>
+                  ${showLabel ? `<div style="font-size:9px;color:${isToday2?'var(--success)':'var(--ink-muted)'};margin-top:3px;white-space:nowrap;font-weight:${isToday2?700:400};transform:${days.length>21?'rotate(-35deg)':'none'};transform-origin:top center">${dateLabel}</div>` : '<div style="height:14px"></div>'}
+                </div>`;
+              }).join('')}
+            </div>
+
+            <!-- Legend -->
+            ${deptList.length ? `
+            <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:${days.length>21?'20px':'10px'}">
+              ${deptList.map((dn,i)=>{
+                const dIdx = [...allDeptNames].sort().indexOf(dn);
+                const total = days.reduce((s,d)=>{const c=countForDay(d); return s+(c.byDept[dn]||0);},0);
+                return `<div style="display:flex;align-items:center;gap:4px;font-size:11px">
+                  <span style="width:8px;height:8px;border-radius:2px;background:${CHIP_COLORS[dIdx%CHIP_COLORS.length]};display:inline-block;flex-shrink:0"></span>
+                  <span style="color:var(--ink-dim)">${escapeHtml(dn)}</span>
+                  <span style="color:var(--ink-muted);font-family:'JetBrains Mono',monospace">(${total})</span>
+                </div>`;
+              }).join('')}
+            </div>` : ''}
+          </div>
+        </div>` : ''}
       </div>`;
     })()}
 
