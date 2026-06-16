@@ -7711,15 +7711,23 @@ function renderContracts(main){
 
   setTimeout(()=>{
     const _ce = $('#chartContract');
+    console.log('[Contract chart] el:', !!_ce, 'typeCount:', typeCount, 'parentWidth:', _ce?.parentElement?.getBoundingClientRect()?.width);
     if(!_ce) return;
-    const rect = _ce.parentElement?.getBoundingClientRect();
-    _ce.width  = Math.max(rect?.width  || 400, 200);
-    _ce.height = 260;
+    if(Object.keys(typeCount).length === 0){
+      console.warn('[Contract chart] No data');
+      return;
+    }
+    const pw = _ce.parentElement?.getBoundingClientRect()?.width || 0;
+    const _w = pw > 100 ? pw : 400;
+    const _dpr = window.devicePixelRatio || 1;
+    _ce.style.width = _w+'px'; _ce.style.height = '260px';
+    _ce.width  = _w * _dpr;
+    _ce.height = 260 * _dpr;
     if(Chart.getChart(_ce)) Chart.getChart(_ce).destroy();
     new Chart(_ce, {
     type: 'doughnut',
     data: {
-      labels: Object.keys(typeCount).map(k => CONTRACT_TYPE[k]),
+      labels: Object.keys(typeCount).map(k => CONTRACT_TYPE[k] || k),
       datasets: [{
         data: Object.values(typeCount),
         backgroundColor: palette,
@@ -7732,7 +7740,7 @@ function renderContracts(main){
       plugins: { legend: { position: 'right', labels: { usePointStyle: true, padding: 10, boxWidth: 8 } } }
     }
   });
-  }, 50);
+  }, 100);
 
   const el = $('#expiringList');
   const sortedExp = [...expiringIn60].sort((a,b) => new Date(a.endDate) - new Date(b.endDate));
@@ -20003,8 +20011,10 @@ function renderSvcInline(svcYr, curYear, curMonth){
     if(!el) return;
     // Set explicit size để tránh chart bị méo với responsive:false
     const rect = el.parentElement ? el.parentElement.getBoundingClientRect() : {width: 400};
-    el.width = Math.max(rect.width || 400, 200);
-    el.height = 190;
+    const _w = Math.max(rect.width || 400, 200);
+    const _dpr = window.devicePixelRatio || 1;
+    el.style.width = _w + "px"; el.style.height = "190px";
+    el.width = _w * _dpr; el.height = 190 * _dpr;
     if(Chart.getChart(el)) Chart.getChart(el).destroy();
     const datasets = [{
       label:'SVC '+svcYr, data:svcD.map(v=>v||0),
@@ -20078,7 +20088,7 @@ function renderSvcInline(svcYr, curYear, curMonth){
     <div style="display:grid;grid-template-columns:3fr 2fr;gap:14px;padding:0 16px 16px">
       <div>
         <div style="font-size:10.5px;color:var(--ink-muted);font-weight:600;text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Biểu đồ SVC</div>
-        <div style="height:190px;position:relative;overflow:hidden"><canvas style="width:100%;height:190px" id="${cid}"></canvas></div>
+        <div style="height:190px;position:relative;overflow:hidden"><canvas id="${cid}"></canvas></div>
       </div>
       <div>
         <div style="font-size:10.5px;color:var(--ink-muted);font-weight:600;text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Nhập số liệu</div>
@@ -20150,8 +20160,10 @@ function renderBonusInline(yr, curYear, curMonth){
     if(!el) return;
     // Set explicit size để tránh chart bị méo với responsive:false
     const rect = el.parentElement ? el.parentElement.getBoundingClientRect() : {width: 400};
-    el.width = Math.max(rect.width || 400, 200);
-    el.height = 190;
+    const _w = Math.max(rect.width || 400, 200);
+    const _dpr = window.devicePixelRatio || 1;
+    el.style.width = _w + "px"; el.style.height = "190px";
+    el.width = _w * _dpr; el.height = 190 * _dpr;
     if(Chart.getChart(el)) Chart.getChart(el).destroy();
 
     const datasets = [{
@@ -20241,7 +20253,7 @@ function renderBonusInline(yr, curYear, curMonth){
     <div style="display:grid;grid-template-columns:3fr 2fr;gap:14px;padding:0 16px 16px">
       <div>
         <div style="font-size:10.5px;color:var(--ink-muted);font-weight:600;text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Biểu đồ</div>
-        <div style="height:190px;position:relative;overflow:hidden"><canvas style="width:100%;height:190px" id="${cid}"></canvas></div>
+        <div style="height:190px;position:relative;overflow:hidden"><canvas id="${cid}"></canvas></div>
       </div>
       <div>
         <div style="font-size:10.5px;color:var(--ink-muted);font-weight:600;text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Nhập số liệu</div>
@@ -20345,7 +20357,7 @@ function renderSvcTab(){
           <div class="card-title">📊 SVC theo tháng — ${yr}${showCmp?' vs '+cyr:''}</div>
           <div class="card-sub">Nhấp vào ô để chỉnh sửa số liệu trực tiếp</div>
         </div></div>
-        <div class="chart-wrap" style="height:220px"><canvas style="width:100%;height:220px" id="${chartId}"></canvas></div>
+        <div class="chart-wrap" style="height:220px"><canvas id="${chartId}"></canvas></div>
       </div>
 
       <!-- Input table -->
@@ -20395,8 +20407,10 @@ function renderSvcTab(){
     console.log('[SVC chart] chartId:', chartId, 'el:', !!el, 'showCmp:', showCmp, 'cdata:', cdata?.filter(v=>v>0).length, 'cyr:', cyr);
     if(!el) return;
     const rect = el.parentElement ? el.parentElement.getBoundingClientRect() : {width:400};
-    el.width = Math.max(rect.width||400, 200);
-    el.height = 220;
+    const _w = Math.max(rect.width || 400, 200);
+    const _dpr = window.devicePixelRatio || 1;
+    el.style.width = _w + "px"; el.style.height = "220px";
+    el.width = _w * _dpr; el.height = 220 * _dpr;
     const ds = [{
       label:`SVC ${yr}`, data:data.map(v=>v||0),
       backgroundColor:'rgba(212,165,116,.75)', borderColor:'rgba(212,165,116,.9)',
@@ -20740,8 +20754,10 @@ function renderCasual(main){
     if(!el) return;
     // Set explicit size để tránh chart bị méo với responsive:false
     const rect = el.parentElement ? el.parentElement.getBoundingClientRect() : {width: 400};
-    el.width = Math.max(rect.width || 400, 200);
-    el.height = 280;
+    const _w = Math.max(rect.width || 400, 200);
+    const _dpr = window.devicePixelRatio || 1;
+    el.style.width = _w + "px"; el.style.height = "280px";
+    el.width = _w * _dpr; el.height = 280 * _dpr;
     const monthlyData = Array(12).fill(0);
     const monthlyCost = Array(12).fill(0);
     (DB.casuals||[]).filter(r=>r.year===cf.year).forEach(r=>{
@@ -20871,13 +20887,16 @@ function renderCasualAnalysis(){
     const el1=document.getElementById('chartCasualAnal1');
     const el2=document.getElementById('chartCasualAnal2');
     if(!el1||!el2) return;
-    // Set explicit size
+    // Retina-aware sizing
+    const _dpr = window.devicePixelRatio || 1;
     const rect1 = el1.parentElement ? el1.parentElement.getBoundingClientRect() : {width:500};
-    el1.width = Math.max(rect1.width||500, 200);
-    el1.height = 220;
+    const _w1 = Math.max(rect1.width||500, 200);
+    el1.style.width = _w1+'px'; el1.style.height = '220px';
+    el1.width = _w1*_dpr; el1.height = 220*_dpr;
     const rect2 = el2.parentElement ? el2.parentElement.getBoundingClientRect() : {width:300};
-    el2.width = Math.max(rect2.width||300, 200);
-    el2.height = 220;
+    const _w2 = Math.max(rect2.width||300, 200);
+    el2.style.width = _w2+'px'; el2.style.height = '220px';
+    el2.width = _w2*_dpr; el2.height = 220*_dpr;
     Chart.defaults.font.family="'Inter Tight',sans-serif";
     Chart.defaults.color='#8b949e';
     const ds1=[{label:`Chi phí ${yr}`,data:curM.map(x=>x.cost),backgroundColor:'rgba(212,165,116,.7)',borderRadius:4,yAxisID:'y',order:2},{label:`Lượt ${yr}`,type:'line',data:curM.map(x=>x.qty),borderColor:'#7eb6e8',backgroundColor:'rgba(126,182,232,.1)',borderWidth:2,pointRadius:3,yAxisID:'y1',order:1}];
@@ -20918,14 +20937,14 @@ function renderCasualAnalysis(){
           <div class="card-title">📈 Chi phí & Lượt người theo tháng${showCmp?` — ${yr} vs ${cyr}`:` — ${yr}`}</div>
           <div class="card-sub">So sánh chi phí (bar) và lượt người (line)</div>
         </div></div>
-        <div class="chart-wrap" style="height:220px"><canvas style="width:100%;height:220px" id="chartCasualAnal1"></canvas></div>
+        <div class="chart-wrap" style="height:220px"><canvas id="chartCasualAnal1"></canvas></div>
       </div>
       <div class="card">
         <div class="card-head"><div>
           <div class="card-title">🍩 Tỷ trọng theo Phòng ban — ${yr}</div>
           <div class="card-sub">% chi phí casual mỗi phòng ban</div>
         </div></div>
-        <div class="chart-wrap" style="height:220px"><canvas style="width:100%;height:220px" id="chartCasualAnal2"></canvas></div>
+        <div class="chart-wrap" style="height:220px"><canvas id="chartCasualAnal2"></canvas></div>
       </div>
     </div>
 
