@@ -19581,11 +19581,10 @@ function confirmAddSalaryYear(){
 }
 
 function renderSalaryAnalysis(main){
-  // Hủy tất cả Chart.js instances trước khi render lại để tránh resize loop
+  // Hủy chart.js instances BÊN TRONG main content (không destroy charts ở trang khác)
   if(typeof Chart !== 'undefined'){
-    Object.keys(Chart.instances||{}).forEach(key=>{
-      try { Chart.instances[key].destroy(); } catch(e){}
-    });
+    const canvases = main.querySelectorAll('canvas');
+    canvases.forEach(c => { try { const ch = Chart.getChart(c); if(ch) ch.destroy(); } catch(e){} });
   }
   if(!window.canDo('salary') && !window.isAdmin()){
     main.innerHTML='<div class="topbar"><div class="topbar-left"><h1 class="page-title">🔒 Không có quyền</h1><div class="page-sub">Bạn không được cấp quyền truy cập module Phân tích Lương</div></div></div>';
@@ -20422,7 +20421,7 @@ function renderSvcTab(){
                 <td style="text-align:right;padding:3px 6px">
                   <input type="text" value="${v?fmtN(v):''}" placeholder="0"
                     style="width:100%;text-align:right;padding:4px 8px;font-family:'JetBrains Mono',monospace;font-size:12px;background:var(--bg-elev);border:1px solid var(--border);border-radius:4px;color:${v?'var(--accent)':'var(--ink-muted)'};font-weight:${v?'600':'400'}"
-                    onchange="saveSvcCell(${yr},${i},this.value);this.style.color='var(--accent)';this.style.fontWeight='600';render()"
+                    onchange="saveSvcCell(${yr},${i},this.value);this.style.color='var(--accent)';this.style.fontWeight='600'"
                     onfocus="this.select()">
                 </td>
                 ${showCmp?`<td style="text-align:right;font-family:'JetBrains Mono',monospace;padding:5px 8px;color:var(--ink-muted)">${cv?fmtN(cv):'—'}</td>`:''}
@@ -23329,6 +23328,12 @@ fbAuth.onAuthStateChanged(async user => {
                 if(!window._pendingRender) window._pendingRender={};
                 ['employees','employee-profile','dashboard','salary','performance'].forEach(p=>{window._pendingRender[p]=true;});
               } else if(['employees','employee-profile','dashboard','salary','performance'].includes(currentPage)){
+                // Salary page: KHÔNG full re-render từ emp_profiles snapshot (gây chart jump)
+                // Chỉ update badges, defer render khi user rời input
+                if(currentPage === 'salary'){
+                  updateBadges();
+                  return;
+                }
                 render();
               }
               updateBadges();
