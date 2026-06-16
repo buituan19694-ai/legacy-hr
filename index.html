@@ -2151,11 +2151,13 @@ function renderBrand(){
   }
   const authName = document.getElementById('authNameWrap');
   if(authName){
-    // Clone tên từ sidebar — đã được renderBrand() apply đúng
     const nameEl = document.getElementById('brandName');
     const tagEl  = document.getElementById('brandTag');
-    const nameHTML = nameEl ? nameEl.innerHTML : `${escapeHtml(b.name||'Legacy')}<br><em style="color:var(--accent);font-style:italic">${escapeHtml(b.nameAccent||'MGallery')}</em>`;
-    const tagText  = tagEl  ? tagEl.textContent  : (b.tag || 'P&C Department');
+    // Lấy HTML từ sidebar rồi thêm màu vàng đồng vào em tag
+    let nameHTML = nameEl ? nameEl.innerHTML : `${escapeHtml(b.name||'Legacy')}<br><em>${escapeHtml(b.nameAccent||'MGallery')}</em>`;
+    // Force màu vàng đồng cho em trong auth screen
+    nameHTML = nameHTML.replace(/<em>/gi, '<em style="color:#d4a574;font-style:italic">');
+    const tagText = tagEl ? tagEl.textContent : (b.tag || 'P&C Department');
     authName.innerHTML = `
       <div style="font-family:'Fraunces',serif;font-size:20px;font-weight:500;letter-spacing:-.01em;color:var(--ink);line-height:1.2">${nameHTML}</div>
       ${tagText?`<div style="font-size:11px;color:var(--ink-muted);letter-spacing:.18em;text-transform:uppercase;margin-top:6px">${escapeHtml(tagText)}</div>`:''}
@@ -22384,8 +22386,10 @@ window.currentUserData = null; // role, permissions, name
   if(authName){
     const nameEl = document.getElementById('brandName');
     const tagEl  = document.getElementById('brandTag');
-    const nameHTML = nameEl ? nameEl.innerHTML : 'Legacy-<br><em style="color:var(--accent);font-style:italic">MGallery</em>';
-    const tagText  = tagEl  ? tagEl.textContent.trim() : 'P&C Department';
+    let nameHTML = nameEl ? nameEl.innerHTML : 'Legacy Yên Tử<br><em>MGallery</em>';
+    // Force màu vàng đồng cho em
+    nameHTML = nameHTML.replace(/<em>/gi, '<em style="color:#d4a574;font-style:italic">');
+    const tagText = tagEl ? tagEl.textContent.trim() : 'P&C Department';
     authName.innerHTML = `
       <div style="font-family:'Fraunces',serif;font-size:20px;font-weight:500;letter-spacing:-.01em;color:var(--ink);line-height:1.25">${nameHTML}</div>
       ${tagText?`<div style="font-size:11px;color:var(--ink-muted);letter-spacing:.18em;text-transform:uppercase;margin-top:6px">${tagText}</div>`:''}
