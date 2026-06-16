@@ -642,7 +642,7 @@ if(typeof Chart !== 'undefined'){
 const STATUS_LABEL = new Proxy({},{get(_,k){const m={active:t('status_active'),leave:t('status_leave'),exit:t('status_exit'),probation:t('status_probation')};return m[k]||k;}});
 const LEAVE_TYPE = {annual:(_lang==="en"?"Annual leave":"Phép năm"), comp:(_lang==="en"?"Compensatory":"Phép bù"), sick:(_lang==="en"?"Sick leave":"Nghỉ ốm"), personal:(_lang==="en"?"Personal":"Việc riêng"), maternity:(_lang==="en"?"Maternity":"Thai sản"), unpaid:(_lang==="en"?"Unpaid":"Không lương")};
 const LEAVE_STATUS = {pending:'Chờ duyệt', approved:(_lang==="en"?"Approved":"Đã duyệt"), rejected:(_lang==="en"?"Rejected":"Từ chối")};
-const CONTRACT_TYPE = {indefinite:(_lang==="en"?"Indefinite":"Vô thời hạn"), term24:'Xác định 24 tháng', term12:'Xác định 12 tháng', probation:(_lang==="en"?"Probation":"Thử việc"), contractor:'Khoán việc'};
+const CONTRACT_TYPE = {indefinite:(_lang==="en"?"Indefinite":"Vô thời hạn"), term24:'Xác định 24 tháng', term12:'Xác định 12 tháng', probation:(_lang==="en"?"Probation":"Thử việc"), contractor:'Khoán việc', unknown:(_lang==="en"?"No contract info":"Chưa có HĐ")};
 // Safe contract type display: nếu type là free-text (từ customData) thì dùng trực tiếp
 const ctLabel = (type) => type ? (CONTRACT_TYPE[type] || type) : '—';
 const JOB_STATUS = {open:(_lang==="en"?"Open":"Đang tuyển"), paused:(_lang==="en"?"On hold":"Tạm hoãn"), filled:(_lang==="en"?"Filled":"Đã đủ"), closed:(_lang==="en"?"Closed":"Đã đóng")};
@@ -7582,13 +7582,48 @@ function renderContracts(main){
   if(!yearsList.includes(contractFilter.year)) yearsList.push(contractFilter.year);
   yearsList.sort();
 
+  // Normalize free-text currentContractType → coded key
+  const _normCType = (raw) => {
+    if(!raw) return '';
+    const lc = raw.toLowerCase();
+    if(lc.includes('thử việc') || lc.includes('probation') || lc.includes('học việc')) return 'probation';
+    if(lc.includes('không xác định') || lc.includes('vô thời hạn') || lc.includes('indefinite')) return 'indefinite';
+    if(lc.includes('khoán việc') || lc.includes('contractor')) return 'contractor';
+    if(lc.includes('02 năm') || lc.includes('24 tháng') || lc.includes('2 năm') || lc.includes('term24')) return 'term24';
+    if(lc.includes('01 năm') || lc.includes('12 tháng') || lc.includes('1 năm') || lc.includes('term12')) return 'term12';
+    // Nếu đã là coded key thì giữ nguyên
+    if(['term12','term24','indefinite','probation','contractor'].includes(raw)) return raw;
+    return raw; // fallback giữ nguyên
+  };
+
   const typeCount = {};
   currentContracts.forEach(c => { typeCount[c.type] = (typeCount[c.type]||0) + 1; });
+
   // Đếm thêm NV có HĐ trong customData nhưng chưa có record trong DB.contracts
+  // (bao gồm cả NV có currentContractType nhưng KHÔNG có endDate — ví dụ HĐ vô thời hạn)
+  const countedEmpIds = new Set(currentContracts.map(c=>c.empId));
   empContractEndList.forEach(c => {
-    if(c.type) typeCount[c.type] = (typeCount[c.type]||0) + 1;
+    const key = _normCType(c.type);
+    if(key) { typeCount[key] = (typeCount[key]||0) + 1; countedEmpIds.add(c.empId); }
   });
-  console.log('[Contract chart] typeCount:', typeCount, 'currentContracts:', currentContracts.length, 'fromCustomData:', empContractEndList.length);
+
+  // Đếm NV có currentContractType trong customData nhưng KHÔNG có endDate (vd: vô thời hạn)
+  // và chưa được đếm ở trên
+  activeEmpsAll.filter(e => e.status !== 'exit' && !countedEmpIds.has(e.id)).forEach(e => {
+    const cd = DB.customData[e.id]||{};
+    const ctRaw = cd.currentContractType||'';
+    if(!ctRaw) return; // thật sự không có info HĐ → sẽ vào unknown
+    const key = _normCType(ctRaw);
+    if(key) { typeCount[key] = (typeCount[key]||0) + 1; countedEmpIds.add(e.id); }
+  });
+
+  // Số NV đang làm nhưng KHÔNG có thông tin HĐ (cả trong DB.contracts và customData)
+  const totalCounted = Object.values(typeCount).reduce((s,v)=>s+v, 0);
+  const noContractCount = totalActive - totalCounted;
+  if(noContractCount > 0){
+    typeCount['unknown'] = noContractCount;
+  }
+  console.log('[Contract chart] typeCount:', typeCount, 'totalActive:', totalActive, 'counted:', totalCounted);
 
   main.innerHTML = `
     <div class="topbar">
@@ -7716,25 +7751,24 @@ function renderContracts(main){
 
   setTimeout(()=>{
     const _ce = $('#chartContract');
-    console.log('[Contract chart] el:', !!_ce, 'typeCount:', typeCount, 'parentWidth:', _ce?.parentElement?.getBoundingClientRect()?.width);
-    if(!_ce) return;
-    if(Object.keys(typeCount).length === 0){
-      console.warn('[Contract chart] No data');
-      return;
-    }
+    if(!_ce || !_ce.isConnected) return;
+    if(Object.keys(typeCount).length === 0) return;
+    // Destroy chart cũ trước khi tạo mới (tránh orphan chart)
+    if(Chart.getChart(_ce)) Chart.getChart(_ce).destroy();
     const pw = _ce.parentElement?.getBoundingClientRect()?.width || 0;
     const _w = pw > 100 ? pw : 400;
     const _dpr = window.devicePixelRatio || 1;
     _ce.style.width = _w+'px'; _ce.style.height = '260px';
     _ce.width  = _w * _dpr;
     _ce.height = 260 * _dpr;
-    if(Chart.getChart(_ce)) Chart.getChart(_ce).destroy();
+    const _ORDER = {probation:0,term12:1,term24:2,indefinite:3,contractor:4,unknown:9};
+    const sortedKeys = Object.keys(typeCount).sort((a,b)=>(_ORDER[a]??5)-(_ORDER[b]??5));
     new Chart(_ce, {
     type: 'doughnut',
     data: {
-      labels: Object.keys(typeCount).map(k => CONTRACT_TYPE[k] || k),
+      labels: sortedKeys.map(k => CONTRACT_TYPE[k] || k),
       datasets: [{
-        data: Object.values(typeCount),
+        data: sortedKeys.map(k => typeCount[k]),
         backgroundColor: palette,
         borderColor: '#1a2028',
         borderWidth: 2,
@@ -23102,6 +23136,16 @@ fbAuth.onAuthStateChanged(async user => {
                     }
                     return;
                   }
+                  // Contracts page: chỉ re-render khi data thay đổi từ account khác
+                  if(currentPage === 'contracts'){
+                    updateBadges();
+                    if(!isSelf){
+                      const fn = RENDER_MAP[currentPage];
+                      const main = document.getElementById('mainContent');
+                      if(fn && main) fn(main);
+                    }
+                    return;
+                  }
                   const fn = RENDER_MAP[currentPage];
                   const main = document.getElementById('mainContent');
                   if(fn && main) fn(main);
@@ -24706,11 +24750,34 @@ function renderManning(main){
     const gBudY=gBudM*12,gVarY=gBudY-gForeY,gVarCY=gVarY>0?'var(--success)':gVarY<0?'var(--danger)':' var(--ink-dim)';
     const gActM=allEmps.reduce((s,e)=>{const dp=getDeptPlan(e.deptId||'')||{positions:[]};const cd=DB.customData[e.id]||{};const base=parseInt(cd.baseSalary)||0,bonus=parseInt(cd.bonusSalary)||0;const pos=(dp.positions||[]).find(p=>p.title===(e.role||'')); const wd=parseInt((actMoCur[e.id]||{}).workDays)||0;const meal=Math.round(wd*(parseFloat(pos?.mealRate)||0));return s+base+bonus+Math.round(base*BH_RATE)+meal+(parseFloat((actMoCur[e.id]||{}).other)||0);},0);
     const gVarM=gBudM-gActM,gVarCM=gVarM>0?'var(--success)':gVarM<0?'var(--danger)':' var(--ink-dim)';
-    // Tổng lương thuần
-    const gBudSalM=depts.reduce((s,d)=>{const dp=getDeptPlan(d.id);return s+(dp.positions||[]).reduce((s2,p)=>{return s2+(parseFloat(p.budgetSalary)||0+parseFloat(p.budgetBonus)||0)*(parseInt(p.planned)||0);},0);},0);
-    const gBudSalY=gBudSalM*12;
-    const gActSalM=allEmps.reduce((s,e)=>{const cd=DB.customData[e.id]||{};return s+(parseInt(cd.baseSalary)||0)+(parseInt(cd.bonusSalary)||0);},0);
-    const gForeSalY=depts.reduce((s,d)=>{const dp=getDeptPlan(d.id);const el=allEmps.filter(e=>e.deptId===d.id);let t=0;MN.forEach((_,mi)=>{el.forEach(e=>{const cd=DB.customData[e.id]||{};t+=(parseInt(cd.baseSalary)||0)+(parseInt(cd.bonusSalary)||0);});});return s+t;},0);
+    // Tổng lương thuần — sum đúng như dept rows
+    let gBudSalM=0, gActSalM=0, gForeSalY=0;
+    depts.forEach(d=>{
+      const dp=getDeptPlan(d.id);
+      const el=allEmps.filter(e=>e.deptId===d.id);
+      // Budget per tháng: sum (baseSalary + bonusSalary) × headcount kế hoạch
+      (dp.positions||[]).forEach(p=>{
+        const hc=parseInt(p.planned)||0;
+        const bs=parseFloat(p.budgetSalary)||0;
+        const bon=parseFloat(p.budgetBonus)||0;
+        gBudSalM += (bs+bon)*hc;
+      });
+      // Actual per tháng: sum lương thực tế của NV đang làm
+      el.forEach(e=>{
+        const cd=DB.customData[e.id]||{};
+        gActSalM += (parseInt(cd.baseSalary)||0)+(parseInt(cd.bonusSalary)||0);
+      });
+      // Forecast cả năm: cộng dồn 12 tháng dựa trên manningActual (hoặc actual nếu chưa có data)
+      MN.forEach((_,mi)=>{
+        const actMo=(DB.manningActual[curYear]||{})[mi]||{};
+        const hasA=Object.keys(actMo).some(k=>!k.startsWith('_'));
+        el.forEach(e=>{
+          const cd=DB.customData[e.id]||{};
+          gForeSalY += (parseInt(cd.baseSalary)||0)+(parseInt(cd.bonusSalary)||0);
+        });
+      });
+    });
+    const gBudSalY = gBudSalM * 12;
     const deptTotalRow=`<tr style="background:#0f1a28;border-top:2px solid var(--border-strong)">
       <td style="padding:8px 12px;font-weight:800;color:#FFCC00">∑ TỔNG</td>
       <td style="padding:8px;text-align:center;font-weight:700;color:var(--accent)">${grandHCBud}</td>
