@@ -15344,7 +15344,8 @@ function setPerfPeriod(p){ window._perfPeriod = p; sessionStorage.setItem('_perf
 function perfTabsHTML(active){
   return `
     <div class="rec-tabs">
-      <button class="rec-tab ${active==='list'?'active':''}" onclick="setPerfView('list')">📋 Danh sách đánh giá</button>
+      <button class="rec-tab ${active==='list'?'active':''}" onclick="setPerfView('list')">📋 Thăng chức</button>
+      <button class="rec-tab ${active==='history'?'active':''}" onclick="setPerfView('history')">📝 Lịch sử đánh giá</button>
       <button class="rec-tab ${active==='reports'?'active':''}" onclick="setPerfView('reports')">📊 Báo cáo & Phân tích</button>
     </div>
   `;
@@ -15628,8 +15629,11 @@ function renderPerformance(main){
     main.innerHTML='<div class="topbar"><div class="topbar-left"><h1 class="page-title">🔒 Không có quyền</h1><div class="page-sub">Bạn không được cấp quyền truy cập module Đánh giá KPI</div></div></div>';
     return;
   }
+  // Dọn duplicate records (do bug shard sai năm trước đây)
+  if(dedupeKpiReviews()) _saveSharded('kpiReviews');
   if(!window._perfView) window._perfView = sessionStorage.getItem('_perfView')||'list';
   if(window._perfView === 'reports') return renderPerformanceReports(main);
+  if(window._perfView === 'history') return renderPerformanceHistory(main);
   const scoredEmps = DB.employees.filter(e=>e.kpi>0);
   const avgKPI = scoredEmps.length ? (scoredEmps.reduce((s,e)=>s+e.kpi,0)/scoredEmps.length).toFixed(1) : '—';
   const excellent = DB.employees.filter(e=>e.kpi>=90).length;
@@ -15885,48 +15889,6 @@ function renderPerformance(main){
         </div>`;
     })()}
 
-    <div class="card" style="margin-top:16px">
-      ${(()=>{
-        const allYears = [...new Set((DB.kpiReviews||[]).map(k=>(k.period||'').slice(-4)).filter(y=>/^\d{4}$/.test(y)))].sort((a,b)=>b-a);
-        if(!window._perfHistYear) window._perfHistYear = localStorage.getItem('_perfHistYear') || String(new Date().getFullYear());
-        const selYear = window._perfHistYear;
-        const filtered = (DB.kpiReviews||[]).filter(k=>!selYear||(k.period||'').includes(selYear));
-        return `
-      <div class="card-head" style="display:flex;align-items:center;justify-content:space-between">
-        <div><div class="card-title">Lịch sử <em>đánh giá</em></div><div class="card-sub">${filtered.length} bản ghi${selYear?' · Năm '+selYear:''}</div></div>
-        <div style="display:flex;gap:8px;align-items:center">
-          <select class="filter-select" onchange="window._perfHistYear=this.value;localStorage.setItem('_perfHistYear',this.value);render()">
-            <option value="">Tất cả năm</option>
-            ${allYears.map(y=>`<option value="${y}" ${selYear===y?'selected':''}>${y}</option>`).join('')}
-          </select>
-        </div>
-      </div>
-      ${filtered.length===0 ? `<div class="empty-state"><h3>Không có đánh giá nào${selYear?' trong năm '+selYear:''}</h3><button class="btn btn-primary" onclick="editReview()">${ICONS.plus} Tạo đánh giá</button></div>` : `
-        <table class="tbl">
-          <thead><tr><th>Nhân viên</th><th>${_lang==="en"?"Period":"Kỳ đánh giá"}</th><th>${_lang==="en"?"Score":"Điểm"}</th><th>${_lang==="en"?"Reviewer":"Người đánh giá"}</th><th>${_lang==="en"?"Comments":"Nhận xét"}</th><th></th></tr></thead>
-          <tbody>
-            ${filtered.map(k=>{
-              const emp = empById(k.empId); if(!emp) return '';
-              return `<tr>
-                <td><div class="cell-emp">
-                  ${avatarHTML(emp)}
-                  <div><div class="cell-emp-name">${escapeHtml(emp.name)}</div><div class="cell-emp-meta">${deptName(emp.deptId)}</div></div>
-                </div></td>
-                <td>${escapeHtml(k.period)}</td>
-                <td style="font-family:'JetBrains Mono',monospace;font-weight:600;color:${k.score>=90?'var(--success)':k.score>=75?'var(--accent)':'var(--warning)'}">${k.score.toFixed(1)}</td>
-                <td>${escapeHtml(k.reviewer)}</td>
-                <td style="color:var(--ink-dim);max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHtml(k.notes)}">${escapeHtml(k.notes)||'—'}</td>
-                <td><div class="row-actions">
-                  <button class="btn btn-icon" onclick="editReview('${k.id}')">${ICONS.edit}</button>
-                  <button class="btn btn-icon btn-danger" onclick="deleteReview('${k.id}')">${ICONS.trash}</button>
-                </div></td>
-              </tr>`;
-            }).join('')}
-          </tbody>
-        </table>
-      `}
-      `;
-      })()}
     </div>
   `;
 
@@ -15988,8 +15950,189 @@ function editReview(id){
   `);
 }
 
+/* ────────────────────────────────────────────────────────────────────────
+   LỊCH SỬ ĐÁNH GIÁ — Tab riêng với biểu đồ + bảng
+   ──────────────────────────────────────────────────────────────────────── */
+function renderPerformanceHistory(main){
+  if(!window._perfHistYear) window._perfHistYear = localStorage.getItem('_perfHistYear') || String(new Date().getFullYear());
+  const selYear    = window._perfHistYear;
+  const allReviews = DB.kpiReviews || [];
+  const allYears   = [...new Set(allReviews.map(k=>(k.period||'').slice(-4)).filter(y=>/^\d{4}$/.test(y)))].sort((a,b)=>b-a);
+  const filtered   = allReviews.filter(k=>!selYear||(k.period||'').includes(selYear));
+
+  // Biểu đồ 1: Điểm trung bình theo phòng ban
+  const byDept = {};
+  filtered.forEach(k=>{
+    const emp = empById(k.empId); if(!emp) return;
+    const dn = deptName(emp.deptId)||'Khác';
+    if(!byDept[dn]) byDept[dn]={sum:0,cnt:0};
+    byDept[dn].sum+=k.score; byDept[dn].cnt++;
+  });
+  const deptLabels = Object.keys(byDept).sort((a,b)=>byDept[b].sum/byDept[b].cnt - byDept[a].sum/byDept[a].cnt);
+  const deptAvgs   = deptLabels.map(d=>+(byDept[d].sum/byDept[d].cnt).toFixed(1));
+
+  // Biểu đồ 2: Phân bổ điểm (histogram)
+  const buckets = [0,0,0,0,0,0,0,0];
+  filtered.forEach(k=>{
+    const s=k.score;
+    if(s<60)buckets[0]++; else if(s<70)buckets[1]++; else if(s<75)buckets[2]++;
+    else if(s<80)buckets[3]++; else if(s<85)buckets[4]++; else if(s<90)buckets[5]++;
+    else if(s<95)buckets[6]++; else buckets[7]++;
+  });
+
+  // Top performers trong kỳ
+  const empScores = {};
+  filtered.forEach(k=>{ if(!empScores[k.empId]||k.score>empScores[k.empId]) empScores[k.empId]=k.score; });
+  const topList = Object.entries(empScores).sort((a,b)=>b[1]-a[1]).slice(0,5).map(([id,sc])=>({emp:empById(id),sc})).filter(x=>x.emp);
+
+  const allPromotions = DB.promotions || [];
+  const thisYear = new Date().getFullYear();
+  const completedPromotions = allPromotions.filter(p => p.status === 'completed' || p.status === 'approved').length;
+  const pendingPromotions   = allPromotions.filter(p => p.status === 'proposed' || p.status === 'reviewing').length;
+
+  main.innerHTML = `
+    <div class="topbar">
+      <div class="topbar-left">
+        <div class="crumb">Phát triển · <span>Performance</span></div>
+        <h1 class="page-title">Đánh giá <em>Performance</em></h1>
+        <div class="page-sub">${allReviews.length} lượt đánh giá · ${allPromotions.length} đề xuất thăng chức</div>
+      </div>
+      <div class="topbar-actions">
+        <button class="btn" onclick="editPromotion()">🚀 Đề xuất thăng chức</button>
+        <button class="btn btn-primary" onclick="editReview()">${ICONS.plus} Tạo đánh giá</button>
+      </div>
+    </div>
+
+    ${perfTabsHTML('history')}
+
+    <!-- Filter năm + KPI summary -->
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px">
+      <div style="display:flex;gap:8px;align-items:center">
+        <span style="font-size:13px;font-weight:600;color:var(--ink-muted)">Năm:</span>
+        <select class="filter-select" onchange="window._perfHistYear=this.value;localStorage.setItem('_perfHistYear',this.value);render()">
+          <option value="">Tất cả</option>
+          ${allYears.map(y=>`<option value="${y}" ${selYear===y?'selected':''}>${y}</option>`).join('')}
+        </select>
+        <span style="font-size:12px;color:var(--ink-muted)">${filtered.length} bản ghi${selYear?' · Năm '+selYear:''}</span>
+      </div>
+    </div>
+
+    <!-- Charts row -->
+    <div class="row row-2" style="margin-bottom:16px">
+      <div class="card">
+        <div class="card-head"><div>
+          <div class="card-title">Phân bố <em>điểm đánh giá</em></div>
+          <div class="card-sub">Histogram${selYear?' · '+selYear:' · Tất cả'}</div>
+        </div></div>
+        <div class="chart-wrap"><canvas id="chartHistHist"></canvas></div>
+      </div>
+      <div class="card">
+        <div class="card-head"><div>
+          <div class="card-title">TB điểm <em>theo phòng ban</em></div>
+          <div class="card-sub">${deptLabels.length} phòng ban có dữ liệu</div>
+        </div></div>
+        <div class="chart-wrap"><canvas id="chartHistDept"></canvas></div>
+      </div>
+    </div>
+
+    <!-- Top performers + bảng lịch sử -->
+    <div class="row row-2" style="margin-bottom:16px">
+      <div class="card">
+        <div class="card-head"><div>
+          <div class="card-title">Top <em>performer</em>${selYear?' '+selYear:''}</div>
+          <div class="card-sub">Điểm cao nhất từng NV</div>
+        </div></div>
+        <div class="list">
+          ${topList.length===0?'<div class="empty-state"><p>Chưa có dữ liệu</p></div>':topList.map((x,i)=>`
+            <div class="list-item">
+              <div class="list-bullet" style="background:${i<3?'var(--accent)':'var(--accent-dim)'}"></div>
+              ${avatarHTML(x.emp,32)}
+              <div class="list-main">
+                <div class="list-title">${escapeHtml(x.emp.name)}</div>
+                <div class="list-meta">${escapeHtml(x.emp.role||'')} · ${deptName(x.emp.deptId)}</div>
+              </div>
+              <div style="font-family:'JetBrains Mono',monospace;font-weight:700;color:${x.sc>=90?'var(--success)':x.sc>=75?'var(--accent)':'var(--warning)'};font-size:15px">${x.sc.toFixed(1)}</div>
+            </div>`).join('')}
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-head"><div>
+          <div class="card-title">📊 Thống kê nhanh</div>
+        </div></div>
+        <div style="display:flex;flex-direction:column;gap:10px;padding:4px 0">
+          ${(()=>{
+            const avg = filtered.length ? (filtered.reduce((s,k)=>s+k.score,0)/filtered.length).toFixed(1) : '—';
+            const max = filtered.length ? Math.max(...filtered.map(k=>k.score)).toFixed(1) : '—';
+            const min = filtered.length ? Math.min(...filtered.map(k=>k.score)).toFixed(1) : '—';
+            const above90 = filtered.filter(k=>k.score>=90).length;
+            const below70 = filtered.filter(k=>k.score<70).length;
+            return [
+              ['📈 Điểm TB', avg, 'var(--accent)'],
+              ['🏆 Cao nhất', max, 'var(--success)'],
+              ['⬇️ Thấp nhất', min, 'var(--warning)'],
+              ['✅ ≥90 điểm', above90+' lượt', 'var(--success)'],
+              ['⚠️ <70 điểm', below70+' lượt', 'var(--danger)'],
+            ].map(([l,v,c])=>`<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:var(--bg-elev);border-radius:7px">
+              <span style="font-size:13px;color:var(--ink-dim)">${l}</span>
+              <span style="font-family:'JetBrains Mono',monospace;font-weight:700;color:${c};font-size:15px">${v}</span>
+            </div>`).join('');
+          })()}
+        </div>
+      </div>
+    </div>
+
+    <!-- Bảng lịch sử -->
+    <div class="card">
+      <div class="card-head">
+        <div><div class="card-title">Lịch sử <em>đánh giá</em></div></div>
+      </div>
+      ${filtered.length===0 ? `<div class="empty-state"><h3>Không có đánh giá${selYear?' trong năm '+selYear:''}</h3><button class="btn btn-primary" onclick="editReview()">${ICONS.plus} Tạo đánh giá</button></div>` : `
+      <div style="overflow-x:auto">
+      <table class="tbl">
+        <thead><tr>
+          <th>Nhân viên</th><th>Kỳ đánh giá</th><th>Điểm</th>
+          <th>Người đánh giá</th><th>Nhận xét</th><th></th>
+        </tr></thead>
+        <tbody>
+          ${[...filtered].sort((a,b)=>(b.period||'').localeCompare(a.period||'')).map(k=>{
+            const emp=empById(k.empId); if(!emp) return '';
+            return `<tr>
+              <td><div class="cell-emp">${avatarHTML(emp)}<div>
+                <div class="cell-emp-name">${escapeHtml(emp.name)}</div>
+                <div class="cell-emp-meta">${deptName(emp.deptId)}</div>
+              </div></div></td>
+              <td style="font-family:'JetBrains Mono',monospace;font-size:12px">${escapeHtml(k.period)}</td>
+              <td><span style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:14px;color:${k.score>=90?'var(--success)':k.score>=75?'var(--accent)':'var(--warning)'}">${k.score.toFixed(1)}</span></td>
+              <td style="font-size:12.5px">${escapeHtml(k.reviewer||'—')}</td>
+              <td style="color:var(--ink-dim);font-size:12px;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHtml(k.notes)}">${escapeHtml(k.notes)||'—'}</td>
+              <td><div class="row-actions">
+                <button class="btn btn-icon" onclick="editReview('${k.id}')">${ICONS.edit}</button>
+                <button class="btn btn-icon btn-danger" onclick="deleteReview('${k.id}')">${ICONS.trash}</button>
+              </div></td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+      </div>`}
+    </div>
+  `;
+
+  // Render charts
+  setTimeout(()=>{
+    const eh = document.getElementById('chartHistHist');
+    if(eh&&typeof Chart!=='undefined'){
+      if(Chart.getChart(eh)) Chart.getChart(eh).destroy();
+      new Chart(eh,{type:'bar',data:{labels:['<60','60-70','70-75','75-80','80-85','85-90','90-95','>95'],datasets:[{data:buckets,backgroundColor:(c)=>{const v=c.dataIndex;if(v<2)return '#e57373';if(v<4)return '#e8b974';if(v<6)return '#d4a574';return '#7ec699';},borderRadius:6}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{grid:{display:false}},y:{grid:{color:'#1f2630'},beginAtZero:true,ticks:{stepSize:1}}}}});
+    }
+    const ed = document.getElementById('chartHistDept');
+    if(ed&&typeof Chart!=='undefined'&&deptLabels.length){
+      if(Chart.getChart(ed)) Chart.getChart(ed).destroy();
+      new Chart(ed,{type:'bar',data:{labels:deptLabels,datasets:[{data:deptAvgs,backgroundColor:'rgba(212,165,116,.7)',borderRadius:5}]},options:{responsive:true,maintainAspectRatio:false,indexAxis:'y',plugins:{legend:{display:false},tooltip:{callbacks:{label:ctx=>ctx.raw+' điểm'}}},scales:{x:{beginAtZero:true,max:100,grid:{color:'#1f2630'}},y:{grid:{display:false},ticks:{font:{size:10}}}}}});
+    }
+  },80);
+}
+
 // ─── Helper: save sharded key to Firestore with confirmation ───────────────
-// Replaces fire-and-forget saveData(['key']) for all sharded collections
 function _saveSharded(key, onDone){
   const prefixMap = {
     kpiReviews:'kpi', rewardRecords:'rewards', disciplineRecords:'discipline',
@@ -16028,7 +16171,8 @@ function saveReview(id, isNew){
     score: $sf('f_score'),
     reviewer: reviewerEmp ? reviewerEmp.name : reviewerVal,
     notes:$('#f_notes').value.trim(),
-    date: new Date().toISOString().slice(0,10), // ensure _recYear works
+    // date lấy từ period để _recYear shard đúng năm (không dùng today)
+    date: (()=>{ const p=dispToIso($('#f_period')?.value||'').trim(); const m=p.match(/(\d{4})/); return m?m[1]+'-01-01':new Date().toISOString().slice(0,10); })(),
   };
   if(!data.empId || !data.period){ toast((_lang==="en"?"Please fill in all required fields":"Vui lòng nhập đủ thông tin"),'error'); return; }
 
@@ -16077,9 +16221,36 @@ function deleteReview(id, fromModal=false){
   });
 }
 
-/* =========================================================
-   SYNC HELPERS — Đồng bộ data 2 chiều giữa các module và NV
-   ========================================================= */
+/* ── Dọn duplicate kpiReviews (do bug shard sai năm) ─────────────── */
+function dedupeKpiReviews(){
+  if(!DB.kpiReviews||!DB.kpiReviews.length) return false;
+  const seen = new Set();
+  const deduped = [];
+  DB.kpiReviews.forEach(r=>{
+    // Key = empId + period + score — nếu trùng giữ cái có date khớp period năm hơn
+    const key = `${r.empId}|${r.period}|${r.score}`;
+    if(!seen.has(key)){ seen.add(key); deduped.push(r); }
+    else {
+      // Giữ cái có date gần với period hơn (cái mới fix)
+      const idx = deduped.findIndex(x=>`${x.empId}|${x.period}|${x.score}`===key);
+      if(idx>=0){
+        const existDate = deduped[idx].date||'';
+        const newDate   = r.date||'';
+        const periodYear = String(r.period||'').match(/(\d{4})/)?.[1]||'';
+        // Ưu tiên record có date năm khớp period
+        if(periodYear && newDate.startsWith(periodYear) && !existDate.startsWith(periodYear)){
+          deduped[idx] = r;
+        }
+      }
+    }
+  });
+  if(deduped.length === DB.kpiReviews.length) return false;
+  console.log(`[dedupeKPI] Cleaned ${DB.kpiReviews.length - deduped.length} duplicates`);
+  DB.kpiReviews = deduped;
+  return true;
+}
+
+
 
 function syncEmployeeKPI(empId){
   const emp = DB.employees.find(e => e.id === empId);
@@ -21798,7 +21969,12 @@ fbAuth.onAuthStateChanged(async user => {
               });
             }
           });
-          const _mergeArr = (key)=>{ if(dynamicAccum[key].length){ DB[key]=dynamicAccum[key]; hasCloud=true; } };
+          const _mergeArr = (key)=>{ if(dynamicAccum[key].length){ 
+            // Dedup by id to prevent duplicates from multi-tab saves
+            const seen = new Set();
+            DB[key] = dynamicAccum[key].filter(r=>{ if(!r.id||seen.has(r.id)) return false; seen.add(r.id); return true; });
+            hasCloud=true; 
+          } };
           const _mergeObj = (key)=>{ if(Object.keys(dynamicAccum[key]).length){ DB[key]=dynamicAccum[key]; hasCloud=true; } };
           ['leaves','kpiReviews','rewardRecords','casuals','candidates','promotions','disciplineRecords'].forEach(_mergeArr);
           ['leaveSheet','leaveOpening','leavePlan'].forEach(_mergeObj);
