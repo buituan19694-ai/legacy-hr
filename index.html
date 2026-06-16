@@ -21364,15 +21364,38 @@ function renderTraineeSchedule(main){
 
           <!-- Date picker + quick buttons -->
           <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-            <input type="date" value="${fromStr}" id="tr_range_from"
-              style="background:var(--bg-elev);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--ink);font-size:12px;font-family:inherit"
-              onchange="(function(v){if(!v)return;if(window._traineeRangeTo&&v>window._traineeRangeTo){window._traineeRangeTo=v;}window._traineeRangeFrom=v;render();})(this.value)"
-              onkeydown="if(event.key==='Enter'){(function(v){if(!v)return;if(window._traineeRangeTo&&v>window._traineeRangeTo){window._traineeRangeTo=v;}window._traineeRangeFrom=v;render();})(this.value)}">
+            <input type="text" value="${fromStr.split('-').reverse().join('/')}" id="tr_range_from"
+              placeholder="dd/mm/yyyy"
+              style="background:var(--bg-elev);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--ink);font-size:12px;font-family:'JetBrains Mono',monospace;width:110px"
+              onkeydown="if(event.key==='Enter'){(function(raw){
+                var v=raw.trim();
+                // Chấp nhận dd/mm/yyyy hoặc yyyy-mm-dd
+                var iso='';
+                var m1=v.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+                var m2=v.match(/^(\d{4})[\/\-](\d{2})[\/\-](\d{2})$/);
+                if(m1) iso=m1[3]+'-'+m1[2].padStart(2,'0')+'-'+m1[1].padStart(2,'0');
+                else if(m2) iso=v.replace(/\//g,'-');
+                if(!iso||isNaN(new Date(iso))) return;
+                if(window._traineeRangeTo&&iso>window._traineeRangeTo) window._traineeRangeTo=iso;
+                window._traineeRangeFrom=iso;
+                render();
+              })(this.value)}">
             <span style="font-size:12px;color:var(--ink-muted)">→</span>
-            <input type="date" value="${toStr}" id="tr_range_to"
-              style="background:var(--bg-elev);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--ink);font-size:12px;font-family:inherit"
-              onchange="(function(v){if(!v)return;if(window._traineeRangeFrom&&v<window._traineeRangeFrom){window._traineeRangeFrom=v;}window._traineeRangeTo=v;render();})(this.value)"
-              onkeydown="if(event.key==='Enter'){(function(v){if(!v)return;if(window._traineeRangeFrom&&v<window._traineeRangeFrom){window._traineeRangeFrom=v;}window._traineeRangeTo=v;render();})(this.value)}">
+            <input type="text" value="${toStr.split('-').reverse().join('/')}" id="tr_range_to"
+              placeholder="dd/mm/yyyy"
+              style="background:var(--bg-elev);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--ink);font-size:12px;font-family:'JetBrains Mono',monospace;width:110px"
+              onkeydown="if(event.key==='Enter'){(function(raw){
+                var v=raw.trim();
+                var iso='';
+                var m1=v.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+                var m2=v.match(/^(\d{4})[\/\-](\d{2})[\/\-](\d{2})$/);
+                if(m1) iso=m1[3]+'-'+m1[2].padStart(2,'0')+'-'+m1[1].padStart(2,'0');
+                else if(m2) iso=v.replace(/\//g,'-');
+                if(!iso||isNaN(new Date(iso))) return;
+                if(window._traineeRangeFrom&&iso<window._traineeRangeFrom) window._traineeRangeFrom=iso;
+                window._traineeRangeTo=iso;
+                render();
+              })(this.value)}">
             <button onclick="window._traineeRangeFrom='${todayStr}';window._traineeRangeTo='${todayStr}';render()"
               style="padding:5px 10px;border-radius:6px;border:1px solid var(--border);background:${fromStr===todayStr&&toStr===todayStr?'var(--accent)':'var(--bg-elev)'};color:${fromStr===todayStr&&toStr===todayStr?'#1a1a1a':'var(--ink-muted)'};font-size:11px;cursor:pointer;font-family:inherit;font-weight:600">
               Hôm nay
@@ -22196,7 +22219,18 @@ fbAuth.onAuthStateChanged(async user => {
             else if(id.startsWith('kpi_')    && d.kpiReviews)       dynamicAccum.kpiReviews.push(...d.kpiReviews);
             else if(id.startsWith('rewards_')&& d.rewardRecords)    dynamicAccum.rewardRecords.push(...d.rewardRecords);
             else if(id.startsWith('casuals_')&& d.casuals)          dynamicAccum.casuals.push(...d.casuals);
-            else if(id.startsWith('cand_')   && d.candidates)       dynamicAccum.candidates.push(...d.candidates);
+            else if(id.startsWith('cand_')   && d.candidates){
+              // Bỏ qua shard sai format (cand_2026 theo năm — từ bug cũ)
+              // Chỉ chấp nhận shard theo jobId (cand_j1, cand_abc...)
+              const shardVal = d._shard;
+              const isYearShard = typeof shardVal==='number' || /^\d{4}$/.test(String(shardVal||''));
+              if(isYearShard){
+                // Xóa shard sai này khỏi Firestore
+                doc.ref.delete().then(()=>console.log('[cleanup] ✅ Deleted invalid cand year shard:', id)).catch(()=>{});
+              } else {
+                dynamicAccum.candidates.push(...d.candidates);
+              }
+            }
             else if(id.startsWith('promos_') && d.promotions)       dynamicAccum.promotions.push(...d.promotions);
             else if(id.startsWith('discipline_')&&d.disciplineRecords) dynamicAccum.disciplineRecords.push(...d.disciplineRecords);
             else if(id.startsWith('leavesheet_')&&d.leaveSheet){
@@ -22678,6 +22712,15 @@ fbAuth.onAuthStateChanged(async user => {
                 const shardId = d._shard;
                 const isMonthShard = typeof shardId==='string' && /^\d{4}_\d{2}$/.test(String(shardId));
                 const isYearShard  = typeof shardId==='number' || /^\d{4}$/.test(String(shardId));
+
+                // Candidates chỉ shard theo jobId — bỏ qua nếu shard là năm (format cũ bị bug)
+                if(key==='candidates' && isYearShard){
+                  // Xóa shard sai format này khỏi Firestore
+                  if(window.fbDb) window.fbDb.collection('hrdata').doc(docId).delete()
+                    .then(()=>console.log('[cleanup] ✅ Deleted invalid cand year shard:', docId))
+                    .catch(()=>{});
+                  return; // không merge vào DB
+                }
                 if(isMonthShard){
                   // casuals: YYYY_MM
                   DB[key] = [
