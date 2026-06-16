@@ -21361,7 +21361,7 @@ function renderTraineeSchedule(main){
             </div>
           </div>
 
-          <!-- Date picker -->
+          <!-- Date picker + quick buttons -->
           <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
             <input type="date" value="${fromStr}" id="tr_range_from"
               style="background:var(--bg-elev);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--ink);font-size:12px;font-family:inherit"
@@ -21374,20 +21374,34 @@ function renderTraineeSchedule(main){
               style="padding:5px 10px;border-radius:6px;border:1px solid var(--border);background:${fromStr===todayStr&&toStr===todayStr?'var(--accent)':'var(--bg-elev)'};color:${fromStr===todayStr&&toStr===todayStr?'#1a1a1a':'var(--ink-muted)'};font-size:11px;cursor:pointer;font-family:inherit;font-weight:600">
               Hôm nay
             </button>
-            ${[7,30].map(n=>{
-              const f=new Date(today); f.setDate(f.getDate()-n+1);
-              const fs=f.toISOString().slice(0,10);
-              const active=fromStr===fs&&toStr===todayStr;
-              return `<button onclick="(function(){const f=new Date('${todayStr}');f.setDate(f.getDate()-${n-1});window._traineeRangeFrom=f.toISOString().slice(0,10);window._traineeRangeTo='${todayStr}';render();})()"
+            ${[
+              {n:7,  dir:'past',   label:'7 ngày qua'},
+              {n:30, dir:'past',   label:'30 ngày qua'},
+              {n:7,  dir:'future', label:'7 ngày tới'},
+              {n:30, dir:'future', label:'30 ngày tới'},
+            ].map(({n, dir, label})=>{
+              let fs, ts;
+              if(dir==='past'){
+                const f=new Date(today); f.setDate(f.getDate()-n+1);
+                fs=f.toISOString().slice(0,10); ts=todayStr;
+              } else {
+                const t=new Date(today); t.setDate(t.getDate()+n-1);
+                fs=todayStr; ts=t.toISOString().slice(0,10);
+              }
+              const active = fromStr===fs && toStr===ts;
+              const onclick = dir==='past'
+                ? `(function(){const f=new Date('${todayStr}');f.setDate(f.getDate()-${n-1});window._traineeRangeFrom=f.toISOString().slice(0,10);window._traineeRangeTo='${todayStr}';render();})()`
+                : `(function(){const t=new Date('${todayStr}');t.setDate(t.getDate()+${n-1});window._traineeRangeFrom='${todayStr}';window._traineeRangeTo=t.toISOString().slice(0,10);render();})()`;
+              return `<button onclick="${onclick}"
                 style="padding:5px 10px;border-radius:6px;border:1px solid var(--border);background:${active?'var(--accent)':'var(--bg-elev)'};color:${active?'#1a1a1a':'var(--ink-muted)'};font-size:11px;cursor:pointer;font-family:inherit;font-weight:600">
-                ${n} ngày qua
+                ${label}
               </button>`;
             }).join('')}
           </div>
 
-          <!-- Chips phân bổ BP -->
+          <!-- Chips phân bổ BP — row riêng -->
           ${mainDeptEntries.length ? `
-          <div style="display:flex;flex-wrap:wrap;gap:6px;flex:1">
+          <div style="display:flex;flex-wrap:wrap;gap:6px;width:100%">
             ${mainDeptEntries.map(([name,cnt],i)=>`
               <div style="display:flex;align-items:center;gap:5px;background:${CHIP_COLORS[i%CHIP_COLORS.length]}22;border:1px solid ${CHIP_COLORS[i%CHIP_COLORS.length]}55;border-radius:20px;padding:3px 10px 3px 7px">
                 <span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:${CHIP_COLORS[i%CHIP_COLORS.length]};flex-shrink:0"></span>
