@@ -12052,6 +12052,7 @@ function renderDormitory(main){
         <div class="page-sub">${houses.length} nhà · ${dormEmps.length} NV đang ở · ${activeEmps.length} tổng NV</div>
       </div>
       <div class="topbar-actions">
+        <button class="btn" onclick="exportDormPDF()">📄 Xuất PDF</button>
         <button class="btn btn-primary" onclick="openDormHouseModal()">＋ Thêm nhà</button>
       </div>
     </div>
@@ -23230,7 +23231,7 @@ function renderManning(main){
                 <td style="padding:3px 5px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--teal)"><span data-meal="">${meal?meal.toLocaleString('vi'):'—'}</span></td>
                 <td style="padding:3px 6px;text-align:right">
                   <input type="number" min="0" step="10000" value="${oth||''}" placeholder="0" data-oth=""
-                    onchange="(function(){const totEl=row.querySelector('[data-tot]');const salTotEl=row.querySelector('[data-saltot]');const bhEl=row.querySelector('[data-bh]');const mealEl=row.querySelector('[data-meal]');const sal=parseFloat(salTotEl?.textContent?.replace(/[^\\d.]/g,''))||${Math.round(sal)};const bh=parseFloat(bhEl?.value)||${bh};const meal=parseFloat(mealEl?.textContent?.replace(/[^\\d]/g,''))||0;const oth=parseFloat(this.value)||0;if(totEl)totEl.textContent=(sal+bh+meal+oth).toLocaleString('vi');}).call(this)"
+                    onchange="${saveAct('other')};${recalcJS}"
                     style="width:80px;padding:3px 5px;background:var(--bg-elev);border:1px solid var(--warning)44;border-radius:4px;color:var(--warning);font-family:'JetBrains Mono',monospace;font-size:11px;text-align:right">
                 </td>
                 <td style="padding:3px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:#FFCC00"><span data-tot="">${(Math.round(tot)).toLocaleString('vi')}</span></td>
@@ -24557,6 +24558,81 @@ function exportWorkforcePDF(){
     periodLabel);
 }
 
-</script>
-</body>
-</html>
+// ── STAFF HOUSE ──
+function exportDormPDF(){
+  if(!DB.dormConfig) DB.dormConfig={houses:[]};
+  const houses  = DB.dormConfig.houses||[];
+  const today2  = new Date().toISOString().slice(0,10);
+  const activeEmps = (DB.employees||[]).filter(e=>getEffectiveStatus(e)!=='exit');
+  const depts   = DB.departments||[];
+
+  // Build data per house
+  const houseRows = houses.map(h=>{
+    const emps = activeEmps.filter(e=>(DB.customData[e.id]||{}).dormitory===h.name)
+      .sort((a,b)=>(a.name||'').localeCompare(b.name||'','vi'));
+    const cap  = parseInt(h.capacity)||0;
+    const pct  = cap ? Math.round(emps.length/cap*100) : null;
+    const statusColor = cap && emps.length>=cap ? '#c62828' : cap && emps.length/cap>0.8 ? '#e65100' : '#2e7d32';
+
+    const empRows = emps.map((e,i)=>{
+      const dept = depts.find(d=>d.id===e.deptId)?.name||'—';
+      const cd   = DB.customData[e.id]||{};
+      const joinedStr = e.joined ? new Date(e.joined).toLocaleDateString('vi-VN') : '—';
+      return `<tr>
+        <td style="text-align:center">${i+1}</td>
+        <td style="font-family:monospace;font-size:9pt">${escapeHtml(e.code||'—')}</td>
+        <td><b>${escapeHtml(e.name||'—')}</b></td>
+        <td>${escapeHtml(dept)}</td>
+        <td>${escapeHtml(e.role||'—')}</td>
+        <td>${escapeHtml(getEffectiveStatus(e)==='active'?'Active':getEffectiveStatus(e)==='probation'?'Thử việc':'Nghỉ phép')}</td>
+        <td>${joinedStr}</td>
+      </tr>`;
+    }).join('');
+
+    const thead = `<thead><tr><th>#</th><th>Mã NV</th><th>Họ tên</th><th>Phòng ban</th><th>Vị trí</th><th>Trạng thái</th><th>Ngày vào</th></tr></thead>`;
+
+    return `
+      <h2>🏠 ${escapeHtml(h.name)}</h2>
+      <div style="display:flex;gap:16px;margin-bottom:10px;flex-wrap:wrap">
+        <div style="background:#f8f9fa;border-left:4px solid #1e3a5f;padding:8px 14px;border-radius:4px">
+          <div style="font-size:8pt;color:#888;text-transform:uppercase">Đang ở</div>
+          <div style="font-size:16pt;font-weight:700;color:#1e3a5f">${emps.length}${cap?' / '+cap:''} người</div>
+        </div>
+        ${cap ? `<div style="background:#f8f9fa;border-left:4px solid ${statusColor};padding:8px 14px;border-radius:4px">
+          <div style="font-size:8pt;color:#888;text-transform:uppercase">Sức chứa</div>
+          <div style="font-size:16pt;font-weight:700;color:${statusColor}">${pct}%</div>
+        </div>` : ''}
+        ${h.note ? `<div style="background:#f8f9fa;border-left:4px solid #888;padding:8px 14px;border-radius:4px">
+          <div style="font-size:8pt;color:#888;text-transform:uppercase">Ghi chú</div>
+          <div style="font-size:10pt;color:#444">${escapeHtml(h.note)}</div>
+        </div>` : ''}
+      </div>
+      ${emps.length ? `<table>${thead}<tbody>${empRows}</tbody></table>` 
+        : '<p style="color:#888;font-style:italic;margin-bottom:8px">Chưa có nhân viên nào ở nhà này</p>'}`;
+  }).join('');
+
+  // Summary KPI
+  const totalInDorm = activeEmps.filter(e=>{
+    const cd=(DB.customData||{})[e.id]||{};
+    return cd.dormitory && houses.some(h=>h.name===cd.dormitory);
+  }).length;
+  const totalCap = houses.reduce((s,h)=>s+(parseInt(h.capacity)||0),0);
+
+  const summary = `<div style="display:flex;gap:16px;margin-bottom:18px;flex-wrap:wrap">
+    ${[
+      ['Tổng nhà', houses.length+' nhà', '#1e3a5f'],
+      ['NV đang ở', totalInDorm+' người', '#2e7d32'],
+      ['Tổng sức chứa', totalCap ? totalCap+' người' : '—', '#555'],
+      ['Tỉ lệ lấp đầy', totalCap ? Math.round(totalInDorm/totalCap*100)+'%' : '—', totalCap&&totalInDorm/totalCap>0.9?'#c62828':'#e65100'],
+    ].map(([l,v,c])=>`<div style="background:#f8f9fa;border-left:4px solid ${c};padding:10px 16px;border-radius:4px">
+      <div style="font-size:8.5pt;color:#888;text-transform:uppercase">${l}</div>
+      <div style="font-size:16pt;font-weight:700;color:${c}">${v}</div>
+    </div>`).join('')}
+  </div>`;
+
+  _openPDF('Báo cáo Staff House',
+    summary + (houses.length ? houseRows : '<p style="color:#888;font-style:italic">Chưa có nhà nào được thêm vào hệ thống.</p>'),
+    `${houses.length} nhà · ${totalInDorm} NV đang ở`
+  );
+}
+
