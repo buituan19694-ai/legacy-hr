@@ -20977,8 +20977,12 @@ function renderTraineeSchedule(main){
     ${tabsHTML}
 
     ${(()=>{
-      // Panel "Hôm nay" — đếm theo DB.trainees thực tế
+      // Panel "Hôm nay" — dùng cùng logic với KPI "Đang thực tập"
+      // status='active' → luôn đang TTS; status='exit'/'early_exit' → đã nghỉ; không có status → dựa vào ngày
       const actualToday = (DB.trainees||[]).filter(tr=>{
+        if(tr.status==='active') return true;
+        if(tr.status==='exit'||tr.status==='early_exit') return false;
+        // Không có status → dùng ngày
         const s = tr.startDate||'';
         const e = tr.endDate||'';
         return s && s <= todayStr && (!e || e >= todayStr);
