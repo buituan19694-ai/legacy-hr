@@ -21979,9 +21979,12 @@ fbAuth.onAuthStateChanged(async user => {
             DB.candidates=DB.candidates.filter(c=>c.jobId&&_jids2.has(c.jobId));
           }
 
-          // Migration: nếu trainees rỗng, thử đọc từ workforce doc cũ
-          if(!DB.trainees || !DB.trainees.length){
-            try{
+          // Migration: chỉ đọc từ workforce doc cũ nếu doc 'trainees' CHƯA TỒN TẠI
+          // (không chạy khi doc tồn tại nhưng rỗng — user có thể đã xóa hết data)
+          try{
+            const traineesDocRef = await window.fbDb.collection('hrdata').doc('trainees').get();
+            if(!traineesDocRef.exists){
+              // Doc chưa tồn tại → thử migrate từ workforce cũ
               const oldWfT = await window.fbDb.collection('hrdata').doc('workforce').get();
               if(oldWfT.exists && oldWfT.data().trainees && oldWfT.data().trainees.length){
                 DB.trainees = oldWfT.data().trainees;
@@ -21990,8 +21993,8 @@ fbAuth.onAuthStateChanged(async user => {
                 console.log('[MIGRATE] trainees from workforce:', DB.trainees.length);
                 saveData(['trainees','traineeSchedules']);
               }
-            }catch(e){ console.warn('[MIGRATE] trainees:', e.message); }
-          }
+            }
+          }catch(e){ console.warn('[MIGRATE] trainees:', e.message); }
 
           // Migration: đọc từ workforce doc cũ nếu resign doc chưa có data
           // Chạy mọi lần để đồng bộ giữa các thiết bị
@@ -22255,12 +22258,13 @@ fbAuth.onAuthStateChanged(async user => {
                 // Chỉ skip nếu cloud cũ HƠN local VÀ chính mình vừa save (< 3s)
                 // Không skip khi account khác cập nhật
                 const selfSave = (cloudData._syncBy === window.currentUser?.uid);
-                // Chỉ skip khi self-save VÀ cloud timestamp rất mới (< 8s) tránh echo
-                // Không skip quá lâu → có thể miss update từ chính mình trên tab khác
-                const skipAge = (Date.now() - cloudSyncAt) < 8000;
-                if(cloudTs < localTs && selfSave && skipAge){
-                  return;
-                }
+                // Skip nếu snapshot từ cache (chưa từ server thật)
+                if(snap.metadata.fromCache) return;
+                // Skip echo: self-save trong 5s gần nhất → chờ server confirm
+                const skipAge = (Date.now() - cloudSyncAt) < 5000;
+                if(selfSave && skipAge){ return; }
+                // Nếu cloud cũ hơn local → không đè
+                if(cloudTs < localTs){ return; }
 
                 FS_DOC_MAP[docId].forEach(key=>{
                   if(cloudData[key] === undefined) return;
