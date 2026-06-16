@@ -20975,6 +20975,55 @@ function renderTraineeSchedule(main){
       </div>
     </div>
     ${tabsHTML}
+
+    ${(()=>{
+      // Panel "Hôm nay" — đếm theo DB.trainees thực tế
+      const actualToday = (DB.trainees||[]).filter(tr=>{
+        const s = tr.startDate||'';
+        const e = tr.endDate||'';
+        return s && s <= todayStr && (!e || e >= todayStr);
+      });
+      const qty = actualToday.reduce((s,tr)=>s+(parseInt(tr.qty)||1),0);
+
+      // Breakdown theo bộ phận
+      const byDept = {};
+      actualToday.forEach(tr=>{
+        const deptId = tr.deptId||'';
+        const dName  = (DB.departments||[]).find(d=>d.id===deptId)?.name || (deptId?deptId:'Chưa phân bổ');
+        if(!byDept[dName]) byDept[dName]=0;
+        byDept[dName] += parseInt(tr.qty)||1;
+      });
+      const deptEntries = Object.entries(byDept).sort((a,b)=>b[1]-a[1]);
+
+      const CHIP_COLORS = ['#185FA5','#0F6E56','#854F0B','#993556','#534AB7','#A32D2D','#1D9E75','#3B6D11','#5C6BC0','#00838F'];
+
+      return `<div style="background:var(--bg-card);border:1px solid var(--border);border-radius:12px;padding:16px 20px;margin-bottom:14px;display:flex;align-items:center;gap:20px;flex-wrap:wrap">
+        <!-- KPI số lớn -->
+        <div style="display:flex;align-items:center;gap:14px;flex-shrink:0">
+          <div style="background:rgba(126,198,153,.12);border:1.5px solid rgba(126,198,153,.3);border-radius:10px;padding:10px 18px;text-align:center;min-width:80px">
+            <div style="font-size:30px;font-weight:800;color:var(--success);font-family:'Fraunces',serif;line-height:1">${qty}</div>
+            <div style="font-size:10px;color:var(--ink-muted);text-transform:uppercase;letter-spacing:.07em;margin-top:3px">SV hôm nay</div>
+          </div>
+          <div style="color:var(--ink-muted);font-size:11px">
+            <div style="font-weight:600;color:var(--ink);margin-bottom:3px">📅 ${today.toLocaleDateString('vi-VN',{weekday:'long',day:'2-digit',month:'2-digit',year:'numeric'})}</div>
+            <div>${deptEntries.length} bộ phận · ${actualToday.length} sinh viên</div>
+          </div>
+        </div>
+        <!-- Divider -->
+        <div style="width:1px;height:48px;background:var(--border);flex-shrink:0;display:${deptEntries.length?'block':'none'}"></div>
+        <!-- Breakdown chips -->
+        <div style="display:flex;flex-wrap:wrap;gap:7px;flex:1">
+          ${deptEntries.length ? deptEntries.map(([name,cnt],i)=>`
+            <div style="display:flex;align-items:center;gap:6px;background:${CHIP_COLORS[i%CHIP_COLORS.length]}22;border:1px solid ${CHIP_COLORS[i%CHIP_COLORS.length]}55;border-radius:20px;padding:4px 12px 4px 8px">
+              <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${CHIP_COLORS[i%CHIP_COLORS.length]};flex-shrink:0"></span>
+              <span style="font-size:12px;font-weight:600;color:${CHIP_COLORS[i%CHIP_COLORS.length]}">${cnt}</span>
+              <span style="font-size:12px;color:var(--ink)">${escapeHtml(name)}</span>
+            </div>`).join('')
+          : '<span style="font-size:12px;color:var(--ink-muted);font-style:italic">Không có sinh viên thực tập hôm nay</span>'}
+        </div>
+      </div>`;
+    })()}
+
     ${window._ganttView==='timeline' ? renderTimelineView() : renderTableView()}
   `;
 }
