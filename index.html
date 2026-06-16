@@ -20146,12 +20146,11 @@ function renderBonusInline(yr, curYear, curMonth){
     if(showCmp && cD) datasets.push({
       label:(DB.bonusName?.[cyr]||'Thưởng')+' '+cyr,
       data:cD.map(v=>v||0),
-      type:'line',
+      type:'bar',
+      backgroundColor:'rgba(126,182,232,.55)',
       borderColor:'rgba(126,182,232,.85)',
-      backgroundColor:'rgba(126,182,232,.08)',
-      borderWidth:2, borderDash:[4,3],
-      pointRadius:3, pointBackgroundColor:'rgba(126,182,232,.85)',
-      tension:0.3, order:1,
+      borderWidth:1.5, borderRadius:4,
+      order:2,
     });
 
     const ch = new Chart(el,{
@@ -20280,56 +20279,6 @@ function renderSvcTab(){
 
   const chartId = 'chartSvc_'+yr+(showCmp?'_'+cyr:'');
 
-  setTimeout(()=>{
-    const el = document.getElementById(chartId);
-    if(!el) return;
-    // Set explicit size để tránh chart bị méo với responsive:false
-    const rect = el.parentElement ? el.parentElement.getBoundingClientRect() : {width: 400};
-    el.width = Math.max(rect.width || 400, 200);
-    el.height = 220;
-    if(!el || !el.isConnected) return;
-    const ds = [{
-      label: `SVC ${yr}`,
-      data: data.map(v=>v||0),
-      backgroundColor: 'rgba(212,165,116,.75)',
-      borderColor: 'rgba(212,165,116,.9)',
-      borderWidth: 1.5,
-      borderRadius: 4,
-      type: 'bar',
-      order: 2,
-      yAxisID: 'y',
-    }];
-    if(showCmp && cdata) ds.push({
-      label: `SVC ${cyr}`,
-      data: cdata.map(v=>v||0),
-      type: 'line',
-      borderColor: 'rgba(126,182,232,.85)',
-      backgroundColor: 'rgba(126,182,232,.08)',
-      borderWidth: 2,
-      borderDash: [4,3],
-      pointRadius: 3,
-      pointBackgroundColor: 'rgba(126,182,232,.85)',
-      tension: 0.3,
-      order: 1,
-      yAxisID: 'y',
-    });
-    if(Chart.getChart(el)) Chart.getChart(el).destroy();
-    new Chart(el, {
-      type:'bar',
-      data:{labels:MN, datasets:ds},
-      options:{
-        responsive:false, maintainAspectRatio:false, animation:false,
-        plugins:{legend:{position:'top',labels:{usePointStyle:true,padding:10}},
-          tooltip:{mode:'index',intersect:false,callbacks:{label:ctx=>`${ctx.dataset.label}: ${fmtN(ctx.raw)} đ`}}},
-        scales:{
-          x:{grid:{display:false}},
-          y:{beginAtZero:true, grid:{color:'rgba(255,255,255,.04)'},
-            ticks:{callback:v=>v>=1e9?(v/1e9).toFixed(1)+'B':v>=1e6?(v/1e6).toFixed(0)+'M':fmtN(v)}}
-        }
-      }
-    });
-  }, 50);
-
   return `
     <!-- SVC Filter -->
     <div class="card" style="padding:12px 16px;margin-bottom:14px">
@@ -20420,6 +20369,41 @@ function renderSvcTab(){
       </div>
     </div>
   `;
+
+  // Init SVC chart SAU khi HTML đã inject vào DOM
+  setTimeout(()=>{
+    const el = document.getElementById(chartId);
+    if(!el) return;
+    const rect = el.parentElement ? el.parentElement.getBoundingClientRect() : {width:400};
+    el.width = Math.max(rect.width||400, 200);
+    el.height = 220;
+    const ds = [{
+      label:`SVC ${yr}`, data:data.map(v=>v||0),
+      backgroundColor:'rgba(212,165,116,.75)', borderColor:'rgba(212,165,116,.9)',
+      borderWidth:1.5, borderRadius:4, type:'bar', order:2,
+    }];
+    if(showCmp && cdata) ds.push({
+      label:`SVC ${cyr}`, data:cdata.map(v=>v||0),
+      type:'bar', backgroundColor:'rgba(126,182,232,.55)', borderColor:'rgba(126,182,232,.85)',
+      borderWidth:1.5, borderRadius:4, order:2,
+    });
+    if(Chart.getChart(el)) Chart.getChart(el).destroy();
+    new Chart(el,{
+      type:'bar', data:{labels:MN, datasets:ds},
+      options:{
+        responsive:false, maintainAspectRatio:false, animation:false,
+        plugins:{
+          legend:{display:showCmp, position:'top', labels:{usePointStyle:true,padding:10}},
+          tooltip:{mode:'index', intersect:false, callbacks:{label:ctx=>`${ctx.dataset.label}: ${fmtN(ctx.raw)} đ`}}
+        },
+        scales:{
+          x:{grid:{display:false}},
+          y:{beginAtZero:true, grid:{color:'rgba(255,255,255,.04)'},
+            ticks:{callback:v=>v>=1e9?(v/1e9).toFixed(1)+'B':v>=1e6?(v/1e6).toFixed(0)+'M':fmtN(v)}}
+        }
+      }
+    });
+  }, 50);
 }
 
 function renderDailyTab(){
