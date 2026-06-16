@@ -19769,14 +19769,11 @@ function renderSalaryAnalysis(main){
           <th style="text-align:right;padding:8px 10px">HC</th>
           <th style="text-align:right;padding:8px 10px">Quỹ lương (tr.đ)</th>
           <th style="text-align:right;padding:8px 10px">Δ MoM</th>
-          <th style="text-align:right;padding:8px 10px">Lương CB</th>
-          <th style="text-align:right;padding:8px 10px">Bổ sung</th>
-          <th style="text-align:right;padding:8px 10px">TB/NV</th>
           ${F.showCmp?`<th style="text-align:right;padding:8px 10px;color:var(--ink-muted)">Cùng kỳ ${F.cmpYear}</th><th style="text-align:right;padding:8px 10px">YoY</th>`:''}
         </tr></thead>
         <tbody>
           ${mdCur.map((d,i)=>{
-            const fM=Math.round(d.fund/1e6), bM=Math.round(d.base/1e6), bonM=Math.round(d.bonus/1e6);
+            const fM=Math.round(d.fund/1e6);
             const mom=momFund[i];
             const cmpRow=mdCmp?mdCmp[i]:null;
             const yoy=cmpRow?yoyPct(d.fund,cmpRow.fund):null;
@@ -19790,9 +19787,6 @@ function renderSalaryAnalysis(main){
               <td style="text-align:right;padding:7px 10px;color:${mom===null?'var(--ink-muted)':mom>0?'var(--danger)':mom<0?'var(--success)':'var(--ink-muted)'}">
                 ${mom===null?'—':mom>0?'+'+mom+'%':mom+'%'}${mom!==null&&Math.abs(mom)>=5?' ⚠️':''}
               </td>
-              <td style="text-align:right;font-family:'JetBrains Mono',monospace;padding:7px 10px;color:var(--success)">${bM.toLocaleString('vi-VN')}</td>
-              <td style="text-align:right;font-family:'JetBrains Mono',monospace;padding:7px 10px;color:var(--info)">${bonM.toLocaleString('vi-VN')}</td>
-              <td style="text-align:right;font-family:'JetBrains Mono',monospace;padding:7px 10px;font-size:11px;color:var(--ink-dim)">${d.avgPer?fmtMoney(d.avgPer):'—'}</td>
               ${F.showCmp&&cmpRow?`
               <td style="text-align:right;font-family:'JetBrains Mono',monospace;padding:7px 10px;color:var(--ink-muted)">${Math.round(cmpRow.fund/1e6).toLocaleString('vi-VN')}</td>
               <td style="text-align:right;padding:7px 10px;color:${yoy===null?'var(--ink-muted)':yoy>0?'var(--danger)':yoy<0?'var(--success)':'var(--ink-muted)'}">
@@ -19805,9 +19799,6 @@ function renderSalaryAnalysis(main){
           <td style="padding:8px 10px">Tổng / TB năm</td>
           <td style="text-align:right;font-family:'JetBrains Mono',monospace">${Math.round(mdCur.reduce((s,d)=>s+d.hc,0)/12)} avg</td>
           <td style="text-align:right;font-family:'JetBrains Mono',monospace;color:var(--accent)">${Math.round(mdCur.reduce((s,d)=>s+d.fund,0)/1e6).toLocaleString('vi-VN')}</td>
-          <td></td>
-          <td style="text-align:right;font-family:'JetBrains Mono',monospace;color:var(--success)">${Math.round(mdCur.reduce((s,d)=>s+d.base,0)/1e6).toLocaleString('vi-VN')}</td>
-          <td style="text-align:right;font-family:'JetBrains Mono',monospace;color:var(--info)">${Math.round(mdCur.reduce((s,d)=>s+d.bonus,0)/1e6).toLocaleString('vi-VN')}</td>
           <td></td>
           ${F.showCmp&&mdCmp?`<td style="text-align:right;font-family:'JetBrains Mono',monospace;color:var(--ink-muted)">${Math.round(mdCmp.reduce((s,d)=>s+d.fund,0)/1e6).toLocaleString('vi-VN')}</td><td></td>`:''}
         </tr></tfoot>
@@ -19990,6 +19981,10 @@ function renderSvcInline(svcYr, curYear, curMonth){
   requestAnimationFrame(()=>{
     const el = document.getElementById(cid);
     if(!el) return;
+    // Set explicit size để tránh chart bị méo với responsive:false
+    const rect = el.parentElement ? el.parentElement.getBoundingClientRect() : {width: 400};
+    el.width = Math.max(rect.width || 400, 200);
+    el.height = 190;
     if(Chart.getChart(el)) Chart.getChart(el).destroy();
     const ch = new Chart(el,{type:'bar',data:{labels:MNs,datasets:[{
       label:'SVC '+svcYr, data:svcD.map(v=>v||0),
@@ -20065,10 +20060,16 @@ function renderBonusInline(yr, curYear, curMonth){
   if(!DB.bonusData) DB.bonusData = {};
   if(!DB.bonusName) DB.bonusName = {};
   if(!DB.bonusData[yr]) DB.bonusData[yr] = Array(12).fill(0);
+  const F = window._salF || {};
+  const showCmp = !!(F.bonusShowCmp || F.showCmp);
+  const cyr = F.bonusCmpYear || F.cmpYear || yr-1;
+  if(showCmp && !DB.bonusData[cyr]) DB.bonusData[cyr] = Array(12).fill(0);
   const bD    = DB.bonusData[yr];
+  const cD    = showCmp ? DB.bonusData[cyr] : null;
   const bName = DB.bonusName[yr] || '';
   const MNs   = ['T1','T2','T3','T4','T5','T6','T7','T8','T9','T10','T11','T12'];
   const tot   = bD.reduce((s,v)=>s+(v||0),0);
+  const cTot  = cD ? cD.reduce((s,v)=>s+(v||0),0) : 0;
   const filled= bD.filter(v=>v>0).length;
   const avg12 = Math.round(tot/12);
   const avgF  = filled ? Math.round(tot/filled) : 0;
@@ -20114,6 +20115,10 @@ function renderBonusInline(yr, curYear, curMonth){
   requestAnimationFrame(()=>{
     const el = document.getElementById(cid);
     if(!el) return;
+    // Set explicit size để tránh chart bị méo với responsive:false
+    const rect = el.parentElement ? el.parentElement.getBoundingClientRect() : {width: 400};
+    el.width = Math.max(rect.width || 400, 200);
+    el.height = 190;
     if(Chart.getChart(el)) Chart.getChart(el).destroy();
     const ch = new Chart(el,{type:'bar',data:{labels:MNs,datasets:[{
       label:(bName||'Thưởng')+' '+yr, data:bD.map(v=>v||0),
@@ -20189,6 +20194,40 @@ function renderBonusInline(yr, curYear, curMonth){
         <div style="display:flex;flex-direction:column;gap:5px">${rows2.join('')}</div>
       </div>
     </div>
+    ${showCmp ? `
+    <div style="padding:0 16px 16px">
+      <div style="font-size:10.5px;color:var(--ink-muted);font-weight:600;text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">So sánh cùng kỳ ${yr} vs ${cyr}</div>
+      <table class="tbl" style="font-size:12px">
+        <thead><tr>
+          <th style="text-align:left;padding:6px 10px">Tháng</th>
+          <th style="text-align:right;padding:6px 10px">Năm ${yr}</th>
+          <th style="text-align:right;padding:6px 10px;color:var(--ink-muted)">Năm ${cyr}</th>
+          <th style="text-align:right;padding:6px 10px">YoY</th>
+        </tr></thead>
+        <tbody>
+          ${MNs.map((mn,i)=>{
+            const v = bD[i]||0, cv = cD?.[i]||0;
+            const yoy = cv>0 ? Math.round((v-cv)/cv*100) : null;
+            return `<tr>
+              <td style="padding:5px 10px">${mn}</td>
+              <td style="text-align:right;font-family:'JetBrains Mono',monospace;padding:5px 10px;color:${v?'var(--accent)':'var(--ink-muted)'}">${v?fmtN(v):'—'}</td>
+              <td style="text-align:right;font-family:'JetBrains Mono',monospace;padding:5px 10px;color:var(--ink-muted)">${cv?fmtN(cv):'—'}</td>
+              <td style="text-align:right;padding:5px 10px;color:${yoy===null?'var(--ink-muted)':yoy>0?'var(--danger)':yoy<0?'var(--success)':'var(--ink-muted)'}">
+                ${yoy===null?'—':yoy>0?'+'+yoy+'%':yoy+'%'}
+              </td>
+            </tr>`;
+          }).join('')}
+          <tr style="border-top:2px solid var(--border);font-weight:700">
+            <td style="padding:6px 10px">Tổng</td>
+            <td style="text-align:right;font-family:'JetBrains Mono',monospace;color:var(--accent)">${fmtN(tot)}</td>
+            <td style="text-align:right;font-family:'JetBrains Mono',monospace;color:var(--ink-muted)">${fmtN(cTot)}</td>
+            <td style="text-align:right;color:${cTot>0?(tot>cTot?'var(--danger)':'var(--success)'):'var(--ink-muted)'}">
+              ${cTot>0?(tot>cTot?'+':'')+Math.round((tot-cTot)/cTot*100)+'%':'—'}
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>` : ''}
   </div>`;
 }
 
@@ -20197,8 +20236,9 @@ function renderSvcTab(){
   const curYear = today.getFullYear(), curMonth = today.getMonth()+1;
   const F = window._salF;
   const yr = F.svcYear || curYear;
-  const cyr = F.svcCmpYear || curYear-1;
-  const showCmp = !!F.svcShowCmp;
+  const cyr = F.svcCmpYear || (F.cmpYear || curYear-1);
+  // Link với F.showCmp của bảng lương — ấn 1 nút so sánh là áp dụng toàn bộ
+  const showCmp = !!(F.svcShowCmp || F.showCmp);
 
   if(!DB.svcData) DB.svcData = {};
   if(!DB.svcData[yr]) DB.svcData[yr] = Array(12).fill(0);
@@ -20239,6 +20279,11 @@ function renderSvcTab(){
 
   requestAnimationFrame(()=>{
     const el = document.getElementById(chartId);
+    if(!el) return;
+    // Set explicit size để tránh chart bị méo với responsive:false
+    const rect = el.parentElement ? el.parentElement.getBoundingClientRect() : {width: 400};
+    el.width = Math.max(rect.width || 400, 200);
+    el.height = 220;
     if(!el || !el.isConnected) return;
     const ds = [{
       label: `SVC ${yr}`,
@@ -20679,6 +20724,10 @@ function renderCasual(main){
   requestAnimationFrame(()=>{
     const el = document.getElementById('chartCasualTrend');
     if(!el) return;
+    // Set explicit size để tránh chart bị méo với responsive:false
+    const rect = el.parentElement ? el.parentElement.getBoundingClientRect() : {width: 400};
+    el.width = Math.max(rect.width || 400, 200);
+    el.height = 280;
     const monthlyData = Array(12).fill(0);
     const monthlyCost = Array(12).fill(0);
     (DB.casuals||[]).filter(r=>r.year===cf.year).forEach(r=>{
@@ -20805,6 +20854,11 @@ function renderCasualAnalysis(){
 
   requestAnimationFrame(()=>{
     const el1=document.getElementById('chartCasualAnal1');
+    if(!el) return;
+    // Set explicit size để tránh chart bị méo với responsive:false
+    const rect = el.parentElement ? el.parentElement.getBoundingClientRect() : {width: 400};
+    el.width = Math.max(rect.width || 400, 200);
+    el.height = 280;
     const el2=document.getElementById('chartCasualAnal2');
     if(!el1||!el2) return;
     Chart.defaults.font.family="'Inter Tight',sans-serif";
@@ -22962,8 +23016,9 @@ fbAuth.onAuthStateChanged(async user => {
                   if(!window._pendingRender) window._pendingRender = {};
                   affectedPages.forEach(p=>{ window._pendingRender[p]=true; });
                 } else if(affectedPages.includes(currentPage)){
-                  // Salary page: chỉ render khi không phải self-save vừa xong
-                  if(currentPage === 'salary' && isSelf && (Date.now()-cloudSyncAt) < 10000){
+                  // Salary page: KHÔNG re-render từ snapshot (gây chart loop)
+                  // Chỉ update badges — user tự reload nếu cần
+                  if(currentPage === 'salary'){
                     updateBadges(); return;
                   }
                   const fn = RENDER_MAP[currentPage];
