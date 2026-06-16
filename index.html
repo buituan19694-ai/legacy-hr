@@ -1829,6 +1829,7 @@ function navigate(page){
   currentEmpId = null;
   currentDeptId = null;
   currentJobId = null;
+  window._salaryRendered = false; // Reset guard khi navigate
   document.querySelectorAll('.nav-item').forEach(i=>i.classList.toggle('active', i.dataset.page===page));
   render();
   window.scrollTo({top:0, behavior:'smooth'});
@@ -2015,8 +2016,24 @@ function _doRender(){
   requestAnimationFrame(()=>{
     updateBadges();
     const main = $('#mainContent');
+
+    // ── Salary render guard: chỉ render 1 lần sau navigate ──
+    // Tránh chart bị destroy/rebuild liên tục do snapshot callbacks
+    // NHƯNG cho phép re-render khi user thay đổi filter/tab
+    if(currentPage === 'salary'){
+      const now = Date.now();
+      const last = window._salaryLastRender || 0;
+      const curHash = JSON.stringify(window._salF||{});
+      const changed = curHash !== window._salaryFilterHash;
+      if(window._salaryRendered && !changed && (now - last) < 3000){
+        return; // salary đã render, filter không đổi → skip
+      }
+      window._salaryLastRender = now;
+      window._salaryRendered = true;
+      window._salaryFilterHash = curHash;
+    }
+
     // ── Destroy ALL Chart.js instances TRƯỚC khi xóa DOM ──
-    // Tránh orphan ResizeObserver callbacks từ charts mất canvas gây flicker loop
     if(typeof Chart !== 'undefined' && Chart.instances){
       Object.keys(Chart.instances).forEach(key=>{
         try { Chart.instances[key].destroy(); } catch(e){}
@@ -3256,8 +3273,6 @@ function renderDashboardCharts(){
   Chart.defaults.font.family = "'Inter Tight', sans-serif";
   Chart.defaults.font.size = 11.5;
   Chart.defaults.color = '#8b949e';
-  Chart.defaults.responsive = false;       // Tắt ResizeObserver toàn cục — tránh flicker loop
-  Chart.defaults.animation = false;        // Tắt animation toàn cục — tránh rAF loop
   Chart.defaults.layout = Chart.defaults.layout || {};
   Chart.defaults.layout.padding = {top: 18, right: 12, bottom: 0, left: 4};
 
@@ -7919,7 +7934,25 @@ function confirmRenewContract(oldContractId, empId, nextType, nextEndDate){
   const startISO = startEl?.getAttribute('data-iso') || dispToIso(startEl?.value||'') || startEl?.value||'';
   const signedISO = signedEl?.getAttribute('data-iso') || dispToIso(signedEl?.value||'') || signedEl?.value||'';
   const notes = notesEl?.value.trim()||'';
-  const endISO = nextEndDate || '';
+
+  if(!startISO){ toast('Vui lòng nhập ngày bắt đầu','error'); return; }
+
+  // Tính lại endDate từ startDate + type
+  // term12: +1 năm −1 ngày | term24: +2 năm −1 ngày | indefinite: chỉ có ngày bắt đầu
+  let endISO = '';
+  if(nextType === 'term12'){
+    const s = new Date(startISO); s.setFullYear(s.getFullYear()+1); s.setDate(s.getDate()-1);
+    endISO = s.toISOString().slice(0,10);
+  } else if(nextType === 'term24'){
+    const s = new Date(startISO); s.setFullYear(s.getFullYear()+2); s.setDate(s.getDate()-1);
+    endISO = s.toISOString().slice(0,10);
+  } else if(nextType === 'indefinite'){
+    endISO = '';
+  } else {
+    endISO = nextEndDate || '';
+  }
+
+  console.log('[RenewContract]', {empId, nextType, startISO, endISO, signedISO, oldContractId});
 
   if(!startISO){ toast('Vui lòng nhập ngày bắt đầu','error'); return; }
 
@@ -7945,6 +7978,7 @@ function confirmRenewContract(oldContractId, empId, nextType, nextEndDate){
   DB.customData[empId].currentContractType  = typeLabel;
   DB.customData[empId].currentContractStart = startISO;
   DB.customData[empId].currentContractEnd   = endISO;
+  console.log('[RenewContract] ✅ customData updated:', empId, {type:typeLabel, start:startISO, end:endISO});
 
   const empIdx = DB.employees.findIndex(x=>x.id===empId);
   if(empIdx >= 0 && DB.employees[empIdx].status === 'probation' && nextType !== 'probation'){
