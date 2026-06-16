@@ -2687,11 +2687,13 @@ function renderKpiMiniCharts(){
 function setDashPeriod(key, val){
   if(!window._dashPeriod) window._dashPeriod = {month: new Date().getMonth()+1, year: new Date().getFullYear(), status:''};
   window._dashPeriod[key] = val;
+  sessionStorage.setItem('_dashPeriod', JSON.stringify(window._dashPeriod));
   render();
 }
 function setDashPeriodNow(){
   const now = new Date();
   window._dashPeriod = {month: now.getMonth()+1, year: now.getFullYear(), status:''};
+  sessionStorage.setItem('_dashPeriod', JSON.stringify(window._dashPeriod));
   render();
 }
 
@@ -7240,7 +7242,7 @@ function saveDepartment(id, isNew){
   const head = headEmp ? headEmp.name : '';
   const data = {id, name, head, headId, color:$s('f_color'), desc:$('#f_desc').value.trim()};
   if(isNew) DB.departments.push(_sanitizeForFirebase(data));
-  else{ const i = DB.departments.findIndex(x=>x.id===id); DB.departments[i] = data; }
+  else{ const i = DB.departments.findIndex(x=>x.id===id); if(i>=0) DB.departments[i] = data; }
   saveData(['departments']); closeModal(); toast(isNew?'Đã thêm phòng ban':(_lang==="en"?"Updated":"Đã cập nhật")); render();
 }
 
@@ -11266,12 +11268,9 @@ function deleteLeave(id, fromModal=false){
    RECRUITMENT — CRUD
    ========================================================= */
 function getJobHired(jobId){
-  const j = DB.jobs?.find(x => x.id === jobId);
-  const fromJob = j ? (j.hired || 0) : 0;
-  // j.hired là source of truth (được update khi tích ✓ accept offer)
-  // fromCands chỉ dùng để verify hoặc khi j.hired chưa có
-  const fromCands = (DB.candidates||[]).filter(a => a.jobId === jobId && a.status === 'hired').length;
-  return Math.max(fromCands, fromJob);
+  // Source of truth duy nhất: đếm candidates có status='hired' cho jobId này
+  // j.hired (counter cũ) bị lỗi vì không giảm khi candidate bị xóa/đổi status
+  return (DB.candidates||[]).filter(a => a.jobId === jobId && a.status === 'hired').length;
 }
 
 /* ---------- View + period state ---------- */
@@ -13801,8 +13800,9 @@ function advanceCandidate(id){
   if(next === 'hired'){
     const j = DB.jobs.find(j=>j.id===a.jobId);
     if(j){
-      j.hired = (j.hired||0) + 1;
-      if(j.hired >= j.positions){
+      // j.hired bỏ - dùng candidate count làm source of truth
+      const hiredCount = (DB.candidates||[]).filter(c=>c.jobId===j.id&&c.status==='hired').length + 1; // +1 vì a chưa save
+      if(hiredCount >= j.positions){
         if(confirm(`Đã tuyển đủ ${j.positions} người cho "${j.title}". Đánh dấu vị trí "Đã đủ"?`)){
           j.status = 'filled';
           j.closedDate = new Date().toISOString().slice(0,10);
@@ -13835,8 +13835,9 @@ function acceptOffer(id){
   a.hiredDate = new Date().toISOString().slice(0,10);
   const j = DB.jobs ? DB.jobs.find(j=>j.id===a.jobId) : null;
   if(j){
-    j.hired = (j.hired||0) + 1;
-    if(j.hired >= j.positions){
+    // j.hired bỏ - dùng candidate count làm source of truth
+    const hiredCount = (DB.candidates||[]).filter(c=>c.jobId===j.id&&c.status==='hired').length + 1; // +1 vì a chưa save
+    if(hiredCount >= j.positions){
       if(confirm('Đã tuyển đủ ' + j.positions + ' người cho "' + j.title + '". Đánh dấu vị trí "Đã đủ"?')){
         j.status = 'filled';
         j.closedDate = new Date().toISOString().slice(0,10);
@@ -14283,18 +14284,29 @@ function deleteCandidate(id, fromModal=false){
 function markJobHired(id){
   const j = DB.jobs.find(x=>x.id===id);
   if(!j) return;
-  const newHired = (j.hired||0) + 1;
-  if(newHired > j.positions){
-    if(!confirm('Đã tuyển vượt quá số lượng cần. Tiếp tục?')) return;
+  const currentHired = getJobHired(id);
+  if(currentHired >= j.positions){
+    if(!confirm('Đã tuyển đủ số lượng. Vẫn ghi nhận thêm?')) return;
   }
-  j.hired = newHired;
+  // Tạo candidate placeholder thay vì tăng counter j.hired
+  const placeholder = {
+    id: uid(), jobId: id,
+    name: `[Tuyển ngoài hệ thống #${currentHired+1}]`,
+    phone:'', email:'', appliedDate: new Date().toISOString().slice(0,10),
+    status:'hired', hiredDate: new Date().toISOString().slice(0,10),
+    source:'Khác', rating:0, notes:'Ghi nhận thủ công'
+  };
+  if(!DB.candidates) DB.candidates = [];
+  DB.candidates.push(placeholder);
+  const newHired = currentHired + 1;
   if(newHired >= j.positions){
     if(confirm(`Đã tuyển đủ ${j.positions} người cho vị trí "${j.title}". Đánh dấu vị trí là "Đã đủ"?`)){
       j.status = 'filled';
       j.closedDate = new Date().toISOString().slice(0,10);
     }
   }
-  saveData();
+  saveData(['jobs']);
+  _saveSharded('candidates');
   toast(`Đã ghi nhận tuyển được người thứ ${newHired}/${j.positions}`);
   render();
 }
@@ -14480,6 +14492,7 @@ function confirmAddTrainingYear(){
   saveData();
   if(!window._trainingPeriod){ const _ttp=sessionStorage.getItem('_trainingPeriod'); window._trainingPeriod=_ttp?JSON.parse(_ttp):{mode:'year',year:new Date().getFullYear(),month:new Date().getMonth()+1}; }
   window._trainingPeriod.year=yr;
+  sessionStorage.setItem('_trainingPeriod', JSON.stringify(window._trainingPeriod));
   closeModal(); render();
   toast(`✅ Đã thêm năm ${yr}`,'success');
 }
@@ -15873,14 +15886,14 @@ function renderPerformance(main){
     <div class="card" style="margin-top:16px">
       ${(()=>{
         const allYears = [...new Set((DB.kpiReviews||[]).map(k=>(k.period||'').slice(-4)).filter(y=>/^\d{4}$/.test(y)))].sort((a,b)=>b-a);
-        if(!window._perfHistYear) window._perfHistYear = String(new Date().getFullYear());
+        if(!window._perfHistYear) window._perfHistYear = sessionStorage.getItem('_perfHistYear') || String(new Date().getFullYear());
         const selYear = window._perfHistYear;
         const filtered = (DB.kpiReviews||[]).filter(k=>!selYear||(k.period||'').includes(selYear));
         return `
       <div class="card-head" style="display:flex;align-items:center;justify-content:space-between">
         <div><div class="card-title">Lịch sử <em>đánh giá</em></div><div class="card-sub">${filtered.length} bản ghi${selYear?' · Năm '+selYear:''}</div></div>
         <div style="display:flex;gap:8px;align-items:center">
-          <select class="filter-select" onchange="window._perfHistYear=this.value;render()">
+          <select class="filter-select" onchange="window._perfHistYear=this.value;sessionStorage.setItem('_perfHistYear',this.value);render()">
             <option value="">Tất cả năm</option>
             ${allYears.map(y=>`<option value="${y}" ${selYear===y?'selected':''}>${y}</option>`).join('')}
           </select>
@@ -19348,11 +19361,11 @@ function renderSalaryAnalysis(main){
       <div style="overflow-x:auto">
       <table class="tbl">
         <thead><tr>
-          <th onclick="window._salSort={key:'name',dir:window._salSort.key==='name'?-window._salSort.dir:1};render()" style="${thS('name')}">${_lang==="en"?"Employee":"Nhân viên"} ${arr('name')}</th>
-          <th onclick="window._salSort={key:'dept',dir:window._salSort.key==='dept'?-window._salSort.dir:1};render()" style="${thS('dept')}">${_lang==="en"?"Dept":"Phòng ban"} ${arr('dept')}</th>
-          <th onclick="window._salSort={key:'base',dir:window._salSort.key==='base'?-window._salSort.dir:-1};render()" style="${thS('base')}">Lương CB ${arr('base')}</th>
-          <th onclick="window._salSort={key:'bonus',dir:window._salSort.key==='bonus'?-window._salSort.dir:-1};render()" style="${thS('bonus')}">Bổ sung ${arr('bonus')}</th>
-          <th onclick="window._salSort={key:'total',dir:window._salSort.key==='total'?-window._salSort.dir:-1};render()" style="${thS('total')}">${_lang==="en"?"Total salary":"Tổng lương"} ${arr('total')}</th>
+          <th onclick="window._salSort={key:'name',dir:window._salSort.key==='name'?-window._salSort.dir:1};sessionStorage.setItem('_salSort',JSON.stringify(window._salSort));render()" style="${thS('name')}">${_lang==="en"?"Employee":"Nhân viên"} ${arr('name')}</th>
+          <th onclick="window._salSort={key:'dept',dir:window._salSort.key==='dept'?-window._salSort.dir:1};sessionStorage.setItem('_salSort',JSON.stringify(window._salSort));render()" style="${thS('dept')}">${_lang==="en"?"Dept":"Phòng ban"} ${arr('dept')}</th>
+          <th onclick="window._salSort={key:'base',dir:window._salSort.key==='base'?-window._salSort.dir:-1};sessionStorage.setItem('_salSort',JSON.stringify(window._salSort));render()" style="${thS('base')}">Lương CB ${arr('base')}</th>
+          <th onclick="window._salSort={key:'bonus',dir:window._salSort.key==='bonus'?-window._salSort.dir:-1};sessionStorage.setItem('_salSort',JSON.stringify(window._salSort));render()" style="${thS('bonus')}">Bổ sung ${arr('bonus')}</th>
+          <th onclick="window._salSort={key:'total',dir:window._salSort.key==='total'?-window._salSort.dir:-1};sessionStorage.setItem('_salSort',JSON.stringify(window._salSort));render()" style="${thS('total')}">${_lang==="en"?"Total salary":"Tổng lương"} ${arr('total')}</th>
           <th style="text-align:right;padding:8px 12px">${_lang==="en"?"% Fund":"% Quỹ"}</th>
         </tr></thead>
         <tbody>
@@ -22001,13 +22014,15 @@ fbAuth.onAuthStateChanged(async user => {
         // ── Listener cho dynamic sharded docs (rewards_, leaves_, kpi_, etc.) ──
         // Dùng collectionGroup query thay vì listen từng doc
         const DYNAMIC_PREFIXES = {
-          'rewards_':    'rewardRecords',
-          'leaves_':     'leaves',
-          'kpi_':        'kpiReviews',
-          'promos_':     'promotions',
-          'discipline_': 'disciplineRecords',
-          'casuals_':    'casuals',
-          'cand_':       'candidates',
+          'rewards_':        'rewardRecords',
+          'leaves_':         'leaves',
+          'kpi_':            'kpiReviews',
+          'promos_':         'promotions',
+          'discipline_':     'disciplineRecords',
+          'casuals_':        'casuals',
+          'cand_':           'candidates',
+          'manning_plan_':   'manningPlan',
+          'manning_actual_': 'manningActual',
         };
         const dynamicUnsub = window.fbDb.collection('hrdata')
           .onSnapshot(snap=>{
@@ -22055,12 +22070,29 @@ fbAuth.onAuthStateChanged(async user => {
                   DB[key] = _merged;
                 }
                 changed = true;
+              } else if(key==='manningPlan' && d.manningPlan && typeof d.manningPlan==='object'){
+                // manning_plan_YYYY: merge sharded year data
+                Object.entries(d.manningPlan).forEach(([yr,yrData])=>{
+                  if(!DB.manningPlan[yr]) DB.manningPlan[yr]={depts:{}};
+                  if(yrData.depts) Object.assign(DB.manningPlan[yr].depts, yrData.depts);
+                });
+                changed = true;
+              } else if(key==='manningActual' && d.manningActual && typeof d.manningActual==='object'){
+                // manning_actual_YYYY: merge sharded year→month→empId data
+                Object.entries(d.manningActual).forEach(([yr,yrData])=>{
+                  if(!DB.manningActual[yr]) DB.manningActual[yr]={};
+                  Object.entries(yrData||{}).forEach(([mi,moData])=>{
+                    if(!DB.manningActual[yr][mi]) DB.manningActual[yr][mi]={};
+                    Object.assign(DB.manningActual[yr][mi], moData||{});
+                  });
+                });
+                changed = true;
               }
             });
             if(!changed) return;
             clearTimeout(window._dynamicDebounce);
             window._dynamicDebounce = setTimeout(()=>{
-              const pages = ['awards','warnings','performance','leaves','recruitment','job-detail','dashboard'];
+              const pages = ['awards','warnings','performance','leaves','recruitment','job-detail','dashboard','manning'];
               const modalOpen = document.getElementById('modal')?.classList.contains('open');
               if(modalOpen){
                 if(!window._pendingRender) window._pendingRender={};
@@ -22506,7 +22538,7 @@ function renderYoYTab(curYear, depts, allEmps, BH_RATE){
   // Available years with data
   const availYears = Object.keys(DB.manningPlan||{}).map(Number).filter(y=>y!==curYear).sort((a,b)=>b-a);
   // Default prevYear = curYear-1, but user can pick
-  const prevYear = window._yoyCompareYear || (availYears.includes(curYear-1) ? curYear-1 : (availYears[0]||curYear-1));
+  const prevYear = window._yoyCompareYear || parseInt(sessionStorage.getItem('_yoyCompareYear')) || (availYears.includes(curYear-1) ? curYear-1 : (availYears[0]||curYear-1));
   window._yoyCompareYear = prevYear;
 
   const planCur  = (DB.manningPlan[curYear]||{}).depts||{};
@@ -22518,7 +22550,7 @@ function renderYoYTab(curYear, depts, allEmps, BH_RATE){
     <span style="font-size:13px;font-weight:600;color:var(--ink)">So sánh</span>
     <span style="font-size:14px;font-weight:800;color:var(--accent)">${curYear}</span>
     <span style="font-size:13px;color:var(--ink-muted)">với</span>
-    <select onchange="window._yoyCompareYear=parseInt(this.value);render()"
+    <select onchange="window._yoyCompareYear=parseInt(this.value);sessionStorage.setItem('_yoyCompareYear',this.value);render()"
       style="padding:6px 12px;border-radius:7px;border:1px solid var(--accent);background:var(--bg-elev);color:var(--accent);font-family:inherit;font-size:14px;font-weight:700;cursor:pointer">
       ${availYears.length
         ? availYears.map(y=>`<option value="${y}" ${y===prevYear?'selected':''}>${y}</option>`).join('')
@@ -22530,7 +22562,7 @@ function renderYoYTab(curYear, depts, allEmps, BH_RATE){
     </span>` : `<span style="font-size:11px;color:var(--success)">✅ Có data Budget ${prevYear}</span>`}
   </div>`;
 
-  const fmtM = v => !v ? '—' : v>=1e9 ? (v/1e9).toFixed(1)+'B' : v>=1e6 ? (v/1e6).toFixed(1)+'M' : v.toLocaleString('vi');
+  const fmtM = v => !v ? '—' : (Math.round((v||0)/1e6*10)/10).toLocaleString('vi-VN')+'M';
   const calcDeptTotal = (plan, deptId) => {
     const dp = plan[deptId]||{positions:[]};
     const rate = parseFloat((DB.manningConfig||{}).bhRate)||0.225;
@@ -22696,7 +22728,7 @@ function renderManning(main){
     return;
   }
   const today   = new Date();
-  const curYear = window._manningYear || today.getFullYear();
+  const curYear = window._manningYear || parseInt(sessionStorage.getItem('_manningYear')) || today.getFullYear();
   window._manningYear = curYear;
   const tab = window._manningTab || 'budget';
   window._manningTab = tab;
@@ -22779,7 +22811,7 @@ function renderManning(main){
       // Tự thêm active roles vào plan nếu chưa có (để có thể nhập budget)
       activeRoles.forEach(r=>{
         if(!dp.positions.find(p=>p.title===r)){
-          dp.positions.push({title:r,planned:0,budgetSalary:0,budgetBH:0,mealRate:0,budgetOther:0,notes:''});
+          dp.positions.push({title:r,planned:0,budgetSalary:0,budgetBonus:0,budgetBH:0,mealRate:0,budgetOther:0,notes:''});
         }
       });
       // Clean stale data: nếu budgetSalary=0 thì reset budgetBH=0 (tránh số rác từ data cũ)
@@ -23637,7 +23669,7 @@ function renderManning(main){
       <div class="topbar-actions">
         ${tab==='budget'?`
         `:''}
-        <select onchange="window._manningYear=parseInt(this.value);render()"
+        <select onchange="window._manningYear=parseInt(this.value);sessionStorage.setItem('_manningYear',this.value);render()"
           style="background:var(--bg-card);border:1px solid var(--border);border-radius:7px;padding:8px 12px;color:var(--ink);font-family:inherit;font-size:13px">
           ${years.map(y=>`<option value="${y}" ${y===curYear?'selected':''}>${y}</option>`).join('')}
         </select>
