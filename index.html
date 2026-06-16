@@ -1975,9 +1975,19 @@ window._applyTraineeTo = function(raw){
   render();
 };
 
-function render(){
+function render(force){
   if(window._renderDebounceTimer) clearTimeout(window._renderDebounceTimer);
-  window._renderDebounceTimer = setTimeout(_doRender, 150);
+  window._renderDebounceTimer = setTimeout(()=>{
+    // Hard throttle: không render quá 1 lần/500ms trừ khi force=true
+    const now = Date.now();
+    if(!force && window._lastRenderTime && (now - window._lastRenderTime) < 500){
+      // Reschedule sau khi hết throttle
+      window._renderDebounceTimer = setTimeout(_doRender, 500 - (now - window._lastRenderTime));
+      return;
+    }
+    window._lastRenderTime = now;
+    _doRender();
+  }, 150);
 }
 
 // ── Mobile sidebar ──────────────────────────────────
@@ -19942,7 +19952,9 @@ function renderSvcInline(svcYr, curYear, curMonth){
     // Xử lý format số kiểu VN: "2.263.485" → 2263485
     const cleaned = String(val).replace(/\./g,'').replace(/[^0-9]/g,'');
     DB.svcData[yr][m] = parseInt(cleaned)||0;
-    saveData(['svcData']);
+    // Throttle save 800ms để tránh rapid writes gây snapshot loop
+    clearTimeout(window._svcSaveTimer);
+    window._svcSaveTimer = setTimeout(()=>saveData(['svcData']), 800);
     // Update chart
     const el = document.getElementById('chartSvcInline_'+yr);
     if(el && el._chart){ el._chart.data.datasets[0].data[m]=DB.svcData[yr][m]; el._chart.update(); }
@@ -20064,7 +20076,9 @@ function renderBonusInline(yr, curYear, curMonth){
     if(!DB.bonusData) DB.bonusData={};
     if(!DB.bonusData[y]) DB.bonusData[y]=Array(12).fill(0);
     DB.bonusData[y][m] = parseInt(String(val).replace(/\./g,'').replace(/[^0-9]/g,''))||0;
-    saveData(['bonusData']);
+    // Throttle save 800ms
+    clearTimeout(window._bonusSaveTimer);
+    window._bonusSaveTimer = setTimeout(()=>saveData(['bonusData']), 800);
     const el = document.getElementById(cid);
     if(el && el._chart){ el._chart.data.datasets[0].data[m]=DB.bonusData[y][m]; el._chart.update(); }
     const d = DB.bonusData[y];
@@ -20213,7 +20227,8 @@ function renderSvcTab(){
     if(!DB.svcData) DB.svcData = {};
     if(!DB.svcData[yr]) DB.svcData[yr] = Array(12).fill(0);
     DB.svcData[yr][m] = parseInt(val.replace(/\./g,'').replace(/[^0-9]/g,''))||0;
-    saveData(['svcData']);
+    clearTimeout(window._svcSaveTimer);
+    window._svcSaveTimer = setTimeout(()=>saveData(['svcData']), 800);
   };
 
   const chartId = 'chartSvc_'+yr+(showCmp?'_'+cyr:'');
