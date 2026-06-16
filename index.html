@@ -21447,9 +21447,13 @@ window.processTraineeImport = function(input){
 
       // Detect format by reading header row
       const headerRow = rows[0].map(h=>String(h||'').trim().toLowerCase());
-      // New format (21 cols) has 'giới tính' at col 4
-      // Old format (14 cols): col4=SĐT, col5=Trường, col6=Bộ phận, col7=Số lượng, col8=Ngày BĐ, col9=Ngày KT, col10=CCCD, col11=TK, col12=NH, col13=Notes
-      const isNewFormat = headerRow.length >= 12 && (headerRow[4].includes('giới') || headerRow[4].includes('gender') || headerRow[11].includes('trạng thái') || headerRow[11].includes('status'));
+      // New format (21 cols) vs Old format (14 cols)
+      // Dùng số cột làm primary check — tránh vấn đề encoding với tiếng Việt
+      const isNewFormat = headerRow.length >= 18 || 
+        (headerRow.length >= 12 && (
+          headerRow[4].includes('gi') || headerRow[4].includes('gender') ||
+          headerRow[11].includes('tr') || headerRow[11].includes('status')
+        ));
       const isOldFormat = !isNewFormat;
 
       // Column map
