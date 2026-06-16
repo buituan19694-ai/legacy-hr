@@ -14743,15 +14743,48 @@ function renderTraining(main){
   (DB.trainingExtraYears||[]).forEach(y=>yearsSet.add(y));
   const yearsList = [...yearsSet].sort();
 
+  // ── So sánh cùng kỳ ─────────────────────────────────────────────
+  // Kỳ trước: cùng tháng năm trước (mode=month), cùng năm trước (mode=year)
+  const prevP = p.mode === 'month'
+    ? {mode:'month', month:p.month, year:p.year-1}
+    : p.mode === 'year'
+    ? {mode:'year',  month:0,       year:p.year-1}
+    : null; // mode=all → không có cùng kỳ
+
+  const prevCourses = prevP
+    ? DB.courses.filter(c => courseInPeriod(c, prevP.mode, prevP.month, prevP.year))
+    : [];
+
+  const prevAttendees   = prevCourses.reduce((s,c)=>s+(c.attendees||0),0);
+  const prevHours       = prevCourses.reduce((s,c)=>s+(c.hours||0),0);
+  const prevCost        = prevCourses.reduce((s,c)=>s+(c.cost||0),0);
+
+  const prevLabel = prevP
+    ? (prevP.mode==='month' ? `T${prevP.month}/${prevP.year}` : `Năm ${prevP.year}`)
+    : null;
+
+  // Helper: tính delta % và render badge
+  const deltaBadge = (cur, prev) => {
+    if(!prevP || prev === 0) return '';
+    const pct = Math.round((cur - prev) / prev * 100);
+    const up = pct >= 0;
+    const color = up ? 'var(--success)' : 'var(--danger)';
+    const arrow = up ? '▲' : '▼';
+    return `<span style="font-size:11px;font-weight:600;color:${color};background:${up?'rgba(126,198,153,.12)':'rgba(229,115,115,.12)'};padding:2px 7px;border-radius:5px;margin-left:6px">${arrow} ${Math.abs(pct)}% so với ${prevLabel}</span>`;
+  };
+  const deltaRow = (cur, prev, label) => {
+    if(!prevP) return '';
+    const diff = cur - prev;
+    const sign = diff >= 0 ? '+' : '';
+    const color = diff >= 0 ? 'var(--success)' : 'var(--danger)';
+    return `<div style="font-size:11px;color:var(--ink-muted);margin-top:2px">${label}: <span style="color:${color};font-weight:600">${sign}${diff}</span> so với ${prevLabel} (${prev})</div>`;
+  };
+
   const periodLabel = p.mode === 'all' ? 'Toàn thời gian'
     : p.mode === 'year' ? `Năm ${p.year}`
     : `${_lang==="en"?"Month":"Tháng"} ${p.month}/${p.year}`;
 
   main.innerHTML = `
-    <div class="topbar">
-      <div class="topbar-left">
-        <div class="crumb">Phát triển · <span>Đào tạo</span></div>
-        <h1 class="page-title">Đào <em>tạo</em></h1>
         <div class="page-sub">${DB.courses.length} khoá học · ${totalAttendees} lượt tham gia · ${fmtMoney(totalCost/1000000)} triệu đầu tư</div>
       </div>
       <div class="topbar-actions">
@@ -14791,11 +14824,35 @@ function renderTraining(main){
 
       <!-- KPI trong period -->
       <div class="kpi-grid">
-        ${kpiCard('Khoá học', periodCourses.length, periodLabel, '', 'accent')}
-        ${kpiCard((_lang==="en"?"Participants":"Lượt tham gia"), periodAttendees, 'Cộng dồn các khoá', '', 'info')}
-        ${kpiCard('Tổng giờ học', periodTotalLearningHours.toLocaleString(), 'Người × giờ', '', 'purple')}
-        ${kpiCard('Chi phí', fmtMoney(periodCost/1000000)+' tr', 'VNĐ trong kỳ', '', 'warning')}
+        ${kpiCard('Khoá học', periodCourses.length, periodLabel + (prevP?` · ${prevLabel}: ${prevCourses.length}`:''), '', 'accent')}
+        ${kpiCard((_lang==="en"?"Participants":"Lượt tham gia"), periodAttendees, 'Cộng dồn các khoá' + (prevP?` · ${prevLabel}: ${prevAttendees}`:''), '', 'info')}
+        ${kpiCard('Tổng giờ học', periodTotalLearningHours.toLocaleString(), 'Người × giờ' + (prevP?` · ${prevLabel}: ${prevHours}`:''), '', 'purple')}
+        ${kpiCard('Chi phí', fmtMoney(periodCost/1000000)+' tr', 'VNĐ trong kỳ' + (prevP?` · ${prevLabel}: ${fmtMoney(prevCost/1000000)} tr`:''), '', 'warning')}
       </div>
+
+      ${prevP ? `
+      <!-- So sánh cùng kỳ — biểu đồ -->
+      <div style="margin-top:14px;padding-top:14px;border-top:1px dashed var(--border)">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;flex-wrap:wrap;gap:8px">
+          <div>
+            <div style="font-size:13px;font-weight:600;color:var(--ink)">📊 So sánh cùng kỳ</div>
+            <div style="font-size:11px;color:var(--ink-muted);margin-top:2px">
+              <span style="display:inline-flex;align-items:center;gap:4px"><span style="width:10px;height:10px;border-radius:2px;background:rgba(212,165,116,.8);display:inline-block"></span>${periodLabel}</span>
+              &nbsp;vs&nbsp;
+              <span style="display:inline-flex;align-items:center;gap:4px"><span style="width:10px;height:10px;border-radius:2px;background:rgba(126,182,232,.5);display:inline-block"></span>${prevLabel}</span>
+            </div>
+          </div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap">
+            ${['courses','attendees','hours','cost'].map(m=>`
+              <button onclick="window._trnCompareMetric='${m}';render()"
+                style="padding:4px 10px;border-radius:5px;border:1px solid var(--border);background:${(window._trnCompareMetric||'courses')===m?'var(--accent)':'var(--bg-elev)'};color:${(window._trnCompareMetric||'courses')===m?'#1a1a1a':'var(--ink-muted)'};font-size:11px;cursor:pointer;font-family:inherit;font-weight:600">
+                ${{courses:'Khoá học',attendees:'Lượt tham gia',hours:'Giờ học',cost:'Chi phí'}[m]}
+              </button>`).join('')}
+          </div>
+        </div>
+        <div style="height:180px"><canvas id="chartTrnCompare"></canvas></div>
+      </div>
+      ` : ''}
     </div>
 
     <!-- Chart trend 12 tháng -->
@@ -15161,6 +15218,99 @@ function renderTraining(main){
           y: {beginAtZero: true, grid: {color: 'rgba(255,255,255,0.04)'}, ticks: {color: '#8b949e', stepSize: 1, precision: 0}},
         }),
       },
+    });
+  }
+
+  // ── Biểu đồ so sánh cùng kỳ ──────────────────────────────────
+  const compareEl = document.getElementById('chartTrnCompare');
+  if(compareEl && prevP){
+    const metric = window._trnCompareMetric || 'courses';
+    const metricLabel = {courses:'Khoá học',attendees:'Lượt tham gia',hours:'Giờ học',cost:'Chi phí (tr đồng)'}[metric];
+
+    // Tính data theo tháng cho cả 2 kỳ
+    const buildMonthly = (yr, mo_fixed) => {
+      if(p.mode === 'month'){
+        // So sánh theo tháng: chỉ 1 giá trị — hiển thị theo ngày trong tháng hoặc đơn giản 1 bar
+        const courses_in = DB.courses.filter(c=>courseInPeriod(c,'month',mo_fixed,yr));
+        return [courses_in];
+      }
+      // mode=year: 12 tháng
+      return Array.from({length:12},(_,i)=>DB.courses.filter(c=>courseInPeriod(c,'month',i+1,yr)));
+    };
+
+    const getValue = (courses_arr) => {
+      if(metric==='courses') return courses_arr.length;
+      if(metric==='attendees') return courses_arr.reduce((s,c)=>s+(c.attendees||0),0);
+      if(metric==='hours') return courses_arr.reduce((s,c)=>s+(c.hours||0),0);
+      if(metric==='cost') return Math.round(courses_arr.reduce((s,c)=>s+(c.cost||0),0)/1000000*10)/10;
+      return 0;
+    };
+
+    let labels, curData, prevData;
+    if(p.mode === 'month'){
+      // Từng tháng trong 2 năm — 12 labels
+      labels = MN;
+      curData  = Array.from({length:12},(_,i)=>getValue(DB.courses.filter(c=>courseInPeriod(c,'month',i+1,p.year))));
+      prevData = Array.from({length:12},(_,i)=>getValue(DB.courses.filter(c=>courseInPeriod(c,'month',i+1,prevP.year))));
+    } else {
+      // mode=year: 12 tháng
+      labels = MN;
+      curData  = Array.from({length:12},(_,i)=>getValue(DB.courses.filter(c=>courseInPeriod(c,'month',i+1,p.year))));
+      prevData = Array.from({length:12},(_,i)=>getValue(DB.courses.filter(c=>courseInPeriod(c,'month',i+1,prevP.year))));
+    }
+
+    Chart.defaults.font.family = "'Inter Tight',sans-serif";
+    Chart.defaults.color = '#8b949e';
+    if(Chart.getChart(compareEl)) Chart.getChart(compareEl).destroy();
+    new Chart(compareEl,{
+      type:'bar',
+      data:{
+        labels,
+        datasets:[
+          {
+            label: periodLabel,
+            data: curData,
+            backgroundColor:'rgba(212,165,116,.8)',
+            borderRadius:4,
+            order:2,
+          },
+          {
+            label: prevLabel,
+            data: prevData,
+            backgroundColor:'rgba(126,182,232,.45)',
+            borderRadius:4,
+            order:2,
+          },
+        ]
+      },
+      options:{
+        responsive:true, maintainAspectRatio:false,
+        plugins:{
+          legend:{position:'top',labels:{usePointStyle:true,padding:12,boxWidth:8}},
+          tooltip:{
+            mode:'index', intersect:false,
+            callbacks:{
+              label: ctx => {
+                const v = ctx.parsed.y;
+                if(metric==='cost') return ` ${ctx.dataset.label}: ${v} tr đồng`;
+                return ` ${ctx.dataset.label}: ${v}`;
+              }
+            }
+          }
+        },
+        scales:{
+          x:{grid:{display:false}, ticks:{color:'#8b949e',font:{size:11}}},
+          y:{
+            beginAtZero:true,
+            grid:{color:'rgba(255,255,255,.04)'},
+            ticks:{
+              color:'#8b949e',
+              callback: v => metric==='cost' ? v+'M' : v
+            },
+            title:{display:true, text:metricLabel, color:'#8b949e', font:{size:11}}
+          }
+        }
+      }
     });
   }
 }
