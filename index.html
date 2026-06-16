@@ -15927,12 +15927,12 @@ function renderPerformanceHistory(main){
   const avgKPI     = scoredEmps.length ? (scoredEmps.reduce((s,e)=>s+e.kpi,0)/scoredEmps.length).toFixed(1) : '—';
   const excellent  = DB.employees.filter(e=>e.kpi>=90).length;
   const needSupport= DB.employees.filter(e=>e.kpi>0&&e.kpi<70).length;
-  const thisYear   = new Date().getFullYear();
-  const allPromotions    = DB.promotions||[];
-  const pendingPromotions  = allPromotions.filter(p=>p.status==='proposed'||p.status==='reviewing').length;
-  const completedPromotions= allPromotions.filter(p=>p.status==='completed'||p.status==='approved').length;
+  const allPromotions = DB.promotions || [];
+  const thisYear = new Date().getFullYear();
+  const completedPromotions = allPromotions.filter(p => p.status === 'completed' || p.status === 'approved').length;
+  const pendingPromotions   = allPromotions.filter(p => p.status === 'proposed' || p.status === 'reviewing').length;
 
-  // Biểu đồ 1: Điểm trung bình theo phòng ban
+  // Biểu đồ: điểm TB theo phòng ban
   const byDept = {};
   filtered.forEach(k=>{
     const emp = empById(k.empId); if(!emp) return;
@@ -15940,10 +15940,10 @@ function renderPerformanceHistory(main){
     if(!byDept[dn]) byDept[dn]={sum:0,cnt:0};
     byDept[dn].sum+=k.score; byDept[dn].cnt++;
   });
-  const deptLabels = Object.keys(byDept).sort((a,b)=>byDept[b].sum/byDept[b].cnt - byDept[a].sum/byDept[a].cnt);
+  const deptLabels = Object.keys(byDept).sort((a,b)=>byDept[b].sum/byDept[b].cnt-byDept[a].sum/byDept[a].cnt);
   const deptAvgs   = deptLabels.map(d=>+(byDept[d].sum/byDept[d].cnt).toFixed(1));
 
-  // Biểu đồ 2: Phân bổ điểm (histogram)
+  // Biểu đồ: phân bổ điểm histogram
   const buckets = [0,0,0,0,0,0,0,0];
   filtered.forEach(k=>{
     const s=k.score;
@@ -15956,11 +15956,6 @@ function renderPerformanceHistory(main){
   const empScores = {};
   filtered.forEach(k=>{ if(!empScores[k.empId]||k.score>empScores[k.empId]) empScores[k.empId]=k.score; });
   const topList = Object.entries(empScores).sort((a,b)=>b[1]-a[1]).slice(0,5).map(([id,sc])=>({emp:empById(id),sc})).filter(x=>x.emp);
-
-  const allPromotions = DB.promotions || [];
-  const thisYear = new Date().getFullYear();
-  const completedPromotions = allPromotions.filter(p => p.status === 'completed' || p.status === 'approved').length;
-  const pendingPromotions   = allPromotions.filter(p => p.status === 'proposed' || p.status === 'reviewing').length;
 
   main.innerHTML = `
     <div class="topbar">
