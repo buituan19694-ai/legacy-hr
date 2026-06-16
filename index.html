@@ -21159,11 +21159,13 @@ function renderTraineeSchedule(main){
       return Math.max(0, Math.min(100, (monthOff+dayFrac)/totalMonths*100));
     };
     const getWidth = (s, e) => {
-      const endDate = e ? new Date(e) : new Date(rangeEndRaw);
-      const endD = new Date(endDate.getFullYear(), endDate.getMonth()+1, 0);
       const startD = new Date(s);
-      const diffMs = endD - startD + 86400000;
-      const totalMs = new Date(rangeEndRaw.getFullYear(), rangeEndRaw.getMonth()+1, 0) - new Date(rangeStart);
+      const endD   = e ? new Date(e) : new Date(rangeEndRaw);
+      // Tổng px range = từ ngày 1 của rangeStart đến ngày 1 của tháng sau rangeEnd
+      const totalStart = new Date(rangeStart.getFullYear(), rangeStart.getMonth(), 1);
+      const totalEnd   = new Date(rangeEndRaw.getFullYear(), rangeEndRaw.getMonth()+1, 1);
+      const totalMs = totalEnd - totalStart;
+      const diffMs  = (endD - startD) + 86400000; // +1 ngày để tính inclusive
       return Math.max(2, Math.min(100-getOffset(s), diffMs/totalMs*100));
     };
 
