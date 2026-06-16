@@ -7697,7 +7697,7 @@ function renderContracts(main){
           <div class="card-title">Cơ cấu <em>loại HĐ hiện tại</em></div>
           <div class="card-sub">${totalActive} CBNV đang làm</div>
         </div></div>
-        <div class="chart-wrap"><canvas id="chartContract"></canvas></div>
+        <div class="chart-wrap" style="height:260px;position:relative"><canvas id="chartContract" style="width:100%;height:260px"></canvas></div>
       </div>
       <div class="card">
         <div class="card-head"><div>
@@ -7712,6 +7712,9 @@ function renderContracts(main){
   setTimeout(()=>{
     const _ce = $('#chartContract');
     if(!_ce) return;
+    const rect = _ce.parentElement?.getBoundingClientRect();
+    _ce.width  = Math.max(rect?.width  || 400, 200);
+    _ce.height = 260;
     if(Chart.getChart(_ce)) Chart.getChart(_ce).destroy();
     new Chart(_ce, {
     type: 'doughnut',
@@ -7725,7 +7728,7 @@ function renderContracts(main){
       }]
     },
     options: {
-      responsive: true, maintainAspectRatio: false, cutout: '60%',
+      responsive: false, maintainAspectRatio: false, animation: false, cutout: '60%',
       plugins: { legend: { position: 'right', labels: { usePointStyle: true, padding: 10, boxWidth: 8 } } }
     }
   });
@@ -19945,6 +19948,12 @@ function renderSvcInline(svcYr, curYear, curMonth){
   if(!DB.svcData) DB.svcData = {};
   if(!DB.svcData[svcYr]) DB.svcData[svcYr] = Array(12).fill(0);
   const svcD = DB.svcData[svcYr];
+  // Link với F.showCmp ở Tổng quan
+  const F = window._salF || {};
+  const showCmp = !!(F.svcShowCmp || F.showCmp);
+  const cyr = F.svcCmpYear || F.cmpYear || svcYr-1;
+  if(showCmp && !DB.svcData[cyr]) DB.svcData[cyr] = Array(12).fill(0);
+  const cD = showCmp ? DB.svcData[cyr] : null;
   const MNs = ['T1','T2','T3','T4','T5','T6','T7','T8','T9','T10','T11','T12'];
   const svcTotal = svcD.reduce((s,v)=>s+(v||0),0);
   const svcFilled = svcD.filter(v=>v>0).length;
@@ -19997,12 +20006,25 @@ function renderSvcInline(svcYr, curYear, curMonth){
     el.width = Math.max(rect.width || 400, 200);
     el.height = 190;
     if(Chart.getChart(el)) Chart.getChart(el).destroy();
-    const ch = new Chart(el,{type:'bar',data:{labels:MNs,datasets:[{
+    const datasets = [{
       label:'SVC '+svcYr, data:svcD.map(v=>v||0),
       backgroundColor:MNs.map((_,i)=>i===svcMaxIdx?'rgba(212,165,116,.95)':'rgba(212,165,116,.5)'),
-      borderColor:'rgba(212,165,116,.8)',borderWidth:1.5,borderRadius:5
-    }]},options:{responsive:false,maintainAspectRatio:false,animation:false,
-      plugins:{legend:{display:false},tooltip:{callbacks:{label:ctx=>fmtN(ctx.raw)+' đ'}}},
+      borderColor:'rgba(212,165,116,.8)',borderWidth:1.5,borderRadius:5,
+      type:'bar', order:2,
+    }];
+    if(showCmp && cD) datasets.push({
+      label:'SVC '+cyr, data:cD.map(v=>v||0),
+      backgroundColor:'rgba(126,182,232,.55)',
+      borderColor:'rgba(126,182,232,.85)',
+      borderWidth:1.5, borderRadius:5,
+      type:'bar', order:2,
+    });
+    const ch = new Chart(el,{type:'bar',data:{labels:MNs,datasets},
+      options:{responsive:false,maintainAspectRatio:false,animation:false,
+      plugins:{
+        legend:{display:showCmp,position:'top',labels:{usePointStyle:true,padding:10}},
+        tooltip:{mode:'index',intersect:false,callbacks:{label:ctx=>`${ctx.dataset.label}: ${fmtN(ctx.raw)} đ`}}
+      },
       scales:{x:{grid:{display:false}},y:{beginAtZero:true,
         grid:{color:'rgba(255,255,255,.04)'},
         ticks:{callback:v=>v>=1e9?(v/1e9).toFixed(1)+'B':v>=1e6?(v/1e6).toFixed(0)+'M':fmtN(v)}}}}});
