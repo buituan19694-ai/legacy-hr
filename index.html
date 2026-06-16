@@ -20130,6 +20130,41 @@ function renderBonusInline(yr, curYear, curMonth){
         grid:{color:'rgba(255,255,255,.04)'},
         ticks:{callback:v=>v>=1e6?(v/1e6).toFixed(0)+'M':fmtN(v)}}}}});
     el._chart=ch;
+
+    // Comparison chart nếu showCmp
+    if(showCmp && cD){
+      const el2 = document.getElementById('chartBonusCmp_'+yr);
+      if(el2){
+        const rect2 = el2.parentElement ? el2.parentElement.getBoundingClientRect() : {width:500};
+        el2.width = Math.max(rect2.width||500, 200);
+        el2.height = 200;
+        if(Chart.getChart(el2)) Chart.getChart(el2).destroy();
+        new Chart(el2,{
+          type:'bar',
+          data:{
+            labels:MNs,
+            datasets:[
+              {label:(bName||'Thưởng')+' '+yr, data:bD.map(v=>v||0),
+               backgroundColor:'rgba(126,198,153,.75)', borderColor:'rgba(126,198,153,.9)',
+               borderWidth:1.5, borderRadius:4},
+              {label:(DB.bonusName?.[cyr]||'Thưởng')+' '+cyr, data:cD.map(v=>v||0),
+               backgroundColor:'rgba(126,182,232,.45)', borderColor:'rgba(126,182,232,.8)',
+               borderWidth:1.5, borderRadius:4},
+            ]
+          },
+          options:{
+            responsive:false, maintainAspectRatio:false, animation:false,
+            plugins:{legend:{position:'top',labels:{usePointStyle:true,padding:10}},
+              tooltip:{mode:'index',intersect:false,callbacks:{label:ctx=>`${ctx.dataset.label}: ${fmtN(ctx.raw)} đ`}}},
+            scales:{
+              x:{grid:{display:false}},
+              y:{beginAtZero:true, grid:{color:'rgba(255,255,255,.04)'},
+                ticks:{callback:v=>v>=1e6?(v/1e6).toFixed(0)+'M':fmtN(v)}}
+            }
+          }
+        });
+      }
+    }
   });
 
   const rows2=[];
@@ -20197,36 +20232,7 @@ function renderBonusInline(yr, curYear, curMonth){
     ${showCmp ? `
     <div style="padding:0 16px 16px">
       <div style="font-size:10.5px;color:var(--ink-muted);font-weight:600;text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">So sánh cùng kỳ ${yr} vs ${cyr}</div>
-      <table class="tbl" style="font-size:12px">
-        <thead><tr>
-          <th style="text-align:left;padding:6px 10px">Tháng</th>
-          <th style="text-align:right;padding:6px 10px">Năm ${yr}</th>
-          <th style="text-align:right;padding:6px 10px;color:var(--ink-muted)">Năm ${cyr}</th>
-          <th style="text-align:right;padding:6px 10px">YoY</th>
-        </tr></thead>
-        <tbody>
-          ${MNs.map((mn,i)=>{
-            const v = bD[i]||0, cv = cD?.[i]||0;
-            const yoy = cv>0 ? Math.round((v-cv)/cv*100) : null;
-            return `<tr>
-              <td style="padding:5px 10px">${mn}</td>
-              <td style="text-align:right;font-family:'JetBrains Mono',monospace;padding:5px 10px;color:${v?'var(--accent)':'var(--ink-muted)'}">${v?fmtN(v):'—'}</td>
-              <td style="text-align:right;font-family:'JetBrains Mono',monospace;padding:5px 10px;color:var(--ink-muted)">${cv?fmtN(cv):'—'}</td>
-              <td style="text-align:right;padding:5px 10px;color:${yoy===null?'var(--ink-muted)':yoy>0?'var(--danger)':yoy<0?'var(--success)':'var(--ink-muted)'}">
-                ${yoy===null?'—':yoy>0?'+'+yoy+'%':yoy+'%'}
-              </td>
-            </tr>`;
-          }).join('')}
-          <tr style="border-top:2px solid var(--border);font-weight:700">
-            <td style="padding:6px 10px">Tổng</td>
-            <td style="text-align:right;font-family:'JetBrains Mono',monospace;color:var(--accent)">${fmtN(tot)}</td>
-            <td style="text-align:right;font-family:'JetBrains Mono',monospace;color:var(--ink-muted)">${fmtN(cTot)}</td>
-            <td style="text-align:right;color:${cTot>0?(tot>cTot?'var(--danger)':'var(--success)'):'var(--ink-muted)'}">
-              ${cTot>0?(tot>cTot?'+':'')+Math.round((tot-cTot)/cTot*100)+'%':'—'}
-            </td>
-          </tr>
-        </tbody>
-      </table>
+      <div style="height:200px;position:relative;overflow:hidden"><canvas style="width:100%;height:200px" id="chartBonusCmp_${yr}"></canvas></div>
     </div>` : ''}
   </div>`;
 }
@@ -20308,9 +20314,9 @@ function renderSvcTab(){
       type:'bar',
       data:{labels:MN, datasets:ds},
       options:{
-        responsive:true, maintainAspectRatio:false,
-        plugins:{legend:{position:'top',labels:{usePointStyle:true}},
-          tooltip:{callbacks:{label:ctx=>`${ctx.dataset.label}: ${fmtN(ctx.raw)} đ`}}},
+        responsive:false, maintainAspectRatio:false, animation:false,
+        plugins:{legend:{position:'top',labels:{usePointStyle:true,padding:10}},
+          tooltip:{mode:'index',intersect:false,callbacks:{label:ctx=>`${ctx.dataset.label}: ${fmtN(ctx.raw)} đ`}}},
         scales:{
           x:{grid:{display:false}},
           y:{beginAtZero:true, grid:{color:'rgba(255,255,255,.04)'},
@@ -20318,7 +20324,7 @@ function renderSvcTab(){
         }
       }
     });
-  }, 50);
+  });
 
   return `
     <!-- SVC Filter -->
