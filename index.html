@@ -2343,11 +2343,27 @@ function renderDashboard(main){
   const weekdays = ['Chủ nhật','Thứ hai','Thứ ba','Thứ tư','Thứ năm','Thứ sáu','Thứ bảy'];
   const todayStr = `${weekdays[today.getDay()]}, ngày ${today.getDate()} tháng ${today.getMonth()+1}, ${today.getFullYear()}`;
 
+  // Lấy tên người dùng — robust fallback chain
+  function _getUserDisplay(){
+    const dn = (window.currentUserData?.displayName || '').trim();
+    if(dn){
+      const parts = dn.split(/\s+/).filter(Boolean);
+      if(parts.length) return parts[parts.length - 1]; // lấy chữ cuối (tên thường ở cuối tiếng Việt)
+    }
+    const em = (window.currentUser?.email || '').trim();
+    if(em){
+      const localPart = em.split('@')[0];
+      if(localPart) return localPart;
+    }
+    return 'bạn';
+  }
+  const _userDisplay = _getUserDisplay();
+
   main.innerHTML = `
     <div class="topbar">
       <div class="topbar-left">
         <div class="crumb">Workspace · <span>Tổng quan</span></div>
-        <h1 class="page-title">${greeting}, <em>${escapeHtml((window.currentUserData?.displayName||window.currentUser?.email||'').split(' ').slice(-1)[0])}</em></h1>
+        <h1 class="page-title">${greeting}, <em>${escapeHtml(_userDisplay)}</em></h1>
         <div class="page-sub">${todayStr} — bức tranh nhân sự Legacy Yên Tử</div>
       </div>
       <div class="topbar-actions">
@@ -21920,7 +21936,15 @@ function showDailyGreeting(forceShow){
   const quotes = window._GREETING_QUOTES[lang];
   const quote = quotes[Math.floor(Math.random() * quotes.length)];
 
-  const userName = (window.currentUserData?.displayName || window.currentUser?.email || '').split(' ').slice(-1)[0] || 'bạn';
+  const _dn = (window.currentUserData?.displayName || '').trim();
+  const _em = (window.currentUser?.email || '').trim();
+  let userName = 'bạn';
+  if(_dn){
+    const parts = _dn.split(/\s+/).filter(Boolean);
+    if(parts.length) userName = parts[parts.length - 1];
+  } else if(_em){
+    userName = _em.split('@')[0] || 'bạn';
+  }
   const greetWithName = data.greet.replace('Meoz', userName);
 
   const overlay = _getOverlayEffect(bucket);
