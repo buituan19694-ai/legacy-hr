@@ -18418,11 +18418,10 @@ function renderSalaryAnalysis(main){
       const eff = getEffectiveStatus(e);
       if(st==='active' && eff==='exit') return false;
       if(st==='exit'   && eff!=='exit') return false;
-      if(m > 0){
-        if(!e.joined) return false;
+      if(e.joined){
         const joined  = _parseAnyDate(e.joined);
         const endMonth = new Date(yr, m, 0); // cuối tháng
-        if(joined > endMonth) return false;
+        if(joined && m > 0 && joined > endMonth) return false;
       }
       return true;
     });
@@ -19093,7 +19092,7 @@ function renderDailyTab(){
   const curYear=today.getFullYear(),curMonth=today.getMonth()+1;
   const F=window._salF;
   const MN=['Tháng 1','Tháng 2','Tháng 3','Tháng 4','Tháng 5','Tháng 6','Tháng 7','Tháng 8','Tháng 9','Tháng 10','Tháng 11','Tháng 12'];
-  function gPool(yr,m,st){return DB.employees.filter(e=>{const eff=getEffectiveStatus(e);if(st==='active'&&eff==='exit')return false;if(st==='exit'&&eff!=='exit')return false;if(m>0&&e.joined){const j=new Date(e.joined);if(j>new Date(yr,m,0))return false;}return true;});}
+  function gPool(yr,m,st){const endM=new Date(yr,m,0);return DB.employees.filter(e=>{const eff=getEffectiveStatus(e);if(st==='active'&&eff==='exit')return false;if(st==='exit'&&eff!=='exit')return false;if(e.joined){const j=_parseAnyDate(e.joined);if(j&&j>endM)return false;}return true;});}
   function bSal(pool){return pool.map(e=>{const cd=DB.customData[e.id]||{};const b=parseInt(cd.baseSalary)||0;const x=parseInt(cd.bonusSalary)||0;return{e,base:b,bonus:x,total:b+x,dept:deptName(e.deptId)};});}
   function cKPI(sal){const w=sal.filter(d=>d.total>0);const tf=sal.reduce((s,d)=>s+d.total,0);return{totalFund:tf,headcount:sal.length,withSal:w};}
   const dY=F.dailyYear||curYear, dM=F.dailyMonth||curMonth;
@@ -20051,10 +20050,15 @@ function renderTraineeSchedule(main){
     return;
   }
 
+  if(!window._ganttPad) window._ganttPad = { before: 0, after: 0 };
+  if(window._ganttDayDetail === undefined) window._ganttDayDetail = null; // 'YYYY-MM' or null
+
   const starts = schedules.map(s=>s.startDate).filter(Boolean).sort();
   const ends   = schedules.map(s=>s.endDate).filter(Boolean).sort();
-  const rangeStart = starts.length ? new Date(starts[0]) : new Date(today.getFullYear(), today.getMonth(), 1);
-  const rangeEndRaw = ends.length ? new Date(ends[ends.length-1]) : new Date(today.getFullYear(), today.getMonth()+4, 0);
+  const dataStart = starts.length ? new Date(starts[0]) : new Date(today.getFullYear(), today.getMonth(), 1);
+  const dataEnd   = ends.length ? new Date(ends[ends.length-1]) : new Date(today.getFullYear(), today.getMonth()+4, 0);
+  const rangeStart = new Date(dataStart.getFullYear(), dataStart.getMonth() - window._ganttPad.before, 1);
+  const rangeEndRaw = new Date(dataEnd.getFullYear(), dataEnd.getMonth() + window._ganttPad.after, new Date(dataEnd.getFullYear(), dataEnd.getMonth() + window._ganttPad.after + 1, 0).getDate());
 
   const months = [];
   let cur = new Date(rangeStart.getFullYear(), rangeStart.getMonth(), 1);
@@ -20097,12 +20101,12 @@ function renderTraineeSchedule(main){
       return Math.max(0, Math.min(100, (monthOff+dayFrac)/totalMonths*100));
     };
     const getWidth = (s, e) => {
-      const endDate = e ? new Date(e) : new Date(rangeEndRaw);
-      const endD = new Date(endDate.getFullYear(), endDate.getMonth()+1, 0);
-      const startD = new Date(s);
-      const diffMs = endD - startD + 86400000;
-      const totalMs = new Date(rangeEndRaw.getFullYear(), rangeEndRaw.getMonth()+1, 0) - new Date(rangeStart);
-      return Math.max(2, Math.min(100-getOffset(s), diffMs/totalMs*100));
+      const ed = e ? new Date(e) : new Date(rangeEndRaw);
+      const endMonthOff = (ed.getFullYear()-rangeStart.getFullYear())*12 + ed.getMonth()-rangeStart.getMonth();
+      const endDayFrac  = ed.getDate() / new Date(ed.getFullYear(), ed.getMonth()+1, 0).getDate();
+      const endPct = Math.min(100, (endMonthOff+endDayFrac)/totalMonths*100);
+      const startPct = getOffset(s);
+      return Math.max(2, endPct - startPct);
     };
 
     const monthHeaders = months.map(m=>`
@@ -20173,10 +20177,10 @@ function renderTraineeSchedule(main){
   const renderTableView = () => {
     const bySchool = {};
     schedules.forEach(sc=>{ const k=sc.school||(_lang==="en"?"Other":"Khác"); if(!bySchool[k]) bySchool[k]=[]; bySchool[k].push(sc); });
-    const thMonths = months.map(m=>`<th style="text-align:center;min-width:46px;font-size:10px;background:#1e3a5f;color:#90b8e0;padding:5px 3px;border-right:1px solid rgba(255,255,255,.1)">T${m.getMonth()+1}<br><span style="opacity:.7">${m.getFullYear()}</span></th>`).join('');
+    const thMonths = months.map(m=>{const ym=m.toISOString().slice(0,7);const sel=window._ganttDayDetail===ym;return `<th onclick="_showGanttDay('${ym}')" style="text-align:center;min-width:46px;font-size:10px;background:${sel?'rgba(212,165,116,.25)':'#1e3a5f'};color:${sel?'var(--accent)':'#90b8e0'};padding:5px 3px;border-right:1px solid rgba(255,255,255,.1);cursor:pointer;transition:background .15s" title="Click xem chi tiết ngày">T${m.getMonth()+1}<br><span style="opacity:.7">${m.getFullYear()}</span></th>`;}).join('');
     const totalRow = months.map((m,i)=>{
-      const n=monthTotal[i];
-      return `<td style="text-align:center;font-weight:600;font-size:11px;color:${n>0?'var(--danger)':'rgba(255,255,255,.2)'};background:${n>0?'rgba(163,45,45,.1)':'transparent'};padding:4px 2px">${n||''}</td>`;
+      const n=monthTotal[i];const ym=m.toISOString().slice(0,7);const sel=window._ganttDayDetail===ym;
+      return `<td onclick="_showGanttDay('${ym}')" style="text-align:center;font-weight:600;font-size:11px;color:${n>0?'var(--danger)':'rgba(255,255,255,.2)'};background:${sel?'rgba(212,165,116,.15)':n>0?'rgba(163,45,45,.1)':'transparent'};padding:4px 2px;cursor:pointer;transition:background .15s" title="Click xem chi tiết ngày">${n||''}</td>`;
     }).join('');
 
     const schoolRows = Object.entries(bySchool).map(([school, scs])=>{
@@ -20188,7 +20192,7 @@ function renderTraineeSchedule(main){
           const scStart=(sc.startDate||'').slice(0,7);
           const scEnd=(sc.endDate||'9999-12').slice(0,7);
           const inRange = scStart<=ms && scEnd>=ms;
-          return `<td style="text-align:center;padding:3px 2px;font-size:11px;font-weight:${inRange?'600':'400'};background:${inRange?color+'22':'transparent'};color:${inRange?color:'rgba(255,255,255,.2)'}">
+          return `<td onclick="_showGanttDay('${ms}')" style="text-align:center;padding:3px 2px;font-size:11px;font-weight:${inRange?'600':'400'};background:${inRange?color+'22':'transparent'};color:${inRange?color:'rgba(255,255,255,.2)'};cursor:pointer">
             ${inRange?sc.qty:''}
           </td>`;
         }).join('');
@@ -20230,6 +20234,92 @@ function renderTraineeSchedule(main){
     </div>`;
   };
 
+  const _navRange = (dir) => `window._ganttPad.${dir==='before'?'before':'after'}++;render()`;
+  const _navReset = () => { window._ganttPad = {before:0,after:0}; window._ganttDayDetail=null; };
+  const _showDay = (ym) => { window._ganttDayDetail = window._ganttDayDetail===ym ? null : ym; };
+
+  const renderDayDetailPanel = () => {
+    const ym = window._ganttDayDetail;
+    if(!ym) return '';
+    const [yr,mo] = ym.split('-').map(Number);
+    const daysInMonth = new Date(yr, mo, 0).getDate();
+    const MN_FULL = ['','Tháng 1','Tháng 2','Tháng 3','Tháng 4','Tháng 5','Tháng 6','Tháng 7','Tháng 8','Tháng 9','Tháng 10','Tháng 11','Tháng 12'];
+    const DOW = ['CN','T2','T3','T4','T5','T6','T7'];
+
+    // Build daily data
+    const dayData = [];
+    for(let d=1; d<=daysInMonth; d++){
+      const iso = `${yr}-${String(mo).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+      const dow = new Date(yr, mo-1, d).getDay();
+      const active = [];
+      schedules.forEach(sc=>{
+        if(!sc.startDate) return;
+        if(sc.startDate<=iso && (!sc.endDate||sc.endDate>=iso)){
+          const deptLbl = sc.depts&&sc.depts.length
+            ? sc.depts.map(x=>(deptName(x.deptId)||'?')+(x.qty?' ('+x.qty+')':'')).join(', ')
+            : (deptName(sc.deptId)||'—');
+          active.push({school:sc.school||'Khác',qty:parseInt(sc.qty)||0,depts:deptLbl,color:schoolColorMap[sc.school||'']||'var(--accent)'});
+        }
+      });
+      const totalQty = active.reduce((s,a)=>s+a.qty,0);
+      dayData.push({day:d, iso, dow, active, totalQty});
+    }
+    const maxQty = Math.max(...dayData.map(d=>d.totalQty),1);
+    const isToday = (iso) => iso===todayStr;
+
+    const rows = dayData.map(dd=>{
+      const bg = isToday(dd.iso) ? 'rgba(212,165,116,.12)' : dd.dow===0||dd.dow===6 ? 'rgba(255,255,255,.02)' : 'transparent';
+      const todayMark = isToday(dd.iso) ? '<span style="background:var(--accent);color:var(--bg);font-size:9px;padding:1px 5px;border-radius:3px;margin-left:4px;font-weight:700">HÔM NAY</span>' : '';
+      const barPct = dd.totalQty ? Math.round(dd.totalQty/maxQty*100) : 0;
+      const detailCells = dd.active.length ? dd.active.map(a =>
+        `<span style="display:inline-flex;align-items:center;gap:4px;margin-right:10px;font-size:11px"><span style="width:8px;height:8px;border-radius:2px;background:${a.color};display:inline-block"></span><strong>${a.school}</strong> <span style="color:var(--ink-muted)">${a.qty} SV — ${a.depts}</span></span>`
+      ).join('') : '<span style="color:var(--ink-muted);font-size:11px">—</span>';
+      return `<tr style="background:${bg};border-bottom:1px solid var(--border)">
+        <td style="padding:5px 8px;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:600;white-space:nowrap;width:50px">${String(dd.day).padStart(2,'0')}/${String(mo).padStart(2,'0')}${todayMark}</td>
+        <td style="padding:5px 6px;font-size:11px;color:${dd.dow===0||dd.dow===6?'var(--danger)':'var(--ink-muted)'};width:30px;text-align:center">${DOW[dd.dow]}</td>
+        <td style="padding:5px 8px;font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:700;text-align:center;width:40px;color:${dd.totalQty?'var(--accent)':'var(--ink-muted)'}">${dd.totalQty||'—'}</td>
+        <td style="padding:5px 8px;width:100px"><div style="height:12px;background:var(--bg-elev);border-radius:3px;overflow:hidden"><div style="height:100%;width:${barPct}%;background:var(--accent);border-radius:3px;transition:width .2s"></div></div></td>
+        <td style="padding:5px 8px">${detailCells}</td>
+      </tr>`;
+    }).join('');
+
+    return `<div class="card" style="margin-top:12px;padding:0;overflow:hidden">
+      <div style="padding:14px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between">
+        <div>
+          <div style="font-family:'Fraunces',serif;font-size:18px;font-weight:500">📋 Chi tiết ngày — <em style="color:var(--accent)">${MN_FULL[mo]} ${yr}</em></div>
+          <div style="font-size:12px;color:var(--ink-muted);margin-top:2px">${daysInMonth} ngày · Tổng: ${dayData.reduce((s,d)=>s+d.totalQty,0)} lượt SV</div>
+        </div>
+        <button onclick="window._ganttDayDetail=null;render()" class="btn" style="font-size:11px">✕ Đóng</button>
+      </div>
+      <div style="overflow-x:auto;max-height:480px;overflow-y:auto">
+        <table style="border-collapse:collapse;width:100%;font-size:12px">
+          <thead><tr style="position:sticky;top:0;z-index:1">
+            <th style="text-align:left;padding:6px 8px;background:var(--bg-elev);font-size:10px;color:var(--ink-muted);letter-spacing:.1em">NGÀY</th>
+            <th style="text-align:center;padding:6px 6px;background:var(--bg-elev);font-size:10px;color:var(--ink-muted)">THỨ</th>
+            <th style="text-align:center;padding:6px 8px;background:var(--bg-elev);font-size:10px;color:var(--ink-muted)">SV</th>
+            <th style="padding:6px 8px;background:var(--bg-elev);font-size:10px;color:var(--ink-muted);width:100px"></th>
+            <th style="text-align:left;padding:6px 8px;background:var(--bg-elev);font-size:10px;color:var(--ink-muted)">CHI TIẾT TRƯỜNG / BỘ PHẬN</th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    </div>`;
+  };
+
+  // Expose to window for onclick handlers
+  window._showGanttDay = function(ym){ window._ganttDayDetail = window._ganttDayDetail===ym ? null : ym; render(); };
+  window._ganttNavBefore = function(){ window._ganttPad.before++; window._ganttDayDetail=null; render(); };
+  window._ganttNavAfter = function(){ window._ganttPad.after++; window._ganttDayDetail=null; render(); };
+  window._ganttNavReset = function(){ window._ganttPad={before:0,after:0}; window._ganttDayDetail=null; render(); };
+
+  const hasPad = window._ganttPad.before>0 || window._ganttPad.after>0;
+  const navBar = `<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap">
+    <button onclick="_ganttNavBefore()" class="btn" style="font-size:11px;padding:5px 10px" title="Thêm tháng trước">← Trước</button>
+    ${hasPad ? `<button onclick="_ganttNavReset()" class="btn" style="font-size:11px;padding:5px 10px;color:var(--danger);border-color:rgba(229,115,115,.3)" title="Về mặc định">✕ Reset</button>` : ''}
+    <span style="font-size:11px;color:var(--ink-muted)">T${rangeStart.getMonth()+1}/${rangeStart.getFullYear()} → T${rangeEndRaw.getMonth()+1}/${rangeEndRaw.getFullYear()} · ${months.length} tháng</span>
+    <button onclick="_ganttNavAfter()" class="btn" style="font-size:11px;padding:5px 10px" title="Thêm tháng sau">Sau →</button>
+  </div>`;
+
   main.innerHTML = `
     <div class="topbar">
       <div class="topbar-left">
@@ -20250,7 +20340,9 @@ function renderTraineeSchedule(main){
       </div>
     </div>
     ${tabsHTML}
+    ${navBar}
     ${window._ganttView==='timeline' ? renderTimelineView() : renderTableView()}
+    ${renderDayDetailPanel()}
   `;
 }
 
