@@ -241,7 +241,7 @@
         <div style="height:1px;background:var(--border)"></div>
         <div onclick="showDailyGreeting(true);document.getElementById('userMenuPopup').style.display='none'" style="padding:10px 14px;display:flex;align-items:center;gap:10px;cursor:pointer;font-size:13px;color:var(--accent)" onmouseover="this.style.background=\'var(--bg-card-hover)\'" onmouseout="this.style.background=\'\'">
           <span style="font-size:15px">🐱</span>
-          Chào Chít Chít
+          Chào P&C
         </div>
         <div style="height:1px;background:var(--border)"></div>
         <div onclick="doLogout()" style="padding:10px 14px;display:flex;align-items:center;gap:10px;cursor:pointer;font-size:13px;color:var(--danger)" onmouseover="this.style.background=\'var(--bg-card-hover)\'" onmouseout="this.style.background=\'\'">
@@ -7817,34 +7817,61 @@ function setContractFilterCurrent(){
    Mở trong tab mới, có thể chỉnh sửa, in hoặc lưu PDF
    ========================================================= */
 function renewContract(contractId, empId){
-  const c = (DB.contracts||[]).find(x=>x.id===contractId);
+  // Normalize label → key cho contract type
+  function _typeKey(t){
+    if(!t) return '';
+    t = t.toLowerCase();
+    if(t==='probation'||t.includes('thử việc')) return 'probation';
+    if(t==='term12'||t.includes('01 năm')||t.includes('1 năm')||t.includes('12 tháng')) return 'term12';
+    if(t==='term24'||t.includes('02 năm')||t.includes('2 năm')||t.includes('24 tháng')) return 'term24';
+    if(t==='indefinite'||t.includes('không xác định')||t.includes('vô thời hạn')||t.includes('indefinite')) return 'indefinite';
+    return t;
+  }
+
+  let c = (DB.contracts||[]).find(x=>x.id===contractId);
+  // Fallback: HĐ từ customData (id bắt đầu bằng cf_)
+  if(!c && contractId.startsWith('cf_')){
+    const eid = contractId.slice(3);
+    const cd = DB.customData[eid]||{};
+    const endRaw = cd.contractEnd||cd.currentContractEnd||'';
+    const startRaw = cd.contractStart||cd.currentContractStart||'';
+    c = { id:contractId, empId:eid, type:_typeKey(cd.currentContractType||''), endDate:endRaw, startDate:startRaw, _fromCustom:true };
+  }
   const emp = DB.employees.find(x=>x.id===empId);
   if(!c || !emp){ toast('Không tìm thấy dữ liệu','error'); return; }
 
+  // Normalize type
+  const cType = _typeKey(c.type);
+
   const ORDER = ['probation','term12','term24','indefinite'];
-  const curIdx = ORDER.indexOf(c.type);
+  const curIdx = ORDER.indexOf(cType);
   let nextType, nextEndDate;
-  if(curIdx === -1 || c.type === 'indefinite'){
+  if(cType === 'indefinite'){
     toast('HĐ vô thời hạn không cần gia hạn','warning'); return;
   }
-  nextType = ORDER[Math.min(curIdx+1, ORDER.length-1)];
+  if(curIdx === -1){
+    // Type không nhận diện được → cho chọn thủ công
+    nextType = 'term12'; // default
+  } else {
+    nextType = ORDER[Math.min(curIdx+1, ORDER.length-1)];
+  }
 
-  const oldEnd = new Date(c.endDate);
+  const oldEnd = c.endDate ? new Date(c.endDate) : new Date();
   const newStart = new Date(oldEnd); newStart.setDate(newStart.getDate()+1);
   const newStartISO = newStart.toISOString().slice(0,10);
 
+  // Tính end date theo loại HĐ
   if(nextType === 'term12'){
     const e = new Date(newStart); e.setFullYear(e.getFullYear()+1); e.setDate(e.getDate()-1);
     nextEndDate = e.toISOString().slice(0,10);
   } else if(nextType === 'term24'){
     const e = new Date(newStart); e.setFullYear(e.getFullYear()+2); e.setDate(e.getDate()-1);
     nextEndDate = e.toISOString().slice(0,10);
+  } else if(nextType === 'indefinite'){
+    nextEndDate = '';
   } else {
-    nextEndDate = ''; // indefinite
+    nextEndDate = ''; // probation: user tự điền
   }
-
-  const typeLabel = {term12:'Xác định 12 tháng', term24:'Xác định 24 tháng', indefinite:'Vô thời hạn'}[nextType] || nextType;
-  const endLabel = nextEndDate ? fmtDate(nextEndDate) : 'Vô thời hạn';
 
   openModal(`
     <div class="modal-head">
@@ -7853,19 +7880,33 @@ function renewContract(contractId, empId){
     </div>
     <div style="background:rgba(126,198,153,.08);border:1px solid rgba(126,198,153,.3);border-radius:8px;padding:14px 18px;margin-bottom:16px">
       <div style="font-size:12px;color:var(--ink-muted);margin-bottom:8px">HĐ hiện tại</div>
-      <div style="font-weight:600">${ctLabel(c.type)||c.type} — hết hạn ${fmtDate(c.endDate)}</div>
-    </div>
-    <div style="background:rgba(212,165,116,.08);border:1px solid rgba(212,165,116,.3);border-radius:8px;padding:14px 18px;margin-bottom:16px">
-      <div style="font-size:12px;color:var(--ink-muted);margin-bottom:8px">HĐ mới sẽ tạo</div>
-      <div style="font-weight:700;color:var(--accent)">${typeLabel}</div>
-      <div style="font-size:12px;color:var(--ink-muted);margin-top:4px">
-        Bắt đầu: <b style="color:var(--ink)">${fmtDate(newStartISO)}</b> &nbsp;|&nbsp;
-        Kết thúc: <b style="color:var(--ink)">${endLabel}</b>
-      </div>
+      <div style="font-weight:600">${ctLabel(cType)||c.type||'Chưa xác định'} — hết hạn ${c.endDate?fmtDate(c.endDate):'—'}</div>
     </div>
     <div class="form-grid">
-      <div class="field"><label>Ngày bắt đầu HĐ mới</label>
-        <input type="date" id="rn_start" value="${newStartISO}">
+      <div class="field"><label>Loại HĐ mới</label>
+        <select id="rn_type" onchange="(function(v){
+          const startEl=document.getElementById('rn_start');
+          const sVal=startEl?(startEl.getAttribute('data-iso')||startEl.value):'';
+          const s=sVal?new Date(sVal):new Date();
+          const endEl=document.getElementById('rn_end');
+          const endWrap=document.getElementById('rn_end_wrap');
+          if(v==='term12'){const e=new Date(s);e.setFullYear(e.getFullYear()+1);e.setDate(e.getDate()-1);if(endEl){endEl.value=e.toISOString().slice(0,10);endEl.setAttribute('data-iso',e.toISOString().slice(0,10));endEl.readOnly=true;}if(endWrap)endWrap.style.display='';}
+          else if(v==='term24'){const e=new Date(s);e.setFullYear(e.getFullYear()+2);e.setDate(e.getDate()-1);if(endEl){endEl.value=e.toISOString().slice(0,10);endEl.setAttribute('data-iso',e.toISOString().slice(0,10));endEl.readOnly=true;}if(endWrap)endWrap.style.display='';}
+          else if(v==='indefinite'){if(endEl){endEl.value='';endEl.removeAttribute('data-iso');}if(endWrap)endWrap.style.display='none';}
+          else{if(endEl){endEl.value='';endEl.removeAttribute('data-iso');endEl.readOnly=false;}if(endWrap)endWrap.style.display='';}
+        })(this.value)">
+          <option value="probation" ${nextType==='probation'?'selected':''}>HĐ Thử việc</option>
+          <option value="term12" ${nextType==='term12'?'selected':''}>HĐ xác định thời hạn (01 năm)</option>
+          <option value="term24" ${nextType==='term24'?'selected':''}>HĐ xác định thời hạn (02 năm)</option>
+          <option value="indefinite" ${nextType==='indefinite'?'selected':''}>HĐ Không xác định thời hạn</option>
+        </select>
+      </div>
+      <div class="field"><label>Ngày bắt đầu</label>
+        <input type="date" id="rn_start" value="${newStartISO}" onchange="document.getElementById('rn_type').onchange()">
+      </div>
+      <div class="field" id="rn_end_wrap" ${nextType==='indefinite'?'style="display:none"':''}>
+        <label>Ngày kết thúc ${nextType==='probation'?'(tự điền)':''}</label>
+        <input type="date" id="rn_end" value="${nextEndDate}" ${['term12','term24'].includes(nextType)?'readonly':''}>
       </div>
       <div class="field"><label>Ngày ký</label>
         <input type="date" id="rn_signed" value="${newStartISO}">
@@ -7876,7 +7917,7 @@ function renewContract(contractId, empId){
     </div>
     <div class="modal-actions">
       <button class="btn" onclick="closeModal()">Huỷ</button>
-      <button class="btn btn-primary" onclick="confirmRenewContract('${contractId}','${empId}','${nextType}','${nextEndDate}')">
+      <button class="btn btn-primary" onclick="confirmRenewContract('${contractId}','${empId}')">
         ✅ Xác nhận gia hạn
       </button>
     </div>
@@ -7884,15 +7925,18 @@ function renewContract(contractId, empId){
   setTimeout(()=>initDateInputs($('#modalBox')), 10);
 }
 
-function confirmRenewContract(oldContractId, empId, nextType, nextEndDate){
+function confirmRenewContract(oldContractId, empId){
+  const typeEl = document.getElementById('rn_type');
   const startEl = document.getElementById('rn_start');
+  const endEl = document.getElementById('rn_end');
   const signedEl = document.getElementById('rn_signed');
   const notesEl = document.getElementById('rn_notes');
 
+  const nextType = typeEl?.value||'term12';
   const startISO = startEl?.getAttribute('data-iso') || dispToIso(startEl?.value||'') || startEl?.value||'';
+  const endISO = nextType==='indefinite' ? '' : (endEl?.getAttribute('data-iso') || dispToIso(endEl?.value||'') || endEl?.value||'');
   const signedISO = signedEl?.getAttribute('data-iso') || dispToIso(signedEl?.value||'') || signedEl?.value||'';
   const notes = notesEl?.value.trim()||'';
-  const endISO = nextEndDate || '';
 
   if(!startISO){ toast('Vui lòng nhập ngày bắt đầu','error'); return; }
 
@@ -7918,6 +7962,9 @@ function confirmRenewContract(oldContractId, empId, nextType, nextEndDate){
   DB.customData[empId].currentContractType  = typeLabel;
   DB.customData[empId].currentContractStart = startISO;
   DB.customData[empId].currentContractEnd   = endISO;
+  // Sync cả fields gốc (một số NV dùng contractStart/End thay vì currentContractStart/End)
+  DB.customData[empId].contractStart = startISO;
+  DB.customData[empId].contractEnd   = endISO;
 
   const empIdx = DB.employees.findIndex(x=>x.id===empId);
   if(empIdx >= 0 && DB.employees[empIdx].status === 'probation' && nextType !== 'probation'){
@@ -13243,7 +13290,7 @@ function resignAction(rid, action){
   if(action==='confirm'){
     // Duyệt ngay, không hỏi lại
     const eIdx=DB.employees.findIndex(e=>e.id===r.empId);
-    if(eIdx>=0){ DB.employees[eIdx].status='exit'; _autoRemoveFromDorm(empId); }
+    if(eIdx>=0){ DB.employees[eIdx].status='exit'; _autoRemoveFromDorm(r.empId); }
     if(!DB.customData) DB.customData={};
     if(!DB.customData[r.empId]) DB.customData[r.empId]={};
     DB.customData[r.empId].exitDate=r.endDate||r.submitDate;
@@ -22502,17 +22549,27 @@ const fbDb      = firebase.firestore();
 // Cache toàn bộ data vào IndexedDB của browser
 // → Render UI đọc từ cache (0 reads), Firebase chỉ push khi có thay đổi
 // → Vẫn realtime, vẫn free, an toàn cho 6 máy của Meoz
-fbDb.enablePersistence({ synchronizeTabs: true })
-  .then(() => console.log('[Firestore] Offline persistence enabled ✅'))
-  .catch(err => {
+// Offline persistence — clear corrupt IndexedDB nếu lỗi, retry 1 lần
+(async function initPersistence(){
+  try {
+    await fbDb.enablePersistence({ synchronizeTabs: true });
+    console.log('[Firestore] Offline persistence enabled ✅');
+  } catch(err) {
     if(err.code === 'failed-precondition'){
       console.warn('[Firestore] Persistence: nhiều tab cùng mở, chỉ 1 tab cache được');
     } else if(err.code === 'unimplemented'){
       console.warn('[Firestore] Browser không hỗ trợ IndexedDB');
     } else {
-      console.warn('[Firestore] Persistence error:', err.message);
+      console.warn('[Firestore] Persistence lỗi, clearing IndexedDB...', err.message);
+      try {
+        const dbs = await indexedDB.databases();
+        const fsDbs = dbs.filter(db=>db.name && db.name.startsWith('firestore'));
+        for(const db of fsDbs){ indexedDB.deleteDatabase(db.name); }
+        console.log('[Firestore] Cleared', fsDbs.length, 'corrupt IndexedDB databases');
+      } catch(e){ console.warn('[Firestore] IndexedDB cleanup failed:', e.message); }
     }
-  });
+  }
+})();
 
 const CLOUDINARY_CLOUD = 'dmsb6wbg6';
 const CLOUDINARY_PRESET = 'legacy_hr';
