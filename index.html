@@ -3670,11 +3670,11 @@ function renderDashboardCharts(){
       const mEnd = new Date(yr2, mi+1, 0); // cuối tháng
       let total = 0;
       (DB.employees||[]).forEach(e=>{
-        // Dùng đúng logic như bảng Salary: chỉ check joined date
-        if(!e.joined || new Date(e.joined) > mEnd) return;
-        const cd = (DB.customData||{})[e.id]||{};
+        // Consistent với Salary page: NV không có joined → vẫn tính (coi như đã có mặt)
+        if(e.joined && new Date(e.joined) > mEnd) return;
         // Chỉ tính NV đang làm (status != exit)
         if(getEffectiveStatus(e) === 'exit') return;
+        const cd = (DB.customData||{})[e.id]||{};
         total += (parseInt(cd.baseSalary)||0) + (parseInt(cd.bonusSalary)||0);
       });
       return Math.round(total/1e6*10)/10;
@@ -3692,11 +3692,11 @@ function renderDashboardCharts(){
   if(salDeptAvgEl && !hiddenCharts.has('salaryDeptAvg')){
     if(Chart.getChart(salDeptAvgEl)) Chart.getChart(salDeptAvgEl).destroy();
     const deptAvg = DB.departments.map(d=>{
-      const emps = (DB.employees||[]).filter(e=>e.deptId===d.id&&e.status!=='exit');
+      const emps = (DB.employees||[]).filter(e=>e.deptId===d.id&&getEffectiveStatus(e)!=='exit');
       if(!emps.length) return {name:d.name, avg:0};
       const total = emps.reduce((s,e)=>{
-        const base = parseFloat((DB.customData||{})[e.id]?.baseSalary||e.baseSalary||0);
-        return s + base;
+        const cd = (DB.customData||{})[e.id]||{};
+        return s + (parseInt(cd.baseSalary)||0) + (parseInt(cd.bonusSalary)||0);
       },0);
       return {name:d.name, avg:Math.round(total/emps.length/1e5)/10}; // triệu
     }).filter(d=>d.avg>0).sort((a,b)=>b.avg-a.avg);
@@ -9967,7 +9967,13 @@ window.toggleLeaveGroup = function(did){
             </tr>
           </thead>
           <tbody>
-            ${Object.entries(empByDept).map(([did, dEmps])=>{
+            ${(()=>{
+              // Sắp xếp theo thứ tự DB.departments (giống bảng nhân viên)
+              const deptIds = DB.departments.map(d=>d.id).filter(id=>empByDept[id]);
+              Object.keys(empByDept).forEach(did=>{ if(!deptIds.includes(did)) deptIds.push(did); }); // _none cuối cùng
+              return deptIds.map(did=>{
+              const dEmps = empByDept[did];
+              if(!dEmps||!dEmps.length) return '';
               const dName = deptName(did);
               const isCollapsed = !!window._leaveCollapsed[did];
               // Summary totals for dept header
@@ -10123,7 +10129,7 @@ window.toggleLeaveGroup = function(did){
               }).join('');
 
               return deptHeader + empRows;
-            }).join('')}
+            }).join('');})()}
           </tbody>
           <tfoot>
             <tr style="background:#162030;border-top:2px solid var(--border-strong);font-weight:700">
@@ -20468,7 +20474,7 @@ function renderSvcTab(){
                 <td style="text-align:right;padding:3px 6px">
                   <input type="text" value="${v?fmtN(v):''}" placeholder="0"
                     style="width:100%;text-align:right;padding:4px 8px;font-family:'JetBrains Mono',monospace;font-size:12px;background:var(--bg-elev);border:1px solid var(--border);border-radius:4px;color:${v?'var(--accent)':'var(--ink-muted)'};font-weight:${v?'600':'400'}"
-                    onchange="saveSvcCell(${yr},${i},this.value);this.style.color='var(--accent)';this.style.fontWeight='600';render()"
+                    onchange="saveSvcCell(${yr},${i},this.value);this.style.color='var(--accent)';this.style.fontWeight='600'"
                     onfocus="this.select()">
                 </td>
                 ${showCmp?`<td style="text-align:right;font-family:'JetBrains Mono',monospace;padding:5px 8px;color:var(--ink-muted)">${cv?fmtN(cv):'—'}</td>`:''}
@@ -23042,7 +23048,6 @@ fbAuth.onAuthStateChanged(async user => {
           window._tabActive = !document.hidden;
           window._visibilityHandler = () => {
             window._tabActive = !document.hidden;
-            console.log('[Firestore] Tab', window._tabActive ? 'active' : 'inactive');
           };
           document.addEventListener('visibilitychange', window._visibilityHandler);
         }
@@ -23183,16 +23188,10 @@ fbAuth.onAuthStateChanged(async user => {
                   if(currentPage === 'employees' && window._empSearchActive){
                     updateBadges(); return;
                   }
-                  // Salary page: KHÔNG re-render từ snapshot tự động (gây chart loop)
-                  // Nhưng vẫn update badges
+                  // Salary page: KHÔNG bao giờ re-render từ snapshot (gây chart jump)
+                  // User tự filter/nhập → page tự render riêng
                   if(currentPage === 'salary'){
                     updateBadges();
-                    // Chỉ re-render nếu data thực sự thay đổi (không phải self-save)
-                    if(!isSelf){
-                      const fn = RENDER_MAP[currentPage];
-                      const main = document.getElementById('mainContent');
-                      if(fn && main) fn(main);
-                    }
                     return;
                   }
                   // Contracts page: chỉ re-render khi data thay đổi từ account khác
