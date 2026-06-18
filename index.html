@@ -3902,6 +3902,160 @@ function exportJSON(){
   toast('Đã xuất dữ liệu JSON');
 }
 
+function exportAllExcel(){
+  if(typeof XLSX === 'undefined'){ toast('SheetJS chưa tải, thử lại sau','error'); return; }
+  toast('⏳ Đang xuất Excel toàn bộ dữ liệu...');
+  setTimeout(()=>{
+  try {
+    const wb = XLSX.utils.book_new();
+    const _d = (v)=> v||'';
+    const _n = (v)=> v?parseInt(v)||0:0;
+    const _fmtN = (v)=> v?(parseInt(v)||0).toLocaleString('vi-VN'):'';
+
+    // 1. NHÂN VIÊN
+    const empHead = ['Mã NV','Họ tên','Email','SĐT','SĐT 2','Ngày sinh','Giới tính','Phòng ban','Chức danh','Cấp bậc','Ngày vào','Trạng thái','Loại HĐ','HĐ bắt đầu','HĐ kết thúc','Lương CB','Phụ cấp','Tổng lương','Ngày nghỉ việc','Lý do nghỉ'];
+    const empRows = (DB.employees||[]).map(e=>{
+      const cd = (DB.customData||{})[e.id]||{};
+      const dept = DB.departments.find(d=>d.id===e.deptId);
+      const base = _n(cd.baseSalary); const bonus = _n(cd.bonusSalary);
+      return [_d(e.code),_d(e.name),_d(e.email),_d(e.phone),_d(e.phone2),_d(e.dob),_d(e.gender),dept?dept.name:'',_d(e.role),_d(e.level),_d(e.joined),_d(getEffectiveStatus(e)),_d(cd.currentContractType),_d(cd.contractStart||cd.currentContractStart),_d(cd.contractEnd||cd.currentContractEnd),base,bonus,base+bonus,_d(cd.exitDate),_d(cd.exitReason)];
+    });
+    const ws1 = XLSX.utils.aoa_to_sheet([empHead,...empRows]);
+    ws1['!cols'] = empHead.map((_,i)=>({wch: i===1?25:i===2?22:i===7?18:i===11?12:i===12?28:15}));
+    XLSX.utils.book_append_sheet(wb, ws1, 'Nhân viên');
+
+    // 2. PHÒNG BAN
+    const deptHead = ['Tên phòng ban','Mô tả','Trưởng phòng','Màu','Số NV'];
+    const deptRows = (DB.departments||[]).map(d=>{
+      const hc = (DB.employees||[]).filter(e=>e.deptId===d.id && getEffectiveStatus(e)!=='exit').length;
+      return [_d(d.name),_d(d.desc),_d(d.head),_d(d.color),hc];
+    });
+    const ws2 = XLSX.utils.aoa_to_sheet([deptHead,...deptRows]);
+    XLSX.utils.book_append_sheet(wb, ws2, 'Phòng ban');
+
+    // 3. HỢP ĐỒNG
+    const ctHead = ['Mã NV','Họ tên','Loại HĐ','Ngày bắt đầu','Ngày kết thúc','Ngày ký','Ghi chú'];
+    const ctRows = (DB.contracts||[]).map(c=>{
+      const emp = empById(c.empId);
+      return [emp?emp.code:'',emp?emp.name:'',ctLabel(c.type),_d(c.startDate),_d(c.endDate),_d(c.signedDate),_d(c.notes)];
+    });
+    const ws3 = XLSX.utils.aoa_to_sheet([ctHead,...ctRows]);
+    XLSX.utils.book_append_sheet(wb, ws3, 'Hợp đồng');
+
+    // 4. NGHỈ VIỆC
+    const rsHead = ['Mã NV','Họ tên','Phòng ban','Ngày nộp','Ngày kết thúc','Lý do','Trạng thái'];
+    const rsRows = (DB.resignations||[]).map(r=>{
+      const emp = empById(r.empId); const dept = emp?DB.departments.find(d=>d.id===emp.deptId):null;
+      return [emp?emp.code:'',emp?emp.name:'',dept?dept.name:'',_d(r.submitDate),_d(r.endDate),_d(r.reason),_d(r.status)];
+    });
+    const ws4 = XLSX.utils.aoa_to_sheet([rsHead,...rsRows]);
+    XLSX.utils.book_append_sheet(wb, ws4, 'Nghỉ việc');
+
+    // 5. SVC
+    const svcYears = Object.keys(DB.svcData||{}).sort();
+    if(svcYears.length){
+      const svcHead = ['Năm','T1','T2','T3','T4','T5','T6','T7','T8','T9','T10','T11','T12','Tổng'];
+      const svcRows = svcYears.map(yr=>{
+        const d = DB.svcData[yr]||Array(12).fill(0);
+        return [yr,...d.map(v=>v||0),d.reduce((s,v)=>s+(v||0),0)];
+      });
+      const ws5 = XLSX.utils.aoa_to_sheet([svcHead,...svcRows]);
+      XLSX.utils.book_append_sheet(wb, ws5, 'SVC');
+    }
+
+    // 6. BONUS
+    const bonusYears = Object.keys(DB.bonusData||{}).sort();
+    if(bonusYears.length){
+      const bHead = ['Năm','Tên thưởng','T1','T2','T3','T4','T5','T6','T7','T8','T9','T10','T11','T12','Tổng'];
+      const bRows = [];
+      bonusYears.forEach(yr=>{
+        const bd = DB.bonusData[yr];
+        if(bd && typeof bd === 'object'){
+          Object.keys(bd).forEach(name=>{
+            const d = bd[name]||Array(12).fill(0);
+            bRows.push([yr,name,...d.map(v=>v||0),d.reduce((s,v)=>s+(v||0),0)]);
+          });
+        }
+      });
+      if(bRows.length){
+        const ws6 = XLSX.utils.aoa_to_sheet([bHead,...bRows]);
+        XLSX.utils.book_append_sheet(wb, ws6, 'Khoản thưởng');
+      }
+    }
+
+    // 7. NGHỈ PHÉP (leave records)
+    const lvHead = ['Mã NV','Họ tên','Phòng ban','Loại','Từ ngày','Đến ngày','Số ngày','Trạng thái','Ghi chú'];
+    const lvRows = (DB.leaves||[]).map(l=>{
+      const emp = empById(l.empId); const dept = emp?DB.departments.find(d=>d.id===emp.deptId):null;
+      return [emp?emp.code:'',emp?emp.name:'',dept?dept.name:'',_d(l.leaveType),_d(l.startDate),_d(l.endDate),l.days||'',_d(l.status),_d(l.notes)];
+    });
+    if(lvRows.length){
+      const ws7 = XLSX.utils.aoa_to_sheet([lvHead,...lvRows]);
+      XLSX.utils.book_append_sheet(wb, ws7, 'Đơn nghỉ phép');
+    }
+
+    // 8. TUYỂN DỤNG - Vị trí
+    const jobHead = ['Tên vị trí','Phòng ban','Trạng thái','Số lượng','Ngày mở','Ghi chú'];
+    const jobRows = (DB.jobs||[]).map(j=>{
+      const dept = DB.departments.find(d=>d.id===j.deptId);
+      return [_d(j.title),dept?dept.name:'',_d(j.status),j.qty||1,_d(j.openDate),_d(j.notes)];
+    });
+    if(jobRows.length){
+      const ws8 = XLSX.utils.aoa_to_sheet([jobHead,...jobRows]);
+      XLSX.utils.book_append_sheet(wb, ws8, 'Vị trí tuyển dụng');
+    }
+
+    // 9. ỨNG VIÊN
+    const candHead = ['Họ tên','Vị trí','Ngày ứng tuyển','Trạng thái','SĐT','Email','Ghi chú'];
+    const candRows = (DB.candidates||[]).map(c=>{
+      const job = (DB.jobs||[]).find(j=>j.id===c.jobId);
+      return [_d(c.name),job?job.title:'',_d(c.appliedDate),_d(c.status),_d(c.phone),_d(c.email),_d(c.notes)];
+    });
+    if(candRows.length){
+      const ws9 = XLSX.utils.aoa_to_sheet([candHead,...candRows]);
+      XLSX.utils.book_append_sheet(wb, ws9, 'Ứng viên');
+    }
+
+    // 10. KHEN THƯỞNG
+    const rwHead = ['Mã NV','Họ tên','Loại','Ngày','Nội dung','Ghi chú'];
+    const rwRows = (DB.rewardRecords||[]).map(r=>{
+      const emp = empById(r.empId);
+      return [emp?emp.code:'',emp?emp.name:'',_d(r.type),_d(r.date),_d(r.content),_d(r.notes)];
+    });
+    if(rwRows.length){
+      const ws10 = XLSX.utils.aoa_to_sheet([rwHead,...rwRows]);
+      XLSX.utils.book_append_sheet(wb, ws10, 'Khen thưởng');
+    }
+
+    // 11. KỶ LUẬT
+    const dcHead = ['Mã NV','Họ tên','Mức độ','Ngày','Nội dung','Ghi chú'];
+    const dcRows = (DB.disciplineRecords||[]).map(r=>{
+      const emp = empById(r.empId);
+      return [emp?emp.code:'',emp?emp.name:'',_d(r.severity),_d(r.date),_d(r.content),_d(r.notes)];
+    });
+    if(dcRows.length){
+      const ws11 = XLSX.utils.aoa_to_sheet([dcHead,...dcRows]);
+      XLSX.utils.book_append_sheet(wb, ws11, 'Kỷ luật');
+    }
+
+    // 12. ĐÀO TẠO
+    const trHead = ['Tên khoá','Giảng viên','Ngày bắt đầu','Ngày kết thúc','Số giờ','Số HV','Loại','Ghi chú'];
+    const trRows = (DB.courses||[]).map(c=>{
+      return [_d(c.name),_d(c.trainer),_d(c.startDate),_d(c.endDate),c.hours||0,c.participants||0,_d(c.type),_d(c.notes)];
+    });
+    if(trRows.length){
+      const ws12 = XLSX.utils.aoa_to_sheet([trHead,...trRows]);
+      XLSX.utils.book_append_sheet(wb, ws12, 'Đào tạo');
+    }
+
+    // Download
+    const fileName = `LegacyHR_ToanBo_${new Date().toISOString().slice(0,10)}.xlsx`;
+    XLSX.writeFile(wb, fileName);
+    toast('✅ Đã xuất Excel toàn bộ: ' + fileName, 'success');
+  } catch(e){ toast('❌ Lỗi xuất Excel: '+e.message,'error'); console.error(e); }
+  }, 100);
+}
+
 /* =========================================================
    EMPLOYEES — Full CRUD
    ========================================================= */
@@ -19520,6 +19674,9 @@ function renderSettings(main){
         </div></div>
         <div style="display:flex;flex-direction:column;gap:10px">
           <button class="btn" onclick="exportJSON()">${ICONS.download} Xuất toàn bộ dữ liệu (JSON)</button>
+          <button class="btn" onclick="exportAllExcel()" style="border-color:var(--success);color:var(--success);font-weight:600">
+            📊 Xuất toàn bộ ra Excel (.xlsx)
+          </button>
           <button class="btn" onclick="syncCustomFields()" style="border-color:var(--accent);color:var(--accent)">
             🔄 Đồng bộ cấu hình trường (customFields)
           </button>
