@@ -23346,8 +23346,9 @@ fbAuth.onAuthStateChanged(async user => {
                 // Skip echo: self-save trong 5s gần nhất → chờ server confirm
                 const skipAge = (Date.now() - cloudSyncAt) < 5000;
                 if(selfSave && skipAge){ return; }
-                // Nếu cloud cũ hơn local → không đè
-                if(cloudTs < localTs){ return; }
+                // Chỉ skip nếu CHÍNH MÌNH vừa save và cloud cũ hơn local
+                // KHÔNG skip khi cloud từ thiết bị khác — kể cả cloud cũ hơn (vẫn phải merge để không mất data)
+                if(selfSave && cloudTs < localTs){ return; }
 
                 FS_DOC_MAP[docId].forEach(key=>{
                   if(cloudData[key] === undefined) return;
@@ -23395,9 +23396,13 @@ fbAuth.onAuthStateChanged(async user => {
               }
 
               if(!Object.prototype.hasOwnProperty.call(_lastSyncAt, docId)){
+                // Lần đầu: nếu fromCache thì KHÔNG set _lastSyncAt → để server snapshot sau merge được
+                if(snap.metadata.fromCache){
+                  return; // chờ server snapshot
+                }
                 _lastSyncAt[docId] = cloudSyncAt;
                 mergeCloudIntoDb();
-                if(window._dirtyKeys) window._dirtyKeys.clear(); // cloud merge không dirty
+                if(window._dirtyKeys) window._dirtyKeys.clear();
                 return;
               }
 
