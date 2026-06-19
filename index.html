@@ -17016,14 +17016,19 @@ function syncEmployeeFromPromotions(empId){
     .filter(p => {
       if(p.empId !== empId || p.status !== 'completed') return false;
       const effDate = p.effectiveDate ? new Date(p.effectiveDate) : null;
-      return !effDate || effDate <= today; // không có effectiveDate hoặc đã đến ngày
+      return !effDate || effDate <= today;
     })
     .sort((a,b) => new Date(b.effectiveDate||b.date) - new Date(a.effectiveDate||a.date));
 
   if(promotions.length > 0){
     const latest = promotions[0];
-    if(latest.newLevel)  emp.level  = latest.newLevel;
-    if(latest.newDeptId) emp.deptId = latest.newDeptId;
+    const promoTime = new Date(latest.effectiveDate||latest.date||0).getTime();
+    const empUpdated = emp.updatedAt || 0;
+    // Chỉ sync nếu promotion mới hơn lần sửa thủ công cuối
+    if(promoTime > empUpdated){
+      if(latest.newLevel)  emp.level  = latest.newLevel;
+      if(latest.newDeptId) emp.deptId = latest.newDeptId;
+    }
   }
 }
 
