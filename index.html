@@ -12166,7 +12166,11 @@ function renderRecruitmentReports(main){
     sourceMap[src].cv++;
     if(a.status === 'hired') sourceMap[src].hired++;
     if(a.rating){ sourceMap[src].ratingSum += a.rating; sourceMap[src].ratingCount++; }
-    if(a.expectedSalary){ sourceMap[src].salarySum += a.expectedSalary; sourceMap[src].salaryCount++; }
+    // Loại CV đã rút hồ sơ (withdrawn) khỏi tính lương KV TB
+    if(a.expectedSalary && a.status !== 'withdrawn'){
+      sourceMap[src].salarySum += a.expectedSalary;
+      sourceMap[src].salaryCount++;
+    }
   });
   const sourceArr = Object.entries(sourceMap).map(([k,v])=>({
     source: k, cv: v.cv, hired: v.hired,
@@ -12200,9 +12204,17 @@ function renderRecruitmentReports(main){
   cvInPeriod.forEach(a => {
     if(!posMap[a.jobId]) posMap[a.jobId] = {cv:0, hired:0, salarySum:0, salaryCount:0, tthDays:[]};
     posMap[a.jobId].cv++;
+    // Lương KV TB: tính từ CV có khai báo expectedSalary, TRỪ CV đã rút hồ sơ (withdrawn)
+    // - withdrawn: candidate tự rút → lương KV không còn phản ánh kỳ vọng → loại
+    // - rejected: công ty loại nhưng lương KV vẫn là data thị trường → vẫn tính
+    // - các status khác (new/screening/interview/offer/hired): tính bình thường
+    if(a.expectedSalary && a.status !== 'withdrawn'){
+      posMap[a.jobId].salarySum += a.expectedSalary;
+      posMap[a.jobId].salaryCount++;
+    }
     if(a.status === 'hired') {
       posMap[a.jobId].hired++;
-      if(a.expectedSalary){ posMap[a.jobId].salarySum += a.expectedSalary; posMap[a.jobId].salaryCount++; }
+      // TTH (Time To Hire) chỉ tính từ CV đã hire
       if(a.hiredDate && a.appliedDate){
         posMap[a.jobId].tthDays.push(Math.max(0, Math.ceil((new Date(a.hiredDate) - new Date(a.appliedDate)) / 86400000)));
       }
@@ -12249,6 +12261,7 @@ function renderRecruitmentReports(main){
   const posSalMap = {};
   cvInPeriod.forEach(a => {
     if(!(a.expectedSalary > 0)) return;
+    if(a.status === 'withdrawn') return; // Loại CV đã rút khỏi phân tích lương KV
     if(!posSalMap[a.jobId]) posSalMap[a.jobId] = {all: [], hired: []};
     posSalMap[a.jobId].all.push(a.expectedSalary);
     if(a.status === 'hired') posSalMap[a.jobId].hired.push(a.expectedSalary);
