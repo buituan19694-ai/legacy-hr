@@ -225,26 +225,26 @@
     <div class="sidebar-footer" style="position:relative">
       <div id="userMenuPopup" style="display:none;position:absolute;bottom:72px;left:0;right:0;background:var(--bg-elev);border:1px solid var(--border);border-radius:10px;overflow:hidden;z-index:999;box-shadow:0 4px 24px rgba(0,0,0,.35)">
         <div style="padding:8px 12px 6px;font-size:11px;color:var(--ink-muted);letter-spacing:.08em;text-transform:uppercase;border-bottom:1px solid var(--border)">Tài khoản</div>
-        <div onclick="toggleTheme()" id="themeMenuItem" style="padding:10px 14px;display:flex;align-items:center;gap:10px;cursor:pointer;font-size:13px;color:var(--ink)" onmouseover="this.style.background=\'var(--bg-card-hover)\'" onmouseout="this.style.background=\'\'">
+        <div onclick="toggleTheme()" id="themeMenuItem" style="padding:10px 14px;display:flex;align-items:center;gap:10px;cursor:pointer;font-size:13px;color:var(--ink)" onmouseover="this.style.background='var(--bg-card-hover)'" onmouseout="this.style.background=''">
           <span id="themeMenuIcon" style="font-size:15px">☀️</span>
           <span id="themeMenuLabel">Chế độ sáng</span>
         </div>
-        <div onclick="toggleLang()" id="langMenuItem" style="padding:10px 14px;display:flex;align-items:center;gap:10px;cursor:pointer;font-size:13px;color:var(--ink)" onmouseover="this.style.background=\'var(--bg-card-hover)\'" onmouseout="this.style.background=\'\'">
+        <div onclick="toggleLang()" id="langMenuItem" style="padding:10px 14px;display:flex;align-items:center;gap:10px;cursor:pointer;font-size:13px;color:var(--ink)" onmouseover="this.style.background='var(--bg-card-hover)'" onmouseout="this.style.background=''">
           <span style="font-size:15px">🌐</span>
           <span id="langMenuLabel">Switch to English</span>
         </div>
         <div style="height:1px;background:var(--border)"></div>
-        <div onclick="doChangePassword()" style="padding:10px 14px;display:flex;align-items:center;gap:10px;cursor:pointer;font-size:13px;color:var(--ink)" onmouseover="this.style.background=\'var(--bg-card-hover)\'" onmouseout="this.style.background=\'\'">
+        <div onclick="doChangePassword()" style="padding:10px 14px;display:flex;align-items:center;gap:10px;cursor:pointer;font-size:13px;color:var(--ink)" onmouseover="this.style.background='var(--bg-card-hover)'" onmouseout="this.style.background=''">
           <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" style="width:15px;height:15px;flex-shrink:0"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"/></svg>
           Đổi mật khẩu
         </div>
         <div style="height:1px;background:var(--border)"></div>
-        <div onclick="showDailyGreeting(true);document.getElementById('userMenuPopup').style.display='none'" style="padding:10px 14px;display:flex;align-items:center;gap:10px;cursor:pointer;font-size:13px;color:var(--accent)" onmouseover="this.style.background=\'var(--bg-card-hover)\'" onmouseout="this.style.background=\'\'">
+        <div onclick="showDailyGreeting(true);document.getElementById('userMenuPopup').style.display='none'" style="padding:10px 14px;display:flex;align-items:center;gap:10px;cursor:pointer;font-size:13px;color:var(--accent)" onmouseover="this.style.background='var(--bg-card-hover)'" onmouseout="this.style.background=''">
           <span style="font-size:15px">🐱</span>
           Chào P&C
         </div>
         <div style="height:1px;background:var(--border)"></div>
-        <div onclick="doLogout()" style="padding:10px 14px;display:flex;align-items:center;gap:10px;cursor:pointer;font-size:13px;color:var(--danger)" onmouseover="this.style.background=\'var(--bg-card-hover)\'" onmouseout="this.style.background=\'\'">
+        <div onclick="doLogout()" style="padding:10px 14px;display:flex;align-items:center;gap:10px;cursor:pointer;font-size:13px;color:var(--danger)" onmouseover="this.style.background='var(--bg-card-hover)'" onmouseout="this.style.background=''">
           <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" style="width:15px;height:15px;flex-shrink:0"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/></svg>
           Đăng xuất
         </div>
@@ -1222,19 +1222,36 @@ function _pushDynamicKey(key, meta){
     const allYears = new Set([thisYear]);
     Object.values(sheet).forEach(empData=>{ Object.keys(empData).forEach(y=>{ const yi=parseInt(y); if(!isNaN(yi)) allYears.add(yi); }); });
 
+    // Helper: check sheet có data thật không (tránh lưu empty)
+    const _hasData = (sh)=>{
+      if(!sh) return false;
+      if((sh.carry||0)!==0) return true;
+      if((sh.clearAL||0)!==0) return true;
+      if(Array.isArray(sh.entitle) && sh.entitle.some(v=>v)) return true;
+      if(Array.isArray(sh.taken) && sh.taken.some(v=>v)) return true;
+      return false;
+    };
+
     // Map empId → deptId (NV dùng id thường, TTS dùng 'tr_'+id)
     const empDeptMap = {};
     (DB.employees||[]).forEach(e=>{ empDeptMap[e.id] = e.deptId||'_none'; });
     (DB.trainees||[]).forEach(t=>{ empDeptMap['tr_'+t.id] = t.deptId||'_none'; });
 
     allYears.forEach(yr=>{
-      // Nhóm theo dept
+      // Nhóm theo dept — bỏ qua NV có data rỗng
       const byDept = {};
       Object.entries(sheet).forEach(([empId, empData])=>{
         if(empData[yr] === undefined) return;
+        const yrData = empData[yr];
+        // Chỉ lưu nếu ít nhất 1 loại (al/cl) có data thật
+        const filtered = {};
+        Object.entries(yrData).forEach(([lt, sh])=>{
+          if(_hasData(sh)) filtered[lt] = sh;
+        });
+        if(Object.keys(filtered).length === 0) return;
         const did = empDeptMap[empId] || '_none';
         if(!byDept[did]) byDept[did] = {};
-        byDept[did][empId] = {[yr]: empData[yr]};
+        byDept[did][empId] = {[yr]: filtered};
       });
       // Lưu mỗi dept 1 doc: leavesheet_2026_d1, leavesheet_2026__none, ...
       Object.entries(byDept).forEach(([did, sliced])=>{
@@ -3983,16 +4000,48 @@ function exportAllExcel(){
       }
     }
 
-    // 7. NGHỈ PHÉP (leave records)
-    const lvHead = ['Mã NV','Họ tên','Phòng ban','Loại','Từ ngày','Đến ngày','Số ngày','Trạng thái','Ghi chú'];
-    const lvRows = (DB.leaves||[]).map(l=>{
-      const emp = empById(l.empId); const dept = emp?DB.departments.find(d=>d.id===emp.deptId):null;
-      return [emp?emp.code:'',emp?emp.name:'',dept?dept.name:'',_d(l.leaveType),_d(l.startDate),_d(l.endDate),l.days||'',_d(l.status),_d(l.notes)];
+    // 7. NGHỈ PHÉP (từ DB.leaveSheet — dữ liệu tracking thực tế)
+    const leaveYears = new Set();
+    if(DB.leaveSheet){ Object.values(DB.leaveSheet).forEach(emp=>{
+      Object.keys(emp).forEach(y=>{ const yi=parseInt(y); if(!isNaN(yi)) leaveYears.add(yi); });
+    }); }
+    [...leaveYears].sort().forEach(year=>{
+      const lvHead = ['Mã NV','Họ tên','Phòng ban','Loại','Tồn năm trước',
+        'T1','T2','T3','T4','T5','T6','T7','T8','T9','T10','T11','T12','Tổng được hưởng',
+        'Nghỉ T1','Nghỉ T2','Clear AL','Nghỉ T3','Nghỉ T4','Nghỉ T5','Nghỉ T6',
+        'Nghỉ T7','Nghỉ T8','Nghỉ T9','Nghỉ T10','Nghỉ T11','Nghỉ T12','Tổng đã nghỉ','Tồn cuối năm'];
+      const lvRows = [];
+      const activeEmps = (DB.employees||[]).filter(e=>getEffectiveStatus(e)!=='exit')
+        .sort((a,b)=>(a.deptId||'').localeCompare(b.deptId||'')||a.name.localeCompare(b.name,'vi'));
+      activeEmps.forEach(e=>{
+        const empSheet = (DB.leaveSheet||{})[e.id];
+        if(!empSheet || !empSheet[year]) return;
+        const dept = DB.departments.find(d=>d.id===e.deptId);
+        ['al','cl'].forEach(lt=>{
+          const sh = empSheet[year][lt];
+          if(!sh) return;
+          const carry = parseFloat(sh.carry)||0;
+          const entitle = Array.isArray(sh.entitle)?sh.entitle:Array(12).fill(0);
+          const taken = Array.isArray(sh.taken)?sh.taken:Array(12).fill(0);
+          const clearAL = parseFloat(sh.clearAL)||0;
+          const totalEnt = carry + entitle.reduce((s,x)=>s+x,0);
+          const totalTaken = taken.reduce((s,x)=>s+x,0);
+          const tonCuoiNam = Math.round((totalEnt-totalTaken)*100)/100;
+          const row = [_d(e.code),_d(e.name),dept?dept.name:'',lt==='al'?'AL - Phép năm':'CL - Nghỉ bù',carry];
+          for(let m=0;m<12;m++) row.push(entitle[m]||0);
+          row.push(Math.round((carry+entitle.reduce((s,x)=>s+x,0))*100)/100);
+          row.push(taken[0]||0, taken[1]||0, clearAL);
+          for(let m=2;m<12;m++) row.push(taken[m]||0);
+          row.push(Math.round(totalTaken*100)/100, tonCuoiNam);
+          lvRows.push(row);
+        });
+      });
+      if(lvRows.length){
+        const wsLv = XLSX.utils.aoa_to_sheet([lvHead,...lvRows]);
+        wsLv['!cols'] = [{wch:10},{wch:25},{wch:20},{wch:18},{wch:14},...Array(27).fill({wch:10})];
+        XLSX.utils.book_append_sheet(wb, wsLv, 'Nghỉ phép '+year);
+      }
     });
-    if(lvRows.length){
-      const ws7 = XLSX.utils.aoa_to_sheet([lvHead,...lvRows]);
-      XLSX.utils.book_append_sheet(wb, ws7, 'Đơn nghỉ phép');
-    }
 
     // 8. TUYỂN DỤNG - Vị trí
     const jobHead = ['Tên vị trí','Phòng ban','Trạng thái','Số lượng','Ngày mở','Ghi chú'];
@@ -9938,6 +9987,7 @@ function renderLeaveReports(main){
   const mnShort = ['T1','T2','T3','T4','T5','T6','T7','T8','T9','T10','T11','T12'];
   const thStyle = 'style="text-align:center;font-size:10.5px;padding:5px 4px;white-space:nowrap"';
 
+  let _leaveSaveTimer = null;
   window.saveLeaveCell = function(empId, leaveType, field, month, val){
     const sh = getSheet(empId, leaveType);
     const v = parseFloat(val)||0;
@@ -9949,7 +9999,9 @@ function renderLeaveReports(main){
     if(!DB.leaveSheet[empId]) DB.leaveSheet[empId]={};
     if(!DB.leaveSheet[empId][bal.year]) DB.leaveSheet[empId][bal.year]={};
     DB.leaveSheet[empId][bal.year][leaveType]=sh;
-    saveData(['leaveSheet']);
+    // Debounce save — chờ 800ms sau phím cuối mới save Firestore
+    clearTimeout(_leaveSaveTimer);
+    _leaveSaveTimer = setTimeout(()=> saveData(['leaveSheet']), 800);
     window._leaveTrackingData = null;
     if(window._trackingTon) delete window._trackingTon[bal.year]; // invalidate → bảng Kế hoạch tính lại
     const totalUsed=sh.taken.reduce((a,b)=>a+b,0);
@@ -9986,6 +10038,11 @@ function renderLeaveReports(main){
     al: calcRow(e.id,'al'),
     cl: calcRow(e.id,'cl'),
   }));
+
+  const _ltf = bal.leaveType||'all';
+  const showAL = _ltf !== 'cl';
+  const showCL = _ltf !== 'al';
+  const showBoth = showAL && showCL;
 
   // Expose để renderLeavePlan dùng cùng số Tồn cuối năm — không tính lại riêng
   window._leaveTrackingData = {
@@ -10077,6 +10134,11 @@ window.toggleLeaveGroup = function(did){
           <option value="all"    ${(bal.statusFilter||'active')==='all'?'selected':''}>Tất cả</option>
           <option value="exit"   ${(bal.statusFilter||'active')==='exit'?'selected':''}>🔴 Đã nghỉ việc</option>
         </select>
+        <select class="filter-select" onchange="setLeaveBal('leaveType',this.value)" style="min-width:100px">
+          <option value="all" ${(bal.leaveType||'all')==='all'?'selected':''}>AL + CL</option>
+          <option value="al"  ${(bal.leaveType||'all')==='al'?'selected':''}>🟢 AL - Phép năm</option>
+          <option value="cl"  ${(bal.leaveType||'all')==='cl'?'selected':''}>🔵 CL - Nghỉ bù</option>
+        </select>
         <button class="btn" onclick="openNewLeaveYear()"
           style="background:rgba(126,198,153,.12);border-color:rgba(126,198,153,.4);color:var(--success)">
           🗓 Mở năm mới
@@ -10155,6 +10217,9 @@ window.toggleLeaveGroup = function(did){
               }),{carry:0,entitle:Array(12).fill(0),pending:0,totalUsed:0,totalEntitle:0,taken:Array(12).fill(0),clearAL:0});
               const fd=v=>v===0?'—':(Math.round(v*10)/10);
               const sumCell=(v,clr)=>`<td style="padding:3px 5px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:600;color:${clr||'var(--ink-dim)'};">${fd(v)}</td>`;
+              // Helper: hiện giá trị AL/CL theo filter
+              const _alv = (v, style='') => showAL ? `<div style="color:var(--success);font-weight:600;font-family:'JetBrains Mono',monospace;${style}">${fd(v)}</div>` : '';
+              const _clv = (v, style='') => showCL ? `<div style="color:var(--info);font-family:'JetBrains Mono',monospace;${style}">${fd(v)}</div>` : '';
               const deptHeader = `<tr style="background:#1a2535;border-top:2px solid var(--border-strong);border-bottom:1px solid var(--border-strong)">
                 <td style="padding:5px 10px;position:sticky;left:0;z-index:3;background:#1a2535;white-space:nowrap">
                   <div style="display:flex;align-items:center;gap:8px">
@@ -10164,51 +10229,51 @@ window.toggleLeaveGroup = function(did){
                     </button>
                     <span style="font-weight:700;font-size:12px;color:var(--accent)">${escapeHtml(dName)}</span>
                     <span style="font-size:10px;color:var(--ink-muted)">${dEmps.length} NV</span>
-                    <span style="font-size:9px;padding:1px 6px;background:rgba(126,198,153,.15);color:var(--success);border-radius:4px">AL</span>
-                    <span style="font-size:9px;padding:1px 6px;background:rgba(126,182,232,.15);color:var(--info);border-radius:4px">CL</span>
+                    <span style="font-size:9px;padding:1px 6px;background:rgba(126,198,153,.15);color:var(--success);border-radius:4px">${showAL?'AL':''}</span>
+                    <span style="font-size:9px;padding:1px 6px;background:rgba(126,182,232,.15);color:var(--info);border-radius:4px">${showCL?'CL':''}</span>
                   </div>
                 </td>
                 <!-- Tồn năm trước -->
                 <td style="padding:3px 5px;text-align:center;font-size:10px;background:#1a2535">
-                  <div style="color:var(--success);font-weight:600;font-family:'JetBrains Mono',monospace">${fd(dAL.carry)}</div>
-                  <div style="color:var(--info);font-family:'JetBrains Mono',monospace">${fd(dCL.carry)}</div>
+                  ${_alv(dAL.carry)}
+                  ${_clv(dCL.carry)}
                 </td>
                 <!-- Entitle T1-T12 -->
                 ${dAL.entitle.map((v,i)=>`<td style="padding:2px 3px;text-align:center;font-size:10px;background:#1a2535">
-                  <div style="color:var(--success);font-weight:600;font-family:'JetBrains Mono',monospace">${fd(v)}</div>
-                  <div style="color:var(--info);font-family:'JetBrains Mono',monospace">${fd(dCL.entitle[i])}</div>
+                  ${_alv(v)}
+                  ${_clv(dCL.entitle[i])}
                 </td>`).join('')}
                 <!-- Tổng phát sinh -->
                 <td style="padding:3px 5px;text-align:center;font-size:10px;background:#1a2535;border-left:2px solid rgba(126,182,232,.3)">
-                  <div style="color:var(--success);font-weight:700;font-family:'JetBrains Mono',monospace">${fd(dAL.pendingEntitle||dAL.totalEntitle)}</div>
-                  <div style="color:var(--info);font-weight:700;font-family:'JetBrains Mono',monospace">${fd(dCL.pendingEntitle||dCL.totalEntitle)}</div>
+                  ${showAL?`<div style="color:var(--success);font-weight:700;font-family:'JetBrains Mono',monospace">${fd(dAL.pendingEntitle||dAL.totalEntitle)}</div>`:''}
+                  ${showCL?`<div style="color:var(--info);font-weight:700;font-family:'JetBrains Mono',monospace">${fd(dCL.pendingEntitle||dCL.totalEntitle)}</div>`:''}
                 </td>
                 <!-- Taken T1, T2, clearAL, T3-T12 -->
                 ${[0,1,'clear',2,3,4,5,6,7,8,9,10,11].map((mi,i)=>{
-                  if(mi==='clear') return `<td style="padding:2px 3px;text-align:center;font-size:10px;background:#1a2535"><div style="color:var(--warning);font-family:'JetBrains Mono',monospace">${fd(dAL.clearAL)}</div><div style="color:var(--ink-muted)">—</div></td>`;
+                  if(mi==='clear') return `<td style="padding:2px 3px;text-align:center;font-size:10px;background:#1a2535">${showAL?`<div style="color:var(--warning);font-family:'JetBrains Mono',monospace">${fd(dAL.clearAL)}</div>`:''}<div style="color:var(--ink-muted)">—</div></td>`;
                   return `<td style="padding:2px 3px;text-align:center;font-size:10px;background:#1a2535">
-                    <div style="color:var(--accent);font-family:'JetBrains Mono',monospace">${fd(dAL.taken[mi])}</div>
-                    <div style="color:var(--info);font-family:'JetBrains Mono',monospace">${fd(dCL.taken[mi])}</div>
+                    ${showAL?`<div style="color:var(--accent);font-family:'JetBrains Mono',monospace">${fd(dAL.taken[mi])}</div>`:''}
+                    ${showCL?`<div style="color:var(--info);font-family:'JetBrains Mono',monospace">${fd(dCL.taken[mi])}</div>`:''}
                   </td>`;
                 }).join('')}
                 <!-- Tổng đã nghỉ -->
                 <td style="padding:3px 5px;text-align:center;font-size:10px;background:#1a2535">
-                  <div style="color:var(--purple);font-weight:700;font-family:'JetBrains Mono',monospace">${fd(dAL.totalUsed)}</div>
-                  <div style="color:var(--purple);font-family:'JetBrains Mono',monospace">${fd(dCL.totalUsed)}</div>
+                  ${showAL?`<div style="color:var(--purple);font-weight:700;font-family:'JetBrains Mono',monospace">${fd(dAL.totalUsed)}</div>`:''}
+                  ${showCL?`<div style="color:var(--purple);font-family:'JetBrains Mono',monospace">${fd(dCL.totalUsed)}</div>`:''}
                 </td>
                 <!-- Còn lại năm cũ -->
                 <td style="padding:3px 5px;text-align:center;font-size:10px;background:#1a2535">
-                  <div style="color:var(--purple);font-weight:700;font-family:'JetBrains Mono',monospace">${fd(dAL.pending)}</div>
-                  <div style="color:var(--ink-muted);font-size:10px">—</div>
+                  ${showAL?`<div style="color:var(--purple);font-weight:700;font-family:'JetBrains Mono',monospace">${fd(dAL.pending)}</div>`:''}
+                  ${showCL?`<div style="color:var(--ink-muted);font-size:10px">—</div>`:''}
                 </td>
                 <!-- Tồn cuối năm -->
                 <td style="padding:3px 5px;text-align:center;font-size:10px;background:#1a2535;border-left:2px solid rgba(183,148,212,.4)">
-                  <div style="color:var(--success);font-weight:700;font-family:'JetBrains Mono',monospace">${fd((dAL.pendingEntitle||dAL.totalEntitle)-dAL.totalUsed)}</div>
-                  <div style="color:var(--success);font-family:'JetBrains Mono',monospace">${fd((dCL.pendingEntitle||dCL.totalEntitle)-dCL.totalUsed)}</div>
+                  ${showAL?`<div style="color:var(--success);font-weight:700;font-family:'JetBrains Mono',monospace">${fd((dAL.pendingEntitle||dAL.totalEntitle)-dAL.totalUsed)}</div>`:''}
+                  ${showCL?`<div style="color:var(--success);font-family:'JetBrains Mono',monospace">${fd((dCL.pendingEntitle||dCL.totalEntitle)-dCL.totalUsed)}</div>`:''}
                 </td>
 
               </tr>
-              <tr style="background:#0f1a28;border-bottom:2px solid var(--border-strong)">
+              <tr style="background:#0f1a28;border-bottom:2px solid var(--border-strong)${!showBoth?' ;display:none':''}">
                 <td style="padding:3px 10px;position:sticky;left:0;z-index:3;background:#0f1a28;white-space:nowrap">
                   <span style="font-size:10px;font-weight:700;color:#FFCC00;font-family:'JetBrains Mono',monospace">∑ Tổng AL+CL</span>
                 </td>
@@ -10250,7 +10315,7 @@ window.toggleLeaveGroup = function(did){
                 const renderTypeRow=(lt,d,label,ent_color,ent_bg,taken_color,taken_bg,isFirst)=>{
                   const pfx='ls_'+e.id+'_'+lt+'_';
                   return `<tr data-leave-dept="${did}" style="display:${isCollapsed?'none':''};border-bottom:1px solid ${isFirst?'transparent':'var(--border)'}">
-                    ${isFirst?`<td rowspan="${e._isTrainee?1:2}" style="padding:5px 10px;position:sticky;left:0;background:${rowBase};z-index:1;border-right:2px solid var(--border-strong);min-width:160px;vertical-align:top">
+                    ${isFirst?`<td rowspan="${e._isTrainee?1:showBoth?2:1}" style="padding:5px 10px;position:sticky;left:0;background:${rowBase};z-index:1;border-right:2px solid var(--border-strong);min-width:160px;vertical-align:top">
                       <div style="font-size:11.5px;font-weight:600;font-family:'Inter Tight',sans-serif">${escapeHtml(e.name)}${e._isTrainee?` <span style="font-size:9px;background:rgba(126,182,232,.2);color:var(--info);padding:1px 5px;border-radius:3px;font-weight:600">TTS</span>`:''}</div>
                       <div style="font-size:10px;color:var(--ink-muted)">${escapeHtml(e.code)}</div>
                       <div style="font-size:9.5px;color:var(--ink-muted)">${cd.position||e.role||''} · ${yrs} năm CT</div>
@@ -10281,8 +10346,8 @@ window.toggleLeaveGroup = function(did){
 
                   </tr>`;
                 };
-                return (e._isTrainee ? '' : renderTypeRow('al',al,'AL / Phép năm','var(--success)','rgba(126,198,153,.07)','var(--accent)','rgba(212,165,116,.07)',true))
-                     + renderTypeRow('cl',cl,'CL / Nghỉ bù','var(--info)','rgba(126,182,232,.07)','var(--info)','rgba(126,182,232,.05)', e._isTrainee ? true : false)
+                return (e._isTrainee ? '' : (showAL ? renderTypeRow('al',al,'AL / Phép năm','var(--success)','rgba(126,198,153,.07)','var(--accent)','rgba(212,165,116,.07)',true) : ''))
+                     + (showCL ? renderTypeRow('cl',cl,'CL / Nghỉ bù','var(--info)','rgba(126,182,232,.07)','var(--info)','rgba(126,182,232,.05)', e._isTrainee ? true : (!showAL)) : '')
                      + `<tr data-leave-dept="${did}" style="display:${isCollapsed?'none':''}"><td colspan="32" style="height:3px;background:rgba(255,255,255,.03)"></td></tr>`;
               }).join('');
 
@@ -10291,17 +10356,17 @@ window.toggleLeaveGroup = function(did){
           </tbody>
           <tfoot>
             <tr style="background:#162030;border-top:2px solid var(--border-strong);font-weight:700">
-              <td rowspan="2" style="padding:6px 10px;position:sticky;left:0;background:#162030;z-index:1;border-right:2px solid var(--border-strong)">TỔNG · ${scopeEmps.length} NV</td>
-              <td style="text-align:center;color:#FFCC00;font-size:10px">${fnum(empMonthData.reduce((s,x)=>s+(x.al.carry||0),0))}<div style="color:#FFCC00;opacity:.6">${fnum(empMonthData.reduce((s,x)=>s+(x.cl.carry||0),0))}</div></td>
-              ${Array.from({length:12},(_,i)=>`<td style="text-align:center;font-size:10px"><div style="color:var(--success);font-weight:700">${fnum(empMonthData.reduce((s,x)=>s+x.al.months[i].entitle,0))}</div><div style="color:var(--info)">${fnum(empMonthData.reduce((s,x)=>s+x.cl.months[i].entitle,0))}</div></td>`).join('')}
-              <td style="text-align:center;font-size:10px"><div style="color:var(--info);font-weight:700">${fnum(empMonthData.reduce((s,x)=>s+(x.al.pendingEntitle||x.al.totalEntitle),0))}</div><div style="color:var(--info);opacity:.7">${fnum(empMonthData.reduce((s,x)=>s+(x.cl.pendingEntitle||x.cl.totalEntitle),0))}</div></td>
-              <td style="text-align:center;color:#FFCC00;font-size:10px"><div>${fnum(empMonthData.reduce((s,x)=>s+(x.al.months[0].used||0),0))}</div><div style="opacity:.7">${fnum(empMonthData.reduce((s,x)=>s+(x.cl.months[0].used||0),0))}</div></td>
-              <td style="text-align:center;color:#FFCC00;font-size:10px"><div>${fnum(empMonthData.reduce((s,x)=>s+(x.al.months[1].used||0),0))}</div><div style="opacity:.7">${fnum(empMonthData.reduce((s,x)=>s+(x.cl.months[1].used||0),0))}</div></td>
-              <td style="text-align:center;color:var(--warning);font-size:10px"><div>${fnum(empMonthData.reduce((s,x)=>s+(x.al.clearAL||0),0))}</div><div style="opacity:.5">—</div></td>
-              ${Array.from({length:10},(_,i)=>`<td style="text-align:center;font-size:10px"><div style="color:var(--accent)">${fnum(empMonthData.reduce((s,x)=>s+x.al.months[i+2].used,0))}</div><div style="color:var(--info);opacity:.8">${fnum(empMonthData.reduce((s,x)=>s+x.cl.months[i+2].used,0))}</div></td>`).join('')}
-              <td style="text-align:center;font-size:10px"><div style="color:var(--purple);font-weight:700">${fnum(empMonthData.reduce((s,x)=>s+x.al.totalUsed,0))}</div><div style="color:var(--purple);opacity:.7">${fnum(empMonthData.reduce((s,x)=>s+x.cl.totalUsed,0))}</div></td>
-              <td style="text-align:center;font-size:10px"><div style="color:var(--purple);font-weight:700">${fnum(empMonthData.reduce((s,x)=>s+x.al.pending,0))}</div><div style="color:var(--ink-muted);font-size:11px">—</div></td>
-              <td style="text-align:center;font-size:10px;border-left:2px solid rgba(183,148,212,.4)"><div style="color:var(--success);font-weight:700">${fnum(empMonthData.reduce((s,x)=>s+((x.al.pendingEntitle||x.al.totalEntitle)-x.al.totalUsed),0))}</div><div style="color:var(--success);opacity:.7">${fnum(empMonthData.reduce((s,x)=>s+((x.cl.pendingEntitle||x.cl.totalEntitle)-x.cl.totalUsed),0))}</div></td>
+              <td style="padding:6px 10px;position:sticky;left:0;background:#162030;z-index:1;border-right:2px solid var(--border-strong)">TỔNG · ${scopeEmps.length} NV</td>
+              <td style="text-align:center;font-size:10px">${showAL?`<div style="color:#FFCC00">${fnum(empMonthData.reduce((s,x)=>s+(x.al.carry||0),0))}</div>`:''}${showCL?`<div style="color:#FFCC00;opacity:.6">${fnum(empMonthData.reduce((s,x)=>s+(x.cl.carry||0),0))}</div>`:''}</td>
+              ${Array.from({length:12},(_,i)=>`<td style="text-align:center;font-size:10px">${showAL?`<div style="color:var(--success);font-weight:700">${fnum(empMonthData.reduce((s,x)=>s+x.al.months[i].entitle,0))}</div>`:''}${showCL?`<div style="color:var(--info)">${fnum(empMonthData.reduce((s,x)=>s+x.cl.months[i].entitle,0))}</div>`:''}</td>`).join('')}
+              <td style="text-align:center;font-size:10px">${showAL?`<div style="color:var(--info);font-weight:700">${fnum(empMonthData.reduce((s,x)=>s+(x.al.pendingEntitle||x.al.totalEntitle),0))}</div>`:''}${showCL?`<div style="color:var(--info);opacity:.7">${fnum(empMonthData.reduce((s,x)=>s+(x.cl.pendingEntitle||x.cl.totalEntitle),0))}</div>`:''}</td>
+              <td style="text-align:center;font-size:10px">${showAL?`<div style="color:#FFCC00">${fnum(empMonthData.reduce((s,x)=>s+(x.al.months[0].used||0),0))}</div>`:''}${showCL?`<div style="color:#FFCC00;opacity:.7">${fnum(empMonthData.reduce((s,x)=>s+(x.cl.months[0].used||0),0))}</div>`:''}</td>
+              <td style="text-align:center;font-size:10px">${showAL?`<div style="color:#FFCC00">${fnum(empMonthData.reduce((s,x)=>s+(x.al.months[1].used||0),0))}</div>`:''}${showCL?`<div style="color:#FFCC00;opacity:.7">${fnum(empMonthData.reduce((s,x)=>s+(x.cl.months[1].used||0),0))}</div>`:''}</td>
+              <td style="text-align:center;color:var(--warning);font-size:10px">${showAL?`<div>${fnum(empMonthData.reduce((s,x)=>s+(x.al.clearAL||0),0))}</div>`:''}<div style="opacity:.5">—</div></td>
+              ${Array.from({length:10},(_,i)=>`<td style="text-align:center;font-size:10px">${showAL?`<div style="color:var(--accent)">${fnum(empMonthData.reduce((s,x)=>s+x.al.months[i+2].used,0))}</div>`:''}${showCL?`<div style="color:var(--info);opacity:.8">${fnum(empMonthData.reduce((s,x)=>s+x.cl.months[i+2].used,0))}</div>`:''}</td>`).join('')}
+              <td style="text-align:center;font-size:10px">${showAL?`<div style="color:var(--purple);font-weight:700">${fnum(empMonthData.reduce((s,x)=>s+x.al.totalUsed,0))}</div>`:''}${showCL?`<div style="color:var(--purple);opacity:.7">${fnum(empMonthData.reduce((s,x)=>s+x.cl.totalUsed,0))}</div>`:''}</td>
+              <td style="text-align:center;font-size:10px">${showAL?`<div style="color:var(--purple);font-weight:700">${fnum(empMonthData.reduce((s,x)=>s+x.al.pending,0))}</div>`:''}${showCL?`<div style="color:var(--ink-muted);font-size:11px">—</div>`:''}</td>
+              <td style="text-align:center;font-size:10px;border-left:2px solid rgba(183,148,212,.4)">${showAL?`<div style="color:var(--success);font-weight:700">${fnum(empMonthData.reduce((s,x)=>s+((x.al.pendingEntitle||x.al.totalEntitle)-x.al.totalUsed),0))}</div>`:''}${showCL?`<div style="color:var(--success);opacity:.7">${fnum(empMonthData.reduce((s,x)=>s+((x.cl.pendingEntitle||x.cl.totalEntitle)-x.cl.totalUsed),0))}</div>`:''}</td>
             </tr>
           </tfoot>
         </table>
@@ -10940,6 +11005,7 @@ function renderLeaves(main){
     return sh;
   };
 
+  let _clSaveTimer = null;
   window.saveCLCell = function(empId, type, month, val){
     const sh = getSheet(empId, 'cl');
     const v = parseFloat(val)||0;
@@ -10951,7 +11017,8 @@ function renderLeaves(main){
     if(!DB.leaveSheet[empId]) DB.leaveSheet[empId] = {};
     if(!DB.leaveSheet[empId][bal.year]) DB.leaveSheet[empId][bal.year] = {};
     DB.leaveSheet[empId][bal.year].cl = sh;
-    saveData(['leaveSheet']);
+    clearTimeout(_clSaveTimer);
+    _clSaveTimer = setTimeout(()=> saveData(['leaveSheet']), 800);
     const totalUsed = sh.taken.reduce((s,x)=>s+x,0);
     const totalEntitle = sh.carry + sh.entitle.reduce((s,x)=>s+x,0);
     const pendingUsed = sh.taken.slice(0,curMonth).reduce((s,x)=>s+x,0);
@@ -10993,13 +11060,15 @@ function renderLeaves(main){
     while(sh.taken.length < 12) sh.taken.push(0);
     return sh;
   };
+  let _trLeaveSaveTimer = null;
   window.saveTraineeLeaveCell = function(tid, month, val){
     const key = 'tr_'+tid;
     if(!DB.leaveSheet) DB.leaveSheet = {};
     const sh = getTraineeSheet(tid);
     sh.taken[month] = parseFloat(val)||0;
     DB.leaveSheet[key][bal.year] = sh;
-    saveData(['leaveSheet']);
+    clearTimeout(_trLeaveSaveTimer);
+    _trLeaveSaveTimer = setTimeout(()=> saveData(['leaveSheet']), 800);
     const totalUsed = sh.taken.reduce((s,x)=>s+x,0);
     const el = document.getElementById('tr_'+tid+'_total');
     if(el) el.textContent = totalUsed===0?'—':fnum(totalUsed);
