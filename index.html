@@ -9963,8 +9963,12 @@ function renderLeaveReports(main){
     const now = today.toISOString().slice(0,10);
     const activeTrainees = (DB.trainees||[])
       .filter(tr => {
-        if(!tr.startDate) return false;
-        const isActive = !tr.endDate || tr.endDate >= now;
+        // Cho phép TTS không có startDate (chưa nhập) hiện ra trong bảng nghỉ phép
+        // Nếu có startDate thì check active status từ endDate
+        let isActive = true;
+        if(tr.status === 'exit' || tr.status === 'early_exit') isActive = false;
+        else if(tr.status === 'active') isActive = true;
+        else if(tr.endDate && tr.endDate < now) isActive = false;
         if(statusFilter === 'exit') return !isActive;
         if(statusFilter === 'active') return isActive;
         return true; // 'all'
@@ -9975,6 +9979,9 @@ function renderLeaveReports(main){
         role: 'Thực tập sinh', deptId: tr.deptId||'',
         joined: tr.startDate||'', status: 'active', _isTrainee: true,
       }));
+    console.log('[LeaveTracking] TTS loaded:', activeTrainees.length, 'trainees from', (DB.trainees||[]).length, 'total');
+    console.log('[LeaveTracking] TTS details:', activeTrainees.map(t=>`${t.name} (deptId=${t.deptId})`).join(' | '));
+    console.log('[LeaveTracking] All depts:', DB.departments.map(d=>`${d.name}=${d.id}`).join(' | '));
     scopeEmps = [...scopeEmps, ...activeTrainees];
   }
 
