@@ -12421,7 +12421,6 @@ function renderRecruitmentReports(main){
             <th style="text-align:center">Tuyển được</th>
             <th style="text-align:center">Tỉ lệ</th>
             <th style="text-align:center">Đánh giá TB</th>
-            ${window.canSeeRecruitmentInfo()?'<th style="text-align:right">Lương kỳ vọng TB</th>':''}
           </tr></thead>
           <tbody>
             ${sourceArr.map(s => {
@@ -12432,7 +12431,6 @@ function renderRecruitmentReports(main){
                 <td style="text-align:center;font-family:'JetBrains Mono',monospace;color:var(--success);font-weight:600">${s.hired}</td>
                 <td style="text-align:center;font-family:'JetBrains Mono',monospace;color:${rateColor};font-weight:600">${s.rate}%</td>
                 <td style="text-align:center;font-family:'JetBrains Mono',monospace">${s.avgRating}${s.avgRating!=='—'?' ★':''}</td>
-                ${window.canSeeRecruitmentInfo()?`<td style="text-align:right;font-family:'JetBrains Mono',monospace;color:var(--ink-dim)">${s.avgSalary>0?fmtMoney(s.avgSalary)+' đ':'—'}</td>`:''}
               </tr>`;
             }).join('')}
           </tbody>
@@ -12466,9 +12464,10 @@ function renderRecruitmentReports(main){
           </tr></thead>
           <tbody>
             ${posArr.map(p => {
-              const gap = p.avgSalary > 0 && p.budget > 0 ? p.avgSalary - p.budget : null;
-              const gapPct = (gap !== null && p.budget > 0) ? Math.round(gap / p.budget * 100) : null;
-              const gapColor = gap === null ? 'var(--ink-muted)' : gap > 0 ? 'var(--danger)' : gap < 0 ? 'var(--success)' : 'var(--ink)';
+              // GAP = Lương KV / Ngân sách × 100%
+              // > 100% → xanh (số dương so với baseline), < 100% → đỏ
+              const gapPct = (p.avgSalary > 0 && p.budget > 0) ? Math.round(p.avgSalary / p.budget * 100) : null;
+              const gapColor = gapPct === null ? 'var(--ink-muted)' : gapPct > 100 ? 'var(--success)' : gapPct < 100 ? 'var(--danger)' : 'var(--ink)';
               const rateColor = p.rate >= 30 ? 'var(--success)' : p.rate >= 15 ? 'var(--warning)' : p.rate > 0 ? 'var(--ink)' : 'var(--ink-muted)';
               // Offer vs KV: nếu offer < KV thì DN tiết kiệm (xanh), > KV thì vượt (đỏ)
               const offerVsKV = (p.avgOffer>0 && p.avgSalary>0) ? p.avgOffer - p.avgSalary : null;
@@ -12483,7 +12482,7 @@ function renderRecruitmentReports(main){
                 <td style="text-align:right;font-family:'JetBrains Mono',monospace">${p.avgSalary>0?fmtMoney(p.avgSalary)+' đ':'—'}</td>
                 <td style="text-align:right;font-family:'JetBrains Mono',monospace;color:${offerColor};font-weight:600">${p.avgOffer>0?fmtMoney(p.avgOffer)+' đ':'—'}</td>
                 <td style="text-align:right;font-family:'JetBrains Mono',monospace;color:var(--ink-dim)">${p.budget>0?fmtMoney(p.budget)+' đ':'—'}</td>
-                <td style="text-align:center;font-family:'JetBrains Mono',monospace;color:${gapColor};font-weight:600">${gap!==null?(gap>0?'+':'')+gapPct+'%':'—'}</td>
+                <td style="text-align:center;font-family:'JetBrains Mono',monospace;color:${gapColor};font-weight:600">${gapPct!==null?gapPct+'%':'—'}</td>
               </tr>`;
             }).join('')}
           </tbody>
@@ -12525,8 +12524,9 @@ function renderRecruitmentReports(main){
           </tr></thead>
           <tbody>
             ${posSalArr.map(p => {
-              const gapPct = p.budget > 0 ? Math.round((p.avg - p.budget) / p.budget * 100) : null;
-              const gapColor = gapPct === null ? 'var(--ink-muted)' : gapPct > 10 ? 'var(--danger)' : gapPct < -5 ? 'var(--success)' : gapPct > 0 ? 'var(--warning)' : 'var(--ink)';
+              // Gap TB = TB / Ngân sách × 100%
+              const gapPct = (p.avg > 0 && p.budget > 0) ? Math.round(p.avg / p.budget * 100) : null;
+              const gapColor = gapPct === null ? 'var(--ink-muted)' : gapPct > 100 ? 'var(--success)' : gapPct < 100 ? 'var(--danger)' : 'var(--ink)';
               const insight = salInsight(p);
               const skew = p.avg - p.med;
               const skewIcon = Math.abs(skew) > p.med * 0.05 ? (skew > 0 ? ' ↑' : ' ↓') : '';
@@ -12540,7 +12540,7 @@ function renderRecruitmentReports(main){
                 <td style="text-align:right;font-family:'JetBrains Mono',monospace" title="${skewIcon?'TB lệch '+(skew>0?'lên':'xuống')+' vs Median':''}">${fmtMoney(p.avg)}<span style="color:var(--ink-muted);font-size:11px">${skewIcon}</span></td>
                 <td style="text-align:right;font-family:'JetBrains Mono',monospace;color:var(--info)">${p.budget>0?fmtMoney(p.budget):'—'}</td>
                 <td>${renderSalBar(p)}</td>
-                <td style="text-align:center;font-family:'JetBrains Mono',monospace;color:${gapColor};font-weight:600">${gapPct!==null?(gapPct>0?'+':'')+gapPct+'%':'—'}</td>
+                <td style="text-align:center;font-family:'JetBrains Mono',monospace;color:${gapColor};font-weight:600">${gapPct!==null?gapPct+'%':'—'}</td>
                 <td style="font-size:11.5px;color:${insight.color};font-weight:500">${insight.text}</td>
               </tr>`;
             }).join('')}
@@ -12551,8 +12551,8 @@ function renderRecruitmentReports(main){
       <div style="margin-top:12px;padding:10px 14px;background:var(--bg-elev);border-radius:6px;font-size:11px;color:var(--ink-muted);line-height:1.6">
         <b style="color:var(--ink-dim)">Cách đọc:</b>
         <b>Median</b> ổn định hơn TB khi có outlier (ưu tiên Median để định mức lương).
-        <b>Gap TB &gt; +10%</b> → ứng viên đang đòi cao hơn ngân sách đáng kể, cân nhắc nâng quota hoặc tìm nguồn khác.
-        <b>Gap &lt; −5%</b> → có lợi thế thương lượng.
+        <b>Gap TB = TB ÷ Ngân sách × 100%</b>. <b>&gt; 100%</b> → ứng viên đòi cao hơn ngân sách (xanh: thị trường có ứng viên chất lượng).
+        <b>&lt; 100%</b> → kỳ vọng thấp hơn ngân sách (đỏ: có thể chất lượng ứng viên thấp hoặc ngân sách dư).
         <b>↑/↓ cạnh TB</b> báo TB lệch lên/xuống so với Median (có outlier).
       </div>
       `}
