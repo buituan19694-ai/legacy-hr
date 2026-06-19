@@ -7062,7 +7062,7 @@ function exportRecruitmentXLSX(){
   XLSX.utils.book_append_sheet(wb, ws1, 'Vị trí tuyển dụng');
 
   const canSeeRecInfo = window.canSeeRecruitmentInfo();
-  const cvHeaders = [(_lang==="en"?"Position":"Vị trí"),(_lang==="en"?"Department":"Phòng ban"),(_lang==="en"?"Full name":"Họ tên"),(_lang==="en"?"Phone":"SĐT"),'Email','Ngày nộp','Nguồn',(_lang==="en"?"Status":"Trạng thái"),...(canSeeRecInfo?['Lương kỳ vọng']:[]),'Đánh giá (1-5)',(_lang==="en"?"Notes":"Ghi chú")];
+  const cvHeaders = [(_lang==="en"?"Position":"Vị trí"),(_lang==="en"?"Department":"Phòng ban"),(_lang==="en"?"Full name":"Họ tên"),(_lang==="en"?"Phone":"SĐT"),'Email','Ngày nộp','Nguồn',(_lang==="en"?"Status":"Trạng thái"),...(canSeeRecInfo?['Lương kỳ vọng','Lương Offer']:[]),'Đánh giá (1-5)',(_lang==="en"?"Notes":"Ghi chú")];
   const cvRows = (DB.candidates||[]).map(c => {
     const job = DB.jobs.find(j=>j.id===c.jobId);
     const dept = job ? DB.departments.find(d=>d.id===job.deptId) : null;
@@ -7072,12 +7072,12 @@ function exportRecruitmentXLSX(){
       c.name||'', c.phone||'', c.email||'',
       c.appliedDate||'', c.source||'',
       statusMap[c.status]||c.status||'',
-      ...(canSeeRecInfo?[c.expectedSalary||0]:[]),
+      ...(canSeeRecInfo?[c.expectedSalary||0, c.offerSalary||0]:[]),
       c.rating||'', c.notes||''
     ];
   });
   const ws2 = XLSX.utils.aoa_to_sheet([cvHeaders, ...cvRows]);
-  ws2['!cols'] = [...[22,14,22,14,24,12,14,12],...(canSeeRecInfo?[14]:[]),...[10,24]].map(w=>({wch:w}));
+  ws2['!cols'] = [...[22,14,22,14,24,12,14,12],...(canSeeRecInfo?[14,14]:[]),...[10,24]].map(w=>({wch:w}));
   ws2['!freeze'] = {xSplit:0, ySplit:1};
   XLSX.utils.book_append_sheet(wb, ws2, (_lang==="en"?"Candidate":"Ứng viên"));
 
@@ -12202,15 +12202,17 @@ function renderRecruitmentReports(main){
 
   const posMap = {};
   cvInPeriod.forEach(a => {
-    if(!posMap[a.jobId]) posMap[a.jobId] = {cv:0, hired:0, salarySum:0, salaryCount:0, tthDays:[]};
+    if(!posMap[a.jobId]) posMap[a.jobId] = {cv:0, hired:0, salarySum:0, salaryCount:0, offerSum:0, offerCount:0, tthDays:[]};
     posMap[a.jobId].cv++;
     // Lương KV TB: tính từ CV có khai báo expectedSalary, TRỪ CV đã rút hồ sơ (withdrawn)
-    // - withdrawn: candidate tự rút → lương KV không còn phản ánh kỳ vọng → loại
-    // - rejected: công ty loại nhưng lương KV vẫn là data thị trường → vẫn tính
-    // - các status khác (new/screening/interview/offer/hired): tính bình thường
     if(a.expectedSalary && a.status !== 'withdrawn'){
       posMap[a.jobId].salarySum += a.expectedSalary;
       posMap[a.jobId].salaryCount++;
+    }
+    // Lương Offer TB: tính từ CV có khai báo offerSalary (DN đã đề nghị)
+    if(a.offerSalary){
+      posMap[a.jobId].offerSum += a.offerSalary;
+      posMap[a.jobId].offerCount++;
     }
     if(a.status === 'hired') {
       posMap[a.jobId].hired++;
@@ -12232,6 +12234,7 @@ function renderRecruitmentReports(main){
       hired: hiredReal,
       rate: v.cv>0 ? Math.round(hiredReal/v.cv*100) : 0,
       avgSalary: v.salaryCount>0 ? Math.round(v.salarySum/v.salaryCount) : 0,
+      avgOffer:  v.offerCount>0  ? Math.round(v.offerSum/v.offerCount)   : 0,
       avgTTH: v.tthDays.length>0 ? Math.round(v.tthDays.reduce((s,d)=>s+d,0)/v.tthDays.length) : null,
     };
   }).sort((a,b)=>b.cv - a.cv);
@@ -12457,6 +12460,7 @@ function renderRecruitmentReports(main){
             <th style="text-align:center">Conv %</th>
             <th style="text-align:center">TTH (ngày)</th>
             <th style="text-align:right">Lương KV TB</th>
+            <th style="text-align:right">Offer TB</th>
             <th style="text-align:right">Lương ngân sách</th>
             <th style="text-align:center">Gap</th>
           </tr></thead>
@@ -12466,6 +12470,9 @@ function renderRecruitmentReports(main){
               const gapPct = (gap !== null && p.budget > 0) ? Math.round(gap / p.budget * 100) : null;
               const gapColor = gap === null ? 'var(--ink-muted)' : gap > 0 ? 'var(--danger)' : gap < 0 ? 'var(--success)' : 'var(--ink)';
               const rateColor = p.rate >= 30 ? 'var(--success)' : p.rate >= 15 ? 'var(--warning)' : p.rate > 0 ? 'var(--ink)' : 'var(--ink-muted)';
+              // Offer vs KV: nếu offer < KV thì DN tiết kiệm (xanh), > KV thì vượt (đỏ)
+              const offerVsKV = (p.avgOffer>0 && p.avgSalary>0) ? p.avgOffer - p.avgSalary : null;
+              const offerColor = offerVsKV===null ? 'var(--ink-dim)' : offerVsKV>0 ? 'var(--warning)' : offerVsKV<0 ? 'var(--success)' : 'var(--ink)';
               return `<tr>
                 <td><b>${escapeHtml(p.title)}</b></td>
                 <td style="color:var(--ink-dim);font-size:12px">${escapeHtml(p.dept)}</td>
@@ -12474,6 +12481,7 @@ function renderRecruitmentReports(main){
                 <td style="text-align:center;font-family:'JetBrains Mono',monospace;color:${rateColor};font-weight:600">${p.rate}%</td>
                 <td style="text-align:center;font-family:'JetBrains Mono',monospace">${p.avgTTH!==null?p.avgTTH:'—'}</td>
                 <td style="text-align:right;font-family:'JetBrains Mono',monospace">${p.avgSalary>0?fmtMoney(p.avgSalary)+' đ':'—'}</td>
+                <td style="text-align:right;font-family:'JetBrains Mono',monospace;color:${offerColor};font-weight:600">${p.avgOffer>0?fmtMoney(p.avgOffer)+' đ':'—'}</td>
                 <td style="text-align:right;font-family:'JetBrains Mono',monospace;color:var(--ink-dim)">${p.budget>0?fmtMoney(p.budget)+' đ':'—'}</td>
                 <td style="text-align:center;font-family:'JetBrains Mono',monospace;color:${gapColor};font-weight:600">${gap!==null?(gap>0?'+':'')+gapPct+'%':'—'}</td>
               </tr>`;
@@ -14520,8 +14528,24 @@ function saveCandFieldsConfig(){
     if(el && el.checked) req.push(f.key);
   });
   DB.candRequiredFields = req;
-  saveData(['candRequiredFields']);
-  toast('✅ Đã lưu cấu hình trường bắt buộc','success');
+  console.log('[saveCandFieldsConfig] Saving:', req);
+  // Lưu trực tiếp lên Firestore để confirm
+  if(window.fbDb && window.currentUser){
+    const meta = { _syncBy: window.currentUser.uid, _syncAt: Date.now(), _lastSaved: Date.now() };
+    window.fbDb.collection('hrdata').doc('blacklist')
+      .set({...meta, candRequiredFields: req}, {merge: true})
+      .then(()=>{
+        console.log('[saveCandFieldsConfig] ✅ Firestore confirmed');
+        toast('✅ Đã lưu cấu hình trường bắt buộc','success');
+      })
+      .catch(err=>{
+        console.error('[saveCandFieldsConfig] ❌ Failed:', err.message);
+        toast('❌ Lỗi lưu: '+err.message,'error');
+      });
+  } else {
+    saveData(['candRequiredFields']);
+    toast('✅ Đã lưu cấu hình trường bắt buộc','success');
+  }
   closeModal();
 }
 
@@ -14569,7 +14593,8 @@ function editCandidate(id, jobId){
       <div class="field"><label>Trạng thái *</label><select id="ca_status">
         ${Object.entries(CANDIDATE_STATUS).map(([k,v])=>`<option value="${k}" ${a.status===k?'selected':''}>${CANDIDATE_STATUS_ICON[k]} ${v}</option>`).join('')}
       </select></div>
-      <div class="field"><label>Lương kỳ vọng (VNĐ)</label><input type="number" id="ca_salary" value="${a.expectedSalary||0}" min="0" step="500000"></div>
+      <div class="field"><label>Lương kỳ vọng (VNĐ) <span style="font-size:10px;color:var(--ink-muted);font-weight:400">· ứng viên yêu cầu</span></label><input type="number" id="ca_salary" value="${a.expectedSalary||0}" min="0" step="500000"></div>
+      <div class="field"><label>Lương Offer (VNĐ) <span style="font-size:10px;color:var(--accent);font-weight:400">· DN đề nghị</span></label><input type="number" id="ca_offerSalary" value="${a.offerSalary||0}" min="0" step="500000" placeholder="Mức lương DN đề nghị"></div>
 
       <div class="field full"><label>Kinh nghiệm tóm tắt</label><input id="ca_exp" value="${escapeHtml(a.experience||'')}" placeholder="VD: 3 năm Housekeeping ở Vinpearl"></div>
 
@@ -14786,6 +14811,7 @@ function saveCandidate(id, jobId, isNew){
     age: ageCalc || '',
     experience: $s('ca_exp'),
     expectedSalary: $si('ca_salary'),
+    offerSalary: $si('ca_offerSalary'),
     rating: $si('ca_rating'),
     notes: $s('ca_notes'),
     screeningBy: $s('ca_screeningBy'),
