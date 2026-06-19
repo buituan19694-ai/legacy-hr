@@ -13919,10 +13919,10 @@ function renderRecruitment(main){
     </div>
   `;
 
-  const openJobs = DB.jobs.filter(j=>j.status==='open');
+  const openJobsList = DB.jobs.filter(j=>j.status==='open');
   // Sort: vị trí còn thiếu nhiều nhất + chưa hire xong lên đầu
   // → (positions - hired) DESC, sau đó pct DESC
-  const openSorted = openJobs.map(j=>{
+  const openSorted = openJobsList.map(j=>{
     const hired = getJobHired(j.id);
     const remain = Math.max(0, j.positions - hired);
     const pct = j.positions > 0 ? hired / j.positions * 100 : 0;
