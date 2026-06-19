@@ -9979,9 +9979,6 @@ function renderLeaveReports(main){
         role: 'Thực tập sinh', deptId: tr.deptId||'',
         joined: tr.startDate||'', status: 'active', _isTrainee: true,
       }));
-    console.log('[LeaveTracking] TTS loaded:', activeTrainees.length, 'trainees from', (DB.trainees||[]).length, 'total');
-    console.log('[LeaveTracking] TTS details:', activeTrainees.map(t=>`${t.name} (deptId=${t.deptId})`).join(' | '));
-    console.log('[LeaveTracking] All depts:', DB.departments.map(d=>`${d.name}=${d.id}`).join(' | '));
     scopeEmps = [...scopeEmps, ...activeTrainees];
   }
 
@@ -23360,6 +23357,12 @@ fbAuth.onAuthStateChanged(async user => {
                 FS_DOC_MAP[docId].forEach(key=>{
                   if(cloudData[key] === undefined) return;
                   if(key === 'employees') return; // emp_profiles collection là source of truth
+                  // Bảo vệ: không cho cloud RỖNG đè data local (có thể do save chưa xong, hoặc echo cache cũ)
+                  if(Array.isArray(cloudData[key]) && cloudData[key].length === 0
+                     && Array.isArray(DB[key]) && DB[key].length > 0){
+                    console.warn('[Listener] BLOCKED empty cloud overriding local data:', key, '(local has', DB[key].length, 'items)');
+                    return;
+                  }
                   if(key === 'customFields'){
                     const localFields = DB.customFields || [];
                     const cloudFields = cloudData[key] || [];
