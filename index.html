@@ -9992,6 +9992,7 @@ function renderLeaveReports(main){
   const thStyle = 'style="text-align:center;font-size:10.5px;padding:5px 4px;white-space:nowrap"';
 
   let _leaveSaveTimer = null;
+  let _leaveRenderTimer = null;
   window.saveLeaveCell = function(empId, leaveType, field, month, val){
     const sh = getSheet(empId, leaveType);
     const v = parseFloat(val)||0;
@@ -10007,7 +10008,31 @@ function renderLeaveReports(main){
     clearTimeout(_leaveSaveTimer);
     _leaveSaveTimer = setTimeout(()=> saveData(['leaveSheet']), 800);
     window._leaveTrackingData = null;
-    if(window._trackingTon) delete window._trackingTon[bal.year]; // invalidate → bảng Kế hoạch tính lại
+    if(window._trackingTon) delete window._trackingTon[bal.year];
+    // Debounce re-render — cập nhật tổng dept và footer sau 1s, giữ focus
+    clearTimeout(_leaveRenderTimer);
+    _leaveRenderTimer = setTimeout(()=>{
+      const activeEl = document.activeElement;
+      const activeMatch = activeEl && activeEl.getAttribute('oninput')||'';
+      const focusInfo = activeMatch.match(/saveLeaveCell\('([^']+)','([^']+)','([^']+)',(\d+)/);
+      const cursorPos = activeEl && activeEl.selectionStart;
+      render();
+      // Sau render: focus lại ô vừa nhập
+      if(focusInfo){
+        const [, fEmp, fLt, fField, fMonth] = focusInfo;
+        setTimeout(()=>{
+          const inputs = document.querySelectorAll('input[oninput*="saveLeaveCell"]');
+          for(const inp of inputs){
+            const m = (inp.getAttribute('oninput')||'').match(/saveLeaveCell\('([^']+)','([^']+)','([^']+)',(\d+)/);
+            if(m && m[1]===fEmp && m[2]===fLt && m[3]===fField && m[4]===fMonth){
+              inp.focus();
+              if(cursorPos != null && inp.setSelectionRange){ try{ inp.setSelectionRange(cursorPos, cursorPos); }catch(_){} }
+              break;
+            }
+          }
+        }, 0);
+      }
+    }, 1000); // invalidate → bảng Kế hoạch tính lại
     const totalUsed=sh.taken.reduce((a,b)=>a+b,0);
     const totalEntitle=sh.carry+sh.entitle.reduce((a,b)=>a+b,0);
     const pendingUsed=sh.taken.slice(0,curMonth).reduce((a,b)=>a+b,0);
@@ -13535,8 +13560,24 @@ function resignAction(rid, action){
     const _r2 = [...DB.resignations];
     _r2[idx] = {..._r2[idx], status:'confirmed', confirmedAt:new Date().toISOString()};
     DB.resignations = _r2;
+    console.log('[resignAction] Before save:', rid, 'status now=', DB.resignations[idx].status, 'total=', DB.resignations.length);
     saveEmpProfile(r.empId);
-    saveData(['resignations']);
+    // Verify Firestore write success
+    if(window.fbDb && window.currentUser){
+      const meta = { _syncBy: window.currentUser.uid, _syncAt: Date.now(), _lastSaved: Date.now() };
+      window.fbDb.collection('hrdata').doc('resign')
+        .set({...meta, resignations: DB.resignations.map(rec=>_sanitizeForFirebase(rec))}, {merge: true})
+        .then(()=>{
+          console.log('[resignAction] ✅ Firestore confirmed save:', rid);
+          toast('✅ Đã duyệt & lưu cloud thành công','success');
+        })
+        .catch(err=>{
+          console.error('[resignAction] ❌ Firestore save FAILED:', err.message);
+          toast('❌ Lỗi lưu cloud: '+err.message,'error');
+        });
+    } else {
+      saveData(['resignations']);
+    }
     render();
     toast(`✅ Đã duyệt nghỉ việc: ${empById(r.empId)?.name||''}`,'success');
   } else if(action==='cancel'){
