@@ -5681,39 +5681,59 @@ function setEmpFilter(key, val){
     render();
   }
 }
-let _empSearchTimer = null;
 
 // Lưu focus để restore sau render
 function _saveFocus(){
   const el = document.activeElement;
   if(!el || !el.id) return null;
-  return {id: el.id, start: el.selectionStart??el.value?.length??0, end: el.selectionEnd??el.value?.length??0, val: el.value};
+  return {id: el.id, start: el.selectionStart??el.value?.length??0, end: el.selectionEnd??el.value?.length??0};
 }
 function _restoreFocus(saved){
   if(!saved) return;
   setTimeout(()=>{
     const el = document.getElementById(saved.id);
     if(!el || el.tagName!=='INPUT') return;
-    el.focus();
-    if(el.value !== saved.val) el.value = saved.val;
-    try{ el.setSelectionRange(saved.start, saved.end); }catch(_){}
+    // KHÔNG overwrite value — user có thể đã gõ thêm trong khoảng debounce
+    if(document.activeElement !== el) el.focus();
+    try{
+      // Restore cursor về vị trí cuối nếu đã thay đổi value, ngược lại giữ nguyên
+      const len = el.value.length;
+      const pos = Math.min(saved.start, len);
+      el.setSelectionRange(pos, pos);
+    }catch(_){}
   }, 20);
 }
 
+let _empSearchTimer = null;
+let _empIsComposing = false; // true khi đang gõ IME (tiếng Việt có dấu)
 function debounceEmpSearch(val){
   empFilter.search = val;
+  // Nếu đang trong giữa IME composition (gõ tiếng Việt có dấu) → KHÔNG re-render
+  // Đợi compositionend mới filter để tránh "Tuấn" → "Tuaasn"
+  if(_empIsComposing) return;
   clearTimeout(_empSearchTimer);
-  const saved = _saveFocus();
   window._empSearchActive = true; // flag: đang search, chặn snapshot re-render
   _empSearchTimer = setTimeout(()=>{
     empPage=1;
+    const saved = _saveFocus();
     _empPartialRender();
     _restoreFocus(saved);
-    // Reset flag sau 2s
+    // Reset flag sau 3s
     clearTimeout(window._empSearchActiveTimer);
-    window._empSearchActiveTimer = setTimeout(()=>{ window._empSearchActive = false; }, 2000);
-  }, 250);
+    window._empSearchActiveTimer = setTimeout(()=>{ window._empSearchActive = false; }, 3000);
+  }, 400);
 }
+// Handlers cho IME composition (gõ tiếng Việt có dấu)
+window.addEventListener('compositionstart', (e)=>{
+  if(e.target && e.target.id === 'empSearchInput') _empIsComposing = true;
+});
+window.addEventListener('compositionend', (e)=>{
+  if(e.target && e.target.id === 'empSearchInput'){
+    _empIsComposing = false;
+    // Sau khi gõ xong dấu, trigger search với value cuối cùng
+    debounceEmpSearch(e.target.value);
+  }
+});
 
 // Partial render: chỉ update tbody — dùng đúng logic gốc từ renderEmployees
 function _empPartialRender(){
