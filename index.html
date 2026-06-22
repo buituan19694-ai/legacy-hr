@@ -2698,6 +2698,129 @@ function renderDashboard(main){
     <div class="row row-2">
       <div class="card">
         <div class="card-head"><div>
+          <div class="card-title">Lao động <em>ngoại tỉnh</em></div>
+          <div class="card-sub">NV được hỗ trợ ngoại tỉnh hoặc ở Staff House</div>
+        </div></div>
+        ${(() => {
+          const cd = DB.customData || {};
+          const active = filteredPool;
+          let outProvCount = 0, dormCount = 0, bothCount = 0, neitherCount = 0;
+          const dormByHouse = {};
+          active.forEach(e=>{
+            const ed = cd[e.id]||{};
+            const isOut = ed.supportOutProvince === 'Có';
+            const inDorm = !!ed.dormitory;
+            if(isOut && inDorm) bothCount++;
+            else if(isOut) outProvCount++;
+            else if(inDorm) dormCount++;
+            else neitherCount++;
+            if(inDorm){ dormByHouse[ed.dormitory] = (dormByHouse[ed.dormitory]||0)+1; }
+          });
+          const total = active.length;
+          const totalSupported = outProvCount + dormCount + bothCount;
+          const pctSupported = total>0 ? Math.round(totalSupported/total*100) : 0;
+          const houseRows = Object.entries(dormByHouse).sort((a,b)=>b[1]-a[1]).slice(0,6);
+          return `
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:8px 0 14px">
+              <div style="background:rgba(126,182,232,.08);padding:12px 14px;border-radius:8px;border-left:3px solid var(--info)">
+                <div style="font-size:11px;color:var(--ink-muted);font-weight:600;letter-spacing:.04em;text-transform:uppercase;margin-bottom:6px">Hỗ trợ ngoại tỉnh</div>
+                <div style="font-family:'JetBrains Mono',monospace;font-size:22px;font-weight:700;color:var(--info)">${outProvCount + bothCount}</div>
+                <div style="font-size:11px;color:var(--ink-dim);margin-top:2px">${total>0?Math.round((outProvCount+bothCount)/total*100):0}% tổng NV</div>
+              </div>
+              <div style="background:rgba(126,198,153,.08);padding:12px 14px;border-radius:8px;border-left:3px solid var(--success)">
+                <div style="font-size:11px;color:var(--ink-muted);font-weight:600;letter-spacing:.04em;text-transform:uppercase;margin-bottom:6px">Ở Staff House</div>
+                <div style="font-family:'JetBrains Mono',monospace;font-size:22px;font-weight:700;color:var(--success)">${dormCount + bothCount}</div>
+                <div style="font-size:11px;color:var(--ink-dim);margin-top:2px">${total>0?Math.round((dormCount+bothCount)/total*100):0}% tổng NV</div>
+              </div>
+            </div>
+            <div style="display:flex;gap:8px;margin-bottom:10px">
+              <div style="flex:1;background:rgba(212,165,116,.06);padding:8px 12px;border-radius:6px;text-align:center">
+                <div style="font-size:10px;color:var(--ink-muted);text-transform:uppercase;letter-spacing:.04em">Cả 2</div>
+                <div style="font-family:'JetBrains Mono',monospace;font-size:16px;font-weight:600;color:var(--accent)">${bothCount}</div>
+              </div>
+              <div style="flex:1;background:rgba(183,148,212,.06);padding:8px 12px;border-radius:6px;text-align:center">
+                <div style="font-size:10px;color:var(--ink-muted);text-transform:uppercase;letter-spacing:.04em">Tổng hỗ trợ</div>
+                <div style="font-family:'JetBrains Mono',monospace;font-size:16px;font-weight:600;color:var(--purple)">${totalSupported} <span style="font-size:11px;color:var(--ink-dim)">(${pctSupported}%)</span></div>
+              </div>
+              <div style="flex:1;background:rgba(255,255,255,.03);padding:8px 12px;border-radius:6px;text-align:center">
+                <div style="font-size:10px;color:var(--ink-muted);text-transform:uppercase;letter-spacing:.04em">Không hỗ trợ</div>
+                <div style="font-family:'JetBrains Mono',monospace;font-size:16px;font-weight:600;color:var(--ink-dim)">${neitherCount}</div>
+              </div>
+            </div>
+            ${houseRows.length>0 ? `
+              <div style="font-size:11px;color:var(--ink-muted);text-transform:uppercase;letter-spacing:.04em;margin:14px 0 6px;font-weight:600">Phân bố theo Staff House</div>
+              ${houseRows.map(([h,c])=>{
+                const pct = dormCount+bothCount>0 ? c/(dormCount+bothCount)*100 : 0;
+                return `<div style="display:flex;align-items:center;gap:10px;padding:5px 0;font-size:12px">
+                  <div style="flex:0 0 130px;color:var(--ink);font-weight:600">${escapeHtml(h)}</div>
+                  <div style="flex:1;height:5px;background:rgba(255,255,255,.06);border-radius:3px;overflow:hidden">
+                    <div style="width:${pct.toFixed(0)}%;height:100%;background:var(--success)"></div>
+                  </div>
+                  <div style="font-family:'JetBrains Mono',monospace;font-weight:600;color:var(--success);min-width:24px;text-align:right">${c}</div>
+                </div>`;
+              }).join('')}
+            ` : ''}
+          `;
+        })()}
+      </div>
+      <div class="card">
+        <div class="card-head"><div>
+          <div class="card-title">Tôn <em>giáo</em></div>
+          <div class="card-sub">Phân bố theo niềm tin tôn giáo</div>
+        </div></div>
+        ${(() => {
+          const cd = DB.customData || {};
+          const active = filteredPool;
+          const relMap = {};
+          active.forEach(e=>{
+            const ed = cd[e.id]||{};
+            const raw = (ed.religion||'').trim();
+            // Chuẩn hoá: rỗng / "không" / "không có" → "Không"
+            const lower = raw.toLowerCase();
+            let key;
+            if(!raw || lower === 'không' || lower === 'khong' || lower === 'không có' || lower === 'none' || lower === '-') key = 'Không / Không khai báo';
+            else key = raw;
+            relMap[key] = (relMap[key]||0)+1;
+          });
+          const rows = Object.entries(relMap).sort((a,b)=>b[1]-a[1]);
+          const total = active.length;
+          const declared = total - (relMap['Không / Không khai báo']||0);
+          const palette = ['var(--success)','var(--info)','var(--accent)','var(--purple)','var(--warning)','#7eb6e8','#d4a574','#b794d4','#7ec699','#e8a87c'];
+          return `
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:8px 0 14px">
+              <div style="background:rgba(126,198,153,.08);padding:12px 14px;border-radius:8px;border-left:3px solid var(--success)">
+                <div style="font-size:11px;color:var(--ink-muted);font-weight:600;letter-spacing:.04em;text-transform:uppercase;margin-bottom:6px">Đã khai báo</div>
+                <div style="font-family:'JetBrains Mono',monospace;font-size:22px;font-weight:700;color:var(--success)">${declared}</div>
+                <div style="font-size:11px;color:var(--ink-dim);margin-top:2px">${total>0?Math.round(declared/total*100):0}% tổng NV</div>
+              </div>
+              <div style="background:rgba(212,165,116,.08);padding:12px 14px;border-radius:8px;border-left:3px solid var(--accent)">
+                <div style="font-size:11px;color:var(--ink-muted);font-weight:600;letter-spacing:.04em;text-transform:uppercase;margin-bottom:6px">Số tôn giáo</div>
+                <div style="font-family:'JetBrains Mono',monospace;font-size:22px;font-weight:700;color:var(--accent)">${rows.filter(r=>r[0]!=='Không / Không khai báo').length}</div>
+                <div style="font-size:11px;color:var(--ink-dim);margin-top:2px">tôn giáo khác nhau</div>
+              </div>
+            </div>
+            <div style="font-size:11px;color:var(--ink-muted);text-transform:uppercase;letter-spacing:.04em;margin:14px 0 6px;font-weight:600">Chi tiết</div>
+            ${rows.slice(0,8).map(([rel,count],i)=>{
+              const pct = total>0 ? count/total*100 : 0;
+              const isNone = rel === 'Không / Không khai báo';
+              const color = isNone ? 'var(--ink-dim)' : palette[i % palette.length];
+              return `<div style="display:flex;align-items:center;gap:10px;padding:5px 0;font-size:12px">
+                <div style="flex:0 0 140px;color:var(--ink);font-weight:${isNone?'400':'600'}">${escapeHtml(rel)}</div>
+                <div style="flex:1;height:5px;background:rgba(255,255,255,.06);border-radius:3px;overflow:hidden">
+                  <div style="width:${pct.toFixed(0)}%;height:100%;background:${color};opacity:${isNone?.5:1}"></div>
+                </div>
+                <div style="font-family:'JetBrains Mono',monospace;font-weight:600;color:${color};min-width:24px;text-align:right">${count}</div>
+                <div style="font-family:'JetBrains Mono',monospace;color:var(--ink-muted);font-size:10px;min-width:32px;text-align:right">${pct.toFixed(0)}%</div>
+              </div>`;
+            }).join('')}
+          `;
+        })()}
+      </div>
+    </div>
+
+    <div class="row row-2">
+      <div class="card">
+        <div class="card-head"><div>
           <div class="card-title">Phân bố <em>độ tuổi</em></div>
           <div class="card-sub">${filteredPool.filter(e=>e.dob).length} NV có thông tin ngày sinh</div>
         </div></div>
@@ -19665,8 +19788,11 @@ async function loadAccountsList(){
         <td style="padding:12px 14px;font-size:12px">${statusDot}</td>
         <td style="padding:12px 14px;text-align:right">
           ${isMe ? '' : `<button class="btn btn-icon" onclick="openAccountModal('${d.id}')" title="Sửa quyền" style="margin-right:4px">✏️</button>
-          <button class="btn btn-icon btn-danger" onclick="toggleAccountActive('${d.id}','${u.active===false?'unlock':'lock'}')" title="${u.active===false?'Mở khoá':(_lang==="en"?"Lock":"Khoá")}">
+          <button class="btn btn-icon" onclick="toggleAccountActive('${d.id}','${u.active===false?'unlock':'lock'}')" title="${u.active===false?'Mở khoá':(_lang==="en"?"Lock":"Khoá")}" style="margin-right:4px">
             ${u.active===false?'🔓':'🔒'}
+          </button>
+          <button class="btn btn-icon btn-danger" onclick="deleteAccount('${d.id}','${escapeHtml(u.displayName||u.email||'')}')" title="Xoá tài khoản vĩnh viễn">
+            🗑️
           </button>`}
         </td>
       </tr>`;
@@ -19830,6 +19956,45 @@ window.toggleAccountActive = async function(uid, action){
   if(!confirm(msg)) return;
   await window.fbDb.collection('users').doc(uid).update({ active: action!=='lock' });
   navigate('accounts');
+};
+
+window.deleteAccount = async function(uid, name){
+  // 2-step confirmation để tránh xóa nhầm
+  if(!confirm(`⚠️ XOÁ VĨNH VIỄN tài khoản "${name}"?\n\nHành động này:\n• Xoá quyền truy cập của tài khoản\n• Tài khoản sẽ KHÔNG THỂ đăng nhập được nữa\n• Lịch sử hoạt động vẫn được giữ lại để audit\n\nNếu chỉ muốn tạm dừng, dùng nút 🔒 Khoá thay vì xoá.\n\nBấm OK để tiếp tục.`)) return;
+  const confirmText = prompt(`Để xác nhận xoá vĩnh viễn, hãy gõ chính xác:\n\nXOA ${name}\n\n(viết hoa, không dấu)`);
+  if(!confirmText) return;
+  const expected = `XOA ${name}`.normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/đ/gi,'d').toUpperCase();
+  const actual = confirmText.normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/đ/gi,'d').toUpperCase().trim();
+  if(actual !== expected){
+    toast('❌ Xác nhận không khớp — đã huỷ thao tác xoá','error');
+    return;
+  }
+  try{
+    // Lấy data trước khi xoá để log audit
+    const docRef = window.fbDb.collection('users').doc(uid);
+    const snap = await docRef.get();
+    const userData = snap.exists ? snap.data() : null;
+    if(!userData){ toast('Tài khoản không tồn tại','error'); return; }
+    // Không cho xoá ADMIN_EMAIL
+    if(userData.email === ADMIN_EMAIL){
+      toast('❌ Không thể xoá tài khoản Admin','error');
+      return;
+    }
+    // Lưu vào collection deleted_users để audit (không xoá hoàn toàn data)
+    await window.fbDb.collection('deleted_users').doc(uid).set({
+      ...userData,
+      _deletedAt: Date.now(),
+      _deletedBy: window.currentUser?.email||'unknown',
+      _deletedByUid: window.currentUser?.uid||'',
+    });
+    // Xoá khỏi users collection
+    await docRef.delete();
+    toast(`✅ Đã xoá tài khoản: ${name}`,'success');
+    navigate('accounts');
+  } catch(err){
+    console.error('[deleteAccount] Error:', err);
+    toast('❌ Lỗi khi xoá: '+err.message,'error');
+  }
 };
 
 /* =========================================================
