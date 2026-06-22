@@ -3550,9 +3550,6 @@ function renderDashboard(main){
         </div>
       </div>
 
-      <!-- HR Pulse — Intelligent Alert Center -->
-      <div id="hrPulseContainer" style="margin-bottom:20px"></div>
-
       <!-- KPI cards (user customizable) -->
       <div class="kpi-grid">
         ${(cfg.kpis||DEFAULT_DASHBOARD_KPIS).map(k => {
@@ -3872,7 +3869,7 @@ function renderDashboard(main){
 
   window._dashFilteredPool = filteredPool;
   window._dashAllEmps = DB.employees;
-  setTimeout(()=>{ renderDashboardCharts(); setTimeout(renderKpiMiniCharts, 50); setTimeout(renderDashCombos, 60); setTimeout(()=>renderHRPulse('#hrPulseContainer'), 100); }, 320);
+  setTimeout(()=>{ renderDashboardCharts(); setTimeout(renderKpiMiniCharts, 50); setTimeout(renderDashCombos, 60); }, 320);
 }
 
 function toggleKpiMode(k){
