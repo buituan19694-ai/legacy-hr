@@ -123,7 +123,7 @@
       </div>
       <div class="nav-item" data-page="analytics">
         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
-        <span>HR Intelligence</span>
+        <span>HR P&L Review</span>
         <span class="nav-badge" id="navAnalyticsCount" style="background:var(--danger);color:#fff;font-weight:700">0</span>
       </div>
     </div>
@@ -1024,13 +1024,13 @@ const FS_DOC_MAP = {
   config:     ['customFields','rewardTypes','perfReviewTypes','promoTypes','company',
                'dashboardConfig','brandConfig',
                'disciplineSeverityConfig','requiredFieldsConfig',
-               'contractTemplates','quickFilterPrefs','recReportConfig','perfReportConfig',
+               'contractTemplates','quickFilterPrefs','recReportConfig','perfReportConfig','plConfig',
                '_rewardTypesV2','_levelReset2026','_removedProbationStatus','_normalizedDates2026','_cleanedCandYearShards'],
 };
 // manningPlan + manningActual được shard theo năm qua _pushDynamicKey → KHÔNG để trong FS_DOC_MAP
 const FS_DYNAMIC_KEYS = ['leaves','kpiReviews','rewardRecords','casuals','candidates',
                           'promotions','disciplineRecords','leaveSheet','leaveOpening','leavePlan','leavePlanLocked',
-                          'manningPlan','manningActual'];
+                          'manningPlan','manningActual','plRevenue','plActionPlan'];
 
 function _recYear(r){
   const d = r.startDate||r.date||r.effectiveDate||r.period||r.appliedDate||r.createdAt||'';
@@ -1275,6 +1275,28 @@ function _pushDynamicKey(key, meta){
     return;
   }
 
+  // P&L Review data: shard theo năm, gom 1 doc/năm
+  const plDataKeys = ['plRevenue','plActionPlan'];
+  if(plDataKeys.includes(key)){
+    const allYears = new Set([thisYear]);
+    plDataKeys.forEach(k=>{
+      const obj=DB[k]||{};
+      Object.keys(obj).forEach(y=>{ const yi=parseInt(y); if(!isNaN(yi)) allYears.add(yi); });
+    });
+    allYears.forEach(yr=>{
+      const payload={...meta, _shard:yr};
+      plDataKeys.forEach(k=>{
+        const obj=DB[k]||{};
+        if(obj[yr]!==undefined) payload[k] = {[yr]: obj[yr]};
+        else payload[k] = {};
+      });
+      window.fbDb.collection('hrdata').doc(`pldata_${yr}`)
+        .set(payload, {merge:false})
+        .catch(err=>console.error(`[saveData] ❌ pldata_${yr}`, err.message));
+    });
+    return;
+  }
+
   const leaveMetaKeys = ['leaveOpening','leavePlan','leavePlanLocked','salaryYears','trainingExtraYears','leaveExtraYears'];
   if(leaveMetaKeys.includes(key)){
     const allYears = new Set([thisYear]);
@@ -1508,6 +1530,10 @@ if(!DB.manningPlan  || Array.isArray(DB.manningPlan))  DB.manningPlan  = {};
 if(!DB.hrBudget     || Array.isArray(DB.hrBudget))     DB.hrBudget     = {};
 if(!DB.manningActual|| Array.isArray(DB.manningActual))DB.manningActual= {};
 if(!DB.promoTypes   || Array.isArray(DB.promoTypes))   DB.promoTypes   = {};
+// P&L Review storage
+if(!DB.plRevenue    || Array.isArray(DB.plRevenue))    DB.plRevenue    = {};
+if(!DB.plActionPlan || Array.isArray(DB.plActionPlan)) DB.plActionPlan = {};
+if(!DB.plConfig     || Array.isArray(DB.plConfig))     DB.plConfig     = {};
 window._dirtyKeys = new Set();
 DB = new Proxy(DB, {
   set(target, key, value){
@@ -1964,17 +1990,21 @@ function updateBadges(){
   const aw=$('#navAwardCount'); if(aw){aw.textContent=awardCount;aw.style.display=awardCount>0?'':'none';}
   const wn=$('#navWarnCount'); if(wn){wn.textContent=warnCount;wn.style.display=warnCount>0?'':'none';}
   const tk=$('#navTaskCount'); if(tk){tk.textContent=taskCount;tk.style.display=taskCount>0?'':'none';}
-  // Analytics badge: P0 alerts count
+  // Analytics badge: số vacancy RED (>=60 ngày)
   const an=$('#navAnalyticsCount');
   if(an){
     try {
-      const alerts = (typeof hrIntelDetectAll === 'function') ? hrIntelDetectAll() : [];
-      const p0count = alerts.filter(a=>a.severity==='P0').length;
-      const p1count = alerts.filter(a=>a.severity==='P1').length;
-      const showCount = p0count > 0 ? p0count : p1count > 0 ? p1count : 0;
-      an.textContent = showCount;
-      an.style.display = showCount>0 ? '' : 'none';
-      an.style.background = p0count > 0 ? 'var(--danger)' : p1count > 0 ? 'var(--warning)' : 'var(--info)';
+      const today = new Date();
+      const redJobs = (DB.jobs||[]).filter(j=>{
+        if(j.status!=='open' || !j.openDate) return false;
+        const d = new Date(j.openDate);
+        if(isNaN(d)) return false;
+        const days = Math.round((today - d)/86400000);
+        return days >= 60;
+      }).length;
+      an.textContent = redJobs;
+      an.style.display = redJobs>0 ? '' : 'none';
+      an.style.background = 'var(--danger)';
     } catch(e) { an.style.display = 'none'; }
   }
 }
@@ -2482,1360 +2512,432 @@ function _parseAnyDate(s){
 }
 
 /* =========================================================
-   HR INTELLIGENCE ENGINE — Sprint 1
-   Metrics + Pattern Detection + Forecasts
+   HR P&L REVIEW
+   Dashboard for monthly P&L meeting (GM/FC/Owner perspective)
+   Built on top of existing Manning & Budget + Leave + Recruitment data
    ========================================================= */
-
-// Cache để tránh re-compute metrics nhiều lần trong cùng render cycle
-window._hrIntelCache = {};
-window._hrIntelCacheKey = '';
-
-function _hrIntelCacheGet(key, fn){
-  // Cache theo chữ ký data; invalidate khi DB thay đổi
-  const sig = `${(DB.employees||[]).length}_${(DB.resignations||[]).length}_${(DB.candidates||[]).length}_${(DB.contracts||[]).length}`;
-  if(window._hrIntelCacheKey !== sig){
-    window._hrIntelCache = {};
-    window._hrIntelCacheKey = sig;
-  }
-  if(window._hrIntelCache[key] !== undefined) return window._hrIntelCache[key];
-  const v = fn();
-  window._hrIntelCache[key] = v;
-  return v;
-}
 
 // ===== HELPER FUNCTIONS =====
 
-function _hrMonthsBetween(d1, d2){
+function _plDaysBetween(d1, d2){
+  if(!d1||!d2) return 0;
+  const a = new Date(d1), b = new Date(d2);
+  if(isNaN(a)||isNaN(b)) return 0;
+  const aUTC = Date.UTC(a.getFullYear(), a.getMonth(), a.getDate());
+  const bUTC = Date.UTC(b.getFullYear(), b.getMonth(), b.getDate());
+  return Math.round((bUTC-aUTC)/86400000);
+}
+
+function _plMonthsBetween(d1, d2){
   if(!d1||!d2) return 0;
   const a = new Date(d1), b = new Date(d2);
   if(isNaN(a)||isNaN(b)) return 0;
   return (b.getFullYear()-a.getFullYear())*12 + (b.getMonth()-a.getMonth());
 }
 
-function _hrDaysBetween(d1, d2){
-  if(!d1||!d2) return 0;
-  const a = new Date(d1), b = new Date(d2);
-  if(isNaN(a)||isNaN(b)) return 0;
-  return Math.round((b-a)/86400000);
+function _plFmtMoney(v){
+  if(!v) return '0';
+  const n = Math.abs(v);
+  if(n >= 1e9) return (v/1e9).toFixed(2)+' tỷ';
+  if(n >= 1e6) return (v/1e6).toFixed(1)+'tr';
+  if(n >= 1e3) return (v/1e3).toFixed(0)+'k';
+  return v.toFixed(0);
 }
 
-function _hrInPeriod(dateStr, year, month){
-  if(!dateStr) return false;
-  const d = new Date(dateStr);
-  if(isNaN(d)) return false;
-  return d.getFullYear()===year && d.getMonth()===month;
+function _plFmtMoneyFull(v){
+  return (v||0).toLocaleString('vi-VN')+' đ';
 }
 
-// ===== CORE METRICS =====
+function _plFmtPct(v, decimals){
+  decimals = decimals === undefined ? 1 : decimals;
+  if(v === null || v === undefined || isNaN(v)) return '—';
+  return v.toFixed(decimals)+'%';
+}
 
-function hrMetricTurnover(year, month, deptId=null){
-  return _hrIntelCacheGet(`turnover_${year}_${month}_${deptId||'all'}`, ()=>{
-    const emps = (DB.employees||[]).filter(e=>!deptId||e.deptId===deptId);
-    // Số NV nghỉ trong tháng
-    const resigned = (DB.resignations||[]).filter(r=>{
-      if(r.status!=='confirmed') return false;
-      const emp = empById(r.empId);
-      if(!emp) return false;
-      if(deptId && emp.deptId !== deptId) return false;
-      const endDate = r.endDate || r.confirmedAt;
-      return _hrInPeriod(endDate, year, month);
+// Get current month's Payroll Budget from Manning & Budget
+// IMPORTANT: budgetSalary trong Manning Budget là LƯƠNG 1 NV / 1 THÁNG
+// → planned × budgetSalary = MONTHLY budget của 1 dept (KHÔNG phải annual)
+function _plGetPayrollBudgetMonth(year, month){
+  // Returns {salary, bonus, bh, meal, other, total, byDept:{deptId:total}} — ALL MONTHLY
+  const plan = ((DB.manningPlan||{})[year]||{}).depts || {};
+  const bhRate = parseFloat((DB.manningConfig||{}).bhRate) || 0.225;
+  const result = {salary:0, bonus:0, bh:0, meal:0, other:0, total:0, byDept:{}};
+  Object.entries(plan).forEach(([deptId, dp])=>{
+    let deptTotal = 0;
+    (dp.positions||[]).forEach(p=>{
+      const hc = parseInt(p.planned)||0;
+      const sal = (parseFloat(p.budgetSalary)||0) * hc;
+      const bon = (parseFloat(p.budgetBonus)||0) * hc;
+      const bh  = ((parseFloat(p.budgetBH)||0) || (sal*bhRate));
+      const meal= (parseFloat(p.mealRate)||0) * hc;
+      const oth = (parseFloat(p.budgetOther)||0) * hc;
+      result.salary += sal;
+      result.bonus  += bon;
+      result.bh     += bh;
+      result.meal   += meal;
+      result.other  += oth;
+      deptTotal += sal + bon + bh + meal + oth;
     });
-    // HC trung bình tháng = (HC đầu tháng + HC cuối tháng) / 2
-    const monthStart = new Date(year, month, 1);
-    const monthEnd = new Date(year, month+1, 0);
-    const hcStart = emps.filter(e=>{
-      const joined = e.joined ? new Date(e.joined) : null;
-      if(!joined || joined > monthStart) return false;
-      const cd = (DB.customData||{})[e.id]||{};
-      const exitDate = cd.exitDate ? new Date(cd.exitDate) : null;
-      return !exitDate || exitDate >= monthStart;
-    }).length;
-    const hcEnd = emps.filter(e=>{
-      const joined = e.joined ? new Date(e.joined) : null;
-      if(!joined || joined > monthEnd) return false;
-      const cd = (DB.customData||{})[e.id]||{};
-      const exitDate = cd.exitDate ? new Date(cd.exitDate) : null;
-      return !exitDate || exitDate >= monthEnd;
-    }).length;
-    const avgHC = (hcStart + hcEnd) / 2;
-    const rate = avgHC > 0 ? (resigned.length / avgHC * 100) : 0;
-    return { count: resigned.length, avgHC, rate, resigned };
+    result.byDept[deptId] = deptTotal;
   });
+  result.total = result.salary + result.bonus + result.bh + result.meal + result.other;
+  return result; // MONTHLY figures
 }
 
-function hrMetricTurnoverYTD(year, deptId=null){
-  return _hrIntelCacheGet(`turnoverYTD_${year}_${deptId||'all'}`, ()=>{
-    const today = new Date();
-    const lastMonth = year === today.getFullYear() ? today.getMonth() : 11;
-    let totalResigned = 0, totalAvgHC = 0;
-    for(let m=0; m<=lastMonth; m++){
-      const r = hrMetricTurnover(year, m, deptId);
-      totalResigned += r.count;
-      totalAvgHC += r.avgHC;
-    }
-    const monthsCount = lastMonth + 1;
-    const avgHC = totalAvgHC / monthsCount;
-    // Annualized: extrapolate ra cả năm
-    const annualizedRate = avgHC > 0 ? (totalResigned / avgHC) * (12 / monthsCount) * 100 : 0;
-    return { totalResigned, avgHC, annualizedRate, monthsCount };
-  });
-}
+// Get Payroll Actual for a month (compute from current employees + their salaries)
+function _plGetPayrollActualMonth(year, month){
+  // Method: sum of (baseSalary + bonusSalary) for all employees active in that month
+  // Use customData for salary; filter employees who were active during this month
+  const monthStart = new Date(year, month, 1);
+  const monthEnd = new Date(year, month+1, 0);
+  const cd = DB.customData||{};
+  const bhRate = parseFloat((DB.manningConfig||{}).bhRate) || 0.225;
 
-function hrMetricManningGap(year, month){
-  return _hrIntelCacheGet(`manningGap_${year}_${month}`, ()=>{
-    const monthKey = `${year}-${String(month+1).padStart(2,'0')}`;
-    const result = [];
-    (DB.departments||[]).forEach(d=>{
-      const plan = ((DB.manningPlan||{})[monthKey]||{})[d.id] || 0;
-      const actual = (DB.employees||[]).filter(e=>e.deptId===d.id && getEffectiveStatus(e)!=='exit').length;
-      result.push({
-        dept: d.name,
-        deptId: d.id,
-        plan, actual,
-        gap: actual - plan,
-        gapPct: plan>0 ? (actual-plan)/plan*100 : 0,
-        status: plan===0 ? 'no-plan' : actual<plan ? 'short' : actual>plan ? 'over' : 'on-target'
-      });
-    });
-    return result;
-  });
-}
-
-function hrMetricRetention(year){
-  return _hrIntelCacheGet(`retention_${year}`, ()=>{
-    // % NV ở lại sau 6/12/24 tháng kể từ ngày join
-    const joiners = (DB.employees||[]).filter(e=>{
-      if(!e.joined) return false;
-      const j = new Date(e.joined);
-      return j.getFullYear() === year - 2; // Cohort cách đây 2 năm để có đủ data 24 tháng
-    });
-    const cd = DB.customData||{};
-    const stayedAfter = (months)=>{
-      if(joiners.length===0) return null;
-      const count = joiners.filter(e=>{
-        const exitDate = cd[e.id]?.exitDate ? new Date(cd[e.id].exitDate) : null;
-        const joinDate = new Date(e.joined);
-        if(!exitDate) return true; // còn ở
-        const monthsBetween = _hrMonthsBetween(joinDate, exitDate);
-        return monthsBetween >= months;
-      }).length;
-      return { count, total: joiners.length, rate: count/joiners.length*100 };
-    };
-    return {
-      cohortYear: year - 2,
-      cohortSize: joiners.length,
-      after6: stayedAfter(6),
-      after12: stayedAfter(12),
-      after24: stayedAfter(24),
-    };
-  });
-}
-
-function hrMetricTimeToHire(year, month=null){
-  return _hrIntelCacheGet(`timeToHire_${year}_${month}`, ()=>{
-    const hired = (DB.candidates||[]).filter(c=>{
-      if(c.status !== 'hired' || !c.hiredDate || !c.appliedDate) return false;
-      const h = new Date(c.hiredDate);
-      if(h.getFullYear() !== year) return false;
-      if(month !== null && h.getMonth() !== month) return false;
-      return true;
-    });
-    if(hired.length === 0) return { avg: null, median: null, count: 0, p90: null };
-    const days = hired.map(c=>_hrDaysBetween(c.appliedDate, c.hiredDate)).sort((a,b)=>a-b);
-    return {
-      avg: Math.round(days.reduce((s,d)=>s+d,0)/days.length),
-      median: days[Math.floor(days.length/2)],
-      p90: days[Math.floor(days.length*0.9)],
-      count: hired.length,
-      raw: days,
-    };
-  });
-}
-
-function _hrGetLatestContract(empId){
-  // Lấy HĐ mới nhất của NV từ DB.contracts (source of truth)
-  const contracts = (DB.contracts||[]).filter(c=>c.empId===empId);
-  if(contracts.length === 0) return null;
-  contracts.sort((a,b)=>{
-    const da = new Date(a.startDate||a.signedDate||0).getTime();
-    const db = new Date(b.startDate||b.signedDate||0).getTime();
-    return db - da; // mới nhất lên đầu
-  });
-  return contracts[0];
-}
-
-function _hrNormalizeContractType(t){
-  if(!t) return 'unknown';
-  const s = String(t).toLowerCase().trim();
-  if(s==='probation' || s.includes('thử việc')) return 'probation';
-  if(s==='term12' || s.includes('01 năm') || s.includes('1 năm') || s.includes('12 tháng')) return 'term12';
-  if(s==='term24' || s.includes('02 năm') || s.includes('2 năm') || s.includes('24 tháng')) return 'term24';
-  if(s==='indefinite' || s.includes('không xác định') || s.includes('vô thời hạn') || s.includes('indefinite')) return 'indefinite';
-  if(s==='contractor' || s.includes('khoán')) return 'contractor';
-  return 'unknown';
-}
-
-function hrMetricProbation(){
-  return _hrIntelCacheGet('probation', ()=>{
-    const today = new Date();
-    const cd = DB.customData||{};
-    const probationers = [];
-    (DB.employees||[]).forEach(e=>{
-      if(getEffectiveStatus(e) === 'exit') return;
-      const ed = cd[e.id]||{};
-      const ctType = ed.currentContractType || '';
-      // Probation contract theo customData
-      if(_hrNormalizeContractType(ctType) !== 'probation') return;
-
-      const endDate = ed.currentContractEnd || ed.contractEnd;
-      if(!endDate) return;
-      const daysLeft = _hrDaysBetween(today, endDate);
-
-      // Cross-check: nếu trong DB.contracts có HĐ chính thức (non-probation) start sau endDate này → đã chuyển HĐ rồi → skip
-      const latest = _hrGetLatestContract(e.id);
-      if(latest){
-        const latestType = _hrNormalizeContractType(latest.type);
-        const latestStart = new Date(latest.startDate||0);
-        const probEnd = new Date(endDate);
-        if(latestType !== 'probation' && latestType !== 'unknown' && !isNaN(latestStart) && latestStart > probEnd){
-          // NV đã có HĐ mới sau khi thử việc kết thúc → bỏ qua
-          return;
-        }
-        // Hoặc nếu DB.contracts có HĐ thử việc với endDate mới hơn → dùng endDate đó
-        if(latestType === 'probation' && latest.endDate){
-          const newEnd = new Date(latest.endDate);
-          if(!isNaN(newEnd) && newEnd > probEnd){
-            // Skip — đã có HĐ thử việc mới mà customData chưa update
-            return;
-          }
-        }
-      }
-
-      // Bỏ qua các case quá hạn > 30 ngày (stale data — chắc chắn đã chuyển HĐ nhưng customData chưa update)
-      if(daysLeft < -30) return;
-
-      probationers.push({
-        empId: e.id,
-        name: e.name,
-        dept: ((DB.departments||[]).find(d=>d.id===e.deptId)||{}).name||'',
-        role: e.role,
-        joined: e.joined,
-        endDate,
-        daysLeft,
-      });
-    });
-    const expiring7 = probationers.filter(p=>p.daysLeft!==null && p.daysLeft>=0 && p.daysLeft<=7);
-    const expiring30 = probationers.filter(p=>p.daysLeft!==null && p.daysLeft>=0 && p.daysLeft<=30);
-    const overdue = probationers.filter(p=>p.daysLeft!==null && p.daysLeft<0);
-    return { total: probationers.length, expiring7, expiring30, overdue, all: probationers };
-  });
-}
-
-function hrMetricContractExpiry(){
-  return _hrIntelCacheGet('contractExpiry', ()=>{
-    const today = new Date();
-    const cd = DB.customData||{};
-    const expiring = [];
-    (DB.employees||[]).forEach(e=>{
-      if(getEffectiveStatus(e) === 'exit') return;
-      const ed = cd[e.id]||{};
-
-      // Source of truth: lấy HĐ mới nhất từ DB.contracts
-      const latest = _hrGetLatestContract(e.id);
-      let effEndDate = ed.currentContractEnd || ed.contractEnd;
-      let effType = ed.currentContractType;
-      // Nếu có HĐ mới hơn trong DB.contracts → dùng nó
-      if(latest && latest.endDate){
-        const dbEnd = new Date(latest.endDate);
-        const cdEnd = effEndDate ? new Date(effEndDate) : null;
-        if(!isNaN(dbEnd) && (!cdEnd || isNaN(cdEnd) || dbEnd >= cdEnd)){
-          effEndDate = latest.endDate;
-          effType = latest.type;
-        }
-      }
-      // HĐ vô thời hạn → không hết hạn
-      if(_hrNormalizeContractType(effType) === 'indefinite') return;
-      if(!effEndDate) return;
-      const daysLeft = _hrDaysBetween(today, effEndDate);
-      // Bỏ qua HĐ đã quá hạn > 30 ngày (stale data — chắc chắn đã có HĐ mới mà chưa update)
-      if(daysLeft < -30) return;
-      if(daysLeft >= -7 && daysLeft <= 90){
-        expiring.push({
-          empId: e.id,
-          name: e.name,
-          dept: ((DB.departments||[]).find(d=>d.id===e.deptId)||{}).name||'',
-          role: e.role,
-          contractType: effType,
-          endDate: effEndDate,
-          daysLeft,
-        });
-      }
-    });
-    expiring.sort((a,b)=>a.daysLeft-b.daysLeft);
-    return {
-      total: expiring.length,
-      expiring30: expiring.filter(c=>c.daysLeft<=30 && c.daysLeft>=0),
-      expiring60: expiring.filter(c=>c.daysLeft<=60 && c.daysLeft>=0),
-      expiring90: expiring,
-      overdue: expiring.filter(c=>c.daysLeft<0),
-    };
-  });
-}
-
-function hrMetricResignationPipeline(){
-  return _hrIntelCacheGet('resignationPipeline', ()=>{
-    const today = new Date();
-    const pending = (DB.resignations||[]).filter(r=>r.status==='pending');
-    const upcoming = (DB.resignations||[]).filter(r=>{
-      if(r.status==='cancelled') return false;
-      const endDate = r.endDate ? new Date(r.endDate) : null;
-      if(!endDate) return false;
-      const daysLeft = _hrDaysBetween(today, endDate);
-      return daysLeft >= 0 && daysLeft <= 30;
-    });
-    // Phân nhóm theo dept
-    const byDept = {};
-    upcoming.forEach(r=>{
-      const emp = empById(r.empId);
-      const deptName = emp ? ((DB.departments||[]).find(d=>d.id===emp.deptId)||{}).name : 'Unknown';
-      if(!byDept[deptName]) byDept[deptName] = [];
-      byDept[deptName].push({ empId: r.empId, name: emp?.name, endDate: r.endDate, reason: r.reason });
-    });
-    return { pending, upcoming, byDept, totalUpcoming: upcoming.length };
-  });
-}
-
-function hrMetricLeaveLiability(year){
-  return _hrIntelCacheGet(`leaveLiability_${year}`, ()=>{
-    const cd = DB.customData||{};
-    const sheet = (DB.leaveSheet||{});
-    let totalEntitle = 0, totalTaken = 0, totalRemain = 0;
-    const empData = [];
-    (DB.employees||[]).forEach(e=>{
-      if(getEffectiveStatus(e) === 'exit') return;
-      const sh = (sheet[e.id]||{})[year]?.al;
-      if(!sh) return;
-      const carry = parseFloat(sh.carry)||0;
-      const entitle = Array.isArray(sh.entitle) ? sh.entitle.reduce((s,v)=>s+(parseFloat(v)||0),0) : 0;
-      const taken = Array.isArray(sh.taken) ? sh.taken.reduce((s,v)=>s+(parseFloat(v)||0),0) : 0;
-      const clearAL = parseFloat(sh.clearAL)||0;
-      const total = carry + entitle;
-      const used = taken + clearAL;
-      const remain = total - used;
-      if(total > 0){
-        totalEntitle += total;
-        totalTaken += used;
-        totalRemain += remain;
-        empData.push({ empId: e.id, name: e.name, total, used, remain });
-      }
-    });
-    return {
-      totalEntitle,
-      totalTaken,
-      totalRemain,
-      usageRate: totalEntitle>0 ? totalTaken/totalEntitle*100 : 0,
-      remainingRate: totalEntitle>0 ? totalRemain/totalEntitle*100 : 0,
-      empCount: empData.length,
-      avgRemainPerEmp: empData.length>0 ? totalRemain/empData.length : 0,
-    };
-  });
-}
-
-// ===== PATTERN DETECTORS =====
-// Mỗi pattern trả về { severity: 'P0'|'P1'|'P2', icon, title, detail, action, link } hoặc null
-
-function hrPatternProbationExpiringNoAction(){
-  const p = hrMetricProbation();
-  if(p.expiring7.length === 0 && p.overdue.length === 0) return null;
-  const items = [...p.overdue, ...p.expiring7];
-  return {
-    severity: p.overdue.length > 0 ? 'P0' : 'P0',
-    icon: '⏰',
-    title: `${items.length} NV thử việc cần quyết định ngay`,
-    detail: items.slice(0,3).map(p=>`${p.name} (${p.dept}) — ${p.daysLeft<0?`quá hạn ${Math.abs(p.daysLeft)} ngày`:`còn ${p.daysLeft} ngày`}`).join(' · '),
-    action: 'Đánh giá thử việc',
-    link: 'contracts'
-  };
-}
-
-function hrPatternContractExpiring(){
-  const c = hrMetricContractExpiry();
-  if(c.expiring30.length === 0 && c.overdue.length === 0) return null;
-  return {
-    severity: c.overdue.length > 0 ? 'P0' : 'P1',
-    icon: '📋',
-    title: `${c.expiring30.length + c.overdue.length} HĐ hết hạn trong 30 ngày`,
-    detail: c.expiring30.slice(0,3).map(c=>`${c.name} (${c.dept}) — còn ${c.daysLeft} ngày`).join(' · '),
-    action: 'Lập kế hoạch gia hạn',
-    link: 'contracts'
-  };
-}
-
-function hrPatternResignationCluster(){
-  // Phát hiện >=3 đơn nghỉ trong 1 dept trong 14 ngày
-  const today = new Date();
-  const recent = (DB.resignations||[]).filter(r=>{
-    const submitDate = r.submitDate ? new Date(r.submitDate) : null;
-    if(!submitDate) return false;
-    return _hrDaysBetween(submitDate, today) <= 14;
-  });
+  let total = 0, salary = 0, bonus = 0, bh = 0, hc = 0;
   const byDept = {};
-  recent.forEach(r=>{
-    const emp = empById(r.empId);
-    if(!emp) return;
-    const dn = ((DB.departments||[]).find(d=>d.id===emp.deptId)||{}).name || 'Unknown';
-    byDept[dn] = (byDept[dn]||0)+1;
+
+  (DB.employees||[]).forEach(e=>{
+    // Check if active during this month
+    const joined = e.joined ? new Date(e.joined) : null;
+    if(joined && joined > monthEnd) return; // not yet joined
+    // Check resignation
+    const resign = (DB.resignations||[]).find(r=>r.empId===e.id && r.status==='confirmed');
+    if(resign && resign.endDate){
+      const endD = new Date(resign.endDate);
+      if(endD < monthStart) return; // already left
+    } else {
+      // No resignation but is current status exit?
+      if(getEffectiveStatus(e) === 'exit') return;
+    }
+    const ed = cd[e.id]||{};
+    const base = parseInt(ed.baseSalary)||0;
+    const bon = parseInt(ed.bonusSalary)||0;
+    if(base === 0 && bon === 0) return;
+    salary += base;
+    bonus += bon;
+    bh += (base + bon) * bhRate;
+    total += base + bon;
+    hc++;
+    byDept[e.deptId] = (byDept[e.deptId]||0) + base + bon;
   });
-  const clusters = Object.entries(byDept).filter(([d,n])=>n>=3);
-  if(clusters.length === 0) return null;
+
+  return {salary, bonus, bh, total: total + bh, totalPreBH: total, hc, byDept};
+}
+
+// Get casual cost for a month
+function _plGetCasualCost(year, month){
+  let total = 0;
+  let byDept = {};
+  (DB.casuals||[]).forEach(c=>{
+    if(!c.workDate) return;
+    const d = new Date(c.workDate);
+    if(d.getFullYear() !== year || d.getMonth() !== month) return;
+    const cost = (parseFloat(c.dailyRate)||0) * (parseFloat(c.days)||1);
+    total += cost;
+    if(c.deptId) byDept[c.deptId] = (byDept[c.deptId]||0) + cost;
+  });
+  return {total, byDept};
+}
+
+// Get intern cost for a month
+function _plGetInternCost(year, month){
+  const monthStart = new Date(year, month, 1);
+  const monthEnd = new Date(year, month+1, 0);
+  const config = DB.plConfig||{};
+  const dailyCost = parseFloat(config.internDailyCost) || 150000;
+  const fteRatio = parseFloat(config.internFteRatio) || 0.5;
+
+  let activeCount = 0, totalDays = 0;
+  let byDept = {};
+  (DB.trainees||[]).forEach(t=>{
+    if(!t.startDate) return;
+    const start = new Date(t.startDate);
+    const end = t.endDate ? new Date(t.endDate) : new Date();
+    // Active during this month?
+    if(start > monthEnd || end < monthStart) return;
+    // Days in this month
+    const effectiveStart = start > monthStart ? start : monthStart;
+    const effectiveEnd = end < monthEnd ? end : monthEnd;
+    const days = Math.max(0, Math.round((effectiveEnd - effectiveStart)/86400000) + 1);
+    if(days > 0){
+      activeCount++;
+      totalDays += days;
+      const cost = days * dailyCost;
+      if(t.deptId) byDept[t.deptId] = (byDept[t.deptId]||0) + cost;
+    }
+  });
+  return {activeCount, totalDays, totalCost: totalDays * dailyCost, fteEquivalent: activeCount * fteRatio, byDept};
+}
+
+// Get revenue for a month
+function _plGetRevenueMonth(year, month){
+  const r = ((DB.plRevenue||{})[year]||{})[month] || {};
   return {
-    severity: 'P0',
-    icon: '🚨',
-    title: `Bất thường: ${clusters.length} dept có ≥3 đơn nghỉ trong 14 ngày`,
-    detail: clusters.map(([d,n])=>`${d}: ${n} đơn`).join(' · '),
-    action: 'Điều tra nguyên nhân',
-    link: 'workforce'
+    budget: parseFloat(r.budget)||0,
+    actual: parseFloat(r.actual)||0,
   };
 }
 
-function hrPatternManningGap(){
-  const today = new Date();
-  const gaps = hrMetricManningGap(today.getFullYear(), today.getMonth());
-  const shortDepts = gaps.filter(g=>g.status==='short' && Math.abs(g.gapPct) >= 10);
-  if(shortDepts.length === 0) return null;
-  shortDepts.sort((a,b)=>a.gap-b.gap);
-  return {
-    severity: shortDepts.some(g=>Math.abs(g.gapPct)>=20) ? 'P1' : 'P2',
-    icon: '👥',
-    title: `${shortDepts.length} dept thiếu nhân sự so với plan`,
-    detail: shortDepts.slice(0,3).map(g=>`${g.dept}: ${g.actual}/${g.plan} (${g.gap})`).join(' · '),
-    action: 'Đẩy tuyển dụng',
-    link: 'recruitment'
-  };
-}
-
-function hrPatternPendingResignation(){
-  const p = hrMetricResignationPipeline();
-  if(p.pending.length === 0) return null;
-  return {
-    severity: p.pending.length >= 3 ? 'P1' : 'P2',
-    icon: '📝',
-    title: `${p.pending.length} đơn nghỉ chờ duyệt`,
-    detail: p.pending.slice(0,3).map(r=>{
-      const emp = empById(r.empId);
-      return `${emp?.name||'?'} — kết thúc ${r.endDate}`;
-    }).join(' · '),
-    action: 'Xem & duyệt đơn',
-    link: 'workforce'
-  };
-}
-
-function hrPatternTurnoverSpike(){
-  const today = new Date();
-  const curMonth = today.getMonth();
-  const curYear = today.getFullYear();
-  const prevMonth = curMonth === 0 ? 11 : curMonth - 1;
-  const prevYear = curMonth === 0 ? curYear - 1 : curYear;
-  const cur = hrMetricTurnover(curYear, curMonth);
-  const prev = hrMetricTurnover(prevYear, prevMonth);
-  if(cur.rate < 5 || prev.rate < 1) return null; // Bỏ qua khi quá thấp (noise)
-  const delta = cur.rate - prev.rate;
-  if(delta < 3) return null; // Chỉ flag khi tăng đáng kể
-  return {
-    severity: delta >= 8 ? 'P0' : delta >= 5 ? 'P1' : 'P2',
-    icon: '📈',
-    title: `Turnover tăng đột biến tháng này`,
-    detail: `${cur.rate.toFixed(1)}% (${cur.count} người) — tăng ${delta.toFixed(1)}% so tháng trước`,
-    action: 'Phân tích sâu',
-    link: 'analytics'
-  };
-}
-
-function hrPatternHighLeaveBalance(){
-  const today = new Date();
-  if(today.getMonth() < 8) return null; // Chỉ flag từ Q4 trở đi
-  const l = hrMetricLeaveLiability(today.getFullYear());
-  if(l.remainingRate < 50) return null;
-  return {
-    severity: l.remainingRate >= 70 ? 'P1' : 'P2',
-    icon: '🏖️',
-    title: `${l.remainingRate.toFixed(0)}% AL chưa dùng cuối năm`,
-    detail: `${l.empCount} NV có tổng ${l.totalRemain.toFixed(0)} ngày phép còn lại — trung bình ${l.avgRemainPerEmp.toFixed(1)} ngày/NV`,
-    action: 'Đẩy lịch nghỉ phép',
-    link: 'leaves'
-  };
-}
-
-function hrPatternSlowHiring(){
-  const today = new Date();
-  // Vị trí open > 60 ngày chưa hire xong
-  const slowJobs = (DB.jobs||[]).filter(j=>{
-    if(j.status !== 'open') return false;
-    if(!j.openDate) return false;
-    const days = _hrDaysBetween(j.openDate, today);
-    if(days < 60) return false;
-    const hired = getJobHired(j.id);
-    return hired < (j.positions||1);
+// AL/CL liability quy ra tiền
+function _plGetLeaveLiability(year){
+  const sheet = DB.leaveSheet||{};
+  const cd = DB.customData||{};
+  const result = {al:{total:0, days:0}, cl:{total:0, days:0}, byDept:{}};
+  (DB.employees||[]).forEach(e=>{
+    if(getEffectiveStatus(e) === 'exit') return;
+    const sh = sheet[e.id]?.[year];
+    if(!sh) return;
+    const ed = cd[e.id]||{};
+    const dailyRate = ((parseInt(ed.baseSalary)||0) + (parseInt(ed.bonusSalary)||0)) / 26;
+    const dName = ((DB.departments||[]).find(d=>d.id===e.deptId)||{}).name || 'Unknown';
+    if(!result.byDept[dName]) result.byDept[dName] = {al:0, cl:0, alValue:0, clValue:0, count:0};
+    if(sh.al){
+      const carry = parseFloat(sh.al.carry)||0;
+      const entitle = Array.isArray(sh.al.entitle) ? sh.al.entitle.reduce((s,v)=>s+(parseFloat(v)||0),0) : 0;
+      const taken = Array.isArray(sh.al.taken) ? sh.al.taken.reduce((s,v)=>s+(parseFloat(v)||0),0) : 0;
+      const remain = Math.max(0, carry + entitle - taken);
+      result.al.days += remain;
+      result.al.total += remain * dailyRate;
+      result.byDept[dName].al += remain;
+      result.byDept[dName].alValue += remain * dailyRate;
+    }
+    if(sh.cl){
+      const carry = parseFloat(sh.cl.carry)||0;
+      const entitle = Array.isArray(sh.cl.entitle) ? sh.cl.entitle.reduce((s,v)=>s+(parseFloat(v)||0),0) : 0;
+      const taken = Array.isArray(sh.cl.taken) ? sh.cl.taken.reduce((s,v)=>s+(parseFloat(v)||0),0) : 0;
+      const remain = Math.max(0, carry + entitle - taken);
+      result.cl.days += remain;
+      result.cl.total += remain * dailyRate;
+      result.byDept[dName].cl += remain;
+      result.byDept[dName].clValue += remain * dailyRate;
+    }
+    result.byDept[dName].count += 1;
   });
-  if(slowJobs.length === 0) return null;
-  slowJobs.sort((a,b)=>_hrDaysBetween(b.openDate, today)-_hrDaysBetween(a.openDate, today));
-  return {
-    severity: slowJobs.length >= 3 ? 'P1' : 'P2',
-    icon: '⏳',
-    title: `${slowJobs.length} vị trí tuyển > 60 ngày chưa xong`,
-    detail: slowJobs.slice(0,3).map(j=>{
-      const days = _hrDaysBetween(j.openDate, today);
-      return `${j.title} — ${days} ngày`;
-    }).join(' · '),
-    action: 'Review chiến lược tuyển',
-    link: 'recruitment'
-  };
+  return result;
 }
 
-function hrPatternOnboardingRisk(){
-  // NV mới (joined < 90 days) trong dept có turnover cao → flight risk
-  const today = new Date();
-  const newJoiners = (DB.employees||[]).filter(e=>{
-    if(getEffectiveStatus(e) === 'exit') return false;
-    if(!e.joined) return false;
-    const days = _hrDaysBetween(e.joined, today);
-    return days <= 90 && days >= 0;
-  });
-  if(newJoiners.length === 0) return null;
-  // Tính turnover YTD theo dept
-  const turnoverByDept = {};
-  (DB.departments||[]).forEach(d=>{
-    const t = hrMetricTurnoverYTD(today.getFullYear(), d.id);
-    turnoverByDept[d.id] = t.annualizedRate;
-  });
-  const highTurnoverDepts = Object.entries(turnoverByDept).filter(([id,r])=>r >= 25);
-  if(highTurnoverDepts.length === 0) return null;
-  const atRisk = newJoiners.filter(e=>highTurnoverDepts.some(([id,r])=>id===e.deptId));
-  if(atRisk.length === 0) return null;
-  return {
-    severity: 'P2',
-    icon: '⚠️',
-    title: `${atRisk.length} NV mới ở dept có turnover cao`,
-    detail: `Dept ${highTurnoverDepts.map(([id,r])=>((DB.departments||[]).find(d=>d.id===id)||{}).name).join(', ')} có turnover annualized > 25%`,
-    action: 'Tăng support onboarding',
-    link: 'employees'
-  };
-}
 
-function hrPatternOneYearCliff(){
-  // NV gần 1 năm thâm niên (335-365 ngày) — peak risk zone
-  const today = new Date();
-  const oneYearers = (DB.employees||[]).filter(e=>{
-    if(getEffectiveStatus(e) === 'exit') return false;
-    if(!e.joined) return false;
-    const days = _hrDaysBetween(e.joined, today);
-    return days >= 335 && days <= 395;
-  });
-  if(oneYearers.length === 0) return null;
-  return {
-    severity: 'P2',
-    icon: '🎯',
-    title: `${oneYearers.length} NV gần tròn 1 năm — review tăng lương/promote`,
-    detail: oneYearers.slice(0,3).map(e=>{
-      const days = _hrDaysBetween(e.joined, today);
-      return `${e.name} — ${days} ngày`;
-    }).join(' · '),
-    action: 'Lập kế hoạch giữ chân',
-    link: 'employees'
-  };
-}
-
-// ===== PATTERN ORCHESTRATOR =====
-
-function hrIntelDetectAll(){
-  const detectors = [
-    hrPatternProbationExpiringNoAction,
-    hrPatternContractExpiring,
-    hrPatternResignationCluster,
-    hrPatternManningGap,
-    hrPatternPendingResignation,
-    hrPatternTurnoverSpike,
-    hrPatternHighLeaveBalance,
-    hrPatternSlowHiring,
-    hrPatternOnboardingRisk,
-    hrPatternOneYearCliff,
-  ];
-  const alerts = [];
-  detectors.forEach(fn=>{
-    try { const r = fn(); if(r) alerts.push(r); }
-    catch(e){ console.warn('[HR Intel] Pattern detector failed:', fn.name, e); }
-  });
-  // Sort: P0 → P1 → P2
-  const priority = { P0:0, P1:1, P2:2 };
-  alerts.sort((a,b)=>(priority[a.severity]||9)-(priority[b.severity]||9));
-  return alerts;
-}
-
-// ===== NEW METRICS FOR HRM-FOCUSED VIEW =====
-
-function hrMetricActionItems(){
-  // Tổng hợp tất cả việc cần làm trong tuần
-  return _hrIntelCacheGet('actionItems', ()=>{
-    const today = new Date();
-    const tomorrow = new Date(today); tomorrow.setDate(today.getDate()+1);
-    const thisWeekEnd = new Date(today); thisWeekEnd.setDate(today.getDate()+7);
-    const items = [];
-
-    // 1. Đơn nghỉ phép pending
-    (DB.leaves||[]).forEach(l=>{
-      if(l.status === 'pending'){
-        const days = l.requestDate ? _hrDaysBetween(l.requestDate, today) : 0;
-        items.push({
-          urgency: days >= 3 ? 'today' : 'week',
-          icon: '🌴',
-          title: `Duyệt đơn nghỉ phép: ${empById(l.empId)?.name||'?'}`,
-          detail: `Từ ${l.startDate} đến ${l.endDate} · ${l.type||'AL'} · đã chờ ${days} ngày`,
-          action: 'Xem & duyệt',
-          link: 'leaves'
-        });
-      }
-    });
-
-    // 2. Đơn nghỉ việc pending
-    (DB.resignations||[]).filter(r=>r.status==='pending').forEach(r=>{
-      const emp = empById(r.empId);
-      items.push({
-        urgency: 'today',
-        icon: '📝',
-        title: `Duyệt đơn nghỉ việc: ${emp?.name||'?'}`,
-        detail: `Kết thúc ${r.endDate} · ${r.reason||'(no reason)'}`,
-        action: 'Xem & duyệt',
-        link: 'workforce'
-      });
-    });
-
-    // 3. Thử việc quá hạn / sắp hết
-    const probation = hrMetricProbation();
-    probation.overdue.forEach(p=>{
-      items.push({
-        urgency: 'today',
-        icon: '⏰',
-        title: `Đánh giá thử việc: ${p.name}`,
-        detail: `${p.dept} · QUÁ HẠN ${Math.abs(p.daysLeft)} ngày`,
-        action: 'Đánh giá ngay',
-        link: 'contracts'
-      });
-    });
-    probation.expiring7.forEach(p=>{
-      items.push({
-        urgency: 'week',
-        icon: '⏰',
-        title: `Đánh giá thử việc: ${p.name}`,
-        detail: `${p.dept} · còn ${p.daysLeft} ngày`,
-        action: 'Đánh giá',
-        link: 'contracts'
-      });
-    });
-
-    // 4. HĐ hết hạn 7 ngày tới
-    const contracts = hrMetricContractExpiry();
-    contracts.overdue.forEach(c=>{
-      items.push({
-        urgency: 'today',
-        icon: '📋',
-        title: `HĐ quá hạn: ${c.name}`,
-        detail: `${c.dept} · QUÁ ${Math.abs(c.daysLeft)} ngày · ${c.contractType||''}`,
-        action: 'Xử lý',
-        link: 'contracts'
-      });
-    });
-    contracts.expiring30.filter(c=>c.daysLeft<=7).forEach(c=>{
-      items.push({
-        urgency: 'week',
-        icon: '📋',
-        title: `HĐ sắp hết: ${c.name}`,
-        detail: `${c.dept} · còn ${c.daysLeft} ngày · ${c.contractType||''}`,
-        action: 'Lên kế hoạch',
-        link: 'contracts'
-      });
-    });
-
-    // 5. Sinh nhật trong tuần
-    (DB.employees||[]).forEach(e=>{
-      if(getEffectiveStatus(e)==='exit') return;
-      if(!e.dob) return;
-      const dob = new Date(e.dob);
-      if(isNaN(dob)) return;
-      const thisYearBday = new Date(today.getFullYear(), dob.getMonth(), dob.getDate());
-      const daysToBday = _hrDaysBetween(today, thisYearBday);
-      if(daysToBday >= 0 && daysToBday <= 7){
-        items.push({
-          urgency: daysToBday <= 1 ? 'today' : 'week',
-          icon: '🎂',
-          title: `Sinh nhật: ${e.name}`,
-          detail: `${((DB.departments||[]).find(d=>d.id===e.deptId)||{}).name||''} · ${daysToBday===0?'HÔM NAY':daysToBday===1?'NGÀY MAI':`${daysToBday} ngày nữa`}`,
-          action: 'Gửi lời chúc',
-          link: 'birthdays'
-        });
-      }
-    });
-
-    // 6. NV mới tuần này (cần onboarding)
-    (DB.employees||[]).forEach(e=>{
-      if(!e.joined) return;
-      const joined = new Date(e.joined);
-      const days = _hrDaysBetween(joined, today);
-      if(days >= -7 && days <= 7){
-        items.push({
-          urgency: days <= 0 ? 'week' : (days <= 3 ? 'today' : 'week'),
-          icon: '👋',
-          title: `NV mới: ${e.name}`,
-          detail: `${((DB.departments||[]).find(d=>d.id===e.deptId)||{}).name||''} · ${days<0?`vào sau ${-days} ngày`:days===0?'vào hôm nay':`đã vào ${days} ngày`}`,
-          action: 'Check onboarding',
-          link: 'employees'
-        });
-      }
-    });
-
-    // 7. Resignation effective trong tuần (NV sắp nghỉ thật)
-    (DB.resignations||[]).filter(r=>r.status==='confirmed').forEach(r=>{
-      if(!r.endDate) return;
-      const end = new Date(r.endDate);
-      const days = _hrDaysBetween(today, end);
-      if(days >= 0 && days <= 7){
-        const emp = empById(r.empId);
-        items.push({
-          urgency: days <= 2 ? 'today' : 'week',
-          icon: '👋',
-          title: `NV rời: ${emp?.name||'?'}`,
-          detail: `${((DB.departments||[]).find(d=>d.id===emp?.deptId)||{}).name||''} · còn ${days} ngày · ${r.reason||''}`,
-          action: 'Exit interview & handover',
-          link: 'workforce'
-        });
-      }
-    });
-
-    return {
-      today: items.filter(i=>i.urgency==='today'),
-      week: items.filter(i=>i.urgency==='week'),
-      total: items.length,
-    };
-  });
-}
-
-function hrMetricCostLiability(year){
-  // Cost & Liability metrics quan trọng cho FC
-  return _hrIntelCacheGet(`costLiab_${year}`, ()=>{
-    const cd = DB.customData||{};
-    // 1. Total Payroll (sum baseSalary + bonusSalary)
-    let totalPayroll = 0, payrollByDept = {};
-    let totalHC = 0;
-    (DB.employees||[]).forEach(e=>{
-      if(getEffectiveStatus(e)==='exit') return;
-      const ed = cd[e.id]||{};
-      const base = parseInt(ed.baseSalary)||0;
-      const bonus = parseInt(ed.bonusSalary)||0;
-      const total = base + bonus;
-      totalPayroll += total;
-      totalHC++;
-      const deptName = ((DB.departments||[]).find(d=>d.id===e.deptId)||{}).name || 'Unknown';
-      payrollByDept[deptName] = (payrollByDept[deptName]||0) + total;
-    });
-
-    // 2. AL Liability (tiền phép chưa dùng × lương ngày)
-    const sheet = DB.leaveSheet||{};
-    let totalALDaysRemain = 0, totalALLiability = 0;
-    let empALCount = 0;
-    (DB.employees||[]).forEach(e=>{
-      if(getEffectiveStatus(e)==='exit') return;
-      const sh = (sheet[e.id]||{})[year]?.al;
-      if(!sh) return;
-      const carry = parseFloat(sh.carry)||0;
-      const entitle = Array.isArray(sh.entitle) ? sh.entitle.reduce((s,v)=>s+(parseFloat(v)||0),0) : 0;
-      const taken = Array.isArray(sh.taken) ? sh.taken.reduce((s,v)=>s+(parseFloat(v)||0),0) : 0;
-      const clearAL = parseFloat(sh.clearAL)||0;
-      const remain = Math.max(0, carry + entitle - taken - clearAL);
-      if(remain > 0){
-        totalALDaysRemain += remain;
-        // Lương ngày = (base + bonus) / 26 (số ngày công chuẩn)
-        const ed = cd[e.id]||{};
-        const dailyRate = ((parseInt(ed.baseSalary)||0) + (parseInt(ed.bonusSalary)||0)) / 26;
-        totalALLiability += remain * dailyRate;
-        empALCount++;
-      }
-    });
-
-    // 3. Casual cost trong year
-    let totalCasualCost = 0, casualByMonth = Array(12).fill(0);
-    (DB.casuals||[]).forEach(c=>{
-      if(!c.workDate) return;
-      const d = new Date(c.workDate);
-      if(isNaN(d) || d.getFullYear() !== year) return;
-      const cost = (parseFloat(c.dailyRate)||0) * (parseFloat(c.days)||1);
-      totalCasualCost += cost;
-      casualByMonth[d.getMonth()] += cost;
-    });
-
-    // 4. Training cost trong year
-    let totalTrainingCost = 0;
-    (DB.courses||[]).forEach(c=>{
-      if(!c.startDate) return;
-      const d = new Date(c.startDate);
-      if(isNaN(d) || d.getFullYear() !== year) return;
-      totalTrainingCost += parseInt(c.cost)||0;
-    });
-
-    return {
-      totalPayroll, totalHC,
-      avgSalaryPerHC: totalHC>0 ? totalPayroll/totalHC : 0,
-      payrollByDept,
-      totalALDaysRemain, totalALLiability, empALCount,
-      avgALPerEmp: empALCount>0 ? totalALDaysRemain/empALCount : 0,
-      totalCasualCost, casualByMonth,
-      totalTrainingCost,
-    };
-  });
-}
-
-function hrMetricUpcomingMovement(){
-  // NV sắp vào & sắp rời trong 30 ngày
-  return _hrIntelCacheGet('upcomingMovement', ()=>{
-    const today = new Date();
-    const in30 = new Date(today); in30.setDate(today.getDate()+30);
-    // Sắp vào: candidates đã hire với hiredDate >= today
-    const upcomingJoiners = (DB.candidates||[]).filter(c=>{
-      if(c.status !== 'hired' || !c.hiredDate) return false;
-      const h = new Date(c.hiredDate);
-      return !isNaN(h) && h >= today && h <= in30;
-    }).map(c=>{
-      const job = (DB.jobs||[]).find(j=>j.id===c.jobId);
-      return {
-        name: c.name,
-        position: job?.title||'',
-        dept: job?(((DB.departments||[]).find(d=>d.id===job.deptId)||{}).name||''):'',
-        joinDate: c.hiredDate,
-        daysToJoin: _hrDaysBetween(today, c.hiredDate),
-      };
-    }).sort((a,b)=>a.daysToJoin-b.daysToJoin);
-    // Sắp rời: resignations confirmed với endDate >= today
-    const upcomingLeavers = (DB.resignations||[]).filter(r=>{
-      if(r.status !== 'confirmed' || !r.endDate) return false;
-      const e = new Date(r.endDate);
-      return !isNaN(e) && e >= today && e <= in30;
-    }).map(r=>{
-      const emp = empById(r.empId);
-      return {
-        name: emp?.name||r.empId,
-        dept: ((DB.departments||[]).find(d=>d.id===emp?.deptId)||{}).name||'',
-        role: emp?.role||'',
-        leaveDate: r.endDate,
-        daysToLeave: _hrDaysBetween(today, r.endDate),
-        reason: r.reason||''
-      };
-    }).sort((a,b)=>a.daysToLeave-b.daysToLeave);
-    return { upcomingJoiners, upcomingLeavers };
-  });
-}
-
-function hrMetricLongTenureMilestones(){
-  // NV sắp tròn 1/3/5/10 năm
-  return _hrIntelCacheGet('milestones', ()=>{
-    const today = new Date();
-    const in30 = new Date(today); in30.setDate(today.getDate()+30);
-    const milestoneYears = [1, 3, 5, 10, 15, 20];
-    const milestones = [];
-    (DB.employees||[]).forEach(e=>{
-      if(getEffectiveStatus(e)==='exit') return;
-      if(!e.joined) return;
-      const joined = new Date(e.joined);
-      if(isNaN(joined)) return;
-      milestoneYears.forEach(yr=>{
-        const milestoneDate = new Date(joined);
-        milestoneDate.setFullYear(milestoneDate.getFullYear() + yr);
-        if(milestoneDate >= today && milestoneDate <= in30){
-          milestones.push({
-            empId: e.id,
-            name: e.name,
-            dept: ((DB.departments||[]).find(d=>d.id===e.deptId)||{}).name||'',
-            role: e.role,
-            yearsAchieving: yr,
-            milestoneDate: milestoneDate.toISOString().slice(0,10),
-            daysLeft: _hrDaysBetween(today, milestoneDate),
-          });
-        }
-      });
-    });
-    return milestones.sort((a,b)=>a.daysLeft-b.daysLeft);
-  });
-}
-
-function hrMetricDataQuality(){
-  // Đánh giá chất lượng data hiện có để cảnh báo metric nào tin cậy được
-  return _hrIntelCacheGet('dataQuality', ()=>{
-    const emps = DB.employees||[];
-    const activeEmps = emps.filter(e=>getEffectiveStatus(e)!=='exit');
-    const cd = DB.customData||{};
-    // Đếm % NV có data đầy đủ cho từng field
-    let withDob = 0, withJoined = 0, withSalary = 0, withContract = 0;
-    activeEmps.forEach(e=>{
-      if(e.dob) withDob++;
-      if(e.joined) withJoined++;
-      const ed = cd[e.id]||{};
-      if(ed.baseSalary && parseInt(ed.baseSalary)>0) withSalary++;
-      if(ed.currentContractType || ed.currentContractEnd) withContract++;
-    });
-    // Resignations count
-    const resignationsCount = (DB.resignations||[]).length;
-    // Data history span
-    const allDates = [];
-    emps.forEach(e=>{ if(e.joined) allDates.push(new Date(e.joined)); });
-    (DB.resignations||[]).forEach(r=>{ if(r.endDate) allDates.push(new Date(r.endDate)); });
-    const validDates = allDates.filter(d=>!isNaN(d));
-    const oldest = validDates.length>0 ? new Date(Math.min(...validDates.map(d=>d.getTime()))) : null;
-    const historyMonths = oldest ? Math.round((Date.now()-oldest.getTime())/(86400000*30)) : 0;
-    const total = activeEmps.length;
-    return {
-      total,
-      historyMonths,
-      pctDob: total>0 ? Math.round(withDob/total*100) : 0,
-      pctJoined: total>0 ? Math.round(withJoined/total*100) : 0,
-      pctSalary: total>0 ? Math.round(withSalary/total*100) : 0,
-      pctContract: total>0 ? Math.round(withContract/total*100) : 0,
-      resignationsCount,
-      // Confidence levels
-      turnoverConf: historyMonths >= 18 ? 'high' : historyMonths >= 12 ? 'medium' : 'low',
-      retentionConf: historyMonths >= 24 ? 'high' : historyMonths >= 18 ? 'medium' : 'low',
-      payrollConf: total>0 && withSalary/total >= 0.8 ? 'high' : withSalary/total >= 0.5 ? 'medium' : 'low',
-    };
-  });
-}
-
-function renderHRPulse(targetSelector='#hrPulseContainer'){
-  const el = document.querySelector(targetSelector);
-  if(!el) return;
-  const alerts = hrIntelDetectAll();
-  if(alerts.length === 0){
-    el.innerHTML = `
-      <div style="background:linear-gradient(135deg,rgba(126,198,153,.08),rgba(126,198,153,.02));border:1px solid rgba(126,198,153,.2);border-radius:10px;padding:14px 18px;display:flex;align-items:center;gap:12px">
-        <div style="font-size:24px">✨</div>
-        <div>
-          <div style="font-weight:600;color:var(--success);font-size:14px">Mọi việc đang ổn</div>
-          <div style="font-size:12px;color:var(--ink-dim);margin-top:2px">Không phát hiện vấn đề cần xử lý ngay</div>
-        </div>
-      </div>`;
-    return;
-  }
-  const sevColor = { P0:'var(--danger)', P1:'var(--warning)', P2:'var(--info)' };
-  const sevBg = { P0:'rgba(212,127,127,.08)', P1:'rgba(255,160,80,.08)', P2:'rgba(126,182,232,.06)' };
-  const sevBorder = { P0:'rgba(212,127,127,.25)', P1:'rgba(255,160,80,.25)', P2:'rgba(126,182,232,.2)' };
-  const p0 = alerts.filter(a=>a.severity==='P0');
-  const p1 = alerts.filter(a=>a.severity==='P1');
-  const p2 = alerts.filter(a=>a.severity==='P2');
-  el.innerHTML = `
-    <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:12px;padding:16px 18px">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px">
-        <div style="display:flex;align-items:center;gap:10px">
-          <div style="font-size:20px">📡</div>
-          <div>
-            <div style="font-weight:700;font-size:14px;color:var(--ink)">HR Pulse</div>
-            <div style="font-size:11px;color:var(--ink-muted)">${alerts.length} vấn đề phát hiện · ${p0.length} khẩn, ${p1.length} tuần này, ${p2.length} tham khảo</div>
-          </div>
-        </div>
-        <div style="display:flex;gap:6px;font-size:11px">
-          ${p0.length>0?`<span style="background:rgba(212,127,127,.15);color:var(--danger);padding:3px 10px;border-radius:12px;font-weight:600">🔴 ${p0.length} P0</span>`:''}
-          ${p1.length>0?`<span style="background:rgba(255,160,80,.15);color:var(--warning);padding:3px 10px;border-radius:12px;font-weight:600">🟡 ${p1.length} P1</span>`:''}
-          ${p2.length>0?`<span style="background:rgba(126,182,232,.15);color:var(--info);padding:3px 10px;border-radius:12px;font-weight:600">🟢 ${p2.length} P2</span>`:''}
-        </div>
-      </div>
-      <div style="display:grid;gap:8px">
-        ${alerts.slice(0,7).map(a=>`
-          <div style="background:${sevBg[a.severity]};border:1px solid ${sevBorder[a.severity]};border-left:3px solid ${sevColor[a.severity]};border-radius:8px;padding:10px 14px;display:flex;align-items:center;gap:12px">
-            <div style="font-size:18px;flex-shrink:0">${a.icon}</div>
-            <div style="flex:1;min-width:0">
-              <div style="font-weight:600;font-size:13px;color:var(--ink);line-height:1.3">${escapeHtml(a.title)}</div>
-              <div style="font-size:11.5px;color:var(--ink-dim);margin-top:3px;line-height:1.4">${escapeHtml(a.detail)}</div>
-            </div>
-            <button onclick="navigate('${a.link}')" style="background:transparent;border:1px solid ${sevBorder[a.severity]};color:${sevColor[a.severity]};padding:6px 12px;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap;flex-shrink:0" onmouseover="this.style.background='${sevColor[a.severity]}';this.style.color='#000'" onmouseout="this.style.background='transparent';this.style.color='${sevColor[a.severity]}'">${escapeHtml(a.action)} →</button>
-          </div>
-        `).join('')}
-        ${alerts.length > 7 ? `<div style="text-align:center;font-size:11px;color:var(--ink-muted);padding:4px">và ${alerts.length-7} cảnh báo P2 khác</div>` : ''}
-      </div>
-    </div>`;
-}
-
+// ===== MAIN RENDER =====
 function renderAnalytics(main){
   const today = new Date();
-  const dq = hrMetricDataQuality();
-  const currentTab = window._hrIntelTab || 'action';
+  const curYear = window._plYear || today.getFullYear();
+  const curMonth = window._plMonth !== undefined ? window._plMonth : today.getMonth();
+  const currentTab = window._plTab || 'labor';
 
-  const confBadge = (conf) => {
-    const colors = {high:'var(--success)',medium:'var(--warning)',low:'var(--danger)'};
-    const labels = {high:'🟢 Đủ data',medium:'🟡 Data hạn chế',low:'🔴 Data ít'};
-    return `<span style="font-size:9.5px;background:rgba(255,255,255,.05);color:${colors[conf]};padding:2px 8px;border-radius:10px;font-weight:600;letter-spacing:.02em">${labels[conf]}</span>`;
-  };
+  if(!window._plYear) window._plYear = curYear;
+  if(window._plMonth === undefined) window._plMonth = curMonth;
 
-  const fmtMoneyShort = (v) => {
-    if(!v) return '0';
-    if(v >= 1e9) return (v/1e9).toFixed(1)+' tỷ';
-    if(v >= 1e6) return (v/1e6).toFixed(1)+' tr';
-    if(v >= 1e3) return (v/1e3).toFixed(0)+'k';
-    return v.toFixed(0);
-  };
+  const MN_FULL = ['Tháng 1','Tháng 2','Tháng 3','Tháng 4','Tháng 5','Tháng 6','Tháng 7','Tháng 8','Tháng 9','Tháng 10','Tháng 11','Tháng 12'];
+  const years = [today.getFullYear()-1, today.getFullYear(), today.getFullYear()+1];
 
   const tabs = [
-    {k:'action',     icon:'🎯', label:'Hôm nay',    sub:'Việc cần làm'},
-    {k:'snapshot',   icon:'📊', label:'Snapshot',   sub:'Tuần/Tháng này'},
-    {k:'workforce',  icon:'👥', label:'Manning',    sub:'NS & Tuyển dụng'},
-    {k:'compliance', icon:'⚖️', label:'Compliance', sub:'HĐ & Pháp lý'},
-    {k:'cost',       icon:'💰', label:'Cost',       sub:'Chi phí & Liability'},
-    {k:'retention',  icon:'🌡️', label:'Retention',  sub:'Giữ chân & Trend'},
+    {k:'labor',     icon:'💰', label:'Labor Cost',       sub:'Budget vs Actual'},
+    {k:'manpower',  icon:'👥', label:'Manpower',         sub:'HC by Dept'},
+    {k:'productivity',icon:'📈',label:'Productivity',    sub:'Revenue/Employee'},
+    {k:'liability', icon:'🏖️', label:'AL/CL Liability',  sub:'Quy ra tiền'},
+    {k:'recruitment',icon:'🎯',label:'Recruitment Risk', sub:'Vacancy'},
+    {k:'action',    icon:'📋', label:'HR Action Plan',   sub:'Update hàng tháng'},
   ];
 
   main.innerHTML = `
     <div class="topbar">
       <div class="topbar-left">
-        <div class="crumb">Tổng quan · <span>HR Intelligence</span></div>
-        <h1 class="page-title">HR <em>Intelligence</em></h1>
-        <div class="page-sub">Trợ lý thông minh cho HRM · Phát hiện vấn đề sớm · Hành động ngay</div>
+        <div class="crumb">Tổng quan · <span>HR P&L Review</span></div>
+        <h1 class="page-title">HR <em>P&L Review</em></h1>
+        <div class="page-sub">Dashboard cho cuộc họp P&L hàng tháng · Labor Cost · Productivity · Recruitment Risk</div>
       </div>
-      <div class="topbar-right">
-        <div style="display:flex;gap:8px;align-items:center;font-size:11px;color:var(--ink-muted);flex-wrap:wrap">
-          <span>Data: <b style="color:var(--ink)">${dq.historyMonths} tháng</b></span><span>·</span>
-          <span><b style="color:var(--ink)">${dq.total}</b> NV active</span><span>·</span>
-          <span><b style="color:var(--ink)">${dq.resignationsCount}</b> resignation</span>
-        </div>
+      <div class="topbar-right" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <select onchange="window._plYear=parseInt(this.value);render()" style="background:var(--bg-card);color:var(--ink);border:1px solid var(--border);padding:6px 12px;border-radius:6px;font-size:12px">
+          ${years.map(y=>`<option value="${y}" ${y===curYear?'selected':''}>${y}</option>`).join('')}
+        </select>
+        <select onchange="window._plMonth=parseInt(this.value);render()" style="background:var(--bg-card);color:var(--ink);border:1px solid var(--border);padding:6px 12px;border-radius:6px;font-size:12px">
+          ${MN_FULL.map((m,i)=>`<option value="${i}" ${i===curMonth?'selected':''}>${m}</option>`).join('')}
+        </select>
+        <button onclick="window.print()" style="background:transparent;color:var(--ink-dim);border:1px solid var(--border);padding:6px 12px;border-radius:6px;font-size:12px;cursor:pointer" title="In ra để mang vào họp P&L">🖨 In</button>
       </div>
     </div>
 
+    <style>
+      .pl-card{background:var(--bg-card);border:1px solid var(--border);border-radius:12px;padding:18px 20px;margin-bottom:16px}
+      .pl-kpi-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}
+      .pl-kpi{background:var(--bg-elev);padding:14px 16px;border-radius:10px;border-left:3px solid var(--accent)}
+      .pl-kpi-label{font-size:10.5px;color:var(--ink-muted);text-transform:uppercase;letter-spacing:.05em;font-weight:600;margin-bottom:6px}
+      .pl-kpi-value{font-family:'JetBrains Mono',monospace;font-size:22px;font-weight:700;color:var(--ink)}
+      .pl-kpi-sub{font-size:11px;color:var(--ink-dim);margin-top:4px}
+      .pl-table{width:100%;border-collapse:collapse;font-size:12.5px}
+      .pl-table th{padding:9px 8px;text-align:left;font-size:10.5px;color:var(--ink-muted);text-transform:uppercase;letter-spacing:.04em;font-weight:600;border-bottom:1px solid var(--border-strong)}
+      .pl-table td{padding:8px;border-bottom:1px solid rgba(255,255,255,.04)}
+      .pl-table tfoot td{font-weight:700;border-top:2px solid var(--border-strong);background:var(--bg-elev)}
+      .pl-num{font-family:'JetBrains Mono',monospace;text-align:right;font-weight:600}
+      .pl-good{color:var(--success)}
+      .pl-bad{color:var(--danger)}
+      .pl-warn{color:var(--warning)}
+      @media print {
+        body{background:white;color:black}
+        .sidebar,.topbar-right{display:none !important}
+      }
+    </style>
+
+    <!-- Tab navigation -->
     <div style="display:flex;gap:4px;border-bottom:1px solid var(--border);margin-bottom:20px;overflow-x:auto;padding-bottom:0">
       ${tabs.map(t=>`
-        <button onclick="window._hrIntelTab='${t.k}';navigate('analytics')"
-          style="background:${currentTab===t.k?'var(--bg-card)':'transparent'};border:0;border-bottom:2px solid ${currentTab===t.k?'var(--accent)':'transparent'};color:${currentTab===t.k?'var(--accent)':'var(--ink-dim)'};padding:10px 14px;cursor:pointer;font-weight:600;font-size:12.5px;white-space:nowrap;display:flex;align-items:center;gap:8px">
-          <span style="font-size:16px">${t.icon}</span>
+        <button onclick="window._plTab='${t.k}';navigate('analytics')"
+          style="background:${currentTab===t.k?'var(--bg-card)':'transparent'};border:0;border-bottom:2px solid ${currentTab===t.k?'var(--accent)':'transparent'};color:${currentTab===t.k?'var(--accent)':'var(--ink-dim)'};padding:11px 16px;cursor:pointer;font-weight:600;font-size:12.5px;white-space:nowrap;display:flex;align-items:center;gap:9px">
+          <span style="font-size:18px">${t.icon}</span>
           <div style="text-align:left">
             <div>${t.label}</div>
-            <div style="font-size:10px;color:var(--ink-muted);font-weight:400">${t.sub}</div>
+            <div style="font-size:9.5px;color:var(--ink-muted);font-weight:400">${t.sub}</div>
           </div>
         </button>
       `).join('')}
     </div>
 
-    <div id="hrIntelContent"></div>
+    <div id="plContent"></div>
   `;
 
-  const content = document.getElementById('hrIntelContent');
-  if(currentTab === 'action')          _renderTabAction(content, dq);
-  else if(currentTab === 'snapshot')   _renderTabSnapshot(content, dq, fmtMoneyShort);
-  else if(currentTab === 'workforce')  _renderTabWorkforce(content, dq, confBadge);
-  else if(currentTab === 'compliance') _renderTabCompliance(content);
-  else if(currentTab === 'cost')       _renderTabCost(content, dq, fmtMoneyShort, confBadge);
-  else if(currentTab === 'retention')  _renderTabRetention(content, dq, confBadge);
+  const content = document.getElementById('plContent');
+  if(currentTab === 'labor')         _plRenderLaborCost(content, curYear, curMonth);
+  else if(currentTab === 'manpower') _plRenderManpower(content, curYear, curMonth);
+  else if(currentTab === 'productivity') _plRenderProductivity(content, curYear, curMonth);
+  else if(currentTab === 'liability')_plRenderLiability(content, curYear, curMonth);
+  else if(currentTab === 'recruitment')_plRenderRecruitmentRisk(content, curYear, curMonth);
+  else if(currentTab === 'action')   _plRenderActionPlan(content, curYear, curMonth);
 }
 
-function _renderTabAction(el, dq){
-  const items = hrMetricActionItems();
-  const alerts = hrIntelDetectAll();
-  const p0 = alerts.filter(a=>a.severity==='P0');
-  const p1 = alerts.filter(a=>a.severity==='P1');
-  const milestones = hrMetricLongTenureMilestones();
+// ===== TAB 1: LABOR COST =====
+function _plRenderLaborCost(el, year, month){
+  // Budget ĐÃ LÀ MONTHLY (budgetSalary in Manning is per-NV per-month, × planned = monthly)
+  const budget = _plGetPayrollBudgetMonth(year, month);
+  const actual = _plGetPayrollActualMonth(year, month);
+  const casual = _plGetCasualCost(year, month);
+  const intern = _plGetInternCost(year, month);
 
-  const renderItem = (item) => `
-    <div style="background:var(--bg-card);border:1px solid var(--border);border-left:3px solid ${item.urgency==='today'?'var(--danger)':'var(--warning)'};border-radius:8px;padding:12px 14px;display:flex;align-items:center;gap:12px">
-      <div style="font-size:20px;flex-shrink:0">${item.icon}</div>
-      <div style="flex:1;min-width:0">
-        <div style="font-weight:600;font-size:13px;color:var(--ink);line-height:1.3">${escapeHtml(item.title)}</div>
-        <div style="font-size:11.5px;color:var(--ink-muted);margin-top:3px">${escapeHtml(item.detail)}</div>
-      </div>
-      <button onclick="navigate('${item.link}')" style="background:transparent;border:1px solid var(--border);color:var(--ink-dim);padding:6px 12px;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap;flex-shrink:0">${escapeHtml(item.action)} →</button>
-    </div>
-  `;
+  // Total Labor Cost actual = payroll actual + casual + intern
+  const totalActual = actual.total + casual.total + intern.totalCost;
+  const totalBudget = budget.total;
+  const variance = totalBudget - totalActual; // positive = under budget (good)
+  const variancePct = totalBudget > 0 ? (variance/totalBudget*100) : null;
 
-  el.innerHTML = `
-    ${(p0.length + items.today.length) === 0 ? `
-      <div style="background:linear-gradient(135deg,rgba(126,198,153,.08),rgba(126,198,153,.02));border:1px solid rgba(126,198,153,.2);border-radius:12px;padding:20px;display:flex;align-items:center;gap:14px;margin-bottom:20px">
-        <div style="font-size:32px">✨</div>
-        <div>
-          <div style="font-weight:700;color:var(--success);font-size:15px">Không có việc khẩn hôm nay</div>
-          <div style="font-size:12px;color:var(--ink-dim);margin-top:2px">Mọi việc đang trong tầm kiểm soát. Xem các tab khác để planning dài hạn.</div>
-        </div>
-      </div>
-    ` : ''}
-
-    ${p0.length > 0 ? `
-      <div style="margin-bottom:24px">
-        <h3 style="font-size:14px;font-weight:700;color:var(--danger);margin:0 0 12px;display:flex;align-items:center;gap:8px">
-          🚨 CẢNH BÁO KHẨN <span style="background:var(--danger);color:#000;padding:2px 8px;border-radius:10px;font-size:11px">${p0.length}</span>
-        </h3>
-        <div style="display:grid;gap:8px">
-          ${p0.map(a=>`
-            <div style="background:rgba(212,127,127,.06);border:1px solid rgba(212,127,127,.2);border-left:3px solid var(--danger);border-radius:8px;padding:12px 14px;display:flex;align-items:center;gap:12px">
-              <div style="font-size:20px;flex-shrink:0">${a.icon}</div>
-              <div style="flex:1;min-width:0">
-                <div style="font-weight:600;font-size:13px;color:var(--ink);line-height:1.3">${escapeHtml(a.title)}</div>
-                <div style="font-size:11.5px;color:var(--ink-muted);margin-top:3px">${escapeHtml(a.detail)}</div>
-              </div>
-              <button onclick="navigate('${a.link}')" style="background:var(--danger);border:0;color:#000;padding:7px 14px;border-radius:6px;font-size:11px;font-weight:700;cursor:pointer">${escapeHtml(a.action)} →</button>
-            </div>
-          `).join('')}
-        </div>
-      </div>
-    ` : ''}
-
-    ${items.today.length > 0 ? `
-      <div style="margin-bottom:24px">
-        <h3 style="font-size:14px;font-weight:700;color:var(--ink);margin:0 0 12px;display:flex;align-items:center;gap:8px">
-          🔴 HÔM NAY <span style="background:var(--bg-card);border:1px solid var(--border);color:var(--ink-dim);padding:2px 8px;border-radius:10px;font-size:11px">${items.today.length}</span>
-        </h3>
-        <div style="display:grid;gap:8px">${items.today.map(renderItem).join('')}</div>
-      </div>
-    ` : ''}
-
-    ${items.week.length > 0 ? `
-      <div style="margin-bottom:24px">
-        <h3 style="font-size:14px;font-weight:700;color:var(--ink);margin:0 0 12px;display:flex;align-items:center;gap:8px">
-          🟡 LÀM TRONG TUẦN <span style="background:var(--bg-card);border:1px solid var(--border);color:var(--ink-dim);padding:2px 8px;border-radius:10px;font-size:11px">${items.week.length}</span>
-        </h3>
-        <div style="display:grid;gap:8px">${items.week.map(renderItem).join('')}</div>
-      </div>
-    ` : ''}
-
-    ${p1.length > 0 ? `
-      <div style="margin-bottom:24px">
-        <h3 style="font-size:14px;font-weight:700;color:var(--warning);margin:0 0 12px;display:flex;align-items:center;gap:8px">
-          ⚠️ THEO DÕI THÊM <span style="background:var(--bg-card);border:1px solid var(--border);color:var(--ink-dim);padding:2px 8px;border-radius:10px;font-size:11px">${p1.length}</span>
-        </h3>
-        <div style="display:grid;gap:8px">
-          ${p1.slice(0,5).map(a=>`
-            <div style="background:rgba(255,160,80,.04);border:1px solid rgba(255,160,80,.15);border-left:3px solid var(--warning);border-radius:8px;padding:11px 14px;display:flex;align-items:center;gap:12px">
-              <div style="font-size:18px;flex-shrink:0">${a.icon}</div>
-              <div style="flex:1;min-width:0">
-                <div style="font-weight:600;font-size:12.5px;color:var(--ink);line-height:1.3">${escapeHtml(a.title)}</div>
-                <div style="font-size:11px;color:var(--ink-muted);margin-top:3px">${escapeHtml(a.detail)}</div>
-              </div>
-              <button onclick="navigate('${a.link}')" style="background:transparent;border:1px solid rgba(255,160,80,.3);color:var(--warning);padding:5px 11px;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer">${escapeHtml(a.action)} →</button>
-            </div>
-          `).join('')}
-        </div>
-      </div>
-    ` : ''}
-
-    ${milestones.length > 0 ? `
-      <div style="margin-top:24px">
-        <h3 style="font-size:14px;font-weight:700;color:var(--info);margin:0 0 12px;display:flex;align-items:center;gap:8px">
-          🎉 KỶ NIỆM CÔNG TÁC 30 NGÀY TỚI <span style="background:var(--bg-card);border:1px solid var(--border);color:var(--ink-dim);padding:2px 8px;border-radius:10px;font-size:11px">${milestones.length}</span>
-        </h3>
-        <div style="display:grid;gap:6px;background:var(--bg-card);border:1px solid var(--border);border-radius:8px;padding:12px">
-          ${milestones.slice(0,10).map(m=>`
-            <div style="display:flex;align-items:center;gap:10px;font-size:12px;padding:4px 0">
-              <div style="background:rgba(126,182,232,.15);color:var(--info);padding:2px 8px;border-radius:10px;font-weight:700;font-size:11px;min-width:46px;text-align:center">${m.yearsAchieving} năm</div>
-              <div style="flex:1"><b>${escapeHtml(m.name)}</b> <span style="color:var(--ink-muted)">· ${escapeHtml(m.dept)} · ${escapeHtml(m.role||'')}</span></div>
-              <div style="font-family:'JetBrains Mono',monospace;color:var(--ink-dim);font-size:11px">${m.milestoneDate} · còn ${m.daysLeft}d</div>
-            </div>
-          `).join('')}
-        </div>
-      </div>
-    ` : ''}
-  `;
-}
-
-function _renderTabSnapshot(el, dq, fmtMoneyShort){
-  const today = new Date();
-  const curYear = today.getFullYear();
-  const curMonth = today.getMonth();
-  const turnoverM = hrMetricTurnover(curYear, curMonth);
-  const movement = hrMetricUpcomingMovement();
-  const probation = hrMetricProbation();
-  const contracts = hrMetricContractExpiry();
-  const resignPipeline = hrMetricResignationPipeline();
-  const cost = hrMetricCostLiability(curYear);
-  const items = hrMetricActionItems();
-  const thisWeekItems = [...items.today, ...items.week];
-
-  const monthlyHired = (DB.candidates||[]).filter(c=>{
-    if(c.status !== 'hired' || !c.hiredDate) return false;
-    const d = new Date(c.hiredDate);
-    return d.getFullYear()===curYear && d.getMonth()===curMonth;
-  }).length;
+  // 5 categories breakdown rows
+  const categories = [
+    {label:'Lương cơ bản', actual: actual.salary, budget: budget.salary},
+    {label:'Thưởng', actual: actual.bonus, budget: budget.bonus},
+    {label:'BHXH (BH)', actual: actual.bh, budget: budget.bh},
+    {label:'Phụ cấp ăn', actual: 0, budget: budget.meal, note:'Chưa tích hợp module Meal/Allowance'},
+    {label:'Khác (Budget Other)', actual: 0, budget: budget.other, note:'Phụ cấp khác từ Manning Budget'},
+    {label:'Casual / OT', actual: casual.total, budget: 0, note:'Lương thời vụ - chưa có budget riêng'},
+    {label:'Intern / Trainee', actual: intern.totalCost, budget: 0, note:`${intern.activeCount} TTS · ${intern.totalDays} ngày`},
+  ];
 
   el.innerHTML = `
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:20px">
-      <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:12px;padding:18px">
-        <div style="font-weight:700;font-size:14px;color:var(--accent);margin-bottom:14px;text-transform:uppercase;letter-spacing:.04em">📅 Tuần này</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-          <div style="background:var(--bg-elev);padding:12px;border-radius:8px">
-            <div style="font-size:10.5px;color:var(--ink-muted);text-transform:uppercase;letter-spacing:.04em">HĐ hết hạn</div>
-            <div style="font-family:'JetBrains Mono',monospace;font-size:24px;font-weight:700;color:${contracts.expiring30.filter(c=>c.daysLeft<=7).length>0?'var(--danger)':'var(--ink)'};margin-top:4px">${contracts.expiring30.filter(c=>c.daysLeft<=7).length}</div>
-          </div>
-          <div style="background:var(--bg-elev);padding:12px;border-radius:8px">
-            <div style="font-size:10.5px;color:var(--ink-muted);text-transform:uppercase;letter-spacing:.04em">Thử việc xong</div>
-            <div style="font-family:'JetBrains Mono',monospace;font-size:24px;font-weight:700;color:${probation.expiring7.length>0?'var(--warning)':'var(--ink)'};margin-top:4px">${probation.expiring7.length}</div>
-          </div>
-          <div style="background:var(--bg-elev);padding:12px;border-radius:8px">
-            <div style="font-size:10.5px;color:var(--ink-muted);text-transform:uppercase;letter-spacing:.04em">Đơn nghỉ chờ</div>
-            <div style="font-family:'JetBrains Mono',monospace;font-size:24px;font-weight:700;color:${resignPipeline.pending.length>0?'var(--accent)':'var(--ink)'};margin-top:4px">${resignPipeline.pending.length}</div>
-          </div>
-          <div style="background:var(--bg-elev);padding:12px;border-radius:8px">
-            <div style="font-size:10.5px;color:var(--ink-muted);text-transform:uppercase;letter-spacing:.04em">Việc cần làm</div>
-            <div style="font-family:'JetBrains Mono',monospace;font-size:24px;font-weight:700;color:var(--accent);margin-top:4px">${thisWeekItems.length}</div>
-          </div>
-        </div>
-      </div>
-
-      <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:12px;padding:18px">
-        <div style="font-weight:700;font-size:14px;color:var(--success);margin-bottom:14px;text-transform:uppercase;letter-spacing:.04em">📆 Tháng ${curMonth+1}/${curYear}</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-          <div style="background:var(--bg-elev);padding:12px;border-radius:8px">
-            <div style="font-size:10.5px;color:var(--ink-muted);text-transform:uppercase;letter-spacing:.04em">Quỹ lương</div>
-            <div style="font-family:'JetBrains Mono',monospace;font-size:18px;font-weight:700;color:var(--ink);margin-top:4px">${fmtMoneyShort(cost.totalPayroll)} đ</div>
-            <div style="font-size:10px;color:var(--ink-dim);margin-top:2px">${cost.totalHC} NV</div>
-          </div>
-          <div style="background:var(--bg-elev);padding:12px;border-radius:8px">
-            <div style="font-size:10.5px;color:var(--ink-muted);text-transform:uppercase;letter-spacing:.04em">Tuyển mới</div>
-            <div style="font-family:'JetBrains Mono',monospace;font-size:24px;font-weight:700;color:var(--success);margin-top:4px">${monthlyHired}</div>
-            <div style="font-size:10px;color:var(--ink-dim);margin-top:2px">đã hire trong tháng</div>
-          </div>
-          <div style="background:var(--bg-elev);padding:12px;border-radius:8px">
-            <div style="font-size:10.5px;color:var(--ink-muted);text-transform:uppercase;letter-spacing:.04em">Resignation</div>
-            <div style="font-family:'JetBrains Mono',monospace;font-size:24px;font-weight:700;color:${turnoverM.count>0?'var(--warning)':'var(--ink)'};margin-top:4px">${turnoverM.count}</div>
-            <div style="font-size:10px;color:var(--ink-dim);margin-top:2px">Turnover ${turnoverM.rate.toFixed(1)}%</div>
-          </div>
-          <div style="background:var(--bg-elev);padding:12px;border-radius:8px">
-            <div style="font-size:10.5px;color:var(--ink-muted);text-transform:uppercase;letter-spacing:.04em">Sắp rời (30d)</div>
-            <div style="font-family:'JetBrains Mono',monospace;font-size:24px;font-weight:700;color:${movement.upcomingLeavers.length>0?'var(--danger)':'var(--ink)'};margin-top:4px">${movement.upcomingLeavers.length}</div>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
-      <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:12px;padding:18px">
-        <div style="font-weight:700;font-size:13px;color:var(--success);margin-bottom:12px">➡️ Sắp vào (30 ngày) · ${movement.upcomingJoiners.length} người</div>
-        ${movement.upcomingJoiners.length === 0 ? '<div style="color:var(--ink-dim);font-size:12px;font-style:italic">Không có ai sắp vào</div>' : `
-          <div style="display:grid;gap:6px">
-            ${movement.upcomingJoiners.slice(0,10).map(j=>`
-              <div style="display:flex;align-items:center;gap:10px;font-size:12px;padding:6px 0;border-bottom:1px solid rgba(255,255,255,.03)">
-                <div style="flex:1"><b>${escapeHtml(j.name)}</b> <span style="color:var(--ink-muted)">· ${escapeHtml(j.position||'(no position)')} · ${escapeHtml(j.dept||'')}</span></div>
-                <div style="font-family:'JetBrains Mono',monospace;color:var(--success);font-size:11px">${j.joinDate}</div>
-                <div style="background:rgba(126,198,153,.15);color:var(--success);padding:2px 6px;border-radius:8px;font-size:10px;font-weight:600;min-width:40px;text-align:center">${j.daysToJoin===0?'TODAY':'+'+j.daysToJoin+'d'}</div>
-              </div>
-            `).join('')}
-          </div>
-        `}
-      </div>
-      <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:12px;padding:18px">
-        <div style="font-weight:700;font-size:13px;color:var(--danger);margin-bottom:12px">⬅️ Sắp rời (30 ngày) · ${movement.upcomingLeavers.length} người</div>
-        ${movement.upcomingLeavers.length === 0 ? '<div style="color:var(--ink-dim);font-size:12px;font-style:italic">Không có ai sắp rời</div>' : `
-          <div style="display:grid;gap:6px">
-            ${movement.upcomingLeavers.slice(0,10).map(l=>`
-              <div style="display:flex;align-items:center;gap:10px;font-size:12px;padding:6px 0;border-bottom:1px solid rgba(255,255,255,.03)">
-                <div style="flex:1"><b>${escapeHtml(l.name)}</b> <span style="color:var(--ink-muted)">· ${escapeHtml(l.dept||'')} · ${escapeHtml(l.role||'')}</span></div>
-                <div style="font-family:'JetBrains Mono',monospace;color:var(--danger);font-size:11px">${l.leaveDate}</div>
-                <div style="background:rgba(212,127,127,.15);color:var(--danger);padding:2px 6px;border-radius:8px;font-size:10px;font-weight:600;min-width:40px;text-align:center">+${l.daysToLeave}d</div>
-              </div>
-            `).join('')}
-          </div>
-        `}
-      </div>
-    </div>
-  `;
-}
-
-function _renderTabWorkforce(el, dq, confBadge){
-  const today = new Date();
-  const manning = hrMetricManningGap(today.getFullYear(), today.getMonth());
-  const tth = hrMetricTimeToHire(today.getFullYear());
-  const openJobs = (DB.jobs||[]).filter(j=>j.status==='open');
-  const openWithCount = openJobs.map(j=>{
-    const cvCount = (DB.candidates||[]).filter(c=>c.jobId===j.id).length;
-    const hired = (typeof getJobHired === 'function') ? getJobHired(j.id) : 0;
-    const daysOpen = j.openDate ? _hrDaysBetween(j.openDate, today) : 0;
-    return { ...j, cvCount, hired, daysOpen, remain: Math.max(0, (j.positions||0)-hired) };
-  }).sort((a,b)=>b.daysOpen-a.daysOpen);
-  const slowJobs = openWithCount.filter(j=>j.daysOpen >= 30 && j.remain > 0);
-
-  el.innerHTML = `
-    <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:12px;padding:18px;margin-bottom:18px">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
-        <div style="font-weight:700;font-size:14px;color:var(--accent)">👥 Manning Gap — Thực tế vs Kế hoạch</div>
-        <div style="font-size:11px;color:var(--ink-muted)">Tháng ${today.getMonth()+1}/${today.getFullYear()}</div>
-      </div>
-      ${manning.filter(g=>g.plan>0).length === 0 ? `
-        <div style="text-align:center;padding:30px 20px;color:var(--ink-dim);background:var(--bg-elev);border-radius:8px">
-          <div style="font-size:32px;margin-bottom:8px">📋</div>
-          <div style="font-size:13px;margin-bottom:4px">Chưa có Manning Plan cho tháng này</div>
-          <div style="font-size:11px">Setup tại <a href="javascript:navigate('manning')" style="color:var(--accent);font-weight:600">Manning & Budget</a></div>
-        </div>
-      ` : `
-        <table style="width:100%;border-collapse:collapse;font-size:12px">
-          <thead>
-            <tr style="border-bottom:1px solid var(--border);font-size:10.5px;color:var(--ink-muted);text-transform:uppercase;letter-spacing:.05em">
-              <th style="padding:8px 6px;text-align:left;font-weight:600">Phòng ban</th>
-              <th style="padding:8px 6px;text-align:center;font-weight:600">Plan</th>
-              <th style="padding:8px 6px;text-align:center;font-weight:600">Actual</th>
-              <th style="padding:8px 6px;text-align:center;font-weight:600">Gap</th>
-              <th style="padding:8px 6px;text-align:left;font-weight:600;width:30%">Visualization</th>
-              <th style="padding:8px 6px;text-align:center;font-weight:600">Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${manning.filter(g=>g.plan>0).sort((a,b)=>a.gap-b.gap).map(g=>{
-              const ratio = g.plan>0 ? g.actual/g.plan : 0;
-              const fillW = Math.min(ratio*100, 150);
-              const barColor = g.status==='short' ? 'var(--danger)' : g.status==='over' ? 'var(--warning)' : 'var(--success)';
-              const stLabel = g.status==='short'?'🔴 Thiếu':g.status==='over'?'🟡 Vượt':'🟢 OK';
-              return `<tr style="border-bottom:1px solid rgba(255,255,255,.04)">
-                <td style="padding:8px 6px;font-weight:600">${escapeHtml(g.dept)}</td>
-                <td style="padding:8px 6px;text-align:center;font-family:'JetBrains Mono',monospace">${g.plan}</td>
-                <td style="padding:8px 6px;text-align:center;font-family:'JetBrains Mono',monospace">${g.actual}</td>
-                <td style="padding:8px 6px;text-align:center;font-family:'JetBrains Mono',monospace;color:${barColor};font-weight:700">${g.gap>0?'+':''}${g.gap}</td>
-                <td style="padding:8px 6px">
-                  <div style="position:relative;height:8px;background:var(--bg-elev);border-radius:4px;overflow:hidden">
-                    <div style="position:absolute;left:0;top:0;height:100%;width:${Math.min(fillW, 100)}%;background:${barColor}"></div>
-                  </div>
-                </td>
-                <td style="padding:8px 6px;text-align:center;font-size:11px;color:${barColor};font-weight:600">${stLabel}</td>
-              </tr>`;
-            }).join('')}
-          </tbody>
-        </table>
-      `}
-    </div>
-
-    <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:12px;padding:18px">
+    <!-- Top KPI Row -->
+    <div class="pl-card">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:10px">
-        <div style="font-weight:700;font-size:14px;color:var(--accent)">🎯 Tuyển dụng đang mở · ${openJobs.length} vị trí</div>
-        <div style="display:flex;gap:10px;font-size:11px;flex-wrap:wrap">
-          <span>Time to Hire avg: <b style="color:var(--info)">${tth.count>0?tth.avg+'d':'—'}</b></span>
-          <span>Hired năm nay: <b style="color:var(--success)">${tth.count}</b></span>
-          ${slowJobs.length>0?`<span style="color:var(--danger)">⚠️ ${slowJobs.length} > 30d</span>`:''}
+        <div style="font-weight:700;font-size:15px;color:var(--accent)">💰 Labor Cost — Budget vs Actual</div>
+        <div style="font-size:11px;color:var(--ink-muted)">Tháng ${month+1}/${year} · Budget = monthly từ Manning &amp; Budget · Lương 1 NV/tháng × Planned</div>
+      </div>
+      <div class="pl-kpi-grid">
+        <div class="pl-kpi" style="border-left-color:var(--accent)">
+          <div class="pl-kpi-label">Budget tháng</div>
+          <div class="pl-kpi-value">${_plFmtMoney(totalBudget)}đ</div>
+          <div class="pl-kpi-sub">${actual.hc > 0 ? `Annual ≈ ${_plFmtMoney(totalBudget*12)}đ` : 'theo Manning Plan'}</div>
+        </div>
+        <div class="pl-kpi" style="border-left-color:${variance<0?'var(--danger)':'var(--success)'}">
+          <div class="pl-kpi-label">Actual tháng</div>
+          <div class="pl-kpi-value">${_plFmtMoney(totalActual)}đ</div>
+          <div class="pl-kpi-sub">${actual.hc} NV active</div>
+        </div>
+        <div class="pl-kpi" style="border-left-color:${variance>=0?'var(--success)':'var(--danger)'}">
+          <div class="pl-kpi-label">Variance</div>
+          <div class="pl-kpi-value" style="color:${variance>=0?'var(--success)':'var(--danger)'}">${variance>=0?'+':''}${_plFmtMoney(variance)}đ</div>
+          <div class="pl-kpi-sub">${variancePct!==null?(variancePct>=0?'+':'')+variancePct.toFixed(1)+'% vs Budget':'—'}</div>
+        </div>
+        <div class="pl-kpi" style="border-left-color:var(--warning)">
+          <div class="pl-kpi-label">OT / Casual</div>
+          <div class="pl-kpi-value" style="color:var(--warning)">${_plFmtMoney(casual.total)}đ</div>
+          <div class="pl-kpi-sub">Lương thời vụ tháng</div>
+        </div>
+        <div class="pl-kpi" style="border-left-color:var(--info)">
+          <div class="pl-kpi-label">Intern Cost</div>
+          <div class="pl-kpi-value" style="color:var(--info)">${_plFmtMoney(intern.totalCost)}đ</div>
+          <div class="pl-kpi-sub">${intern.activeCount} TTS · ~${intern.fteEquivalent.toFixed(1)} FTE</div>
         </div>
       </div>
-      ${openWithCount.length === 0 ? `<div style="text-align:center;padding:30px;color:var(--ink-dim);font-size:12px;font-style:italic">Không có vị trí đang tuyển</div>` : `
-        <table style="width:100%;border-collapse:collapse;font-size:12px">
+    </div>
+
+    <!-- Breakdown by Category -->
+    <div class="pl-card">
+      <div style="font-weight:700;font-size:14px;color:var(--accent);margin-bottom:14px">Breakdown theo Category</div>
+      <table class="pl-table">
+        <thead>
+          <tr>
+            <th>Hạng mục</th>
+            <th class="pl-num">Budget tháng</th>
+            <th class="pl-num">Actual tháng</th>
+            <th class="pl-num">Variance</th>
+            <th class="pl-num">% vs Budget</th>
+            <th>Ghi chú</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${categories.map(c=>{
+            const v = c.budget - c.actual;
+            const pct = c.budget>0 ? (v/c.budget*100) : null;
+            const vClass = v>=0 ? 'pl-good' : 'pl-bad';
+            return `<tr>
+              <td><b>${c.label}</b></td>
+              <td class="pl-num">${c.budget>0?_plFmtMoney(c.budget)+'đ':'—'}</td>
+              <td class="pl-num">${c.actual>0?_plFmtMoney(c.actual)+'đ':'—'}</td>
+              <td class="pl-num ${vClass}">${c.budget>0||c.actual>0?(v>=0?'+':'')+_plFmtMoney(v)+'đ':'—'}</td>
+              <td class="pl-num ${vClass}">${pct!==null?(pct>=0?'+':'')+pct.toFixed(1)+'%':'—'}</td>
+              <td style="font-size:11px;color:var(--ink-muted)">${c.note||''}</td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+        <tfoot>
+          <tr>
+            <td>TỔNG</td>
+            <td class="pl-num">${_plFmtMoney(totalBudget)}đ</td>
+            <td class="pl-num">${_plFmtMoney(totalActual)}đ</td>
+            <td class="pl-num ${variance>=0?'pl-good':'pl-bad'}">${variance>=0?'+':''}${_plFmtMoney(variance)}đ</td>
+            <td class="pl-num ${variance>=0?'pl-good':'pl-bad'}">${variancePct!==null?(variancePct>=0?'+':'')+variancePct.toFixed(1)+'%':'—'}</td>
+            <td></td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+
+    <!-- Breakdown by Department -->
+    <div class="pl-card">
+      <div style="font-weight:700;font-size:14px;color:var(--accent);margin-bottom:14px">Payroll Actual theo Phòng ban</div>
+      ${Object.keys(actual.byDept).length === 0 ? '<div style="color:var(--ink-dim);text-align:center;padding:20px;font-size:12px">Chưa có data lương theo dept</div>' : `
+        <table class="pl-table">
           <thead>
-            <tr style="border-bottom:1px solid var(--border);font-size:10.5px;color:var(--ink-muted);text-transform:uppercase;letter-spacing:.05em">
-              <th style="padding:8px 6px;text-align:left;font-weight:600">Vị trí</th>
-              <th style="padding:8px 6px;text-align:center;font-weight:600">CV</th>
-              <th style="padding:8px 6px;text-align:center;font-weight:600">Hired</th>
-              <th style="padding:8px 6px;text-align:center;font-weight:600">Days</th>
-              <th style="padding:8px 6px;text-align:center;font-weight:600">Tiến độ</th>
+            <tr>
+              <th>Phòng ban</th>
+              <th class="pl-num">Budget Lương+Thưởng/tháng</th>
+              <th class="pl-num">Actual Lương+Thưởng/tháng</th>
+              <th class="pl-num">Variance</th>
+              <th class="pl-num">% on Budget</th>
             </tr>
           </thead>
           <tbody>
-            ${openWithCount.slice(0,15).map(j=>{
-              const pct = j.positions>0 ? j.hired/j.positions*100 : 0;
-              const slowColor = j.daysOpen >= 60 ? 'var(--danger)' : j.daysOpen >= 30 ? 'var(--warning)' : 'var(--ink)';
-              const dn = (typeof deptName === 'function') ? deptName(j.deptId) : '';
-              return `<tr style="border-bottom:1px solid rgba(255,255,255,.04)">
-                <td style="padding:8px 6px"><b>${escapeHtml(j.title)}</b><div style="font-size:10.5px;color:var(--ink-muted)">${escapeHtml(dn)}</div></td>
-                <td style="padding:8px 6px;text-align:center;font-family:'JetBrains Mono',monospace;color:var(--info);font-weight:600">${j.cvCount}</td>
-                <td style="padding:8px 6px;text-align:center;font-family:'JetBrains Mono',monospace;color:var(--success);font-weight:600">${j.hired}/${j.positions}</td>
-                <td style="padding:8px 6px;text-align:center;font-family:'JetBrains Mono',monospace;color:${slowColor};font-weight:600">${j.daysOpen}d</td>
-                <td style="padding:8px 6px;text-align:center">
-                  <div style="display:flex;align-items:center;gap:6px;justify-content:center">
-                    <div style="flex:1;max-width:100px;height:6px;background:var(--bg-elev);border-radius:3px;overflow:hidden">
-                      <div style="width:${Math.max(pct,3)}%;height:100%;background:${pct>=100?'var(--success)':pct>=50?'var(--accent)':'var(--warning)'}"></div>
-                    </div>
-                    <span style="font-family:'JetBrains Mono',monospace;font-weight:600;color:${pct>=100?'var(--success)':'var(--ink)'};font-size:11px;min-width:32px;text-align:right">${pct.toFixed(0)}%</span>
-                  </div>
-                </td>
+            ${(DB.departments||[]).map(d=>{
+              const a = actual.byDept[d.id]||0;
+              const bTotal = budget.byDept[d.id]||0;
+              if(a === 0 && bTotal === 0) return '';
+              // Budget byDept includes all 5 categories, actual only salary+bonus → compare just (salary+bonus)
+              const bSalBon = bTotal * (budget.salary+budget.bonus) / (budget.total||1);
+              const v = bSalBon - a;
+              const pct = bSalBon>0 ? (a/bSalBon*100) : null;
+              return `<tr>
+                <td><b>${escapeHtml(d.name)}</b></td>
+                <td class="pl-num">${_plFmtMoney(bSalBon)}đ</td>
+                <td class="pl-num">${_plFmtMoney(a)}đ</td>
+                <td class="pl-num ${v>=0?'pl-good':'pl-bad'}">${v>=0?'+':''}${_plFmtMoney(v)}đ</td>
+                <td class="pl-num">${pct!==null?pct.toFixed(0)+'%':'—'}</td>
               </tr>`;
-            }).join('')}
+            }).filter(Boolean).join('')}
           </tbody>
         </table>
       `}
@@ -3843,363 +2945,503 @@ function _renderTabWorkforce(el, dq, confBadge){
   `;
 }
 
-function _renderTabCompliance(el){
-  const contracts = hrMetricContractExpiry();
-  const probation = hrMetricProbation();
-  const today = new Date();
+// ===== TAB 2: MANPOWER =====
+function _plRenderManpower(el, year, month){
+  // Get planned headcount from manningPlan + actual from current employees
+  const plan = ((DB.manningPlan||{})[year]||{}).depts || {};
+  const cd = DB.customData||{};
 
-  const indefiniteCandidates = [];
-  (DB.employees||[]).forEach(e=>{
-    if(getEffectiveStatus(e)==='exit') return;
-    const empContracts = (DB.contracts||[]).filter(c=>c.empId===e.id);
-    const fixedContracts = empContracts.filter(c=>{
-      const t = _hrNormalizeContractType(c.type);
-      return t === 'term12' || t === 'term24';
-    });
-    if(fixedContracts.length >= 2){
-      const cd = DB.customData||{};
+  const rows = [];
+  let totBudget = 0, totActual = 0, totSalaryBudget = 0, totSalaryActual = 0;
+  const bhRate = parseFloat((DB.manningConfig||{}).bhRate) || 0.225;
+
+  (DB.departments||[]).forEach(d=>{
+    const dp = plan[d.id]||{positions:[]};
+    const budgetHC = (dp.positions||[]).reduce((s,p)=>s+(parseInt(p.planned)||0),0);
+    const actualHC = (DB.employees||[]).filter(e=>e.deptId===d.id && getEffectiveStatus(e)!=='exit').length;
+    const variance = actualHC - budgetHC;
+    const variancePct = budgetHC>0 ? (variance/budgetHC*100) : null;
+    // Lương trung bình budget
+    const budgetSalTotal = (dp.positions||[]).reduce((s,p)=>{
+      const hc = parseInt(p.planned)||0;
+      const sal = (parseFloat(p.budgetSalary)||0) + (parseFloat(p.budgetBonus)||0);
+      return s + sal * hc;
+    }, 0);
+    // Lương trung bình actual
+    let actSalTotal = 0;
+    (DB.employees||[]).filter(e=>e.deptId===d.id && getEffectiveStatus(e)!=='exit').forEach(e=>{
       const ed = cd[e.id]||{};
-      indefiniteCandidates.push({
-        empId: e.id, name: e.name,
-        dept: ((DB.departments||[]).find(d=>d.id===e.deptId)||{}).name||'',
-        role: e.role,
-        contractCount: fixedContracts.length,
-        currentEnd: ed.currentContractEnd,
-      });
+      actSalTotal += (parseInt(ed.baseSalary)||0) + (parseInt(ed.bonusSalary)||0);
+    });
+    if(budgetHC > 0 || actualHC > 0){
+      rows.push({dept: d.name, budgetHC, actualHC, variance, variancePct, budgetSalTotal, actSalTotal});
+      totBudget += budgetHC;
+      totActual += actualHC;
+      totSalaryBudget += budgetSalTotal;
+      totSalaryActual += actSalTotal;
     }
   });
-
-  const nearRetirement = [];
-  (DB.employees||[]).forEach(e=>{
-    if(getEffectiveStatus(e)==='exit') return;
-    if(!e.dob) return;
-    const dob = new Date(e.dob);
-    if(isNaN(dob)) return;
-    const age = (today - dob) / (365.25 * 86400000);
-    // Gender: emp.gender lưu 'male'/'female'; customData có thể có 'Nam'/'Nữ'
-    const gender = e.gender || (DB.customData||{})[e.id]?.gender || '';
-    const isFemale = gender === 'female' || gender === 'Nữ' || gender === 'nữ';
-    const retirementAge = isFemale ? 58 : 60;
-    if(age >= retirementAge - 2){
-      nearRetirement.push({
-        empId: e.id, name: e.name,
-        dept: ((DB.departments||[]).find(d=>d.id===e.deptId)||{}).name||'',
-        age: Math.floor(age * 10) / 10,
-        retirementAge,
-        yearsLeft: Math.round((retirementAge - age) * 10) / 10,
-        gender: isFemale ? 'Nữ' : 'Nam',
-      });
-    }
-  });
+  rows.sort((a,b)=>a.variance-b.variance); // worst first
 
   el.innerHTML = `
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:18px">
-      <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:12px;padding:18px">
-        <div style="font-weight:700;font-size:14px;color:var(--accent);margin-bottom:14px">📋 Hợp đồng hết hạn</div>
-        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:12px">
-          <div style="background:rgba(212,127,127,.08);padding:8px;border-radius:6px;text-align:center">
-            <div style="font-size:9.5px;color:var(--ink-muted)">Quá hạn</div>
-            <div style="font-family:'JetBrains Mono',monospace;font-size:20px;font-weight:700;color:var(--danger);margin-top:2px">${contracts.overdue.length}</div>
-          </div>
-          <div style="background:rgba(255,160,80,.08);padding:8px;border-radius:6px;text-align:center">
-            <div style="font-size:9.5px;color:var(--ink-muted)">≤30 ngày</div>
-            <div style="font-family:'JetBrains Mono',monospace;font-size:20px;font-weight:700;color:var(--warning);margin-top:2px">${contracts.expiring30.length}</div>
-          </div>
-          <div style="background:rgba(212,165,116,.08);padding:8px;border-radius:6px;text-align:center">
-            <div style="font-size:9.5px;color:var(--ink-muted)">≤60 ngày</div>
-            <div style="font-family:'JetBrains Mono',monospace;font-size:20px;font-weight:700;color:var(--accent);margin-top:2px">${contracts.expiring60.length - contracts.expiring30.length}</div>
-          </div>
-          <div style="background:rgba(126,182,232,.08);padding:8px;border-radius:6px;text-align:center">
-            <div style="font-size:9.5px;color:var(--ink-muted)">≤90 ngày</div>
-            <div style="font-family:'JetBrains Mono',monospace;font-size:20px;font-weight:700;color:var(--info);margin-top:2px">${contracts.expiring90.length - contracts.expiring60.length}</div>
-          </div>
-        </div>
-        ${contracts.expiring30.length > 0 ? `
-          <div style="font-size:11px;color:var(--ink-muted);font-weight:600;text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px">Chi tiết 30 ngày</div>
-          <div style="display:grid;gap:4px;max-height:200px;overflow-y:auto">
-            ${contracts.expiring30.slice(0,8).map(c=>`
-              <div style="display:flex;justify-content:space-between;align-items:center;font-size:11.5px;padding:4px 0">
-                <div style="flex:1"><b>${escapeHtml(c.name)}</b> <span style="color:var(--ink-muted)">· ${escapeHtml(c.dept)}</span></div>
-                <div style="color:${c.daysLeft<=7?'var(--danger)':'var(--warning)'};font-family:'JetBrains Mono',monospace;font-weight:600">${c.daysLeft}d</div>
-              </div>
-            `).join('')}
-          </div>
-        ` : ''}
+    <div class="pl-card">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap">
+        <div style="font-weight:700;font-size:15px;color:var(--accent)">👥 Department Manpower Analysis</div>
+        <div style="font-size:11px;color:var(--ink-muted)">Plan từ Manning & Budget · Actual = NV đang làm</div>
       </div>
-
-      <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:12px;padding:18px">
-        <div style="font-weight:700;font-size:14px;color:var(--accent);margin-bottom:14px">⏰ Thử việc cần quyết định</div>
-        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:12px">
-          <div style="background:rgba(212,127,127,.08);padding:8px;border-radius:6px;text-align:center">
-            <div style="font-size:9.5px;color:var(--ink-muted)">Quá hạn</div>
-            <div style="font-family:'JetBrains Mono',monospace;font-size:20px;font-weight:700;color:var(--danger);margin-top:2px">${probation.overdue.length}</div>
-          </div>
-          <div style="background:rgba(255,160,80,.08);padding:8px;border-radius:6px;text-align:center">
-            <div style="font-size:9.5px;color:var(--ink-muted)">≤7 ngày</div>
-            <div style="font-family:'JetBrains Mono',monospace;font-size:20px;font-weight:700;color:var(--warning);margin-top:2px">${probation.expiring7.length}</div>
-          </div>
-          <div style="background:rgba(126,198,153,.08);padding:8px;border-radius:6px;text-align:center">
-            <div style="font-size:9.5px;color:var(--ink-muted)">≤30 ngày</div>
-            <div style="font-family:'JetBrains Mono',monospace;font-size:20px;font-weight:700;color:var(--success);margin-top:2px">${probation.expiring30.length}</div>
-          </div>
+      <div class="pl-kpi-grid">
+        <div class="pl-kpi">
+          <div class="pl-kpi-label">Tổng Budget HC</div>
+          <div class="pl-kpi-value">${totBudget}</div>
+          <div class="pl-kpi-sub">Plan toàn KS</div>
         </div>
-        ${probation.all.length > 0 ? `
-          <div style="font-size:11px;color:var(--ink-muted);font-weight:600;text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px">Chi tiết</div>
-          <div style="display:grid;gap:4px;max-height:200px;overflow-y:auto">
-            ${probation.all.slice(0,8).map(p=>`
-              <div style="display:flex;justify-content:space-between;align-items:center;font-size:11.5px;padding:4px 0">
-                <div style="flex:1"><b>${escapeHtml(p.name)}</b> <span style="color:var(--ink-muted)">· ${escapeHtml(p.dept)}</span></div>
-                <div style="color:${p.daysLeft<0?'var(--danger)':p.daysLeft<=7?'var(--warning)':'var(--ink-dim)'};font-family:'JetBrains Mono',monospace;font-weight:600">${p.daysLeft<0?'-'+Math.abs(p.daysLeft):p.daysLeft}d</div>
-              </div>
-            `).join('')}
-          </div>
-        ` : '<div style="font-size:11px;color:var(--ink-dim);font-style:italic;text-align:center;padding:10px">Không có NV nào đang thử việc</div>'}
+        <div class="pl-kpi" style="border-left-color:${totActual<totBudget?'var(--danger)':'var(--success)'}">
+          <div class="pl-kpi-label">Tổng Actual HC</div>
+          <div class="pl-kpi-value">${totActual}</div>
+          <div class="pl-kpi-sub">NV đang làm</div>
+        </div>
+        <div class="pl-kpi" style="border-left-color:${totActual-totBudget<0?'var(--danger)':'var(--warning)'}">
+          <div class="pl-kpi-label">Variance</div>
+          <div class="pl-kpi-value" style="color:${totActual-totBudget<0?'var(--danger)':'var(--success)'}">${totActual-totBudget>=0?'+':''}${totActual-totBudget}</div>
+          <div class="pl-kpi-sub">${totBudget>0?(((totActual-totBudget)/totBudget*100).toFixed(1)+'%'):'—'}</div>
+        </div>
       </div>
     </div>
 
-    <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:12px;padding:18px;margin-bottom:18px">
-      <div style="font-weight:700;font-size:14px;color:var(--warning);margin-bottom:14px">⚠️ NV đã ký HĐ xác định ≥2 lần — phải chuyển HĐ vô thời hạn (Luật LĐ 2019)</div>
-      ${indefiniteCandidates.length === 0 ? `
-        <div style="font-size:11.5px;color:var(--ink-dim);text-align:center;padding:14px;font-style:italic">Không có NV nào trong tình trạng này</div>
-      ` : `
-        <div style="display:grid;gap:6px">
-          ${indefiniteCandidates.slice(0,12).map(c=>`
-            <div style="display:flex;align-items:center;gap:10px;font-size:12px;padding:6px 8px;background:rgba(255,160,80,.05);border-radius:6px">
-              <div style="background:rgba(255,160,80,.2);color:var(--warning);padding:2px 8px;border-radius:10px;font-weight:700;font-size:11px">×${c.contractCount}</div>
-              <div style="flex:1"><b>${escapeHtml(c.name)}</b> <span style="color:var(--ink-muted)">· ${escapeHtml(c.dept)} · ${escapeHtml(c.role||'')}</span></div>
-              <div style="font-family:'JetBrains Mono',monospace;color:var(--ink-dim);font-size:11px">${c.currentEnd||'—'}</div>
-            </div>
-          `).join('')}
-        </div>
-      `}
-    </div>
-
-    <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:12px;padding:18px">
-      <div style="font-weight:700;font-size:14px;color:var(--info);margin-bottom:14px">👴 NV gần tuổi nghỉ hưu — Cần succession plan</div>
-      ${nearRetirement.length === 0 ? `
-        <div style="font-size:11.5px;color:var(--ink-dim);text-align:center;padding:14px;font-style:italic">Không có NV nào gần tuổi nghỉ hưu</div>
-      ` : `
-        <div style="display:grid;gap:6px">
-          ${nearRetirement.sort((a,b)=>a.yearsLeft-b.yearsLeft).map(r=>`
-            <div style="display:flex;align-items:center;gap:10px;font-size:12px;padding:6px 8px;background:rgba(126,182,232,.05);border-radius:6px">
-              <div style="background:rgba(126,182,232,.2);color:var(--info);padding:2px 8px;border-radius:10px;font-weight:700;font-size:11px;min-width:48px;text-align:center">${r.age}t</div>
-              <div style="flex:1"><b>${escapeHtml(r.name)}</b> <span style="color:var(--ink-muted)">· ${escapeHtml(r.dept)} · ${r.gender}</span></div>
-              <div style="font-family:'JetBrains Mono',monospace;color:${r.yearsLeft<=0?'var(--danger)':r.yearsLeft<=1?'var(--warning)':'var(--ink-dim)'};font-size:11px;font-weight:600">${r.yearsLeft<=0?'ĐÃ TỚI':'còn '+r.yearsLeft.toFixed(1)+'y'}</div>
-            </div>
-          `).join('')}
-        </div>
+    <div class="pl-card">
+      <div style="font-weight:700;font-size:14px;color:var(--accent);margin-bottom:14px">Theo Phòng ban</div>
+      ${rows.length === 0 ? '<div style="color:var(--ink-dim);text-align:center;padding:20px;font-size:12px">Chưa có Manning Plan cho năm này. Vào <a href="javascript:navigate(\'manning\')" style="color:var(--accent)">Manning & Budget</a> setup.</div>' : `
+      <table class="pl-table">
+        <thead>
+          <tr>
+            <th>Phòng ban</th>
+            <th class="pl-num">Budget HC</th>
+            <th class="pl-num">Actual HC</th>
+            <th class="pl-num">Variance</th>
+            <th>Trạng thái</th>
+            <th class="pl-num">Budget Lương (annual)</th>
+            <th class="pl-num">Actual Lương (current)</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.map(r=>{
+            const status = r.variance < -2 ? '🔴 Thiếu nghiêm trọng' : r.variance < 0 ? '🟡 Thiếu nhẹ' : r.variance > 2 ? '🟠 Vượt' : '✅ OK';
+            const sColor = r.variance < -2 ? 'var(--danger)' : r.variance < 0 ? 'var(--warning)' : r.variance > 2 ? 'var(--warning)' : 'var(--success)';
+            // Actual sal monthly = current total
+            return `<tr>
+              <td><b>${escapeHtml(r.dept)}</b></td>
+              <td class="pl-num">${r.budgetHC}</td>
+              <td class="pl-num">${r.actualHC}</td>
+              <td class="pl-num ${r.variance<0?'pl-bad':r.variance>2?'pl-warn':'pl-good'}">${r.variance>=0?'+':''}${r.variance}</td>
+              <td style="color:${sColor};font-size:11px;font-weight:600">${status}</td>
+              <td class="pl-num">${_plFmtMoney(r.budgetSalTotal)}đ/tháng</td>
+              <td class="pl-num">${_plFmtMoney(r.actSalTotal)}đ/tháng</td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+        <tfoot>
+          <tr>
+            <td>TỔNG</td>
+            <td class="pl-num">${totBudget}</td>
+            <td class="pl-num">${totActual}</td>
+            <td class="pl-num">${totActual-totBudget>=0?'+':''}${totActual-totBudget}</td>
+            <td></td>
+            <td class="pl-num">${_plFmtMoney(totSalaryBudget)}đ</td>
+            <td class="pl-num">${_plFmtMoney(totSalaryActual)}đ</td>
+          </tr>
+        </tfoot>
+      </table>
       `}
     </div>
   `;
 }
 
-function _renderTabCost(el, dq, fmtMoneyShort, confBadge){
-  const today = new Date();
-  const cost = hrMetricCostLiability(today.getFullYear());
-  const deptByPayroll = Object.entries(cost.payrollByDept).sort((a,b)=>b[1]-a[1]);
+// ===== TAB 3: PRODUCTIVITY =====
+function _plRenderProductivity(el, year, month){
+  const rev = _plGetRevenueMonth(year, month);
+  const actual = _plGetPayrollActualMonth(year, month);
+  const casual = _plGetCasualCost(year, month);
+  const intern = _plGetInternCost(year, month);
+  const totalLabor = actual.total + casual.total + intern.totalCost;
+
+  // Last year same month
+  const revLY = _plGetRevenueMonth(year-1, month);
+  const actualLY = _plGetPayrollActualMonth(year-1, month);
+
+  // Compute KPIs
+  const laborPct = rev.actual > 0 ? (totalLabor/rev.actual*100) : null;
+  const laborPctBudget = rev.budget > 0 ? (totalLabor/rev.budget*100) : null;
+  const laborPctLY = revLY.actual > 0 ? (actualLY.total/revLY.actual*100) : null;
+  const revPerEmp = actual.hc > 0 ? rev.actual/actual.hc : null;
+  const revPerEmpLY = actualLY.hc > 0 ? revLY.actual/actualLY.hc : null;
 
   el.innerHTML = `
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;margin-bottom:18px">
-      <div style="background:var(--bg-card);border:1px solid var(--border);border-left:3px solid var(--accent);border-radius:12px;padding:16px">
-        <div style="font-size:11px;color:var(--ink-muted);font-weight:600;letter-spacing:.04em;text-transform:uppercase;margin-bottom:8px">Quỹ lương (active)</div>
-        <div style="font-family:'JetBrains Mono',monospace;font-size:24px;font-weight:700;color:var(--ink)">${fmtMoneyShort(cost.totalPayroll)} đ</div>
-        <div style="font-size:11px;color:var(--ink-dim);margin-top:6px">${cost.totalHC} NV · TB <span style="color:var(--accent);font-weight:600">${fmtMoneyShort(cost.avgSalaryPerHC)}</span>/NV</div>
-        <div style="margin-top:10px">${confBadge(dq.payrollConf)}</div>
+    <!-- Revenue input -->
+    <div class="pl-card" style="border:1px dashed rgba(212,165,116,.4);background:rgba(212,165,116,.03)">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:10px">
+        <div>
+          <div style="font-weight:700;font-size:14px;color:var(--accent)">📥 Nhập Revenue tháng ${month+1}/${year}</div>
+          <div style="font-size:11px;color:var(--ink-muted);margin-top:2px">Lấy từ Smile PMS / SunSystems / báo cáo doanh thu tháng</div>
+        </div>
       </div>
-
-      <div style="background:var(--bg-card);border:1px solid var(--border);border-left:3px solid var(--warning);border-radius:12px;padding:16px">
-        <div style="font-size:11px;color:var(--ink-muted);font-weight:600;letter-spacing:.04em;text-transform:uppercase;margin-bottom:8px">🏖️ AL Liability</div>
-        <div style="font-family:'JetBrains Mono',monospace;font-size:24px;font-weight:700;color:var(--warning)">${fmtMoneyShort(cost.totalALLiability)} đ</div>
-        <div style="font-size:11px;color:var(--ink-dim);margin-top:6px">${cost.totalALDaysRemain.toFixed(0)} ngày · ${cost.empALCount} NV · TB ${cost.avgALPerEmp.toFixed(1)}d/NV</div>
-        <div style="margin-top:10px;font-size:10.5px;color:var(--warning)">⚠️ Nếu không nghỉ hết — phải trả tiền</div>
-      </div>
-
-      <div style="background:var(--bg-card);border:1px solid var(--border);border-left:3px solid var(--info);border-radius:12px;padding:16px">
-        <div style="font-size:11px;color:var(--ink-muted);font-weight:600;letter-spacing:.04em;text-transform:uppercase;margin-bottom:8px">Casual Cost YTD</div>
-        <div style="font-family:'JetBrains Mono',monospace;font-size:24px;font-weight:700;color:var(--info)">${fmtMoneyShort(cost.totalCasualCost)} đ</div>
-        <div style="font-size:11px;color:var(--ink-dim);margin-top:6px">Lao động thời vụ ${today.getFullYear()}</div>
-      </div>
-
-      <div style="background:var(--bg-card);border:1px solid var(--border);border-left:3px solid var(--success);border-radius:12px;padding:16px">
-        <div style="font-size:11px;color:var(--ink-muted);font-weight:600;letter-spacing:.04em;text-transform:uppercase;margin-bottom:8px">Training Cost YTD</div>
-        <div style="font-family:'JetBrains Mono',monospace;font-size:24px;font-weight:700;color:var(--success)">${fmtMoneyShort(cost.totalTrainingCost)} đ</div>
-        <div style="font-size:11px;color:var(--ink-dim);margin-top:6px">Đào tạo ${today.getFullYear()}</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+        <div>
+          <label style="font-size:11px;color:var(--ink-muted);font-weight:600;text-transform:uppercase;letter-spacing:.04em">Revenue Budget</label>
+          <input type="number" value="${rev.budget||''}" placeholder="0" min="0" step="1000000"
+            onchange="if(!DB.plRevenue[${year}])DB.plRevenue[${year}]={};if(!DB.plRevenue[${year}][${month}])DB.plRevenue[${year}][${month}]={};DB.plRevenue[${year}][${month}].budget=parseFloat(this.value)||0;saveData(['plRevenue']);render()"
+            style="width:100%;background:var(--bg-card);border:1px solid var(--border);color:var(--ink);padding:8px 12px;border-radius:6px;font-family:'JetBrains Mono',monospace;font-size:14px;margin-top:4px">
+          <div style="font-size:11px;color:var(--ink-dim);margin-top:4px">= ${_plFmtMoney(rev.budget)}đ</div>
+        </div>
+        <div>
+          <label style="font-size:11px;color:var(--ink-muted);font-weight:600;text-transform:uppercase;letter-spacing:.04em">Revenue Actual</label>
+          <input type="number" value="${rev.actual||''}" placeholder="0" min="0" step="1000000"
+            onchange="if(!DB.plRevenue[${year}])DB.plRevenue[${year}]={};if(!DB.plRevenue[${year}][${month}])DB.plRevenue[${year}][${month}]={};DB.plRevenue[${year}][${month}].actual=parseFloat(this.value)||0;saveData(['plRevenue']);render()"
+            style="width:100%;background:var(--bg-card);border:1px solid var(--border);color:var(--ink);padding:8px 12px;border-radius:6px;font-family:'JetBrains Mono',monospace;font-size:14px;margin-top:4px">
+          <div style="font-size:11px;color:var(--ink-dim);margin-top:4px">= ${_plFmtMoney(rev.actual)}đ</div>
+        </div>
       </div>
     </div>
 
-    <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:12px;padding:18px;margin-bottom:18px">
-      <div style="font-weight:700;font-size:14px;color:var(--accent);margin-bottom:14px">🏢 Phân bổ quỹ lương theo phòng ban</div>
-      ${deptByPayroll.length === 0 ? '<div style="color:var(--ink-dim);text-align:center;padding:20px;font-size:12px">Chưa có data lương</div>' : `
-        <div style="display:grid;gap:8px">
-          ${deptByPayroll.map(([d,v])=>{
-            const pct = cost.totalPayroll>0 ? v/cost.totalPayroll*100 : 0;
-            return `<div style="display:flex;align-items:center;gap:10px;font-size:12px">
-              <div style="flex:0 0 150px;font-weight:600">${escapeHtml(d)}</div>
-              <div style="flex:1;height:8px;background:var(--bg-elev);border-radius:4px;overflow:hidden">
-                <div style="width:${pct}%;height:100%;background:linear-gradient(90deg,var(--accent),rgba(212,165,116,.7))"></div>
-              </div>
-              <div style="font-family:'JetBrains Mono',monospace;color:var(--ink);font-weight:600;min-width:90px;text-align:right">${fmtMoneyShort(v)} đ</div>
-              <div style="font-family:'JetBrains Mono',monospace;color:var(--ink-muted);min-width:40px;text-align:right;font-size:11px">${pct.toFixed(1)}%</div>
-            </div>`;
-          }).join('')}
+    <!-- KPI Row -->
+    <div class="pl-card">
+      <div style="font-weight:700;font-size:15px;color:var(--accent);margin-bottom:14px">📈 Productivity KPI</div>
+      <div class="pl-kpi-grid">
+        <div class="pl-kpi" style="border-left-color:${laborPct===null?'var(--ink-muted)':laborPct<=18?'var(--success)':laborPct<=25?'var(--warning)':'var(--danger)'}">
+          <div class="pl-kpi-label">Labor Cost %</div>
+          <div class="pl-kpi-value" style="color:${laborPct===null?'var(--ink-muted)':laborPct<=18?'var(--success)':laborPct<=25?'var(--warning)':'var(--danger)'}">${laborPct!==null?laborPct.toFixed(1)+'%':'—'}</div>
+          <div class="pl-kpi-sub">${laborPctBudget!==null?`Budget: ${laborPctBudget.toFixed(1)}%`:'cần nhập Revenue'}</div>
         </div>
-      `}
+        <div class="pl-kpi" style="border-left-color:var(--info)">
+          <div class="pl-kpi-label">Labor Cost %</div>
+          <div class="pl-kpi-value" style="color:var(--ink-dim);font-size:20px">${laborPctLY!==null?laborPctLY.toFixed(1)+'%':'—'}</div>
+          <div class="pl-kpi-sub">cùng kỳ năm ${year-1}</div>
+        </div>
+        <div class="pl-kpi" style="border-left-color:var(--accent)">
+          <div class="pl-kpi-label">Revenue / Employee</div>
+          <div class="pl-kpi-value">${revPerEmp!==null?_plFmtMoney(revPerEmp)+'đ':'—'}</div>
+          <div class="pl-kpi-sub">tháng này</div>
+        </div>
+        <div class="pl-kpi" style="border-left-color:var(--info)">
+          <div class="pl-kpi-label">Revenue / Employee</div>
+          <div class="pl-kpi-value" style="color:var(--ink-dim);font-size:20px">${revPerEmpLY!==null?_plFmtMoney(revPerEmpLY)+'đ':'—'}</div>
+          <div class="pl-kpi-sub">cùng kỳ năm ${year-1}</div>
+        </div>
+      </div>
     </div>
 
-    <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:12px;padding:18px">
-      <div style="font-weight:700;font-size:14px;color:var(--accent);margin-bottom:14px">📊 Casual cost theo tháng (${today.getFullYear()})</div>
-      ${(() => {
-        const maxCasual = Math.max(...cost.casualByMonth, 1);
-        return `<div style="display:flex;align-items:flex-end;gap:6px;height:140px;border-bottom:1px solid var(--border);padding-bottom:4px">
-          ${cost.casualByMonth.map((v,i)=>{
-            const h = maxCasual>0 ? Math.max((v/maxCasual)*100, 2) : 2;
-            return `<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3px" title="T${i+1}: ${fmtMoneyShort(v)}">
-              <div style="font-size:9px;color:var(--ink-muted);font-family:'JetBrains Mono',monospace">${v>0?fmtMoneyShort(v):''}</div>
-              <div style="width:100%;height:${h}%;background:linear-gradient(180deg,var(--info),rgba(126,182,232,.3));border-radius:2px 2px 0 0;min-height:2px"></div>
-            </div>`;
-          }).join('')}
-        </div>
-        <div style="display:flex;gap:6px;margin-top:6px">
-          ${cost.casualByMonth.map((_,i)=>`<div style="flex:1;font-size:9.5px;color:var(--ink-muted);text-align:center">T${i+1}</div>`).join('')}
-        </div>`;
-      })()}
+    <!-- Detail -->
+    <div class="pl-card">
+      <div style="font-weight:700;font-size:14px;color:var(--accent);margin-bottom:14px">Chi tiết</div>
+      <table class="pl-table">
+        <thead>
+          <tr><th>Chỉ số</th><th class="pl-num">Tháng ${month+1}/${year}</th><th class="pl-num">Tháng ${month+1}/${year-1}</th><th class="pl-num">YoY</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><b>Revenue Actual</b></td>
+            <td class="pl-num">${_plFmtMoney(rev.actual)}đ</td>
+            <td class="pl-num">${_plFmtMoney(revLY.actual)}đ</td>
+            <td class="pl-num ${rev.actual>=revLY.actual?'pl-good':'pl-bad'}">${revLY.actual>0?((rev.actual-revLY.actual)/revLY.actual*100).toFixed(1)+'%':'—'}</td>
+          </tr>
+          <tr>
+            <td>Payroll Actual</td>
+            <td class="pl-num">${_plFmtMoney(actual.total)}đ</td>
+            <td class="pl-num">${_plFmtMoney(actualLY.total)}đ</td>
+            <td class="pl-num ${actual.total<=actualLY.total?'pl-good':'pl-bad'}">${actualLY.total>0?((actual.total-actualLY.total)/actualLY.total*100).toFixed(1)+'%':'—'}</td>
+          </tr>
+          <tr>
+            <td>Headcount</td>
+            <td class="pl-num">${actual.hc}</td>
+            <td class="pl-num">${actualLY.hc}</td>
+            <td class="pl-num">${actualLY.hc>0?((actual.hc-actualLY.hc)/actualLY.hc*100).toFixed(1)+'%':'—'}</td>
+          </tr>
+          <tr>
+            <td>Total Labor Cost</td>
+            <td class="pl-num">${_plFmtMoney(totalLabor)}đ</td>
+            <td class="pl-num">—</td>
+            <td class="pl-num">—</td>
+          </tr>
+          <tr>
+            <td><b>Labor Cost %</b></td>
+            <td class="pl-num"><b>${laborPct!==null?laborPct.toFixed(1)+'%':'—'}</b></td>
+            <td class="pl-num">${laborPctLY!==null?laborPctLY.toFixed(1)+'%':'—'}</td>
+            <td class="pl-num ${laborPct!==null && laborPctLY!==null && laborPct<=laborPctLY?'pl-good':'pl-bad'}">${laborPct!==null && laborPctLY!==null?(laborPct-laborPctLY).toFixed(1)+'pp':'—'}</td>
+          </tr>
+        </tbody>
+      </table>
+      <div style="font-size:11px;color:var(--ink-muted);margin-top:10px;padding:10px 12px;background:var(--bg-elev);border-radius:6px;line-height:1.6">
+        💡 <b>Benchmark hospitality VN:</b> Labor Cost % 18-25% là tốt. <b>≤18%</b> rất tốt, <b>&gt;25%</b> cần action.<br>
+        Revenue per Employee tăng so với LY = năng suất cải thiện.
+      </div>
     </div>
   `;
 }
 
-function _renderTabRetention(el, dq, confBadge){
-  const today = new Date();
-  const curYear = today.getFullYear();
-  const turnoverYTD = hrMetricTurnoverYTD(curYear);
-  const liability = hrMetricLeaveLiability(curYear);
-
-  const turnoverByDept = (DB.departments||[]).map(d=>{
-    const t = hrMetricTurnoverYTD(curYear, d.id);
-    return { dept: d.name, ...t };
-  }).filter(t=>t.totalResigned>0).sort((a,b)=>b.annualizedRate-a.annualizedRate);
-
-  const turnoverTrend = [];
-  for(let i=11; i>=0; i--){
-    let m = today.getMonth() - i, y = curYear;
-    while(m < 0){ m += 12; y -= 1; }
-    const t = hrMetricTurnover(y, m);
-    turnoverTrend.push({ label: 'T'+(m+1)+'/'+String(y).slice(-2), rate: t.rate, count: t.count });
-  }
-
-  const tenureBuckets = { '<3m':0, '3-12m':0, '1-2y':0, '2-3y':0, '3-5y':0, '>5y':0 };
-  (DB.employees||[]).forEach(e=>{
-    if(getEffectiveStatus(e)==='exit') return;
-    if(!e.joined) return;
-    const months = _hrMonthsBetween(e.joined, today);
-    if(months < 3) tenureBuckets['<3m']++;
-    else if(months < 12) tenureBuckets['3-12m']++;
-    else if(months < 24) tenureBuckets['1-2y']++;
-    else if(months < 36) tenureBuckets['2-3y']++;
-    else if(months < 60) tenureBuckets['3-5y']++;
-    else tenureBuckets['>5y']++;
-  });
-  const totalTenure = Object.values(tenureBuckets).reduce((s,v)=>s+v,0);
+// ===== TAB 4: AL/CL LIABILITY =====
+function _plRenderLiability(el, year, month){
+  const liab = _plGetLeaveLiability(year);
+  // Sort dept by total value
+  const deptSorted = Object.entries(liab.byDept).sort((a,b)=>(b[1].alValue+b[1].clValue) - (a[1].alValue+a[1].clValue));
 
   el.innerHTML = `
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px;margin-bottom:18px">
-      <div style="background:var(--bg-card);border:1px solid var(--border);border-left:3px solid var(--accent);border-radius:12px;padding:16px">
-        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px">
-          <div style="font-size:11px;color:var(--ink-muted);font-weight:600;letter-spacing:.04em;text-transform:uppercase">Turnover YTD Annualized</div>
-          ${confBadge(dq.turnoverConf)}
+    <div class="pl-card">
+      <div style="font-weight:700;font-size:15px;color:var(--accent);margin-bottom:14px">🏖️ AL / CL Liability — Quy ra tiền</div>
+      <div class="pl-kpi-grid">
+        <div class="pl-kpi" style="border-left-color:var(--warning)">
+          <div class="pl-kpi-label">AL tồn tổng</div>
+          <div class="pl-kpi-value">${liab.al.days.toFixed(0)} ngày</div>
+          <div class="pl-kpi-sub">~ ${_plFmtMoney(liab.al.total)}đ</div>
         </div>
-        <div style="font-family:'JetBrains Mono',monospace;font-size:26px;font-weight:700;color:${turnoverYTD.annualizedRate>=15?'var(--danger)':turnoverYTD.annualizedRate>=10?'var(--warning)':'var(--success)'}">${turnoverYTD.annualizedRate.toFixed(1)}%</div>
-        <div style="font-size:11px;color:var(--ink-dim);margin-top:6px">${turnoverYTD.totalResigned} NV nghỉ · ${turnoverYTD.monthsCount} tháng data</div>
-        <div style="font-size:10.5px;color:var(--ink-muted);margin-top:6px;padding-top:6px;border-top:1px solid var(--border)">
-          <b>Benchmark hospitality VN:</b><br>
-          • 5-sao premium: 8-12%<br>
-          • Resort thường: 15-25%<br>
-          ${turnoverYTD.annualizedRate<5 ? '→ <span style="color:var(--warning)">Quá thấp — kiểm tra data nhập</span>' : turnoverYTD.annualizedRate>25 ? '→ <span style="color:var(--danger)">Cao — cần action</span>' : '→ <span style="color:var(--success)">Trong khoảng OK</span>'}
+        <div class="pl-kpi" style="border-left-color:var(--info)">
+          <div class="pl-kpi-label">CL tồn tổng</div>
+          <div class="pl-kpi-value">${liab.cl.days.toFixed(0)} ngày</div>
+          <div class="pl-kpi-sub">~ ${_plFmtMoney(liab.cl.total)}đ</div>
+        </div>
+        <div class="pl-kpi" style="border-left-color:var(--danger)">
+          <div class="pl-kpi-label">Tổng Liability</div>
+          <div class="pl-kpi-value" style="color:var(--danger)">${_plFmtMoney(liab.al.total+liab.cl.total)}đ</div>
+          <div class="pl-kpi-sub">Nếu phải thanh toán tiền</div>
         </div>
       </div>
-
-      <div style="background:var(--bg-card);border:1px solid var(--border);border-left:3px solid var(--warning);border-radius:12px;padding:16px">
-        <div style="font-size:11px;color:var(--ink-muted);font-weight:600;letter-spacing:.04em;text-transform:uppercase;margin-bottom:8px">🏖️ AL chưa dùng</div>
-        <div style="font-family:'JetBrains Mono',monospace;font-size:26px;font-weight:700;color:${liability.remainingRate>=60?'var(--danger)':liability.remainingRate>=40?'var(--warning)':'var(--success)'}">${liability.remainingRate.toFixed(0)}%</div>
-        <div style="margin:8px 0 0">
-          <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--ink-muted);margin-bottom:4px">
-            <span>Đã dùng ${liability.usageRate.toFixed(0)}%</span>
-            <span>Còn ${liability.remainingRate.toFixed(0)}%</span>
-          </div>
-          <div style="height:6px;background:var(--bg-elev);border-radius:3px;overflow:hidden;display:flex">
-            <div style="background:var(--success);width:${liability.usageRate}%"></div>
-            <div style="background:${liability.remainingRate>=70?'var(--danger)':liability.remainingRate>=50?'var(--warning)':'var(--ink-muted)'};flex:1"></div>
-          </div>
-        </div>
-        <div style="font-size:11px;color:var(--ink-dim);margin-top:6px">${liability.totalRemain.toFixed(0)} / ${liability.totalEntitle.toFixed(0)} ngày</div>
+      <div style="margin-top:14px;padding:10px 12px;background:rgba(232,168,124,.04);border-left:3px solid var(--warning);border-radius:6px;font-size:11.5px;color:var(--ink-dim);line-height:1.7">
+        ⚠️ Theo Luật LĐ 2019, NV không nghỉ hết phép cuối năm → công ty phải thanh toán bằng tiền. Số này là <b>liability accrual</b> sẽ ảnh hưởng P&L Q4.
       </div>
     </div>
 
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:18px">
-      <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:12px;padding:18px">
-        <div style="font-weight:700;font-size:13px;color:var(--ink);margin-bottom:12px">📈 Turnover trend 12 tháng</div>
-        ${(() => {
-          const maxRate = Math.max(...turnoverTrend.map(t=>t.rate), 1);
-          return `<div style="display:flex;align-items:flex-end;gap:4px;height:140px;border-bottom:1px solid var(--border);padding-bottom:6px">
-            ${turnoverTrend.map((t)=>{
-              const h = maxRate>0 ? Math.max((t.rate/maxRate)*100, 2) : 2;
-              const color = t.rate>=10?'var(--danger)':t.rate>=5?'var(--warning)':'var(--success)';
-              return `<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3px" title="${t.label}: ${t.rate.toFixed(1)}% (${t.count})">
-                <div style="font-size:9px;color:var(--ink-muted);font-family:'JetBrains Mono',monospace">${t.rate>0?t.rate.toFixed(1):''}</div>
-                <div style="width:100%;height:${h}%;background:${color};border-radius:2px 2px 0 0;min-height:2px"></div>
-              </div>`;
-            }).join('')}
-          </div>
-          <div style="display:flex;gap:4px;margin-top:4px">
-            ${turnoverTrend.map(t=>`<div style="flex:1;font-size:9px;color:var(--ink-muted);text-align:center">${t.label}</div>`).join('')}
-          </div>`;
-        })()}
+    <div class="pl-card">
+      <div style="font-weight:700;font-size:14px;color:var(--accent);margin-bottom:14px">Theo Phòng ban</div>
+      ${deptSorted.length === 0 ? '<div style="color:var(--ink-dim);text-align:center;padding:20px;font-size:12px">Chưa có data nghỉ phép</div>' : `
+      <table class="pl-table">
+        <thead>
+          <tr>
+            <th>Phòng ban</th>
+            <th class="pl-num">NV</th>
+            <th class="pl-num">AL tồn (ngày)</th>
+            <th class="pl-num">AL (đ)</th>
+            <th class="pl-num">CL tồn (ngày)</th>
+            <th class="pl-num">CL (đ)</th>
+            <th class="pl-num">Tổng Liability</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${deptSorted.map(([dName,d])=>`
+            <tr>
+              <td><b>${escapeHtml(dName)}</b></td>
+              <td class="pl-num">${d.count}</td>
+              <td class="pl-num">${d.al.toFixed(0)}</td>
+              <td class="pl-num">${_plFmtMoney(d.alValue)}đ</td>
+              <td class="pl-num">${d.cl.toFixed(0)}</td>
+              <td class="pl-num">${_plFmtMoney(d.clValue)}đ</td>
+              <td class="pl-num pl-warn"><b>${_plFmtMoney(d.alValue+d.clValue)}đ</b></td>
+            </tr>
+          `).join('')}
+        </tbody>
+        <tfoot>
+          <tr>
+            <td>TỔNG</td>
+            <td class="pl-num">—</td>
+            <td class="pl-num">${liab.al.days.toFixed(0)}</td>
+            <td class="pl-num">${_plFmtMoney(liab.al.total)}đ</td>
+            <td class="pl-num">${liab.cl.days.toFixed(0)}</td>
+            <td class="pl-num">${_plFmtMoney(liab.cl.total)}đ</td>
+            <td class="pl-num">${_plFmtMoney(liab.al.total+liab.cl.total)}đ</td>
+          </tr>
+        </tfoot>
+      </table>
+      `}
+    </div>
+  `;
+}
+
+// ===== TAB 5: RECRUITMENT RISK =====
+function _plRenderRecruitmentRisk(el, year, month){
+  const today = new Date();
+  const openJobs = (DB.jobs||[]).filter(j=>j.status==='open');
+  const enriched = openJobs.map(j=>{
+    const days = j.openDate ? _plDaysBetween(j.openDate, today) : 0;
+    const hired = (typeof getJobHired === 'function') ? getJobHired(j.id) : 0;
+    const cvCount = (DB.candidates||[]).filter(c=>c.jobId===j.id).length;
+    const positions = j.positions||1;
+    const remain = Math.max(0, positions - hired);
+    // Risk level
+    let risk = 'green', riskLabel = '🟢';
+    if(days >= 60) { risk='red'; riskLabel='🔴'; }
+    else if(days >= 30) { risk='amber'; riskLabel='🟡'; }
+    const dName = (typeof deptName === 'function') ? deptName(j.deptId) : '';
+    return {...j, days, hired, cvCount, positions, remain, risk, riskLabel, dName};
+  }).sort((a,b)=>b.days - a.days);
+
+  const red = enriched.filter(j=>j.risk==='red').length;
+  const amber = enriched.filter(j=>j.risk==='amber').length;
+  const green = enriched.filter(j=>j.risk==='green').length;
+
+  el.innerHTML = `
+    <div class="pl-card">
+      <div style="font-weight:700;font-size:15px;color:var(--accent);margin-bottom:14px">🎯 Recruitment Risk — Vacancy List</div>
+      <div class="pl-kpi-grid">
+        <div class="pl-kpi" style="border-left-color:var(--danger)">
+          <div class="pl-kpi-label">🔴 RED</div>
+          <div class="pl-kpi-value" style="color:var(--danger)">${red}</div>
+          <div class="pl-kpi-sub">≥ 60 ngày — critical</div>
+        </div>
+        <div class="pl-kpi" style="border-left-color:var(--warning)">
+          <div class="pl-kpi-label">🟡 AMBER</div>
+          <div class="pl-kpi-value" style="color:var(--warning)">${amber}</div>
+          <div class="pl-kpi-sub">30-59 ngày — cần push</div>
+        </div>
+        <div class="pl-kpi" style="border-left-color:var(--success)">
+          <div class="pl-kpi-label">🟢 GREEN</div>
+          <div class="pl-kpi-value" style="color:var(--success)">${green}</div>
+          <div class="pl-kpi-sub">&lt; 30 ngày — ổn</div>
+        </div>
+        <div class="pl-kpi">
+          <div class="pl-kpi-label">Tổng vacancy</div>
+          <div class="pl-kpi-value">${enriched.reduce((s,j)=>s+j.remain,0)}</div>
+          <div class="pl-kpi-sub">slots cần tuyển</div>
+        </div>
       </div>
-      <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:12px;padding:18px">
-        <div style="font-weight:700;font-size:13px;color:var(--ink);margin-bottom:12px">🏢 Top dept turnover YTD</div>
-        ${turnoverByDept.length === 0 ? '<div style="color:var(--ink-dim);font-size:12px;font-style:italic;text-align:center;padding:20px">Chưa có data</div>' : `
-          <div style="display:grid;gap:6px">
-            ${turnoverByDept.slice(0,6).map(t=>{
-              const color = t.annualizedRate>=25?'var(--danger)':t.annualizedRate>=15?'var(--warning)':'var(--success)';
-              const maxR = Math.max(...turnoverByDept.map(x=>x.annualizedRate),1);
-              const w = (t.annualizedRate/maxR)*100;
-              return `<div style="display:flex;align-items:center;gap:8px;font-size:12px">
-                <div style="flex:0 0 120px;font-weight:600">${escapeHtml(t.dept)}</div>
-                <div style="flex:1;height:5px;background:var(--bg-elev);border-radius:3px;overflow:hidden">
-                  <div style="width:${w}%;height:100%;background:${color}"></div>
+    </div>
+
+    <div class="pl-card">
+      <div style="font-weight:700;font-size:14px;color:var(--accent);margin-bottom:14px">Danh sách Vacancy</div>
+      ${enriched.length === 0 ? '<div style="color:var(--ink-dim);text-align:center;padding:20px;font-size:12px">Không có vị trí đang tuyển</div>' : `
+      <table class="pl-table">
+        <thead>
+          <tr>
+            <th>Risk</th>
+            <th>Vị trí</th>
+            <th>Phòng ban</th>
+            <th class="pl-num">Days Vacant</th>
+            <th class="pl-num">Cần tuyển</th>
+            <th class="pl-num">Đã hire</th>
+            <th class="pl-num">CV pool</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${enriched.map(j=>{
+            const riskColor = j.risk==='red'?'var(--danger)':j.risk==='amber'?'var(--warning)':'var(--success)';
+            return `<tr style="${j.risk==='red'?'background:rgba(212,127,127,.04)':''}">
+              <td style="font-size:16px">${j.riskLabel}</td>
+              <td><b>${escapeHtml(j.title)}</b></td>
+              <td>${escapeHtml(j.dName)}</td>
+              <td class="pl-num" style="color:${riskColor};font-weight:700">${j.days}d</td>
+              <td class="pl-num">${j.remain}/${j.positions}</td>
+              <td class="pl-num">${j.hired}</td>
+              <td class="pl-num">${j.cvCount}</td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+      `}
+    </div>
+  `;
+}
+
+// ===== TAB 6: HR ACTION PLAN =====
+function _plRenderActionPlan(el, year, month){
+  if(!DB.plActionPlan) DB.plActionPlan = {};
+  if(!DB.plActionPlan[year]) DB.plActionPlan[year] = {};
+  if(!DB.plActionPlan[year][month]) DB.plActionPlan[year][month] = [];
+  const items = DB.plActionPlan[year][month] || [];
+  const totalSaving = items.reduce((s,i)=>s+(parseFloat(i.expectedSaving)||0), 0);
+
+  el.innerHTML = `
+    <div class="pl-card">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:10px">
+        <div>
+          <div style="font-weight:700;font-size:15px;color:var(--accent)">📋 HR Action Plan — Tháng ${month+1}/${year}</div>
+          <div style="font-size:11px;color:var(--ink-muted);margin-top:2px">Các initiative HRM commit cho cuộc họp P&L · update hàng tháng</div>
+        </div>
+        <div style="background:rgba(126,198,153,.1);border:1px solid rgba(126,198,153,.3);padding:8px 14px;border-radius:10px">
+          <div style="font-size:10px;color:var(--ink-muted)">EXPECTED SAVING TỔNG</div>
+          <div style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:18px;color:var(--success)">${_plFmtMoney(totalSaving)}đ/tháng</div>
+        </div>
+      </div>
+
+      ${items.length === 0 ? '<div style="color:var(--ink-dim);text-align:center;padding:30px;font-size:12.5px;font-style:italic">Chưa có action plan nào cho tháng này — nhấn "Thêm action" để bắt đầu</div>' : `
+        <div style="display:grid;gap:10px;margin-bottom:14px">
+          ${items.map((it,idx)=>{
+            const statusColors = {planned:'var(--info)', in_progress:'var(--warning)', completed:'var(--success)', dropped:'var(--ink-muted)'};
+            const statusLabels = {planned:'📅 Planned', in_progress:'⚙️ In Progress', completed:'✅ Completed', dropped:'⏸ Dropped'};
+            const st = it.status || 'planned';
+            return `<div style="background:var(--bg-elev);border-left:3px solid ${statusColors[st]};border-radius:8px;padding:12px 14px">
+              <div style="display:flex;align-items:flex-start;gap:10px">
+                <div style="font-family:'JetBrains Mono',monospace;color:var(--ink-muted);font-size:11px;min-width:24px">#${idx+1}</div>
+                <div style="flex:1">
+                  <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;flex-wrap:wrap">
+                    <input type="text" value="${escapeHtml(it.title||'')}" placeholder="Tiêu đề action..."
+                      onchange="DB.plActionPlan[${year}][${month}][${idx}].title=this.value;saveData(['plActionPlan'])"
+                      style="flex:1;min-width:200px;background:transparent;border:0;color:var(--ink);font-weight:600;font-size:13px;padding:2px 0">
+                    <select onchange="DB.plActionPlan[${year}][${month}][${idx}].status=this.value;saveData(['plActionPlan']);render()"
+                      style="background:var(--bg-card);border:1px solid var(--border);color:${statusColors[st]};padding:3px 8px;border-radius:5px;font-size:11px;font-weight:600">
+                      <option value="planned" ${st==='planned'?'selected':''}>📅 Planned</option>
+                      <option value="in_progress" ${st==='in_progress'?'selected':''}>⚙️ In Progress</option>
+                      <option value="completed" ${st==='completed'?'selected':''}>✅ Completed</option>
+                      <option value="dropped" ${st==='dropped'?'selected':''}>⏸ Dropped</option>
+                    </select>
+                  </div>
+                  <div style="display:grid;grid-template-columns:1fr 1fr 1fr 24px;gap:8px;align-items:center;margin-top:6px">
+                    <input type="text" value="${escapeHtml(it.target||'')}" placeholder="Target (vd: -40 ngày AL)..."
+                      onchange="DB.plActionPlan[${year}][${month}][${idx}].target=this.value;saveData(['plActionPlan'])"
+                      style="background:var(--bg-card);border:1px solid var(--border);color:var(--ink-dim);padding:5px 8px;border-radius:5px;font-size:11.5px">
+                    <input type="number" value="${it.expectedSaving||''}" placeholder="Expected saving (đ)" min="0" step="1000000"
+                      onchange="DB.plActionPlan[${year}][${month}][${idx}].expectedSaving=parseFloat(this.value)||0;saveData(['plActionPlan']);render()"
+                      style="background:var(--bg-card);border:1px solid var(--border);color:var(--success);padding:5px 8px;border-radius:5px;font-size:11.5px;font-family:'JetBrains Mono',monospace">
+                    <input type="text" value="${escapeHtml(it.owner||'')}" placeholder="Owner..."
+                      onchange="DB.plActionPlan[${year}][${month}][${idx}].owner=this.value;saveData(['plActionPlan'])"
+                      style="background:var(--bg-card);border:1px solid var(--border);color:var(--ink-dim);padding:5px 8px;border-radius:5px;font-size:11.5px">
+                    <button onclick="if(confirm('Xóa action này?')){DB.plActionPlan[${year}][${month}].splice(${idx},1);saveData(['plActionPlan']);render()}" title="Xóa"
+                      style="background:transparent;border:0;color:var(--ink-muted);cursor:pointer;font-size:14px;padding:2px">×</button>
+                  </div>
                 </div>
-                <div style="font-family:'JetBrains Mono',monospace;font-weight:700;color:${color};min-width:46px;text-align:right">${t.annualizedRate.toFixed(1)}%</div>
-                <div style="font-family:'JetBrains Mono',monospace;color:var(--ink-muted);font-size:10px;min-width:28px;text-align:right">${t.totalResigned}ng</div>
-              </div>`;
-            }).join('')}
-          </div>
-        `}
-      </div>
+              </div>
+            </div>`;
+          }).join('')}
+        </div>
+      `}
+
+      <button onclick="if(!DB.plActionPlan)DB.plActionPlan={};if(!DB.plActionPlan[${year}])DB.plActionPlan[${year}]={};if(!DB.plActionPlan[${year}][${month}])DB.plActionPlan[${year}][${month}]=[];DB.plActionPlan[${year}][${month}].push({title:'',target:'',expectedSaving:0,owner:'',status:'planned',createdAt:Date.now()});saveData(['plActionPlan']);render()"
+        style="background:var(--accent);color:#000;border:0;padding:9px 18px;border-radius:7px;font-weight:600;font-size:12.5px;cursor:pointer">+ Thêm Action</button>
     </div>
 
-    <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:12px;padding:18px">
-      <div style="font-weight:700;font-size:13px;color:var(--ink);margin-bottom:12px">⏳ Phân bố thâm niên (${totalTenure} NV active)</div>
-      <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:8px">
-        ${Object.entries(tenureBuckets).map(([k,v])=>{
-          const pct = totalTenure>0 ? v/totalTenure*100 : 0;
-          const colors = {'<3m':'#7eb6e8','3-12m':'#d4a574','1-2y':'var(--success)','2-3y':'var(--accent)','3-5y':'var(--purple)','>5y':'#FFCC00'};
-          return `<div style="background:var(--bg-elev);padding:12px;border-radius:8px;text-align:center;border-top:3px solid ${colors[k]}">
-            <div style="font-size:10.5px;color:var(--ink-muted);font-weight:600">${k}</div>
-            <div style="font-family:'JetBrains Mono',monospace;font-size:22px;font-weight:700;color:${colors[k]};margin-top:4px">${v}</div>
-            <div style="font-size:10px;color:var(--ink-dim);margin-top:2px">${pct.toFixed(0)}%</div>
-          </div>`;
-        }).join('')}
-      </div>
-      <div style="margin-top:14px;padding:10px 12px;background:var(--bg-elev);border-radius:6px;font-size:11px;color:var(--ink-muted);line-height:1.6">
-        💡 <b style="color:var(--ink-dim)">Cách đọc:</b>
-        Tỉ lệ NV <b>&lt;3 tháng</b> cao → tập trung onboarding.
-        <b>3-12 tháng</b> cao + turnover cao → vấn đề kỳ vọng/lương sau probation.
-        <b>&gt;5 năm</b> nhiều → văn hoá tốt, stable.
-      </div>
+    ${items.length>0 ? `
+    <div class="pl-card">
+      <div style="font-weight:700;font-size:14px;color:var(--accent);margin-bottom:14px">Tổng kết</div>
+      <table class="pl-table">
+        <thead>
+          <tr>
+            <th class="pl-num">#</th>
+            <th>Action</th>
+            <th>Target</th>
+            <th>Owner</th>
+            <th>Status</th>
+            <th class="pl-num">Expected Saving/tháng</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${items.map((it,idx)=>{
+            const statusLabels = {planned:'📅 Planned', in_progress:'⚙️ In Progress', completed:'✅ Completed', dropped:'⏸ Dropped'};
+            return `<tr>
+              <td class="pl-num">${idx+1}</td>
+              <td><b>${escapeHtml(it.title||'(chưa đặt tên)')}</b></td>
+              <td>${escapeHtml(it.target||'—')}</td>
+              <td>${escapeHtml(it.owner||'—')}</td>
+              <td>${statusLabels[it.status||'planned']}</td>
+              <td class="pl-num pl-good"><b>${(parseFloat(it.expectedSaving)||0)>0?_plFmtMoney(it.expectedSaving)+'đ':'—'}</b></td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+        <tfoot>
+          <tr>
+            <td colspan="5"><b>TỔNG EXPECTED SAVING</b></td>
+            <td class="pl-num pl-good"><b>${_plFmtMoney(totalSaving)}đ/tháng</b></td>
+          </tr>
+        </tfoot>
+      </table>
     </div>
+    ` : ''}
   `;
 }
-
-
 
 
 function renderDashboard(main){
@@ -25638,6 +24880,7 @@ fbAuth.onAuthStateChanged(async user => {
           'manning_actual_': 'manningActual',
           'leavesheet_':     '_leaveSheet',
           'leavemeta_':      '_leaveMeta',
+          'pldata_':         '_plData',
         };
         const dynamicUnsub = window.fbDb.collection('hrdata')
           .onSnapshot(snap=>{
@@ -25722,7 +24965,7 @@ fbAuth.onAuthStateChanged(async user => {
                 changed = true;
               } else if(key==='_leaveMeta'){
                 // leavemeta_YYYY: merge leaveOpening, leavePlan, etc.
-                const metaKeys=['leaveOpening','leavePlan','salaryYears','trainingExtraYears','leaveExtraYears'];
+                const metaKeys=['leaveOpening','leavePlan','leavePlanLocked','salaryYears','trainingExtraYears','leaveExtraYears'];
                 metaKeys.forEach(mk=>{
                   if(!d[mk]) return;
                   if(Array.isArray(d[mk])){ DB[mk]=d[mk]; changed=true; return; }
@@ -25735,12 +24978,23 @@ fbAuth.onAuthStateChanged(async user => {
                     changed=true;
                   }
                 });
+              } else if(key==='_plData'){
+                // pldata_YYYY: merge plRevenue, plActionPlan
+                const plKeys=['plRevenue','plActionPlan'];
+                plKeys.forEach(pk=>{
+                  if(!d[pk] || typeof d[pk]!=='object') return;
+                  if(!DB[pk] || typeof DB[pk]!=='object') DB[pk]={};
+                  Object.entries(d[pk]).forEach(([yr,yrData])=>{
+                    DB[pk][yr] = yrData;
+                  });
+                  changed = true;
+                });
               }
             });
             if(!changed) return;
             clearTimeout(window._dynamicDebounce);
             window._dynamicDebounce = setTimeout(()=>{
-              const pages = ['awards','warnings','performance','leaves','recruitment','job-detail','dashboard','manning'];
+              const pages = ['awards','warnings','performance','leaves','recruitment','job-detail','dashboard','manning','analytics'];
               const modalOpen = document.getElementById('modal')?.classList.contains('open');
               if(modalOpen){
                 if(!window._pendingRender) window._pendingRender={};
