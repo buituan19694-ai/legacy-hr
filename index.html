@@ -121,6 +121,11 @@
         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/></svg>
         <span data-i18n="nav_dashboard">Dashboard</span>
       </div>
+      <div class="nav-item" data-page="analytics">
+        <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+        <span>HR Intelligence</span>
+        <span class="nav-badge" id="navAnalyticsCount" style="background:var(--danger);color:#fff;font-weight:700">0</span>
+      </div>
     </div>
 
     <div class="nav-section">
@@ -1960,6 +1965,19 @@ function updateBadges(){
   const aw=$('#navAwardCount'); if(aw){aw.textContent=awardCount;aw.style.display=awardCount>0?'':'none';}
   const wn=$('#navWarnCount'); if(wn){wn.textContent=warnCount;wn.style.display=warnCount>0?'':'none';}
   const tk=$('#navTaskCount'); if(tk){tk.textContent=taskCount;tk.style.display=taskCount>0?'':'none';}
+  // Analytics badge: P0 alerts count
+  const an=$('#navAnalyticsCount');
+  if(an){
+    try {
+      const alerts = (typeof hrIntelDetectAll === 'function') ? hrIntelDetectAll() : [];
+      const p0count = alerts.filter(a=>a.severity==='P0').length;
+      const p1count = alerts.filter(a=>a.severity==='P1').length;
+      const showCount = p0count > 0 ? p0count : p1count > 0 ? p1count : 0;
+      an.textContent = showCount;
+      an.style.display = showCount>0 ? '' : 'none';
+      an.style.background = p0count > 0 ? 'var(--danger)' : p1count > 0 ? 'var(--warning)' : 'var(--info)';
+    } catch(e) { an.style.display = 'none'; }
+  }
 }
 
 /* =========================================================
@@ -2040,6 +2058,7 @@ function _doRender(){
     main.innerHTML = '';
     const renderers = {
       dashboard: renderDashboard,
+      analytics: renderAnalytics,
       employees: renderEmployees,
       'employee-profile': renderEmployeeProfile,
       departments: renderDepartments,
@@ -2463,6 +2482,898 @@ function _parseAnyDate(s){
   return isNaN(d)?null:d;
 }
 
+/* =========================================================
+   HR INTELLIGENCE ENGINE — Sprint 1
+   Metrics + Pattern Detection + Forecasts
+   ========================================================= */
+
+// Cache để tránh re-compute metrics nhiều lần trong cùng render cycle
+window._hrIntelCache = {};
+window._hrIntelCacheKey = '';
+
+function _hrIntelCacheGet(key, fn){
+  // Cache theo chữ ký data; invalidate khi DB thay đổi
+  const sig = `${(DB.employees||[]).length}_${(DB.resignations||[]).length}_${(DB.candidates||[]).length}_${(DB.contracts||[]).length}`;
+  if(window._hrIntelCacheKey !== sig){
+    window._hrIntelCache = {};
+    window._hrIntelCacheKey = sig;
+  }
+  if(window._hrIntelCache[key] !== undefined) return window._hrIntelCache[key];
+  const v = fn();
+  window._hrIntelCache[key] = v;
+  return v;
+}
+
+// ===== HELPER FUNCTIONS =====
+
+function _hrMonthsBetween(d1, d2){
+  if(!d1||!d2) return 0;
+  const a = new Date(d1), b = new Date(d2);
+  if(isNaN(a)||isNaN(b)) return 0;
+  return (b.getFullYear()-a.getFullYear())*12 + (b.getMonth()-a.getMonth());
+}
+
+function _hrDaysBetween(d1, d2){
+  if(!d1||!d2) return 0;
+  const a = new Date(d1), b = new Date(d2);
+  if(isNaN(a)||isNaN(b)) return 0;
+  return Math.round((b-a)/86400000);
+}
+
+function _hrInPeriod(dateStr, year, month){
+  if(!dateStr) return false;
+  const d = new Date(dateStr);
+  if(isNaN(d)) return false;
+  return d.getFullYear()===year && d.getMonth()===month;
+}
+
+// ===== CORE METRICS =====
+
+function hrMetricTurnover(year, month, deptId=null){
+  return _hrIntelCacheGet(`turnover_${year}_${month}_${deptId||'all'}`, ()=>{
+    const emps = (DB.employees||[]).filter(e=>!deptId||e.deptId===deptId);
+    // Số NV nghỉ trong tháng
+    const resigned = (DB.resignations||[]).filter(r=>{
+      if(r.status!=='confirmed') return false;
+      const emp = empById(r.empId);
+      if(!emp) return false;
+      if(deptId && emp.deptId !== deptId) return false;
+      const endDate = r.endDate || r.confirmedAt;
+      return _hrInPeriod(endDate, year, month);
+    });
+    // HC trung bình tháng = (HC đầu tháng + HC cuối tháng) / 2
+    const monthStart = new Date(year, month, 1);
+    const monthEnd = new Date(year, month+1, 0);
+    const hcStart = emps.filter(e=>{
+      const joined = e.joined ? new Date(e.joined) : null;
+      if(!joined || joined > monthStart) return false;
+      const cd = (DB.customData||{})[e.id]||{};
+      const exitDate = cd.exitDate ? new Date(cd.exitDate) : null;
+      return !exitDate || exitDate >= monthStart;
+    }).length;
+    const hcEnd = emps.filter(e=>{
+      const joined = e.joined ? new Date(e.joined) : null;
+      if(!joined || joined > monthEnd) return false;
+      const cd = (DB.customData||{})[e.id]||{};
+      const exitDate = cd.exitDate ? new Date(cd.exitDate) : null;
+      return !exitDate || exitDate >= monthEnd;
+    }).length;
+    const avgHC = (hcStart + hcEnd) / 2;
+    const rate = avgHC > 0 ? (resigned.length / avgHC * 100) : 0;
+    return { count: resigned.length, avgHC, rate, resigned };
+  });
+}
+
+function hrMetricTurnoverYTD(year, deptId=null){
+  return _hrIntelCacheGet(`turnoverYTD_${year}_${deptId||'all'}`, ()=>{
+    const today = new Date();
+    const lastMonth = year === today.getFullYear() ? today.getMonth() : 11;
+    let totalResigned = 0, totalAvgHC = 0;
+    for(let m=0; m<=lastMonth; m++){
+      const r = hrMetricTurnover(year, m, deptId);
+      totalResigned += r.count;
+      totalAvgHC += r.avgHC;
+    }
+    const monthsCount = lastMonth + 1;
+    const avgHC = totalAvgHC / monthsCount;
+    // Annualized: extrapolate ra cả năm
+    const annualizedRate = avgHC > 0 ? (totalResigned / avgHC) * (12 / monthsCount) * 100 : 0;
+    return { totalResigned, avgHC, annualizedRate, monthsCount };
+  });
+}
+
+function hrMetricManningGap(year, month){
+  return _hrIntelCacheGet(`manningGap_${year}_${month}`, ()=>{
+    const monthKey = `${year}-${String(month+1).padStart(2,'0')}`;
+    const result = [];
+    (DB.departments||[]).forEach(d=>{
+      const plan = ((DB.manningPlan||{})[monthKey]||{})[d.id] || 0;
+      const actual = (DB.employees||[]).filter(e=>e.deptId===d.id && getEffectiveStatus(e)!=='exit').length;
+      result.push({
+        dept: d.name,
+        deptId: d.id,
+        plan, actual,
+        gap: actual - plan,
+        gapPct: plan>0 ? (actual-plan)/plan*100 : 0,
+        status: plan===0 ? 'no-plan' : actual<plan ? 'short' : actual>plan ? 'over' : 'on-target'
+      });
+    });
+    return result;
+  });
+}
+
+function hrMetricRetention(year){
+  return _hrIntelCacheGet(`retention_${year}`, ()=>{
+    // % NV ở lại sau 6/12/24 tháng kể từ ngày join
+    const joiners = (DB.employees||[]).filter(e=>{
+      if(!e.joined) return false;
+      const j = new Date(e.joined);
+      return j.getFullYear() === year - 2; // Cohort cách đây 2 năm để có đủ data 24 tháng
+    });
+    const cd = DB.customData||{};
+    const stayedAfter = (months)=>{
+      if(joiners.length===0) return null;
+      const count = joiners.filter(e=>{
+        const exitDate = cd[e.id]?.exitDate ? new Date(cd[e.id].exitDate) : null;
+        const joinDate = new Date(e.joined);
+        if(!exitDate) return true; // còn ở
+        const monthsBetween = _hrMonthsBetween(joinDate, exitDate);
+        return monthsBetween >= months;
+      }).length;
+      return { count, total: joiners.length, rate: count/joiners.length*100 };
+    };
+    return {
+      cohortYear: year - 2,
+      cohortSize: joiners.length,
+      after6: stayedAfter(6),
+      after12: stayedAfter(12),
+      after24: stayedAfter(24),
+    };
+  });
+}
+
+function hrMetricTimeToHire(year, month=null){
+  return _hrIntelCacheGet(`timeToHire_${year}_${month}`, ()=>{
+    const hired = (DB.candidates||[]).filter(c=>{
+      if(c.status !== 'hired' || !c.hiredDate || !c.appliedDate) return false;
+      const h = new Date(c.hiredDate);
+      if(h.getFullYear() !== year) return false;
+      if(month !== null && h.getMonth() !== month) return false;
+      return true;
+    });
+    if(hired.length === 0) return { avg: null, median: null, count: 0, p90: null };
+    const days = hired.map(c=>_hrDaysBetween(c.appliedDate, c.hiredDate)).sort((a,b)=>a-b);
+    return {
+      avg: Math.round(days.reduce((s,d)=>s+d,0)/days.length),
+      median: days[Math.floor(days.length/2)],
+      p90: days[Math.floor(days.length*0.9)],
+      count: hired.length,
+      raw: days,
+    };
+  });
+}
+
+function hrMetricProbation(){
+  return _hrIntelCacheGet('probation', ()=>{
+    const today = new Date();
+    const cd = DB.customData||{};
+    const probationers = [];
+    (DB.employees||[]).forEach(e=>{
+      if(getEffectiveStatus(e) === 'exit') return;
+      const ed = cd[e.id]||{};
+      const ctType = ed.currentContractType || '';
+      // Probation contract
+      if(ctType === 'HĐ Thử việc' || ctType === 'probation' || /thử việc/i.test(ctType)){
+        const endDate = ed.currentContractEnd || ed.contractEnd;
+        const daysLeft = endDate ? _hrDaysBetween(today, endDate) : null;
+        probationers.push({
+          empId: e.id,
+          name: e.name,
+          dept: ((DB.departments||[]).find(d=>d.id===e.deptId)||{}).name||'',
+          role: e.role,
+          joined: e.joined,
+          endDate,
+          daysLeft,
+        });
+      }
+    });
+    const expiring7 = probationers.filter(p=>p.daysLeft!==null && p.daysLeft>=0 && p.daysLeft<=7);
+    const expiring30 = probationers.filter(p=>p.daysLeft!==null && p.daysLeft>=0 && p.daysLeft<=30);
+    const overdue = probationers.filter(p=>p.daysLeft!==null && p.daysLeft<0);
+    return { total: probationers.length, expiring7, expiring30, overdue, all: probationers };
+  });
+}
+
+function hrMetricContractExpiry(){
+  return _hrIntelCacheGet('contractExpiry', ()=>{
+    const today = new Date();
+    const cd = DB.customData||{};
+    const expiring = [];
+    (DB.employees||[]).forEach(e=>{
+      if(getEffectiveStatus(e) === 'exit') return;
+      const ed = cd[e.id]||{};
+      const endDate = ed.currentContractEnd || ed.contractEnd;
+      if(!endDate) return;
+      const daysLeft = _hrDaysBetween(today, endDate);
+      if(daysLeft >= -7 && daysLeft <= 90){ // Trong 90 ngày tới hoặc đã quá hạn 7 ngày
+        expiring.push({
+          empId: e.id,
+          name: e.name,
+          dept: ((DB.departments||[]).find(d=>d.id===e.deptId)||{}).name||'',
+          role: e.role,
+          contractType: ed.currentContractType,
+          endDate,
+          daysLeft,
+        });
+      }
+    });
+    expiring.sort((a,b)=>a.daysLeft-b.daysLeft);
+    return {
+      total: expiring.length,
+      expiring30: expiring.filter(c=>c.daysLeft<=30 && c.daysLeft>=0),
+      expiring60: expiring.filter(c=>c.daysLeft<=60 && c.daysLeft>=0),
+      expiring90: expiring,
+      overdue: expiring.filter(c=>c.daysLeft<0),
+    };
+  });
+}
+
+function hrMetricResignationPipeline(){
+  return _hrIntelCacheGet('resignationPipeline', ()=>{
+    const today = new Date();
+    const pending = (DB.resignations||[]).filter(r=>r.status==='pending');
+    const upcoming = (DB.resignations||[]).filter(r=>{
+      if(r.status==='cancelled') return false;
+      const endDate = r.endDate ? new Date(r.endDate) : null;
+      if(!endDate) return false;
+      const daysLeft = _hrDaysBetween(today, endDate);
+      return daysLeft >= 0 && daysLeft <= 30;
+    });
+    // Phân nhóm theo dept
+    const byDept = {};
+    upcoming.forEach(r=>{
+      const emp = empById(r.empId);
+      const deptName = emp ? ((DB.departments||[]).find(d=>d.id===emp.deptId)||{}).name : 'Unknown';
+      if(!byDept[deptName]) byDept[deptName] = [];
+      byDept[deptName].push({ empId: r.empId, name: emp?.name, endDate: r.endDate, reason: r.reason });
+    });
+    return { pending, upcoming, byDept, totalUpcoming: upcoming.length };
+  });
+}
+
+function hrMetricLeaveLiability(year){
+  return _hrIntelCacheGet(`leaveLiability_${year}`, ()=>{
+    const cd = DB.customData||{};
+    const sheet = (DB.leaveSheet||{});
+    let totalEntitle = 0, totalTaken = 0, totalRemain = 0;
+    const empData = [];
+    (DB.employees||[]).forEach(e=>{
+      if(getEffectiveStatus(e) === 'exit') return;
+      const sh = (sheet[e.id]||{})[year]?.al;
+      if(!sh) return;
+      const carry = parseFloat(sh.carry)||0;
+      const entitle = Array.isArray(sh.entitle) ? sh.entitle.reduce((s,v)=>s+(parseFloat(v)||0),0) : 0;
+      const taken = Array.isArray(sh.taken) ? sh.taken.reduce((s,v)=>s+(parseFloat(v)||0),0) : 0;
+      const clearAL = parseFloat(sh.clearAL)||0;
+      const total = carry + entitle;
+      const used = taken + clearAL;
+      const remain = total - used;
+      if(total > 0){
+        totalEntitle += total;
+        totalTaken += used;
+        totalRemain += remain;
+        empData.push({ empId: e.id, name: e.name, total, used, remain });
+      }
+    });
+    return {
+      totalEntitle,
+      totalTaken,
+      totalRemain,
+      usageRate: totalEntitle>0 ? totalTaken/totalEntitle*100 : 0,
+      remainingRate: totalEntitle>0 ? totalRemain/totalEntitle*100 : 0,
+      empCount: empData.length,
+      avgRemainPerEmp: empData.length>0 ? totalRemain/empData.length : 0,
+    };
+  });
+}
+
+// ===== PATTERN DETECTORS =====
+// Mỗi pattern trả về { severity: 'P0'|'P1'|'P2', icon, title, detail, action, link } hoặc null
+
+function hrPatternProbationExpiringNoAction(){
+  const p = hrMetricProbation();
+  if(p.expiring7.length === 0 && p.overdue.length === 0) return null;
+  const items = [...p.overdue, ...p.expiring7];
+  return {
+    severity: p.overdue.length > 0 ? 'P0' : 'P0',
+    icon: '⏰',
+    title: `${items.length} NV thử việc cần quyết định ngay`,
+    detail: items.slice(0,3).map(p=>`${p.name} (${p.dept}) — ${p.daysLeft<0?`quá hạn ${Math.abs(p.daysLeft)} ngày`:`còn ${p.daysLeft} ngày`}`).join(' · '),
+    action: 'Đánh giá thử việc',
+    link: 'contracts'
+  };
+}
+
+function hrPatternContractExpiring(){
+  const c = hrMetricContractExpiry();
+  if(c.expiring30.length === 0 && c.overdue.length === 0) return null;
+  return {
+    severity: c.overdue.length > 0 ? 'P0' : 'P1',
+    icon: '📋',
+    title: `${c.expiring30.length + c.overdue.length} HĐ hết hạn trong 30 ngày`,
+    detail: c.expiring30.slice(0,3).map(c=>`${c.name} (${c.dept}) — còn ${c.daysLeft} ngày`).join(' · '),
+    action: 'Lập kế hoạch gia hạn',
+    link: 'contracts'
+  };
+}
+
+function hrPatternResignationCluster(){
+  // Phát hiện >=3 đơn nghỉ trong 1 dept trong 14 ngày
+  const today = new Date();
+  const recent = (DB.resignations||[]).filter(r=>{
+    const submitDate = r.submitDate ? new Date(r.submitDate) : null;
+    if(!submitDate) return false;
+    return _hrDaysBetween(submitDate, today) <= 14;
+  });
+  const byDept = {};
+  recent.forEach(r=>{
+    const emp = empById(r.empId);
+    if(!emp) return;
+    const dn = ((DB.departments||[]).find(d=>d.id===emp.deptId)||{}).name || 'Unknown';
+    byDept[dn] = (byDept[dn]||0)+1;
+  });
+  const clusters = Object.entries(byDept).filter(([d,n])=>n>=3);
+  if(clusters.length === 0) return null;
+  return {
+    severity: 'P0',
+    icon: '🚨',
+    title: `Bất thường: ${clusters.length} dept có ≥3 đơn nghỉ trong 14 ngày`,
+    detail: clusters.map(([d,n])=>`${d}: ${n} đơn`).join(' · '),
+    action: 'Điều tra nguyên nhân',
+    link: 'workforce'
+  };
+}
+
+function hrPatternManningGap(){
+  const today = new Date();
+  const gaps = hrMetricManningGap(today.getFullYear(), today.getMonth());
+  const shortDepts = gaps.filter(g=>g.status==='short' && Math.abs(g.gapPct) >= 10);
+  if(shortDepts.length === 0) return null;
+  shortDepts.sort((a,b)=>a.gap-b.gap);
+  return {
+    severity: shortDepts.some(g=>Math.abs(g.gapPct)>=20) ? 'P1' : 'P2',
+    icon: '👥',
+    title: `${shortDepts.length} dept thiếu nhân sự so với plan`,
+    detail: shortDepts.slice(0,3).map(g=>`${g.dept}: ${g.actual}/${g.plan} (${g.gap})`).join(' · '),
+    action: 'Đẩy tuyển dụng',
+    link: 'recruitment'
+  };
+}
+
+function hrPatternPendingResignation(){
+  const p = hrMetricResignationPipeline();
+  if(p.pending.length === 0) return null;
+  return {
+    severity: p.pending.length >= 3 ? 'P1' : 'P2',
+    icon: '📝',
+    title: `${p.pending.length} đơn nghỉ chờ duyệt`,
+    detail: p.pending.slice(0,3).map(r=>{
+      const emp = empById(r.empId);
+      return `${emp?.name||'?'} — kết thúc ${r.endDate}`;
+    }).join(' · '),
+    action: 'Xem & duyệt đơn',
+    link: 'workforce'
+  };
+}
+
+function hrPatternTurnoverSpike(){
+  const today = new Date();
+  const curMonth = today.getMonth();
+  const curYear = today.getFullYear();
+  const prevMonth = curMonth === 0 ? 11 : curMonth - 1;
+  const prevYear = curMonth === 0 ? curYear - 1 : curYear;
+  const cur = hrMetricTurnover(curYear, curMonth);
+  const prev = hrMetricTurnover(prevYear, prevMonth);
+  if(cur.rate < 5 || prev.rate < 1) return null; // Bỏ qua khi quá thấp (noise)
+  const delta = cur.rate - prev.rate;
+  if(delta < 3) return null; // Chỉ flag khi tăng đáng kể
+  return {
+    severity: delta >= 8 ? 'P0' : delta >= 5 ? 'P1' : 'P2',
+    icon: '📈',
+    title: `Turnover tăng đột biến tháng này`,
+    detail: `${cur.rate.toFixed(1)}% (${cur.count} người) — tăng ${delta.toFixed(1)}% so tháng trước`,
+    action: 'Phân tích sâu',
+    link: 'analytics'
+  };
+}
+
+function hrPatternHighLeaveBalance(){
+  const today = new Date();
+  if(today.getMonth() < 8) return null; // Chỉ flag từ Q4 trở đi
+  const l = hrMetricLeaveLiability(today.getFullYear());
+  if(l.remainingRate < 50) return null;
+  return {
+    severity: l.remainingRate >= 70 ? 'P1' : 'P2',
+    icon: '🏖️',
+    title: `${l.remainingRate.toFixed(0)}% AL chưa dùng cuối năm`,
+    detail: `${l.empCount} NV có tổng ${l.totalRemain.toFixed(0)} ngày phép còn lại — trung bình ${l.avgRemainPerEmp.toFixed(1)} ngày/NV`,
+    action: 'Đẩy lịch nghỉ phép',
+    link: 'leaves'
+  };
+}
+
+function hrPatternSlowHiring(){
+  const today = new Date();
+  // Vị trí open > 60 ngày chưa hire xong
+  const slowJobs = (DB.jobs||[]).filter(j=>{
+    if(j.status !== 'open') return false;
+    if(!j.openDate) return false;
+    const days = _hrDaysBetween(j.openDate, today);
+    if(days < 60) return false;
+    const hired = getJobHired(j.id);
+    return hired < (j.positions||1);
+  });
+  if(slowJobs.length === 0) return null;
+  slowJobs.sort((a,b)=>_hrDaysBetween(b.openDate, today)-_hrDaysBetween(a.openDate, today));
+  return {
+    severity: slowJobs.length >= 3 ? 'P1' : 'P2',
+    icon: '⏳',
+    title: `${slowJobs.length} vị trí tuyển > 60 ngày chưa xong`,
+    detail: slowJobs.slice(0,3).map(j=>{
+      const days = _hrDaysBetween(j.openDate, today);
+      return `${j.title} — ${days} ngày`;
+    }).join(' · '),
+    action: 'Review chiến lược tuyển',
+    link: 'recruitment'
+  };
+}
+
+function hrPatternOnboardingRisk(){
+  // NV mới (joined < 90 days) trong dept có turnover cao → flight risk
+  const today = new Date();
+  const newJoiners = (DB.employees||[]).filter(e=>{
+    if(getEffectiveStatus(e) === 'exit') return false;
+    if(!e.joined) return false;
+    const days = _hrDaysBetween(e.joined, today);
+    return days <= 90 && days >= 0;
+  });
+  if(newJoiners.length === 0) return null;
+  // Tính turnover YTD theo dept
+  const turnoverByDept = {};
+  (DB.departments||[]).forEach(d=>{
+    const t = hrMetricTurnoverYTD(today.getFullYear(), d.id);
+    turnoverByDept[d.id] = t.annualizedRate;
+  });
+  const highTurnoverDepts = Object.entries(turnoverByDept).filter(([id,r])=>r >= 25);
+  if(highTurnoverDepts.length === 0) return null;
+  const atRisk = newJoiners.filter(e=>highTurnoverDepts.some(([id,r])=>id===e.deptId));
+  if(atRisk.length === 0) return null;
+  return {
+    severity: 'P2',
+    icon: '⚠️',
+    title: `${atRisk.length} NV mới ở dept có turnover cao`,
+    detail: `Dept ${highTurnoverDepts.map(([id,r])=>((DB.departments||[]).find(d=>d.id===id)||{}).name).join(', ')} có turnover annualized > 25%`,
+    action: 'Tăng support onboarding',
+    link: 'employees'
+  };
+}
+
+function hrPatternOneYearCliff(){
+  // NV gần 1 năm thâm niên (335-365 ngày) — peak risk zone
+  const today = new Date();
+  const oneYearers = (DB.employees||[]).filter(e=>{
+    if(getEffectiveStatus(e) === 'exit') return false;
+    if(!e.joined) return false;
+    const days = _hrDaysBetween(e.joined, today);
+    return days >= 335 && days <= 395;
+  });
+  if(oneYearers.length === 0) return null;
+  return {
+    severity: 'P2',
+    icon: '🎯',
+    title: `${oneYearers.length} NV gần tròn 1 năm — review tăng lương/promote`,
+    detail: oneYearers.slice(0,3).map(e=>{
+      const days = _hrDaysBetween(e.joined, today);
+      return `${e.name} — ${days} ngày`;
+    }).join(' · '),
+    action: 'Lập kế hoạch giữ chân',
+    link: 'employees'
+  };
+}
+
+// ===== PATTERN ORCHESTRATOR =====
+
+function hrIntelDetectAll(){
+  const detectors = [
+    hrPatternProbationExpiringNoAction,
+    hrPatternContractExpiring,
+    hrPatternResignationCluster,
+    hrPatternManningGap,
+    hrPatternPendingResignation,
+    hrPatternTurnoverSpike,
+    hrPatternHighLeaveBalance,
+    hrPatternSlowHiring,
+    hrPatternOnboardingRisk,
+    hrPatternOneYearCliff,
+  ];
+  const alerts = [];
+  detectors.forEach(fn=>{
+    try { const r = fn(); if(r) alerts.push(r); }
+    catch(e){ console.warn('[HR Intel] Pattern detector failed:', fn.name, e); }
+  });
+  // Sort: P0 → P1 → P2
+  const priority = { P0:0, P1:1, P2:2 };
+  alerts.sort((a,b)=>(priority[a.severity]||9)-(priority[b.severity]||9));
+  return alerts;
+}
+
+// ===== UI RENDERING =====
+
+function renderHRPulse(targetSelector='#hrPulseContainer'){
+  const el = document.querySelector(targetSelector);
+  if(!el) return;
+  const alerts = hrIntelDetectAll();
+  if(alerts.length === 0){
+    el.innerHTML = `
+      <div style="background:linear-gradient(135deg,rgba(126,198,153,.08),rgba(126,198,153,.02));border:1px solid rgba(126,198,153,.2);border-radius:10px;padding:14px 18px;display:flex;align-items:center;gap:12px">
+        <div style="font-size:24px">✨</div>
+        <div>
+          <div style="font-weight:600;color:var(--success);font-size:14px">Mọi việc đang ổn</div>
+          <div style="font-size:12px;color:var(--ink-dim);margin-top:2px">Không phát hiện vấn đề cần xử lý ngay</div>
+        </div>
+      </div>`;
+    return;
+  }
+  const sevColor = { P0:'var(--danger)', P1:'var(--warning)', P2:'var(--info)' };
+  const sevBg = { P0:'rgba(212,127,127,.08)', P1:'rgba(255,160,80,.08)', P2:'rgba(126,182,232,.06)' };
+  const sevBorder = { P0:'rgba(212,127,127,.25)', P1:'rgba(255,160,80,.25)', P2:'rgba(126,182,232,.2)' };
+  const p0 = alerts.filter(a=>a.severity==='P0');
+  const p1 = alerts.filter(a=>a.severity==='P1');
+  const p2 = alerts.filter(a=>a.severity==='P2');
+  el.innerHTML = `
+    <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:12px;padding:16px 18px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px">
+        <div style="display:flex;align-items:center;gap:10px">
+          <div style="font-size:20px">📡</div>
+          <div>
+            <div style="font-weight:700;font-size:14px;color:var(--ink)">HR Pulse</div>
+            <div style="font-size:11px;color:var(--ink-muted)">${alerts.length} vấn đề phát hiện · ${p0.length} khẩn, ${p1.length} tuần này, ${p2.length} tham khảo</div>
+          </div>
+        </div>
+        <div style="display:flex;gap:6px;font-size:11px">
+          ${p0.length>0?`<span style="background:rgba(212,127,127,.15);color:var(--danger);padding:3px 10px;border-radius:12px;font-weight:600">🔴 ${p0.length} P0</span>`:''}
+          ${p1.length>0?`<span style="background:rgba(255,160,80,.15);color:var(--warning);padding:3px 10px;border-radius:12px;font-weight:600">🟡 ${p1.length} P1</span>`:''}
+          ${p2.length>0?`<span style="background:rgba(126,182,232,.15);color:var(--info);padding:3px 10px;border-radius:12px;font-weight:600">🟢 ${p2.length} P2</span>`:''}
+        </div>
+      </div>
+      <div style="display:grid;gap:8px">
+        ${alerts.slice(0,7).map(a=>`
+          <div style="background:${sevBg[a.severity]};border:1px solid ${sevBorder[a.severity]};border-left:3px solid ${sevColor[a.severity]};border-radius:8px;padding:10px 14px;display:flex;align-items:center;gap:12px">
+            <div style="font-size:18px;flex-shrink:0">${a.icon}</div>
+            <div style="flex:1;min-width:0">
+              <div style="font-weight:600;font-size:13px;color:var(--ink);line-height:1.3">${escapeHtml(a.title)}</div>
+              <div style="font-size:11.5px;color:var(--ink-dim);margin-top:3px;line-height:1.4">${escapeHtml(a.detail)}</div>
+            </div>
+            <button onclick="navigate('${a.link}')" style="background:transparent;border:1px solid ${sevBorder[a.severity]};color:${sevColor[a.severity]};padding:6px 12px;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap;flex-shrink:0" onmouseover="this.style.background='${sevColor[a.severity]}';this.style.color='#000'" onmouseout="this.style.background='transparent';this.style.color='${sevColor[a.severity]}'">${escapeHtml(a.action)} →</button>
+          </div>
+        `).join('')}
+        ${alerts.length > 7 ? `<div style="text-align:center;font-size:11px;color:var(--ink-muted);padding:4px">và ${alerts.length-7} cảnh báo P2 khác</div>` : ''}
+      </div>
+    </div>`;
+}
+
+function renderAnalytics(main){
+  const today = new Date();
+  const curYear = today.getFullYear();
+  const curMonth = today.getMonth();
+
+  // ===== TÍNH CÁC METRICS =====
+  const turnoverThisMonth = hrMetricTurnover(curYear, curMonth);
+  const prevMonth = curMonth === 0 ? 11 : curMonth - 1;
+  const prevYear = curMonth === 0 ? curYear - 1 : curYear;
+  const turnoverLastMonth = hrMetricTurnover(prevYear, prevMonth);
+  const turnoverYTD = hrMetricTurnoverYTD(curYear);
+  const turnoverLastYear = hrMetricTurnoverYTD(curYear - 1);
+  const retention = hrMetricRetention(curYear);
+  const tth = hrMetricTimeToHire(curYear);
+  const manningGap = hrMetricManningGap(curYear, curMonth);
+  const probation = hrMetricProbation();
+  const contractExp = hrMetricContractExpiry();
+  const resignPipeline = hrMetricResignationPipeline();
+  const leaveLiability = hrMetricLeaveLiability(curYear);
+  const alerts = hrIntelDetectAll();
+
+  // Turnover trend 12 tháng
+  const turnoverTrend = [];
+  for(let i=11; i>=0; i--){
+    let m = curMonth - i, y = curYear;
+    while(m < 0){ m += 12; y -= 1; }
+    const t = hrMetricTurnover(y, m);
+    turnoverTrend.push({ label: `T${m+1}/${String(y).slice(-2)}`, rate: t.rate, count: t.count });
+  }
+
+  // Turnover by dept (YTD)
+  const turnoverByDept = (DB.departments||[]).map(d=>{
+    const t = hrMetricTurnoverYTD(curYear, d.id);
+    return { dept: d.name, deptId: d.id, ...t };
+  }).filter(t=>t.totalResigned>0).sort((a,b)=>b.annualizedRate-a.annualizedRate);
+
+  // Helpers
+  const fmtRate = v => v==null?'—':v.toFixed(1)+'%';
+  const fmtDays = v => v==null?'—':v+' ngày';
+  const trendArrow = (cur, prev) => {
+    if(prev==null||prev===0) return '';
+    const d = cur - prev;
+    if(Math.abs(d) < 0.5) return '<span style="color:var(--ink-muted)">→</span>';
+    return d > 0 ? '<span style="color:var(--danger)">↑</span>' : '<span style="color:var(--success)">↓</span>';
+  };
+
+  const cardBase = (title, icon, body, color='var(--accent)') => `
+    <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:12px;padding:16px 18px">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+        <div style="font-size:18px">${icon}</div>
+        <div style="font-weight:700;font-size:14px;color:${color}">${title}</div>
+      </div>
+      ${body}
+    </div>`;
+
+  main.innerHTML = `
+    <div class="topbar">
+      <div class="topbar-left">
+        <div class="crumb">Tổng quan · <span>HR Intelligence</span></div>
+        <h1 class="page-title">HR <em>Intelligence</em></h1>
+        <div class="page-sub">Phân tích đa chiều · Phát hiện vấn đề trước · Dự báo xu hướng</div>
+      </div>
+    </div>
+
+    <!-- HR Pulse Alert Center -->
+    <div id="hrPulseFull" style="margin-bottom:24px"></div>
+
+    <!-- Section 1: Workforce Health Overview -->
+    <h2 style="font-size:16px;font-weight:700;color:var(--accent);margin:24px 0 14px;display:flex;align-items:center;gap:10px">
+      <span style="font-size:20px">💪</span> Sức khỏe lực lượng lao động
+    </h2>
+
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px;margin-bottom:24px">
+      ${cardBase('Turnover Rate', '📊', `
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+          <div>
+            <div style="font-size:10.5px;color:var(--ink-muted);text-transform:uppercase;letter-spacing:.04em;font-weight:600">Tháng này</div>
+            <div style="font-family:'JetBrains Mono',monospace;font-size:24px;font-weight:700;color:var(--ink);margin-top:4px">${fmtRate(turnoverThisMonth.rate)} ${trendArrow(turnoverThisMonth.rate, turnoverLastMonth.rate)}</div>
+            <div style="font-size:10.5px;color:var(--ink-dim);margin-top:2px">${turnoverThisMonth.count} người nghỉ · tháng trước ${fmtRate(turnoverLastMonth.rate)}</div>
+          </div>
+          <div>
+            <div style="font-size:10.5px;color:var(--ink-muted);text-transform:uppercase;letter-spacing:.04em;font-weight:600">YTD Annualized</div>
+            <div style="font-family:'JetBrains Mono',monospace;font-size:24px;font-weight:700;color:var(--ink);margin-top:4px">${fmtRate(turnoverYTD.annualizedRate)} ${trendArrow(turnoverYTD.annualizedRate, turnoverLastYear.annualizedRate)}</div>
+            <div style="font-size:10.5px;color:var(--ink-dim);margin-top:2px">${turnoverYTD.totalResigned} người · ${curYear-1}: ${fmtRate(turnoverLastYear.annualizedRate)}</div>
+          </div>
+        </div>
+      `, 'var(--accent)')}
+
+      ${cardBase('Retention Cohort', '🎯', `
+        <div style="font-size:11px;color:var(--ink-muted);margin-bottom:8px">Cohort vào năm ${retention.cohortYear} (${retention.cohortSize} NV)</div>
+        ${retention.cohortSize === 0 ? '<div style="color:var(--ink-dim);font-style:italic;font-size:12px">Chưa đủ data cohort 2 năm</div>' : `
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
+            ${[{lbl:'6 tháng',d:retention.after6},{lbl:'12 tháng',d:retention.after12},{lbl:'24 tháng',d:retention.after24}].map(x=>`
+              <div style="background:var(--bg-elev);padding:8px 10px;border-radius:6px;text-align:center">
+                <div style="font-size:10px;color:var(--ink-muted)">${x.lbl}</div>
+                <div style="font-family:'JetBrains Mono',monospace;font-size:18px;font-weight:700;color:${!x.d?'var(--ink-dim)':x.d.rate>=70?'var(--success)':x.d.rate>=50?'var(--warning)':'var(--danger)'};margin-top:2px">${x.d?x.d.rate.toFixed(0)+'%':'—'}</div>
+                <div style="font-size:10px;color:var(--ink-dim);margin-top:1px">${x.d?x.d.count+'/'+x.d.total:''}</div>
+              </div>
+            `).join('')}
+          </div>
+        `}
+      `, 'var(--success)')}
+
+      ${cardBase('Time to Hire', '⚡', `
+        ${tth.count === 0 ? '<div style="color:var(--ink-dim);font-style:italic;font-size:12px">Chưa có data trong năm</div>' : `
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
+            <div style="background:var(--bg-elev);padding:8px 10px;border-radius:6px;text-align:center">
+              <div style="font-size:10px;color:var(--ink-muted)">Trung bình</div>
+              <div style="font-family:'JetBrains Mono',monospace;font-size:18px;font-weight:700;color:var(--info);margin-top:2px">${tth.avg}</div>
+              <div style="font-size:10px;color:var(--ink-dim);margin-top:1px">ngày</div>
+            </div>
+            <div style="background:var(--bg-elev);padding:8px 10px;border-radius:6px;text-align:center">
+              <div style="font-size:10px;color:var(--ink-muted)">Median</div>
+              <div style="font-family:'JetBrains Mono',monospace;font-size:18px;font-weight:700;color:var(--accent);margin-top:2px">${tth.median}</div>
+              <div style="font-size:10px;color:var(--ink-dim);margin-top:1px">${tth.count} job hired</div>
+            </div>
+            <div style="background:var(--bg-elev);padding:8px 10px;border-radius:6px;text-align:center">
+              <div style="font-size:10px;color:var(--ink-muted)">P90 (worst)</div>
+              <div style="font-family:'JetBrains Mono',monospace;font-size:18px;font-weight:700;color:var(--warning);margin-top:2px">${tth.p90}</div>
+              <div style="font-size:10px;color:var(--ink-dim);margin-top:1px">ngày</div>
+            </div>
+          </div>
+        `}
+      `, 'var(--info)')}
+
+      ${cardBase('Leave Liability', '🏖️', `
+        <div style="margin-bottom:10px">
+          <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--ink-muted);margin-bottom:4px">
+            <span>Đã dùng ${leaveLiability.usageRate.toFixed(0)}%</span>
+            <span>Còn ${leaveLiability.remainingRate.toFixed(0)}%</span>
+          </div>
+          <div style="height:8px;background:var(--bg-elev);border-radius:4px;overflow:hidden;display:flex">
+            <div style="background:var(--success);width:${leaveLiability.usageRate}%"></div>
+            <div style="background:${leaveLiability.remainingRate>=70?'var(--danger)':leaveLiability.remainingRate>=50?'var(--warning)':'var(--ink-muted)'};flex:1"></div>
+          </div>
+        </div>
+        <div style="display:flex;gap:10px;font-size:11px">
+          <div style="flex:1"><div style="color:var(--ink-muted)">Tổng AL hưởng</div><div style="font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--ink);font-size:14px">${leaveLiability.totalEntitle.toFixed(0)}</div></div>
+          <div style="flex:1"><div style="color:var(--ink-muted)">Đã dùng</div><div style="font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--success);font-size:14px">${leaveLiability.totalTaken.toFixed(0)}</div></div>
+          <div style="flex:1"><div style="color:var(--ink-muted)">Còn lại</div><div style="font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--warning);font-size:14px">${leaveLiability.totalRemain.toFixed(0)}</div></div>
+        </div>
+      `, 'var(--warning)')}
+    </div>
+
+    <!-- Section 2: Manning Gap by Department -->
+    <h2 style="font-size:16px;font-weight:700;color:var(--accent);margin:24px 0 14px;display:flex;align-items:center;gap:10px">
+      <span style="font-size:20px">👥</span> Manning Gap — Thực tế vs Kế hoạch
+    </h2>
+    <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:12px;padding:16px 18px;margin-bottom:24px">
+      ${manningGap.filter(g=>g.plan>0).length === 0 ? `
+        <div style="text-align:center;color:var(--ink-dim);font-style:italic;padding:20px">
+          Chưa có Manning Plan cho tháng này. Vào module <a href="javascript:navigate('manning')" style="color:var(--accent)">Manning & Budget</a> để thiết lập.
+        </div>
+      ` : `
+        <table style="width:100%;border-collapse:collapse;font-size:12px">
+          <thead>
+            <tr style="border-bottom:1px solid var(--border);font-size:10.5px;color:var(--ink-muted);text-transform:uppercase;letter-spacing:.05em">
+              <th style="padding:8px 6px;text-align:left;font-weight:600">Phòng ban</th>
+              <th style="padding:8px 6px;text-align:center;font-weight:600">Plan</th>
+              <th style="padding:8px 6px;text-align:center;font-weight:600">Actual</th>
+              <th style="padding:8px 6px;text-align:center;font-weight:600">Gap</th>
+              <th style="padding:8px 6px;text-align:left;font-weight:600;width:30%">Visualization</th>
+              <th style="padding:8px 6px;text-align:center;font-weight:600">Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${manningGap.filter(g=>g.plan>0).sort((a,b)=>a.gap-b.gap).map(g=>{
+              const ratio = g.plan>0 ? g.actual/g.plan : 0;
+              const fillW = Math.min(ratio*100, 150);
+              const barColor = g.status==='short' ? 'var(--danger)' : g.status==='over' ? 'var(--warning)' : 'var(--success)';
+              const stColor = barColor;
+              const stLabel = g.status==='short'?'🔴 Thiếu':g.status==='over'?'🟡 Vượt':'🟢 OK';
+              return `<tr style="border-bottom:1px solid rgba(255,255,255,.04)">
+                <td style="padding:8px 6px;font-weight:600">${escapeHtml(g.dept)}</td>
+                <td style="padding:8px 6px;text-align:center;font-family:'JetBrains Mono',monospace">${g.plan}</td>
+                <td style="padding:8px 6px;text-align:center;font-family:'JetBrains Mono',monospace">${g.actual}</td>
+                <td style="padding:8px 6px;text-align:center;font-family:'JetBrains Mono',monospace;color:${stColor};font-weight:700">${g.gap>0?'+':''}${g.gap}</td>
+                <td style="padding:8px 6px">
+                  <div style="position:relative;height:8px;background:var(--bg-elev);border-radius:4px;overflow:hidden">
+                    <div style="position:absolute;left:0;top:0;height:100%;width:${Math.min(fillW, 100)}%;background:${barColor}"></div>
+                    <div style="position:absolute;left:66.66%;top:-2px;height:12px;width:1px;background:var(--ink-muted);opacity:.4"></div>
+                  </div>
+                </td>
+                <td style="padding:8px 6px;text-align:center;font-size:11px;color:${stColor};font-weight:600">${stLabel}</td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+      `}
+    </div>
+
+    <!-- Section 3: Turnover Deep Dive -->
+    <h2 style="font-size:16px;font-weight:700;color:var(--accent);margin:24px 0 14px;display:flex;align-items:center;gap:10px">
+      <span style="font-size:20px">📈</span> Turnover — Phân tích sâu
+    </h2>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:24px">
+      <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:12px;padding:16px 18px">
+        <div style="font-weight:600;color:var(--ink);margin-bottom:12px;font-size:13px">Trend 12 tháng</div>
+        ${(() => {
+          const maxRate = Math.max(...turnoverTrend.map(t=>t.rate), 1);
+          return `<div style="display:flex;align-items:flex-end;gap:4px;height:140px;border-bottom:1px solid var(--border);padding-bottom:6px">
+            ${turnoverTrend.map((t,i)=>{
+              const h = maxRate>0 ? Math.max((t.rate/maxRate)*100, 2) : 2;
+              const color = t.rate>=10?'var(--danger)':t.rate>=5?'var(--warning)':'var(--success)';
+              return `<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3px" title="${t.label}: ${t.rate.toFixed(1)}% (${t.count} người)">
+                <div style="font-size:9px;color:var(--ink-muted);font-family:'JetBrains Mono',monospace">${t.rate>0?t.rate.toFixed(1):''}</div>
+                <div style="width:100%;height:${h}%;background:${color};border-radius:2px 2px 0 0;min-height:2px"></div>
+              </div>`;
+            }).join('')}
+          </div>
+          <div style="display:flex;gap:4px;margin-top:4px">
+            ${turnoverTrend.map(t=>`<div style="flex:1;font-size:9px;color:var(--ink-muted);text-align:center">${t.label}</div>`).join('')}
+          </div>`;
+        })()}
+      </div>
+      <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:12px;padding:16px 18px">
+        <div style="font-weight:600;color:var(--ink);margin-bottom:12px;font-size:13px">Top dept turnover YTD (annualized)</div>
+        ${turnoverByDept.length === 0 ? '<div style="color:var(--ink-dim);font-style:italic;font-size:12px">Chưa có data</div>' : `
+          <div style="display:grid;gap:6px">
+            ${turnoverByDept.slice(0,6).map(t=>{
+              const color = t.annualizedRate>=25?'var(--danger)':t.annualizedRate>=15?'var(--warning)':'var(--success)';
+              const maxR = Math.max(...turnoverByDept.map(x=>x.annualizedRate),1);
+              const w = (t.annualizedRate/maxR)*100;
+              return `<div style="display:flex;align-items:center;gap:10px;font-size:12px">
+                <div style="flex:0 0 140px;font-weight:600">${escapeHtml(t.dept)}</div>
+                <div style="flex:1;height:6px;background:var(--bg-elev);border-radius:3px;overflow:hidden">
+                  <div style="width:${w}%;height:100%;background:${color}"></div>
+                </div>
+                <div style="font-family:'JetBrains Mono',monospace;font-weight:700;color:${color};min-width:48px;text-align:right">${t.annualizedRate.toFixed(1)}%</div>
+                <div style="font-family:'JetBrains Mono',monospace;color:var(--ink-muted);font-size:10px;min-width:32px;text-align:right">${t.totalResigned} ng</div>
+              </div>`;
+            }).join('')}
+          </div>
+        `}
+      </div>
+    </div>
+
+    <!-- Section 4: Compliance & Risk -->
+    <h2 style="font-size:16px;font-weight:700;color:var(--accent);margin:24px 0 14px;display:flex;align-items:center;gap:10px">
+      <span style="font-size:20px">⚖️</span> Compliance & Risk
+    </h2>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px;margin-bottom:24px">
+      ${cardBase('Hợp đồng hết hạn', '📋', `
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
+          <div style="background:rgba(212,127,127,.08);padding:8px;border-radius:6px;text-align:center">
+            <div style="font-size:10px;color:var(--ink-muted)">Quá hạn</div>
+            <div style="font-family:'JetBrains Mono',monospace;font-size:20px;font-weight:700;color:var(--danger);margin-top:2px">${contractExp.overdue.length}</div>
+          </div>
+          <div style="background:rgba(255,160,80,.08);padding:8px;border-radius:6px;text-align:center">
+            <div style="font-size:10px;color:var(--ink-muted)">30 ngày</div>
+            <div style="font-family:'JetBrains Mono',monospace;font-size:20px;font-weight:700;color:var(--warning);margin-top:2px">${contractExp.expiring30.length}</div>
+          </div>
+          <div style="background:rgba(126,182,232,.08);padding:8px;border-radius:6px;text-align:center">
+            <div style="font-size:10px;color:var(--ink-muted)">60-90 ngày</div>
+            <div style="font-family:'JetBrains Mono',monospace;font-size:20px;font-weight:700;color:var(--info);margin-top:2px">${contractExp.expiring90.length - contractExp.expiring30.length - contractExp.overdue.length}</div>
+          </div>
+        </div>
+        ${contractExp.expiring30.length>0 ? `
+          <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border);font-size:11px">
+            ${contractExp.expiring30.slice(0,3).map(c=>`<div style="display:flex;justify-content:space-between;padding:2px 0"><span>${escapeHtml(c.name)} <span style="color:var(--ink-muted)">(${escapeHtml(c.dept||'')})</span></span><span style="color:var(--warning);font-family:'JetBrains Mono',monospace">${c.daysLeft}d</span></div>`).join('')}
+            ${contractExp.expiring30.length>3?`<div style="color:var(--ink-muted);margin-top:4px">+${contractExp.expiring30.length-3} khác</div>`:''}
+          </div>
+        ` : ''}
+      `, 'var(--warning)')}
+
+      ${cardBase('Thử việc cần quyết định', '⏰', `
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
+          <div style="background:rgba(212,127,127,.08);padding:8px;border-radius:6px;text-align:center">
+            <div style="font-size:10px;color:var(--ink-muted)">Quá hạn</div>
+            <div style="font-family:'JetBrains Mono',monospace;font-size:20px;font-weight:700;color:var(--danger);margin-top:2px">${probation.overdue.length}</div>
+          </div>
+          <div style="background:rgba(255,160,80,.08);padding:8px;border-radius:6px;text-align:center">
+            <div style="font-size:10px;color:var(--ink-muted)">7 ngày tới</div>
+            <div style="font-family:'JetBrains Mono',monospace;font-size:20px;font-weight:700;color:var(--warning);margin-top:2px">${probation.expiring7.length}</div>
+          </div>
+          <div style="background:rgba(126,198,153,.08);padding:8px;border-radius:6px;text-align:center">
+            <div style="font-size:10px;color:var(--ink-muted)">30 ngày</div>
+            <div style="font-family:'JetBrains Mono',monospace;font-size:20px;font-weight:700;color:var(--success);margin-top:2px">${probation.expiring30.length}</div>
+          </div>
+        </div>
+        <div style="margin-top:10px;font-size:11px;color:var(--ink-muted)">Tổng đang thử việc: <span style="color:var(--ink);font-weight:600">${probation.total}</span></div>
+      `, 'var(--accent)')}
+
+      ${cardBase('Resignation Pipeline', '📝', `
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
+          <div style="background:rgba(212,165,116,.08);padding:8px;border-radius:6px;text-align:center">
+            <div style="font-size:10px;color:var(--ink-muted)">Đang chờ duyệt</div>
+            <div style="font-family:'JetBrains Mono',monospace;font-size:20px;font-weight:700;color:var(--accent);margin-top:2px">${resignPipeline.pending.length}</div>
+          </div>
+          <div style="background:rgba(212,127,127,.08);padding:8px;border-radius:6px;text-align:center">
+            <div style="font-size:10px;color:var(--ink-muted)">Sắp nghỉ (30d)</div>
+            <div style="font-family:'JetBrains Mono',monospace;font-size:20px;font-weight:700;color:var(--danger);margin-top:2px">${resignPipeline.totalUpcoming}</div>
+          </div>
+        </div>
+        ${Object.keys(resignPipeline.byDept).length>0 ? `
+          <div style="font-size:11px;color:var(--ink-muted);margin-bottom:6px;font-weight:600;text-transform:uppercase;letter-spacing:.04em">Phân bố theo dept</div>
+          ${Object.entries(resignPipeline.byDept).slice(0,5).map(([d,arr])=>`<div style="display:flex;justify-content:space-between;font-size:11px;padding:2px 0"><span>${escapeHtml(d)}</span><span style="color:var(--danger);font-family:'JetBrains Mono',monospace;font-weight:600">${arr.length}</span></div>`).join('')}
+        ` : '<div style="font-size:11px;color:var(--ink-dim);text-align:center;padding:6px">Không có ai sắp nghỉ trong 30 ngày tới</div>'}
+      `, 'var(--info)')}
+    </div>
+
+    <!-- Footer info -->
+    <div style="margin-top:24px;padding:14px 18px;background:rgba(126,182,232,.04);border:1px solid rgba(126,182,232,.15);border-radius:8px;font-size:11.5px;color:var(--ink-muted);line-height:1.7">
+      <strong style="color:var(--info)">💡 Hệ thống HR Intelligence</strong> tự động phát hiện ${alerts.length} vấn đề từ ${(DB.employees||[]).length} NV.
+      Patterns engine quét 10+ pattern khác nhau (turnover spike, manning gap, contract expiry, probation overdue, resignation cluster, slow hiring, leave liability, onboarding risk, 1-year cliff, pending resignation).
+      Mọi metric đều tính từ data hiện có — không gửi đi đâu, không cần internet ngoài Firestore.
+    </div>
+  `;
+  // Render alert panel
+  setTimeout(()=>renderHRPulse('#hrPulseFull'), 50);
+}
+
 function renderDashboard(main){
   const today = new Date();
 
@@ -2639,6 +3550,9 @@ function renderDashboard(main){
         </div>
       </div>
 
+      <!-- HR Pulse — Intelligent Alert Center -->
+      <div id="hrPulseContainer" style="margin-bottom:20px"></div>
+
       <!-- KPI cards (user customizable) -->
       <div class="kpi-grid">
         ${(cfg.kpis||DEFAULT_DASHBOARD_KPIS).map(k => {
@@ -2697,54 +3611,58 @@ function renderDashboard(main){
 
     <div class="row row-2">
       <div class="card">
-        <div class="card-head"><div>
-          <div class="card-title">Lao động <em>ngoại tỉnh</em></div>
-          <div class="card-sub">NV được hỗ trợ ngoại tỉnh hoặc ở Staff House</div>
-        </div></div>
+        <div class="card-head" style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap">
+          <div>
+            <div class="card-title">Lao động <em>ngoại tỉnh</em></div>
+            <div class="card-sub">NV được hỗ trợ ngoại tỉnh hoặc ở Staff House</div>
+          </div>
+          <div style="display:flex;gap:4px;background:var(--bg-elev);border-radius:6px;padding:3px">
+            <button class="btn-mini ${(window._outProvStatusFilter||'active')==='active'?'active':''}" onclick="window._outProvStatusFilter='active';render()" style="padding:5px 10px;font-size:11px;border:0;background:${(window._outProvStatusFilter||'active')==='active'?'var(--accent)':'transparent'};color:${(window._outProvStatusFilter||'active')==='active'?'#000':'var(--ink-dim)'};border-radius:4px;cursor:pointer;font-weight:600">🟢 Đang làm</button>
+            <button class="btn-mini ${window._outProvStatusFilter==='exit'?'active':''}" onclick="window._outProvStatusFilter='exit';render()" style="padding:5px 10px;font-size:11px;border:0;background:${window._outProvStatusFilter==='exit'?'var(--accent)':'transparent'};color:${window._outProvStatusFilter==='exit'?'#000':'var(--ink-dim)'};border-radius:4px;cursor:pointer;font-weight:600">🔴 Đã nghỉ</button>
+            <button class="btn-mini ${window._outProvStatusFilter==='all'?'active':''}" onclick="window._outProvStatusFilter='all';render()" style="padding:5px 10px;font-size:11px;border:0;background:${window._outProvStatusFilter==='all'?'var(--accent)':'transparent'};color:${window._outProvStatusFilter==='all'?'#000':'var(--ink-dim)'};border-radius:4px;cursor:pointer;font-weight:600">Tất cả</button>
+          </div>
+        </div>
         ${(() => {
           const cd = DB.customData || {};
-          const active = filteredPool;
-          let outProvCount = 0, dormCount = 0, bothCount = 0, neitherCount = 0;
+          const sf = window._outProvStatusFilter||'active';
+          const active = filteredPool.filter(e=>{
+            const st = getEffectiveStatus(e);
+            if(sf==='active') return st!=='exit';
+            if(sf==='exit')   return st==='exit';
+            return true;
+          });
+          let outProvCount = 0, dormCount = 0, bothCount = 0, neitherCount = 0, transportCount = 0;
           const dormByHouse = {};
           active.forEach(e=>{
             const ed = cd[e.id]||{};
             const isOut = ed.supportOutProvince === 'Có';
             const inDorm = !!ed.dormitory;
+            const hasTransport = ed.supportTransport === 'Có';
             if(isOut && inDorm) bothCount++;
             else if(isOut) outProvCount++;
             else if(inDorm) dormCount++;
             else neitherCount++;
+            if(hasTransport) transportCount++;
             if(inDorm){ dormByHouse[ed.dormitory] = (dormByHouse[ed.dormitory]||0)+1; }
           });
           const total = active.length;
-          const totalSupported = outProvCount + dormCount + bothCount;
-          const pctSupported = total>0 ? Math.round(totalSupported/total*100) : 0;
           const houseRows = Object.entries(dormByHouse).sort((a,b)=>b[1]-a[1]).slice(0,6);
           return `
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:8px 0 14px">
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin:8px 0 14px">
               <div style="background:rgba(126,182,232,.08);padding:12px 14px;border-radius:8px;border-left:3px solid var(--info)">
                 <div style="font-size:11px;color:var(--ink-muted);font-weight:600;letter-spacing:.04em;text-transform:uppercase;margin-bottom:6px">Hỗ trợ ngoại tỉnh</div>
                 <div style="font-family:'JetBrains Mono',monospace;font-size:22px;font-weight:700;color:var(--info)">${outProvCount + bothCount}</div>
-                <div style="font-size:11px;color:var(--ink-dim);margin-top:2px">${total>0?Math.round((outProvCount+bothCount)/total*100):0}% tổng NV</div>
+                <div style="font-size:11px;color:var(--ink-dim);margin-top:2px">${total>0?Math.round((outProvCount+bothCount)/total*100):0}% trong nhóm</div>
               </div>
               <div style="background:rgba(126,198,153,.08);padding:12px 14px;border-radius:8px;border-left:3px solid var(--success)">
                 <div style="font-size:11px;color:var(--ink-muted);font-weight:600;letter-spacing:.04em;text-transform:uppercase;margin-bottom:6px">Ở Staff House</div>
                 <div style="font-family:'JetBrains Mono',monospace;font-size:22px;font-weight:700;color:var(--success)">${dormCount + bothCount}</div>
-                <div style="font-size:11px;color:var(--ink-dim);margin-top:2px">${total>0?Math.round((dormCount+bothCount)/total*100):0}% tổng NV</div>
+                <div style="font-size:11px;color:var(--ink-dim);margin-top:2px">${total>0?Math.round((dormCount+bothCount)/total*100):0}% trong nhóm</div>
               </div>
-            </div>
-            <div style="display:flex;gap:8px;margin-bottom:10px">
-              <div style="flex:1;background:rgba(212,165,116,.06);padding:8px 12px;border-radius:6px;text-align:center">
-                <div style="font-size:10px;color:var(--ink-muted);text-transform:uppercase;letter-spacing:.04em">Cả 2</div>
-                <div style="font-family:'JetBrains Mono',monospace;font-size:16px;font-weight:600;color:var(--accent)">${bothCount}</div>
-              </div>
-              <div style="flex:1;background:rgba(183,148,212,.06);padding:8px 12px;border-radius:6px;text-align:center">
-                <div style="font-size:10px;color:var(--ink-muted);text-transform:uppercase;letter-spacing:.04em">Tổng hỗ trợ</div>
-                <div style="font-family:'JetBrains Mono',monospace;font-size:16px;font-weight:600;color:var(--purple)">${totalSupported} <span style="font-size:11px;color:var(--ink-dim)">(${pctSupported}%)</span></div>
-              </div>
-              <div style="flex:1;background:rgba(255,255,255,.03);padding:8px 12px;border-radius:6px;text-align:center">
-                <div style="font-size:10px;color:var(--ink-muted);text-transform:uppercase;letter-spacing:.04em">Không hỗ trợ</div>
-                <div style="font-family:'JetBrains Mono',monospace;font-size:16px;font-weight:600;color:var(--ink-dim)">${neitherCount}</div>
+              <div style="background:rgba(212,165,116,.08);padding:12px 14px;border-radius:8px;border-left:3px solid var(--accent)">
+                <div style="font-size:11px;color:var(--ink-muted);font-weight:600;letter-spacing:.04em;text-transform:uppercase;margin-bottom:6px">🚗 Hỗ trợ di chuyển</div>
+                <div style="font-family:'JetBrains Mono',monospace;font-size:22px;font-weight:700;color:var(--accent)">${transportCount}</div>
+                <div style="font-size:11px;color:var(--ink-dim);margin-top:2px">${total>0?Math.round(transportCount/total*100):0}% trong nhóm</div>
               </div>
             </div>
             ${houseRows.length>0 ? `
@@ -2764,48 +3682,63 @@ function renderDashboard(main){
         })()}
       </div>
       <div class="card">
-        <div class="card-head"><div>
-          <div class="card-title">Tôn <em>giáo</em></div>
-          <div class="card-sub">Phân bố theo niềm tin tôn giáo</div>
-        </div></div>
+        <div class="card-head" style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap">
+          <div>
+            <div class="card-title">Dân <em>tộc</em></div>
+            <div class="card-sub">Phân bố theo dân tộc</div>
+          </div>
+          <div style="display:flex;gap:4px;background:var(--bg-elev);border-radius:6px;padding:3px">
+            <button class="btn-mini ${(window._ethnicStatusFilter||'active')==='active'?'active':''}" onclick="window._ethnicStatusFilter='active';render()" style="padding:5px 10px;font-size:11px;border:0;background:${(window._ethnicStatusFilter||'active')==='active'?'var(--accent)':'transparent'};color:${(window._ethnicStatusFilter||'active')==='active'?'#000':'var(--ink-dim)'};border-radius:4px;cursor:pointer;font-weight:600">🟢 Đang làm</button>
+            <button class="btn-mini ${window._ethnicStatusFilter==='exit'?'active':''}" onclick="window._ethnicStatusFilter='exit';render()" style="padding:5px 10px;font-size:11px;border:0;background:${window._ethnicStatusFilter==='exit'?'var(--accent)':'transparent'};color:${window._ethnicStatusFilter==='exit'?'#000':'var(--ink-dim)'};border-radius:4px;cursor:pointer;font-weight:600">🔴 Đã nghỉ</button>
+            <button class="btn-mini ${window._ethnicStatusFilter==='all'?'active':''}" onclick="window._ethnicStatusFilter='all';render()" style="padding:5px 10px;font-size:11px;border:0;background:${window._ethnicStatusFilter==='all'?'var(--accent)':'transparent'};color:${window._ethnicStatusFilter==='all'?'#000':'var(--ink-dim)'};border-radius:4px;cursor:pointer;font-weight:600">Tất cả</button>
+          </div>
+        </div>
         ${(() => {
           const cd = DB.customData || {};
-          const active = filteredPool;
-          const relMap = {};
+          const sf = window._ethnicStatusFilter||'active';
+          const active = filteredPool.filter(e=>{
+            const st = getEffectiveStatus(e);
+            if(sf==='active') return st!=='exit';
+            if(sf==='exit')   return st==='exit';
+            return true;
+          });
+          const ethMap = {};
           active.forEach(e=>{
             const ed = cd[e.id]||{};
-            const raw = (ed.religion||'').trim();
-            // Chuẩn hoá: rỗng / "không" / "không có" → "Không"
+            const raw = (ed.ethnic||'').trim();
+            // Chuẩn hoá: rỗng / "kinh" (case-insensitive) → "Kinh"
             const lower = raw.toLowerCase();
             let key;
-            if(!raw || lower === 'không' || lower === 'khong' || lower === 'không có' || lower === 'none' || lower === '-') key = 'Không / Không khai báo';
-            else key = raw;
-            relMap[key] = (relMap[key]||0)+1;
+            if(!raw || lower === '-' || lower === 'none') key = 'Chưa khai báo';
+            else if(lower === 'kinh') key = 'Kinh';
+            else key = raw.charAt(0).toUpperCase() + raw.slice(1).toLowerCase();
+            ethMap[key] = (ethMap[key]||0)+1;
           });
-          const rows = Object.entries(relMap).sort((a,b)=>b[1]-a[1]);
+          const rows = Object.entries(ethMap).sort((a,b)=>b[1]-a[1]);
           const total = active.length;
-          const declared = total - (relMap['Không / Không khai báo']||0);
+          const declared = total - (ethMap['Chưa khai báo']||0);
+          const ethCount = rows.filter(r=>r[0]!=='Chưa khai báo').length;
           const palette = ['var(--success)','var(--info)','var(--accent)','var(--purple)','var(--warning)','#7eb6e8','#d4a574','#b794d4','#7ec699','#e8a87c'];
           return `
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:8px 0 14px">
               <div style="background:rgba(126,198,153,.08);padding:12px 14px;border-radius:8px;border-left:3px solid var(--success)">
                 <div style="font-size:11px;color:var(--ink-muted);font-weight:600;letter-spacing:.04em;text-transform:uppercase;margin-bottom:6px">Đã khai báo</div>
                 <div style="font-family:'JetBrains Mono',monospace;font-size:22px;font-weight:700;color:var(--success)">${declared}</div>
-                <div style="font-size:11px;color:var(--ink-dim);margin-top:2px">${total>0?Math.round(declared/total*100):0}% tổng NV</div>
+                <div style="font-size:11px;color:var(--ink-dim);margin-top:2px">${total>0?Math.round(declared/total*100):0}% trong nhóm</div>
               </div>
               <div style="background:rgba(212,165,116,.08);padding:12px 14px;border-radius:8px;border-left:3px solid var(--accent)">
-                <div style="font-size:11px;color:var(--ink-muted);font-weight:600;letter-spacing:.04em;text-transform:uppercase;margin-bottom:6px">Số tôn giáo</div>
-                <div style="font-family:'JetBrains Mono',monospace;font-size:22px;font-weight:700;color:var(--accent)">${rows.filter(r=>r[0]!=='Không / Không khai báo').length}</div>
-                <div style="font-size:11px;color:var(--ink-dim);margin-top:2px">tôn giáo khác nhau</div>
+                <div style="font-size:11px;color:var(--ink-muted);font-weight:600;letter-spacing:.04em;text-transform:uppercase;margin-bottom:6px">Số dân tộc</div>
+                <div style="font-family:'JetBrains Mono',monospace;font-size:22px;font-weight:700;color:var(--accent)">${ethCount}</div>
+                <div style="font-size:11px;color:var(--ink-dim);margin-top:2px">dân tộc khác nhau</div>
               </div>
             </div>
             <div style="font-size:11px;color:var(--ink-muted);text-transform:uppercase;letter-spacing:.04em;margin:14px 0 6px;font-weight:600">Chi tiết</div>
-            ${rows.slice(0,8).map(([rel,count],i)=>{
+            ${rows.slice(0,10).map(([eth,count],i)=>{
               const pct = total>0 ? count/total*100 : 0;
-              const isNone = rel === 'Không / Không khai báo';
+              const isNone = eth === 'Chưa khai báo';
               const color = isNone ? 'var(--ink-dim)' : palette[i % palette.length];
               return `<div style="display:flex;align-items:center;gap:10px;padding:5px 0;font-size:12px">
-                <div style="flex:0 0 140px;color:var(--ink);font-weight:${isNone?'400':'600'}">${escapeHtml(rel)}</div>
+                <div style="flex:0 0 140px;color:var(--ink);font-weight:${isNone?'400':'600'}">${escapeHtml(eth)}</div>
                 <div style="flex:1;height:5px;background:rgba(255,255,255,.06);border-radius:3px;overflow:hidden">
                   <div style="width:${pct.toFixed(0)}%;height:100%;background:${color};opacity:${isNone?.5:1}"></div>
                 </div>
@@ -2939,7 +3872,7 @@ function renderDashboard(main){
 
   window._dashFilteredPool = filteredPool;
   window._dashAllEmps = DB.employees;
-  setTimeout(()=>{ renderDashboardCharts(); setTimeout(renderKpiMiniCharts, 50); setTimeout(renderDashCombos, 60); }, 320);
+  setTimeout(()=>{ renderDashboardCharts(); setTimeout(renderKpiMiniCharts, 50); setTimeout(renderDashCombos, 60); setTimeout(()=>renderHRPulse('#hrPulseContainer'), 100); }, 320);
 }
 
 function toggleKpiMode(k){
@@ -7963,19 +8896,44 @@ function renderContracts(main){
   if(!yearsList.includes(contractFilter.year)) yearsList.push(contractFilter.year);
   yearsList.sort();
 
+  // Normalize contract type về key chuẩn (xử lý cả raw string lẫn key)
+  const _normalizeContractType = (t) => {
+    if(!t) return 'unknown';
+    const s = String(t).toLowerCase().trim();
+    if(s==='probation' || s.includes('thử việc') || s.includes('thử việc')) return 'probation';
+    if(s==='term12' || s.includes('01 năm') || s.includes('1 năm') || s.includes('12 tháng')) return 'term12';
+    if(s==='term24' || s.includes('02 năm') || s.includes('2 năm') || s.includes('24 tháng')) return 'term24';
+    if(s==='indefinite' || s.includes('không xác định') || s.includes('vô thời hạn') || s.includes('indefinite')) return 'indefinite';
+    if(s==='contractor' || s.includes('khoán')) return 'contractor';
+    return 'unknown';
+  };
+
   const typeCount = {};
-  currentContracts.forEach(c => { typeCount[c.type] = (typeCount[c.type]||0) + 1; });
+  currentContracts.forEach(c => {
+    const k = _normalizeContractType(c.type);
+    typeCount[k] = (typeCount[k]||0) + 1;
+  });
   // Đếm thêm NV có HĐ trong customData nhưng chưa có record trong DB.contracts
   empContractEndList.forEach(c => {
-    if(c.type) typeCount[c.type] = (typeCount[c.type]||0) + 1;
+    if(c.type){
+      const k = _normalizeContractType(c.type);
+      typeCount[k] = (typeCount[k]||0) + 1;
+    }
   });
   // Số NV đang làm nhưng KHÔNG có thông tin HĐ (cả trong DB.contracts và customData)
   const totalCounted = Object.values(typeCount).reduce((s,v)=>s+v, 0);
   const noContractCount = totalActive - totalCounted;
   if(noContractCount > 0){
-    typeCount['unknown'] = noContractCount;
+    typeCount['unknown'] = (typeCount['unknown']||0) + noContractCount;
   }
-  console.log('[Contract chart] typeCount:', typeCount, 'totalActive:', totalActive, 'counted:', totalCounted);
+  // Sắp xếp lại theo thứ tự logic: probation → term12 → term24 → indefinite → contractor → unknown
+  const _typeOrder = ['probation','term12','term24','indefinite','contractor','unknown'];
+  const _sortedTypeCount = {};
+  _typeOrder.forEach(k=>{ if(typeCount[k]) _sortedTypeCount[k] = typeCount[k]; });
+  // Add any unexpected types at the end
+  Object.keys(typeCount).forEach(k=>{ if(!_sortedTypeCount[k]) _sortedTypeCount[k] = typeCount[k]; });
+  Object.keys(typeCount).forEach(k=>delete typeCount[k]);
+  Object.assign(typeCount, _sortedTypeCount);
 
   main.innerHTML = `
     <div class="topbar">
@@ -19774,8 +20732,10 @@ async function loadAccountsList(){
   if(!el) return;
   try{
     const snap = await window.fbDb.collection('users').get();
-    if(snap.empty){ el.innerHTML='<div style="text-align:center;padding:40px;color:var(--ink-muted)">Chưa có tài khoản nào</div>'; return; }
-    const rows = snap.docs.map(d=>{
+    // Lọc ra account đã bị soft delete
+    const validDocs = snap.docs.filter(d => d.data()._deleted !== true);
+    if(validDocs.length === 0){ el.innerHTML='<div style="text-align:center;padding:40px;color:var(--ink-muted)">Chưa có tài khoản nào</div>'; return; }
+    const rows = validDocs.map(d=>{
       const u = d.data();
       const isMe = u.email === ADMIN_EMAIL;
       const roleLabel = u.email === ADMIN_EMAIL ? '<span style="background:rgba(212,165,116,.2);color:var(--accent);padding:2px 8px;border-radius:4px;font-size:11px;font-weight:700">ADMIN</span>'
@@ -19960,8 +20920,8 @@ window.toggleAccountActive = async function(uid, action){
 
 window.deleteAccount = async function(uid, name){
   // 2-step confirmation để tránh xóa nhầm
-  if(!confirm(`⚠️ XOÁ VĨNH VIỄN tài khoản "${name}"?\n\nHành động này:\n• Xoá quyền truy cập của tài khoản\n• Tài khoản sẽ KHÔNG THỂ đăng nhập được nữa\n• Lịch sử hoạt động vẫn được giữ lại để audit\n\nNếu chỉ muốn tạm dừng, dùng nút 🔒 Khoá thay vì xoá.\n\nBấm OK để tiếp tục.`)) return;
-  const confirmText = prompt(`Để xác nhận xoá vĩnh viễn, hãy gõ chính xác:\n\nXOA ${name}\n\n(viết hoa, không dấu)`);
+  if(!confirm(`⚠️ XOÁ tài khoản "${name}"?\n\nHành động này:\n• Tài khoản sẽ bị đánh dấu xoá và KHÔNG THỂ đăng nhập\n• Không hiển thị trong danh sách nữa\n• Data vẫn được giữ lại trên Firestore để audit (admin có thể khôi phục)\n\nNếu chỉ muốn tạm dừng, dùng nút 🔒 Khoá thay vì xoá.\n\nBấm OK để tiếp tục.`)) return;
+  const confirmText = prompt(`Để xác nhận, hãy gõ chính xác:\n\nXOA ${name}\n\n(viết hoa, không dấu)`);
   if(!confirmText) return;
   const expected = `XOA ${name}`.normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/đ/gi,'d').toUpperCase();
   const actual = confirmText.normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/đ/gi,'d').toUpperCase().trim();
@@ -19970,25 +20930,22 @@ window.deleteAccount = async function(uid, name){
     return;
   }
   try{
-    // Lấy data trước khi xoá để log audit
     const docRef = window.fbDb.collection('users').doc(uid);
     const snap = await docRef.get();
     const userData = snap.exists ? snap.data() : null;
     if(!userData){ toast('Tài khoản không tồn tại','error'); return; }
-    // Không cho xoá ADMIN_EMAIL
     if(userData.email === ADMIN_EMAIL){
       toast('❌ Không thể xoá tài khoản Admin','error');
       return;
     }
-    // Lưu vào collection deleted_users để audit (không xoá hoàn toàn data)
-    await window.fbDb.collection('deleted_users').doc(uid).set({
-      ...userData,
+    // SOFT DELETE: chỉ update field, không xoá hẳn (tránh permission error + giữ audit trail)
+    await docRef.update({
+      _deleted: true,
+      active: false, // cũng khoá luôn để chặn login
       _deletedAt: Date.now(),
       _deletedBy: window.currentUser?.email||'unknown',
       _deletedByUid: window.currentUser?.uid||'',
     });
-    // Xoá khỏi users collection
-    await docRef.delete();
     toast(`✅ Đã xoá tài khoản: ${name}`,'success');
     navigate('accounts');
   } catch(err){
