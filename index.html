@@ -1996,8 +1996,10 @@ function updateBadges(){
     try {
       const today = new Date();
       const redJobs = (DB.jobs||[]).filter(j=>{
-        if(j.status!=='open' || !j.openDate) return false;
-        const d = new Date(j.openDate);
+        if(j.status!=='open') return false;
+        const od = (typeof _plJobOpenDate==='function') ? _plJobOpenDate(j) : (j.startDate||j.openDate);
+        if(!od) return false;
+        const d = new Date(od);
         if(isNaN(d)) return false;
         const days = Math.round((today - d)/86400000);
         return days >= 60;
@@ -2678,6 +2680,26 @@ function _plGetRevenueMonth(year, month){
   };
 }
 
+// Get job open date với fallback chain: startDate → openDate → createdAt → earliest applied candidate
+function _plJobOpenDate(j){
+  if(!j) return null;
+  if(j.startDate) return j.startDate;
+  if(j.openDate) return j.openDate;
+  if(j.createdAt){
+    // Firestore Timestamp or ISO string
+    if(typeof j.createdAt === 'string') return j.createdAt.slice(0,10);
+    if(j.createdAt.toDate) return j.createdAt.toDate().toISOString().slice(0,10);
+    if(j.createdAt.seconds) return new Date(j.createdAt.seconds*1000).toISOString().slice(0,10);
+  }
+  // Fallback: earliest candidate appliedDate for this job
+  const cands = (DB.candidates||[]).filter(c=>c.jobId===j.id && c.appliedDate);
+  if(cands.length > 0){
+    const earliest = cands.map(c=>c.appliedDate).sort()[0];
+    return earliest;
+  }
+  return null;
+}
+
 // AL/CL liability quy ra tiền
 // statusFilter: 'active' (default) | 'exit' | 'all'
 function _plGetLeaveLiability(year, statusFilter){
@@ -2740,7 +2762,8 @@ function renderAnalytics(main){
     {k:'manpower',  icon:'👥', label:'Manpower',         sub:'HC by Dept'},
     {k:'productivity',icon:'📈',label:'Productivity',    sub:'Revenue/Employee'},
     {k:'liability', icon:'🏖️', label:'AL/CL Liability',  sub:'Quy ra tiền'},
-    {k:'recruitment',icon:'🎯',label:'Recruitment Risk', sub:'Vacancy'},
+    {k:'recruitment',icon:'🎯',label:'Recruitment Risk', sub:'Vacancy & Source'},
+    {k:'turnover',  icon:'📉', label:'Turnover',         sub:'Nghỉ việc'},
     {k:'action',    icon:'📋', label:'HR Action Plan',   sub:'Update hàng tháng'},
   ];
 
@@ -2807,6 +2830,7 @@ function renderAnalytics(main){
   else if(currentTab === 'productivity') _plRenderProductivity(content, curYear, curMonth);
   else if(currentTab === 'liability')_plRenderLiability(content, curYear, curMonth);
   else if(currentTab === 'recruitment')_plRenderRecruitmentRisk(content, curYear, curMonth);
+  else if(currentTab === 'turnover') _plRenderTurnover(content, curYear, curMonth);
   else if(currentTab === 'action')   _plRenderActionPlan(content, curYear, curMonth);
 }
 
@@ -2827,7 +2851,7 @@ function _plRenderLaborCost(el, year, month){
   // 5 categories breakdown rows
   const categories = [
     {label:'Lương cơ bản', actual: actual.salary, budget: budget.salary},
-    {label:'Thưởng', actual: actual.bonus, budget: budget.bonus},
+    {label:'Bổ sung KQCV', actual: actual.bonus, budget: budget.bonus, note:'Khoản bổ sung theo kết quả công việc'},
     {label:'BHXH (BH)', actual: actual.bh, budget: budget.bh},
     {label:'Phụ cấp ăn', actual: 0, budget: budget.meal, note:'Chưa tích hợp module Meal/Allowance'},
     {label:'Khác (Budget Other)', actual: 0, budget: budget.other, note:'Phụ cấp khác từ Manning Budget'},
@@ -2921,8 +2945,8 @@ function _plRenderLaborCost(el, year, month){
           <thead>
             <tr>
               <th>Phòng ban</th>
-              <th class="pl-num">Budget Lương+Thưởng/tháng</th>
-              <th class="pl-num">Actual Lương+Thưởng/tháng</th>
+              <th class="pl-num">Budget Lương+KQCV/tháng</th>
+              <th class="pl-num">Actual Lương+KQCV/tháng</th>
               <th class="pl-num">Variance</th>
               <th class="pl-num">% on Budget</th>
             </tr>
@@ -3446,7 +3470,8 @@ function _plRenderRecruitmentRisk(el, year, month){
   // === Open vacancies ===
   const openJobs = (DB.jobs||[]).filter(j=>j.status==='open');
   const enriched = openJobs.map(j=>{
-    const days = j.openDate ? _plDaysBetween(j.openDate, today) : 0;
+    const openDate = _plJobOpenDate(j);
+    const days = openDate ? _plDaysBetween(openDate, today) : null;
     const hired = (typeof getJobHired === 'function') ? getJobHired(j.id) : 0;
     const cvList = (DB.candidates||[]).filter(c=>c.jobId===j.id);
     const cvCount = cvList.length;
@@ -3463,11 +3488,12 @@ function _plRenderRecruitmentRisk(el, year, month){
     };
     // Risk level
     let risk = 'green', riskLabel = '🟢';
-    if(days >= 60) { risk='red'; riskLabel='🔴'; }
+    if(days === null) { risk = 'unknown'; riskLabel = '⚪'; }
+    else if(days >= 60) { risk='red'; riskLabel='🔴'; }
     else if(days >= 30) { risk='amber'; riskLabel='🟡'; }
     const dName = (typeof deptName === 'function') ? deptName(j.deptId) : '';
-    return {...j, days, hired, cvCount, positions, remain, risk, riskLabel, dName, pipeline};
-  }).sort((a,b)=>b.days - a.days);
+    return {...j, days, openDate, hired, cvCount, positions, remain, risk, riskLabel, dName, pipeline};
+  }).sort((a,b)=>(b.days||0) - (a.days||0));
 
   const red = enriched.filter(j=>j.risk==='red').length;
   const amber = enriched.filter(j=>j.risk==='amber').length;
@@ -3482,7 +3508,7 @@ function _plRenderRecruitmentRisk(el, year, month){
     const job = (DB.jobs||[]).find(j=>j.id===c.jobId);
     const dName = job ? ((DB.departments||[]).find(d=>d.id===job.deptId)||{}).name||'' : '';
     const timeToHire = (c.appliedDate && c.hiredDate) ? _plDaysBetween(c.appliedDate, c.hiredDate) : null;
-    const openDate = job?.openDate;
+    const openDate = _plJobOpenDate(job);
     return {
       name: c.name,
       jobTitle: job?.title || '(unknown)',
@@ -3491,14 +3517,16 @@ function _plRenderRecruitmentRisk(el, year, month){
       hiredDate: c.hiredDate,
       openDate,
       timeToHire,
+      source: c.source || 'Không rõ',
       job,
     };
   }).sort((a,b)=>new Date(b.hiredDate) - new Date(a.hiredDate));
 
   // === New jobs opened in selected month ===
   const newJobsInMonth = (DB.jobs||[]).filter(j=>{
-    if(!j.openDate) return false;
-    const d = new Date(j.openDate);
+    const od = _plJobOpenDate(j);
+    if(!od) return false;
+    const d = new Date(od);
     return d.getFullYear()===year && d.getMonth()===month;
   });
 
@@ -3509,11 +3537,51 @@ function _plRenderRecruitmentRisk(el, year, month){
     return d.getFullYear()===year && d.getMonth()===month;
   });
 
+  // === Source breakdown — CV received THIS MONTH ===
+  const sourceThisMonth = {};
+  newCVsInMonth.forEach(c=>{
+    const src = c.source || 'Không rõ';
+    if(!sourceThisMonth[src]) sourceThisMonth[src] = {applied:0, hired:0};
+    sourceThisMonth[src].applied++;
+    if(c.status === 'hired') sourceThisMonth[src].hired++;
+  });
+  // Add hired records this month even if CV was received in earlier months
+  hiredInMonth.forEach(h=>{
+    const appliedD = h.appliedDate ? new Date(h.appliedDate) : null;
+    const inThisMonth = appliedD && appliedD.getFullYear()===year && appliedD.getMonth()===month;
+    if(!inThisMonth){
+      // Hired this month, but applied earlier — track hired only
+      const src = h.source;
+      if(!sourceThisMonth[src]) sourceThisMonth[src] = {applied:0, hired:0};
+      sourceThisMonth[src].hired++;
+    }
+  });
+  const sourceThisMonthSorted = Object.entries(sourceThisMonth).sort((a,b)=>b[1].applied - a[1].applied);
+
+  // === Source all-time performance ===
+  const sourceAllTime = {};
+  (DB.candidates||[]).forEach(c=>{
+    const src = c.source || 'Không rõ';
+    if(!sourceAllTime[src]) sourceAllTime[src] = {totalCV:0, hired:0, rejected:0, inPipeline:0};
+    sourceAllTime[src].totalCV++;
+    if(c.status === 'hired') sourceAllTime[src].hired++;
+    else if(c.status === 'rejected') sourceAllTime[src].rejected++;
+    else sourceAllTime[src].inPipeline++;
+  });
+  const sourceAllTimeSorted = Object.entries(sourceAllTime).sort((a,b)=>b[1].totalCV - a[1].totalCV);
+
   // Average time to hire (chỉ tính những NV hire trong tháng có cả appliedDate)
   const validTTH = hiredInMonth.filter(h=>h.timeToHire !== null && h.timeToHire >= 0);
   const avgTTH = validTTH.length > 0 ? validTTH.reduce((s,h)=>s+h.timeToHire, 0)/validTTH.length : null;
 
   el.innerHTML = `
+    ${enriched.filter(j=>j.risk==='unknown').length > 0 ? `
+    <div style="background:rgba(212,127,127,.06);border:1px solid rgba(212,127,127,.3);border-left:3px solid var(--danger);border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:11.5px;color:var(--ink-dim);line-height:1.6">
+      ⚠️ <b>${enriched.filter(j=>j.risk==='unknown').length} vị trí thiếu "Ngày mở"</b> — chưa tính được Days Vacant và Risk level.
+      Mở module <a href="javascript:navigate('recruitment')" style="color:var(--accent);font-weight:600">Tuyển dụng</a> → chọn vị trí → nhập "Ngày bắt đầu tuyển" để bổ sung.
+    </div>
+    ` : ''}
+
     <!-- Top KPI -->
     <div class="pl-card">
       <div style="font-weight:700;font-size:15px;color:var(--accent);margin-bottom:14px">🎯 Recruitment Risk — Vacancy List</div>
@@ -3578,6 +3646,7 @@ function _plRenderRecruitmentRisk(el, year, month){
             <th>Tên ứng viên</th>
             <th>Vị trí</th>
             <th>Phòng ban</th>
+            <th>Nguồn</th>
             <th class="pl-num">Ngày mở job</th>
             <th class="pl-num">Apply</th>
             <th class="pl-num">Hire</th>
@@ -3591,6 +3660,7 @@ function _plRenderRecruitmentRisk(el, year, month){
               <td><b>${escapeHtml(h.name||'—')}</b></td>
               <td>${escapeHtml(h.jobTitle)}</td>
               <td>${escapeHtml(h.dept)}</td>
+              <td><span style="background:rgba(126,182,232,.12);color:var(--info);padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600">${escapeHtml(h.source||'Không rõ')}</span></td>
               <td class="pl-num" style="font-size:11px;color:var(--ink-dim)">${h.openDate||'—'}</td>
               <td class="pl-num" style="font-size:11px;color:var(--ink-dim)">${h.appliedDate||'—'}</td>
               <td class="pl-num" style="font-size:11px;color:var(--success);font-weight:600">${h.hiredDate||'—'}</td>
@@ -3601,13 +3671,98 @@ function _plRenderRecruitmentRisk(el, year, month){
         ${validTTH.length>0?`
         <tfoot>
           <tr>
-            <td colspan="6">Trung bình Time to Hire (${validTTH.length} NV có đủ data)</td>
+            <td colspan="7">Trung bình Time to Hire (${validTTH.length} NV có đủ data)</td>
             <td class="pl-num"><b>${avgTTH.toFixed(0)}d</b></td>
           </tr>
         </tfoot>
         `:''}
       </table>
       `}
+    </div>
+
+    <!-- Source Analysis -->
+    <div class="pl-card">
+      <div style="font-weight:700;font-size:14px;color:var(--accent);margin-bottom:14px">📡 Phân tích nguồn tuyển dụng</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+
+        <!-- Source this month -->
+        <div>
+          <div style="font-size:12px;font-weight:600;color:var(--ink-dim);margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid var(--border)">📅 Tháng ${month+1}/${year}</div>
+          ${sourceThisMonthSorted.length === 0 ? `<div style="color:var(--ink-dim);text-align:center;padding:20px;font-size:12px;font-style:italic">Chưa có CV nào trong tháng này</div>` : `
+          <table class="pl-table">
+            <thead>
+              <tr>
+                <th>Nguồn</th>
+                <th class="pl-num">CV nhận</th>
+                <th class="pl-num">Hire được</th>
+                <th class="pl-num">Conv %</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${sourceThisMonthSorted.map(([src, d])=>{
+                const conv = d.applied>0 ? (d.hired/d.applied*100) : null;
+                const convColor = conv===null?'var(--ink-muted)':conv>=20?'var(--success)':conv>=10?'var(--warning)':'var(--ink-dim)';
+                return `<tr>
+                  <td><b>${escapeHtml(src)}</b></td>
+                  <td class="pl-num">${d.applied}</td>
+                  <td class="pl-num pl-good">${d.hired}</td>
+                  <td class="pl-num" style="color:${convColor};font-weight:700">${conv!==null?conv.toFixed(0)+'%':'—'}</td>
+                </tr>`;
+              }).join('')}
+            </tbody>
+            <tfoot>
+              <tr>
+                <td>TỔNG</td>
+                <td class="pl-num">${sourceThisMonthSorted.reduce((s,[,d])=>s+d.applied,0)}</td>
+                <td class="pl-num">${sourceThisMonthSorted.reduce((s,[,d])=>s+d.hired,0)}</td>
+                <td class="pl-num">—</td>
+              </tr>
+            </tfoot>
+          </table>
+          `}
+        </div>
+
+        <!-- Source all-time -->
+        <div>
+          <div style="font-size:12px;font-weight:600;color:var(--ink-dim);margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid var(--border)">📊 Toàn thời gian — Hiệu quả nguồn</div>
+          ${sourceAllTimeSorted.length === 0 ? `<div style="color:var(--ink-dim);text-align:center;padding:20px;font-size:12px;font-style:italic">Chưa có CV nào</div>` : `
+          <table class="pl-table">
+            <thead>
+              <tr>
+                <th>Nguồn</th>
+                <th class="pl-num">Tổng CV</th>
+                <th class="pl-num">Hired</th>
+                <th class="pl-num">Conv %</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${sourceAllTimeSorted.map(([src, d])=>{
+                const conv = d.totalCV>0 ? (d.hired/d.totalCV*100) : null;
+                const convColor = conv===null?'var(--ink-muted)':conv>=15?'var(--success)':conv>=8?'var(--warning)':'var(--ink-dim)';
+                return `<tr>
+                  <td><b>${escapeHtml(src)}</b></td>
+                  <td class="pl-num">${d.totalCV}</td>
+                  <td class="pl-num pl-good">${d.hired}</td>
+                  <td class="pl-num" style="color:${convColor};font-weight:700">${conv!==null?conv.toFixed(1)+'%':'—'}</td>
+                </tr>`;
+              }).join('')}
+            </tbody>
+            <tfoot>
+              <tr>
+                <td>TỔNG</td>
+                <td class="pl-num">${sourceAllTimeSorted.reduce((s,[,d])=>s+d.totalCV,0)}</td>
+                <td class="pl-num">${sourceAllTimeSorted.reduce((s,[,d])=>s+d.hired,0)}</td>
+                <td class="pl-num">—</td>
+              </tr>
+            </tfoot>
+          </table>
+          `}
+        </div>
+      </div>
+      <div style="font-size:11px;color:var(--ink-muted);margin-top:12px;padding:10px 12px;background:var(--bg-elev);border-radius:6px;line-height:1.6">
+        💡 <b>Cách đọc:</b> Conv % = Hired / Tổng CV — nguồn nào có Conv cao = hiệu quả cao, đáng đầu tư.<br>
+        <b>Benchmark:</b> Conv % toàn thời gian ≥15% là rất tốt · 8-14% trung bình · &lt;8% nên review.
+      </div>
     </div>
 
     <!-- Open vacancies detail -->
@@ -3629,7 +3784,7 @@ function _plRenderRecruitmentRisk(el, year, month){
         </thead>
         <tbody>
           ${enriched.map(j=>{
-            const riskColor = j.risk==='red'?'var(--danger)':j.risk==='amber'?'var(--warning)':'var(--success)';
+            const riskColor = j.risk==='red'?'var(--danger)':j.risk==='amber'?'var(--warning)':j.risk==='unknown'?'var(--ink-muted)':'var(--success)';
             const p = j.pipeline;
             // Pipeline visualization
             const pipelineHtml = `
@@ -3643,12 +3798,12 @@ function _plRenderRecruitmentRisk(el, year, month){
                 <span style="background:rgba(126,198,153,.15);color:var(--success);padding:2px 6px;border-radius:8px;min-width:22px;text-align:center;font-weight:700" title="Hired">H:${p.hired}</span>
               </span>
             `;
-            return `<tr style="${j.risk==='red'?'background:rgba(212,127,127,.04)':''}">
-              <td style="font-size:16px">${j.riskLabel}</td>
+            return `<tr style="${j.risk==='red'?'background:rgba(212,127,127,.04)':j.risk==='unknown'?'background:rgba(255,255,255,.02)':''}">
+              <td style="font-size:16px" title="${j.risk==='unknown'?'Chưa có ngày mở':''}">${j.riskLabel}</td>
               <td><b>${escapeHtml(j.title)}</b></td>
               <td>${escapeHtml(j.dName)}</td>
-              <td class="pl-num" style="font-size:11px;color:var(--ink-dim)">${j.openDate||'—'}</td>
-              <td class="pl-num" style="color:${riskColor};font-weight:700">${j.days}d</td>
+              <td class="pl-num" style="font-size:11px;color:var(--ink-dim)">${j.openDate||'<span style="color:var(--danger)" title="Cần cập nhật ngày mở trong module Tuyển dụng">⚠ chưa có</span>'}</td>
+              <td class="pl-num" style="color:${riskColor};font-weight:700">${j.days!==null?j.days+'d':'—'}</td>
               <td class="pl-num">${j.remain}/${j.positions}</td>
               <td class="pl-num">${j.hired}</td>
               <td>${pipelineHtml}</td>
@@ -3681,7 +3836,285 @@ function _plRenderRecruitmentRisk(el, year, month){
   `;
 }
 
-// ===== TAB 6: HR ACTION PLAN =====
+// ===== TAB 6: TURNOVER =====
+function _plRenderTurnover(el, year, month){
+  const today = new Date();
+  const monthStart = new Date(year, month, 1);
+  const monthEnd = new Date(year, month+1, 0);
+  const cd = DB.customData||{};
+
+  const allResign = (DB.resignations||[]).filter(r=>r.status==='confirmed' || r.status==='confirm' || !r.status);
+
+  // Enrich each resignation
+  const enriched = allResign.map(r=>{
+    const emp = empById(r.empId);
+    if(!emp) return null;
+    const dept = (DB.departments||[]).find(d=>d.id===emp.deptId);
+    const endDate = r.endDate || cd[emp.id]?.exitDate;
+    if(!endDate) return null;
+    const endD = new Date(endDate);
+    if(isNaN(endD)) return null;
+    const reason = r.reason || cd[emp.id]?.exitReason || 'Không rõ';
+    const joined = emp.joined ? new Date(emp.joined) : null;
+    const tenureMonths = joined && !isNaN(joined) ? _plMonthsBetween(joined, endD) : null;
+    const tenureBucket = tenureMonths === null ? 'unknown' :
+                          tenureMonths < 3 ? '<3m' :
+                          tenureMonths < 12 ? '3-12m' :
+                          tenureMonths < 36 ? '1-3y' : '>3y';
+    return {
+      empId: emp.id, name: emp.name, role: emp.role,
+      dept: dept?.name || 'Unknown', deptId: emp.deptId,
+      submitDate: r.submitDate, endDate, endD, reason,
+      tenureMonths, tenureBucket, joined: emp.joined,
+    };
+  }).filter(Boolean);
+
+  const thisMonthResign = enriched.filter(r=>r.endD.getFullYear()===year && r.endD.getMonth()===month);
+  const ytdResign = enriched.filter(r=>r.endD.getFullYear()===year && r.endD.getMonth()<=month);
+  const ytdResignLY = enriched.filter(r=>r.endD.getFullYear()===year-1 && r.endD.getMonth()<=month);
+
+  // Average HC
+  const avgHcYTD = (year_) => {
+    let sum = 0;
+    for(let m=0; m<=month; m++){ sum += _plGetPayrollActualMonth(year_, m).hc; }
+    return (month+1) > 0 ? sum/(month+1) : 0;
+  };
+  const avgHcCurYear = avgHcYTD(year);
+  const avgHcLY = avgHcYTD(year-1);
+
+  const annualizedTurnoverYTD = avgHcCurYear > 0 ? (ytdResign.length / avgHcCurYear) * (12/(month+1)) * 100 : null;
+  const annualizedTurnoverLY = avgHcLY > 0 ? (ytdResignLY.length / avgHcLY) * (12/(month+1)) * 100 : null;
+
+  const upcomingLeavers = enriched.filter(r=>r.endD > today).sort((a,b)=>a.endD - b.endD).slice(0, 10);
+
+  // By Reason
+  const byReason = {};
+  ytdResign.forEach(r=>{ byReason[r.reason] = (byReason[r.reason]||0) + 1; });
+  const reasonsSorted = Object.entries(byReason).sort((a,b)=>b[1]-a[1]);
+
+  // By Tenure
+  const byTenure = {'<3m':0, '3-12m':0, '1-3y':0, '>3y':0, 'unknown':0};
+  ytdResign.forEach(r=>{ byTenure[r.tenureBucket] = (byTenure[r.tenureBucket]||0) + 1; });
+
+  // By Department
+  const byDept = {};
+  ytdResign.forEach(r=>{
+    if(!byDept[r.dept]) byDept[r.dept] = {dept: r.dept, deptId: r.deptId, count:0, totalTenure:0, validTenureCount:0};
+    byDept[r.dept].count++;
+    if(r.tenureMonths !== null){
+      byDept[r.dept].totalTenure += r.tenureMonths;
+      byDept[r.dept].validTenureCount++;
+    }
+  });
+  Object.values(byDept).forEach(d=>{
+    d.avgTenure = d.validTenureCount > 0 ? d.totalTenure/d.validTenureCount : null;
+    const currentHC = (DB.employees||[]).filter(e=>e.deptId===d.deptId && getEffectiveStatus(e)!=='exit').length;
+    const totalEverHC = currentHC + d.count;
+    d.turnoverRate = totalEverHC > 0 ? (d.count/totalEverHC)*100 : null;
+  });
+  const deptSorted = Object.values(byDept).sort((a,b)=>b.count - a.count);
+
+  // Turnover Cost
+  const costPerHire = parseFloat((DB.plConfig||{}).costPerHire) || 5_000_000;
+  const trainingCostPerEmp = parseFloat((DB.plConfig||{}).trainingCostPerEmp) || 3_000_000;
+  const uniformCostPerEmp = parseFloat((DB.plConfig||{}).uniformCostPerEmp) || 1_500_000;
+  const costPerResign = costPerHire + trainingCostPerEmp + uniformCostPerEmp;
+  const totalTurnoverCostYTD = ytdResign.length * costPerResign;
+
+  el.innerHTML = `
+    <!-- KPI cards -->
+    <div class="pl-card">
+      <div style="font-weight:700;font-size:15px;color:var(--accent);margin-bottom:14px">📉 Turnover Analysis — ${year}</div>
+      <div class="pl-kpi-grid">
+        <div class="pl-kpi" style="border-left-color:${thisMonthResign.length>0?'var(--danger)':'var(--success)'}">
+          <div class="pl-kpi-label">Nghỉ tháng này</div>
+          <div class="pl-kpi-value" style="color:${thisMonthResign.length>0?'var(--danger)':'var(--ink)'}">${thisMonthResign.length}</div>
+          <div class="pl-kpi-sub">Tháng ${month+1}/${year}</div>
+        </div>
+        <div class="pl-kpi" style="border-left-color:var(--warning)">
+          <div class="pl-kpi-label">Tổng nghỉ YTD</div>
+          <div class="pl-kpi-value">${ytdResign.length}</div>
+          <div class="pl-kpi-sub">T1-T${month+1} · LY: ${ytdResignLY.length}</div>
+        </div>
+        <div class="pl-kpi" style="border-left-color:${annualizedTurnoverYTD!==null && annualizedTurnoverYTD>50?'var(--danger)':annualizedTurnoverYTD!==null && annualizedTurnoverYTD>30?'var(--warning)':'var(--success)'}">
+          <div class="pl-kpi-label">Turnover Annualized</div>
+          <div class="pl-kpi-value" style="color:${annualizedTurnoverYTD!==null && annualizedTurnoverYTD>50?'var(--danger)':annualizedTurnoverYTD!==null && annualizedTurnoverYTD>30?'var(--warning)':'var(--success)'}">${annualizedTurnoverYTD!==null?annualizedTurnoverYTD.toFixed(1)+'%':'—'}</div>
+          <div class="pl-kpi-sub">LY: ${annualizedTurnoverLY!==null?annualizedTurnoverLY.toFixed(1)+'%':'—'}</div>
+        </div>
+        <div class="pl-kpi" style="border-left-color:var(--info)">
+          <div class="pl-kpi-label">Sắp nghỉ (đã nộp)</div>
+          <div class="pl-kpi-value" style="color:${upcomingLeavers.length>0?'var(--info)':'var(--ink)'}">${upcomingLeavers.length}</div>
+          <div class="pl-kpi-sub">${upcomingLeavers.length>0?'NV chưa rời':'không có'}</div>
+        </div>
+        <div class="pl-kpi" style="border-left-color:var(--danger)">
+          <div class="pl-kpi-label">Turnover Cost YTD</div>
+          <div class="pl-kpi-value" style="color:var(--danger)">${_plFmtMoney(totalTurnoverCostYTD)}đ</div>
+          <div class="pl-kpi-sub">${_plFmtMoney(costPerResign)}đ/NV × ${ytdResign.length}</div>
+        </div>
+      </div>
+      <div style="font-size:11px;color:var(--ink-muted);margin-top:12px;padding:10px 12px;background:var(--bg-elev);border-radius:6px;line-height:1.6">
+        💡 <b>Benchmark hospitality VN:</b> Turnover annualized 30-50%/năm là bình thường · &lt;30% rất tốt · &gt;50% cần action.<br>
+        <b>Turnover Cost</b> = Cost per Hire (${_plFmtMoney(costPerHire)}đ) + Training (${_plFmtMoney(trainingCostPerEmp)}đ) + Đồng phục/Setup (${_plFmtMoney(uniformCostPerEmp)}đ).
+      </div>
+    </div>
+
+    <!-- By Tenure + By Reason -->
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
+      <div class="pl-card" style="margin-bottom:0">
+        <div style="font-weight:700;font-size:14px;color:var(--accent);margin-bottom:14px">⏱ Theo Thâm niên</div>
+        ${ytdResign.length === 0 ? `<div style="color:var(--ink-dim);text-align:center;padding:20px;font-size:12px;font-style:italic">Chưa có NV nghỉ trong năm</div>` : `
+        <table class="pl-table">
+          <thead><tr><th>Bucket</th><th class="pl-num">Số NV</th><th class="pl-num">%</th><th>Insight</th></tr></thead>
+          <tbody>
+            ${[
+              {k:'<3m', label:'< 3 tháng', insight:'Onboarding fail / không match'},
+              {k:'3-12m', label:'3-12 tháng', insight:'Cultural fit / lương'},
+              {k:'1-3y', label:'1-3 năm', insight:'Career development'},
+              {k:'>3y', label:'> 3 năm', insight:'Tự nguyện / khó tránh'},
+              {k:'unknown', label:'Không rõ', insight:'Thiếu data ngày vào'},
+            ].filter(b=>byTenure[b.k]>0).map(b=>{
+              const n = byTenure[b.k];
+              const pct = ytdResign.length>0 ? (n/ytdResign.length*100) : 0;
+              const color = b.k==='<3m'?'var(--danger)':b.k==='3-12m'?'var(--warning)':'var(--ink-dim)';
+              return `<tr>
+                <td><b style="color:${color}">${b.label}</b></td>
+                <td class="pl-num"><b>${n}</b></td>
+                <td class="pl-num">${pct.toFixed(0)}%</td>
+                <td style="font-size:11px;color:var(--ink-muted)">${b.insight}</td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+          <tfoot><tr><td>TỔNG</td><td class="pl-num"><b>${ytdResign.length}</b></td><td class="pl-num">100%</td><td></td></tr></tfoot>
+        </table>
+        ${(()=>{
+          const earlyLeave = byTenure['<3m'] + byTenure['3-12m'];
+          if(ytdResign.length>0 && earlyLeave / ytdResign.length >= 0.5){
+            return `<div style="margin-top:10px;padding:10px 12px;background:rgba(212,127,127,.04);border-left:3px solid var(--danger);border-radius:6px;font-size:11.5px;color:var(--ink-dim);line-height:1.6">
+              ⚠️ <b>${earlyLeave}/${ytdResign.length} NV nghỉ trong &lt; 1 năm</b> (${(earlyLeave/ytdResign.length*100).toFixed(0)}%) → có vấn đề về <b>onboarding hoặc retention sớm</b>. Review chương trình đào tạo và kỳ vọng tuyển dụng.
+            </div>`;
+          }
+          return '';
+        })()}
+        `}
+      </div>
+
+      <div class="pl-card" style="margin-bottom:0">
+        <div style="font-weight:700;font-size:14px;color:var(--accent);margin-bottom:14px">📋 Theo Lý do</div>
+        ${reasonsSorted.length === 0 ? `<div style="color:var(--ink-dim);text-align:center;padding:20px;font-size:12px;font-style:italic">Chưa có data</div>` : `
+        <table class="pl-table">
+          <thead><tr><th>Lý do</th><th class="pl-num">Số NV</th><th class="pl-num">%</th></tr></thead>
+          <tbody>
+            ${reasonsSorted.map(([reason, n])=>{
+              const pct = ytdResign.length>0 ? (n/ytdResign.length*100) : 0;
+              return `<tr><td><b>${escapeHtml(reason)}</b></td><td class="pl-num">${n}</td><td class="pl-num">${pct.toFixed(0)}%</td></tr>`;
+            }).join('')}
+          </tbody>
+          <tfoot><tr><td>TỔNG</td><td class="pl-num"><b>${ytdResign.length}</b></td><td class="pl-num">100%</td></tr></tfoot>
+        </table>
+        `}
+      </div>
+    </div>
+
+    <!-- By Department -->
+    <div class="pl-card">
+      <div style="font-weight:700;font-size:14px;color:var(--accent);margin-bottom:14px">🏢 Theo Phòng ban</div>
+      ${deptSorted.length === 0 ? `<div style="color:var(--ink-dim);text-align:center;padding:20px;font-size:12px;font-style:italic">Chưa có data</div>` : `
+      <table class="pl-table">
+        <thead><tr>
+          <th>Phòng ban</th>
+          <th class="pl-num">Số NV nghỉ</th>
+          <th class="pl-num">% tổng</th>
+          <th class="pl-num">Turnover rate</th>
+          <th class="pl-num">Thâm niên TB</th>
+          <th>Cảnh báo</th>
+        </tr></thead>
+        <tbody>
+          ${deptSorted.map(d=>{
+            const pct = ytdResign.length>0 ? (d.count/ytdResign.length*100) : 0;
+            const tr = d.turnoverRate;
+            const trColor = tr===null?'var(--ink-muted)':tr>=30?'var(--danger)':tr>=15?'var(--warning)':'var(--success)';
+            const warning = tr!==null && tr>=30 ? '🔴 Rất cao' : tr!==null && tr>=15 ? '🟡 Cao' : tr!==null ? '🟢 OK' : '—';
+            return `<tr>
+              <td><b>${escapeHtml(d.dept)}</b></td>
+              <td class="pl-num"><b>${d.count}</b></td>
+              <td class="pl-num">${pct.toFixed(0)}%</td>
+              <td class="pl-num" style="color:${trColor};font-weight:700">${tr!==null?tr.toFixed(1)+'%':'—'}</td>
+              <td class="pl-num">${d.avgTenure!==null?(d.avgTenure>=12?(d.avgTenure/12).toFixed(1)+'y':d.avgTenure.toFixed(0)+'m'):'—'}</td>
+              <td style="font-size:11px">${warning}</td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+        <tfoot><tr>
+          <td>TỔNG</td>
+          <td class="pl-num"><b>${ytdResign.length}</b></td>
+          <td class="pl-num">100%</td>
+          <td class="pl-num">${annualizedTurnoverYTD!==null?annualizedTurnoverYTD.toFixed(1)+'% (annualized)':'—'}</td>
+          <td class="pl-num">—</td>
+          <td></td>
+        </tr></tfoot>
+      </table>
+      `}
+    </div>
+
+    <!-- Upcoming Leavers -->
+    ${upcomingLeavers.length>0 ? `
+    <div class="pl-card">
+      <div style="font-weight:700;font-size:14px;color:var(--warning);margin-bottom:14px">⚠️ Sắp nghỉ — Đã nộp đơn, chưa rời (${upcomingLeavers.length} NV)</div>
+      <table class="pl-table">
+        <thead><tr>
+          <th>Tên NV</th><th>Vị trí</th><th>Phòng ban</th><th>Lý do</th>
+          <th class="pl-num">Ngày nộp đơn</th><th class="pl-num">Ngày sẽ rời</th><th class="pl-num">Còn lại</th>
+        </tr></thead>
+        <tbody>
+          ${upcomingLeavers.map(l=>{
+            const daysLeft = _plDaysBetween(today, l.endD);
+            const urgColor = daysLeft<=7?'var(--danger)':daysLeft<=14?'var(--warning)':'var(--info)';
+            return `<tr>
+              <td><b>${escapeHtml(l.name)}</b></td>
+              <td>${escapeHtml(l.role||'')}</td>
+              <td>${escapeHtml(l.dept)}</td>
+              <td style="font-size:11px;color:var(--ink-dim)">${escapeHtml(l.reason)}</td>
+              <td class="pl-num" style="font-size:11px">${l.submitDate||'—'}</td>
+              <td class="pl-num" style="font-size:11px;color:var(--warning);font-weight:600">${l.endDate||'—'}</td>
+              <td class="pl-num" style="color:${urgColor};font-weight:700">${daysLeft}d</td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>
+    ` : ''}
+
+    <!-- Detail this month -->
+    ${thisMonthResign.length>0 ? `
+    <div class="pl-card">
+      <div style="font-weight:700;font-size:14px;color:var(--accent);margin-bottom:14px">📋 Chi tiết NV nghỉ trong tháng ${month+1}/${year} (${thisMonthResign.length} NV)</div>
+      <table class="pl-table">
+        <thead><tr>
+          <th>Tên NV</th><th>Phòng ban</th>
+          <th class="pl-num">Vào làm</th><th class="pl-num">Ngày rời</th>
+          <th class="pl-num">Thâm niên</th><th>Lý do</th>
+        </tr></thead>
+        <tbody>
+          ${thisMonthResign.map(r=>{
+            const tenureDisp = r.tenureMonths===null?'—':r.tenureMonths>=12?(r.tenureMonths/12).toFixed(1)+'y':r.tenureMonths.toFixed(0)+'m';
+            const tenureColor = r.tenureMonths!==null && r.tenureMonths<6 ? 'var(--danger)' : r.tenureMonths!==null && r.tenureMonths<12 ? 'var(--warning)' : 'var(--ink-dim)';
+            return `<tr>
+              <td><b>${escapeHtml(r.name)}</b></td>
+              <td>${escapeHtml(r.dept)}</td>
+              <td class="pl-num" style="font-size:11px;color:var(--ink-dim)">${r.joined||'—'}</td>
+              <td class="pl-num" style="font-size:11px;color:var(--danger);font-weight:600">${r.endDate}</td>
+              <td class="pl-num" style="color:${tenureColor};font-weight:700">${tenureDisp}</td>
+              <td style="font-size:11.5px">${escapeHtml(r.reason)}</td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>
+    ` : ''}
+  `;
+}
+
+// ===== TAB 7: HR ACTION PLAN =====
 function _plRenderActionPlan(el, year, month){
   if(!DB.plActionPlan) DB.plActionPlan = {};
   if(!DB.plActionPlan[year]) DB.plActionPlan[year] = {};
@@ -5514,7 +5947,7 @@ function exportAllExcel(){
     const jobHead = ['Tên vị trí','Phòng ban','Trạng thái','Số lượng','Ngày mở','Ghi chú'];
     const jobRows = (DB.jobs||[]).map(j=>{
       const dept = DB.departments.find(d=>d.id===j.deptId);
-      return [_d(j.title),dept?dept.name:'',_d(j.status),j.qty||1,_d(j.openDate),_d(j.notes)];
+      return [_d(j.title),dept?dept.name:'',_d(j.status),j.positions||j.qty||1,_d(j.startDate),_d(j.notes)];
     });
     if(jobRows.length){
       const ws8 = XLSX.utils.aoa_to_sheet([jobHead,...jobRows]);
