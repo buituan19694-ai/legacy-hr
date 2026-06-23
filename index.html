@@ -2886,6 +2886,12 @@ function renderAnalytics(main){
         <select onchange="window._plMonth=parseInt(this.value);render()" style="background:var(--bg-card);color:var(--ink);border:1px solid var(--border);padding:6px 12px;border-radius:6px;font-size:12px">
           ${MN_FULL.map((m,i)=>`<option value="${i}" ${i===curMonth?'selected':''}>${m}</option>`).join('')}
         </select>
+        <!-- Scope selector — applies to Intelligence + Turnover -->
+        <div style="display:flex;gap:0;background:var(--bg-card);border-radius:8px;padding:3px;border:1px solid var(--border)" title="Phạm vi xem cho Turnover & một số chỉ số nhạy thời gian">
+          <button onclick="window._plScope='month';render()" style="background:${(window._plScope||'ytd')==='month'?'var(--accent)':'transparent'};color:${(window._plScope||'ytd')==='month'?'#000':'var(--ink-dim)'};border:0;padding:5px 11px;border-radius:6px;font-size:11.5px;font-weight:600;cursor:pointer">📅 Tháng</button>
+          <button onclick="window._plScope='ytd';render()" style="background:${(window._plScope||'ytd')==='ytd'?'var(--accent)':'transparent'};color:${(window._plScope||'ytd')==='ytd'?'#000':'var(--ink-dim)'};border:0;padding:5px 11px;border-radius:6px;font-size:11.5px;font-weight:600;cursor:pointer">📊 YTD</button>
+          <button onclick="window._plScope='year';render()" style="background:${(window._plScope||'ytd')==='year'?'var(--accent)':'transparent'};color:${(window._plScope||'ytd')==='year'?'#000':'var(--ink-dim)'};border:0;padding:5px 11px;border-radius:6px;font-size:11.5px;font-weight:600;cursor:pointer">📆 Cả năm</button>
+        </div>
         <button onclick="window.print()" style="background:transparent;color:var(--ink-dim);border:1px solid var(--border);padding:6px 12px;border-radius:6px;font-size:12px;cursor:pointer" title="In ra để mang vào họp P&L">🖨 In</button>
       </div>
     </div>
@@ -2961,10 +2967,11 @@ function _plRenderIntelligence(el, year, month){
   const laborCostPct = revActual > 0 ? (totalLaborActual / revActual * 100) : null;
   const benchmark = {good: 25, warning: 30};
 
-  // HC variance
+  // HC variance — dùng SNAPSHOT HIỆN TẠI (NV đang active), không phải HC tháng (bao cả NV nghỉ giữa tháng)
   const totalPlannedHC = Object.values((DB.manningPlan[year]||{}).depts||{})
     .reduce((s,dp)=>s+(dp.positions||[]).reduce((s2,p)=>s2+(parseInt(p.planned)||0),0),0);
-  const hcVar = actual.hc - totalPlannedHC;
+  const currentActiveHC = (DB.employees||[]).filter(e => getEffectiveStatus(e) !== 'exit').length;
+  const hcVar = currentActiveHC - totalPlannedHC;
 
   // Turnover YTD
   const cd = DB.customData||{};
@@ -2976,20 +2983,57 @@ function _plRenderIntelligence(el, year, month){
     else d = new Date(s);
     return isNaN(d) ? null : d;
   };
-  const exitedThisYear = (DB.employees||[]).filter(e => {
-    if(e.status !== 'exit') return false;
-    const d = _parseExitDate((cd[e.id]||{}).exitDate);
-    return d && d.getFullYear() === year && d.getMonth() <= month;
-  });
-  const exitedThisMonth = exitedThisYear.filter(e => {
-    const d = _parseExitDate((cd[e.id]||{}).exitDate);
-    return d && d.getMonth() === month;
-  });
-  // Avg HC YTD
-  let avgHC = 0;
-  for(let m=0; m<=month; m++) avgHC += _plGetPayrollActualMonth(year, m).hc;
-  avgHC = (month+1) > 0 ? avgHC/(month+1) : 0;
-  const annualizedTurnover = avgHC > 0 ? (exitedThisYear.length/avgHC) * (12/(month+1)) * 100 : null;
+
+  // === SCOPE-AWARE: Tháng / YTD / Cả năm ===
+  const scope = window._plScope || 'ytd';
+  let scopeLabel;
+  const allExits = (DB.employees||[]).filter(e => e.status === 'exit').map(e => ({
+    ...e, _exitD: _parseExitDate((cd[e.id]||{}).exitDate)
+  })).filter(e => e._exitD);
+
+  let scopeExits;
+  if(scope === 'month'){
+    scopeExits = allExits.filter(e => e._exitD.getFullYear()===year && e._exitD.getMonth()===month);
+    scopeLabel = `Tháng ${month+1}/${year}`;
+  } else if(scope === 'year'){
+    scopeExits = allExits.filter(e => e._exitD.getFullYear()===year);
+    scopeLabel = `Cả năm ${year}`;
+  } else {
+    scopeExits = allExits.filter(e => e._exitD.getFullYear()===year && e._exitD.getMonth()<=month);
+    scopeLabel = `YTD T1-T${month+1}/${year}`;
+  }
+  // Always-month/always-YTD vars for KPI cards backward compat
+  const exitedThisYear = allExits.filter(e => e._exitD.getFullYear()===year && e._exitD.getMonth()<=month);
+  const exitedThisMonth = allExits.filter(e => e._exitD.getFullYear()===year && e._exitD.getMonth()===month);
+
+  // Avg HC for selected scope
+  let avgHC = 0, monthsCount = 0;
+  if(scope === 'month'){
+    avgHC = _plGetPayrollActualMonth(year, month).hc; monthsCount = 1;
+  } else if(scope === 'year'){
+    for(let m=0; m<12; m++){ avgHC += _plGetPayrollActualMonth(year, m).hc; }
+    monthsCount = 12; avgHC = avgHC/12;
+  } else {
+    for(let m=0; m<=month; m++){ avgHC += _plGetPayrollActualMonth(year, m).hc; }
+    monthsCount = month+1; avgHC = avgHC/monthsCount;
+  }
+  // Turnover rate adapts to scope:
+  //   month  → raw monthly rate = exits / HC tháng × 100  (KHÔNG annualize)
+  //   year   → raw annual rate = exits năm / avgHC × 100
+  //   ytd    → annualized projection = exits / avgHC × (12/months) × 100
+  let turnoverRate, turnoverIsAnnualized;
+  if(scope === 'month'){
+    turnoverRate = avgHC > 0 ? (scopeExits.length / avgHC) * 100 : null;
+    turnoverIsAnnualized = false;
+  } else if(scope === 'year'){
+    turnoverRate = avgHC > 0 ? (scopeExits.length / avgHC) * 100 : null;
+    turnoverIsAnnualized = false;
+  } else {
+    turnoverRate = avgHC > 0 ? (scopeExits.length / avgHC) * (12/monthsCount) * 100 : null;
+    turnoverIsAnnualized = true;
+  }
+  // alias for compatibility with stories below
+  const annualizedTurnover = turnoverRate;
 
   // Pending resignations
   const today = new Date();
@@ -3084,26 +3128,26 @@ function _plRenderIntelligence(el, year, month){
         severity: 'warning',
         icon: '👥',
         title: `Thiếu ${Math.abs(hcVar)} NV so với Plan`,
-        detail: `Planned ${totalPlannedHC} - Actual ${actual.hc}. Có thể ảnh hưởng dịch vụ. Review tuyển dụng.`,
+        detail: `Planned ${totalPlannedHC} - Active ${currentActiveHC}. Có thể ảnh hưởng dịch vụ. Review tuyển dụng.`,
       });
     } else if(hcVar > 10){
       stories.push({
         severity: 'warning',
         icon: '👥',
         title: `Thừa ${hcVar} NV so với Plan`,
-        detail: `Planned ${totalPlannedHC} - Actual ${actual.hc}. Cần optimize hoặc update Plan.`,
+        detail: `Planned ${totalPlannedHC} - Active ${currentActiveHC}. Cần optimize hoặc update Plan.`,
       });
     }
   }
 
-  // 4. Turnover
-  if(annualizedTurnover !== null){
+  // 4. Turnover — chỉ trigger benchmark khi rate annualized (so sánh được cross-year)
+  if(annualizedTurnover !== null && turnoverIsAnnualized){
     if(annualizedTurnover > 50){
       stories.push({
         severity: 'critical',
         icon: '📉',
         title: `Turnover Annualized ${annualizedTurnover.toFixed(1)}% — RẤT CAO`,
-        detail: `${exitedThisYear.length} NV nghỉ YTD. Benchmark hospitality VN <50%. Cần action retention NGAY.`,
+        detail: `${scopeExits.length} NV nghỉ (${scopeLabel}). Benchmark hospitality VN <50%. Cần action retention NGAY.`,
         action: 'Review Turnover tab — đào sâu lý do nghỉ',
       });
     } else if(annualizedTurnover > 30){
@@ -3111,12 +3155,20 @@ function _plRenderIntelligence(el, year, month){
         severity: 'warning',
         icon: '📊',
         title: `Turnover Annualized ${annualizedTurnover.toFixed(1)}% — Cao`,
-        detail: `${exitedThisYear.length} NV nghỉ YTD. Còn trong ngưỡng VN (30-50%) nhưng cần watch.`,
+        detail: `${scopeExits.length} NV nghỉ (${scopeLabel}). Còn trong ngưỡng VN (30-50%) nhưng cần watch.`,
       });
     }
+  } else if(annualizedTurnover !== null && !turnoverIsAnnualized && scope === 'month' && annualizedTurnover > 4){
+    // Raw monthly rate >4% = thường (cao hơn ngưỡng ~4%/tháng tương đương ~50%/năm)
+    stories.push({
+      severity: 'warning',
+      icon: '📊',
+      title: `Turnover Tháng ${annualizedTurnover.toFixed(1)}% — Cao`,
+      detail: `${scopeExits.length} NV nghỉ trong tháng (HC ${Math.round(avgHC)}). >4%/tháng ≈ >50%/năm — cần watch.`,
+    });
   }
 
-  // 5. This month exits
+  // 5. This month exits — always check current month regardless of scope
   if(exitedThisMonth.length > 5){
     stories.push({
       severity: 'warning',
@@ -3198,7 +3250,7 @@ function _plRenderIntelligence(el, year, month){
       <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:14px">
         <div>
           <div style="font-weight:700;font-size:16px;color:var(--accent)">🧠 HR Intelligence — Executive Summary</div>
-          <div style="font-size:11px;color:var(--ink-muted);margin-top:3px">Tổng hợp insights & risks · Tháng ${month+1}/${year}</div>
+          <div style="font-size:11px;color:var(--ink-muted);margin-top:3px">Tổng hợp insights & risks · Tháng ${month+1}/${year} · Scope Turnover: <b style="color:var(--accent)">${scopeLabel}</b></div>
         </div>
         <div style="font-size:11px;color:var(--ink-dim)">${stories.filter(s=>s.severity==='critical').length} 🚨 critical · ${stories.filter(s=>s.severity==='warning').length} ⚠️ warning · ${stories.filter(s=>s.severity==='success').length} ✅ good</div>
       </div>
@@ -3217,13 +3269,13 @@ function _plRenderIntelligence(el, year, month){
         </div>
         <div class="pl-kpi" style="border-left-color:${Math.abs(hcVar)>10?'var(--warning)':'var(--success)'}">
           <div class="pl-kpi-label">HC vs Plan</div>
-          <div class="pl-kpi-value">${actual.hc} / ${totalPlannedHC}</div>
+          <div class="pl-kpi-value">${currentActiveHC} / ${totalPlannedHC}</div>
           <div class="pl-kpi-sub">${hcVar>=0?'+':''}${hcVar} NV</div>
         </div>
-        <div class="pl-kpi" style="border-left-color:${annualizedTurnover!==null && annualizedTurnover>50?'var(--danger)':annualizedTurnover!==null && annualizedTurnover>30?'var(--warning)':'var(--success)'}">
-          <div class="pl-kpi-label">Turnover (annualized)</div>
-          <div class="pl-kpi-value">${annualizedTurnover!==null?annualizedTurnover.toFixed(1)+'%':'—'}</div>
-          <div class="pl-kpi-sub">${exitedThisYear.length} NV YTD · ${exitedThisMonth.length} tháng này</div>
+        <div class="pl-kpi" style="border-left-color:${turnoverRate!==null && turnoverIsAnnualized && turnoverRate>50?'var(--danger)':turnoverRate!==null && turnoverIsAnnualized && turnoverRate>30?'var(--warning)':'var(--success)'}">
+          <div class="pl-kpi-label">${turnoverIsAnnualized?'Turnover (annualized)':scope==='month'?'Turnover rate tháng':'Turnover rate năm'}</div>
+          <div class="pl-kpi-value">${turnoverRate!==null?turnoverRate.toFixed(1)+'%':'—'}</div>
+          <div class="pl-kpi-sub">${scopeExits.length} NV · ${scopeLabel}</div>
         </div>
         <div class="pl-kpi" style="border-left-color:${redVacancies.length>0?'var(--danger)':amberVacancies.length>0?'var(--warning)':'var(--success)'}">
           <div class="pl-kpi-label">Vacancies open</div>
@@ -3310,7 +3362,7 @@ function _plRenderLaborCost(el, year, month){
     {label:'Phụ cấp ăn', actual: 0, budget: budget.meal, note:'Chưa tích hợp module Meal/Allowance'},
     {label:'Khác (Budget Other)', actual: 0, budget: budget.other, note:'Phụ cấp khác từ Manning Budget'},
     {label:'Casual / OT', actual: casual.total, budget: 0, note:'Lương thời vụ - chưa có budget riêng'},
-    {label:'Intern / Trainee', actual: intern.totalCost, budget: 0, note:`${intern.activeCount} TTS · ~${intern.fteEquivalent.toFixed(1)} FTE`},
+    {label:'Intern / Trainee', actual: intern.totalCost, budget: 0, note:`${intern.activeCount} TTS · từ module Trainee`},
   ];
 
   el.innerHTML = `
@@ -3344,7 +3396,7 @@ function _plRenderLaborCost(el, year, month){
         <div class="pl-kpi" style="border-left-color:var(--info)">
           <div class="pl-kpi-label">Intern Cost</div>
           <div class="pl-kpi-value" style="color:var(--info)">${_plFmtMoney(intern.totalCost)}đ</div>
-          <div class="pl-kpi-sub">${intern.activeCount} TTS · ~${intern.fteEquivalent.toFixed(1)} FTE</div>
+          <div class="pl-kpi-sub">${intern.activeCount} TTS · từ module Trainee</div>
         </div>
       </div>
     </div>
@@ -4391,8 +4443,10 @@ function _plRenderTurnover(el, year, month){
   const annualizedTurnoverYTD = avgHcCurYear > 0 ? (ytdResign.length / avgHcCurYear) * (12/(month+1)) * 100 : null;
   const annualizedTurnoverLY = avgHcLY > 0 ? (ytdResignLY.length / avgHcLY) * (12/(month+1)) * 100 : null;
 
+  // Scope-adapted turnover rate computed below after scopeSet is defined
+
   // === SCOPE FILTER (Tháng / YTD / Cả năm) — affects sections below KPI cards ===
-  const scope = window._turnoverScope || 'ytd';
+  const scope = window._plScope || 'ytd';
   let scopeSet, scopeLabel;
   if(scope === 'month'){
     scopeSet = exitedEmps.filter(r => r.exitDate.getFullYear() === year && r.exitDate.getMonth() === month);
@@ -4440,16 +4494,35 @@ function _plRenderTurnover(el, year, month){
   const totalTurnoverCostScope = scopeSet.length * costPerResign;
   const totalTurnoverCostYTD = ytdResign.length * costPerResign;
 
+  // Scope-adapted turnover rate
+  // month: raw monthly = exits trong tháng / HC tháng × 100 (KHÔNG annualize)
+  // year:  raw annual = exits năm / avg HC × 100
+  // ytd:   annualized projection = exits / avgHC × (12/months) × 100
+  let scopeAvgHC = 0, scopeMonthsCount = 1;
+  if(scope === 'month'){
+    scopeAvgHC = _plGetPayrollActualMonth(year, month).hc;
+    scopeMonthsCount = 1;
+  } else if(scope === 'year'){
+    for(let m=0; m<12; m++){ scopeAvgHC += _plGetPayrollActualMonth(year, m).hc; }
+    scopeMonthsCount = 12; scopeAvgHC = scopeAvgHC/12;
+  } else {
+    scopeAvgHC = avgHcCurYear;
+    scopeMonthsCount = month+1;
+  }
+  const scopeIsAnnualized = scope === 'ytd';
+  const scopeTurnoverRate = scopeAvgHC > 0
+    ? (scopeIsAnnualized
+        ? (scopeSet.length / scopeAvgHC) * (12/scopeMonthsCount) * 100
+        : (scopeSet.length / scopeAvgHC) * 100)
+    : null;
+
   el.innerHTML = `
     <!-- KPI cards -->
     <div class="pl-card">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:10px">
-        <div style="font-weight:700;font-size:15px;color:var(--accent)">📉 Turnover Analysis — ${year}</div>
-        <!-- Scope selector -->
-        <div style="display:flex;gap:0;background:var(--bg-elev);border-radius:8px;padding:3px;border:1px solid var(--border)">
-          <button onclick="window._turnoverScope='month';render()" style="background:${scope==='month'?'var(--accent)':'transparent'};color:${scope==='month'?'#000':'var(--ink-dim)'};border:0;padding:6px 14px;border-radius:6px;font-size:11.5px;font-weight:600;cursor:pointer">📅 Tháng ${month+1}</button>
-          <button onclick="window._turnoverScope='ytd';render()" style="background:${scope==='ytd'?'var(--accent)':'transparent'};color:${scope==='ytd'?'#000':'var(--ink-dim)'};border:0;padding:6px 14px;border-radius:6px;font-size:11.5px;font-weight:600;cursor:pointer">📊 YTD (T1-T${month+1})</button>
-          <button onclick="window._turnoverScope='year';render()" style="background:${scope==='year'?'var(--accent)':'transparent'};color:${scope==='year'?'#000':'var(--ink-dim)'};border:0;padding:6px 14px;border-radius:6px;font-size:11.5px;font-weight:600;cursor:pointer">📆 Cả năm ${year}</button>
+        <div>
+          <div style="font-weight:700;font-size:15px;color:var(--accent)">📉 Turnover Analysis — ${year}</div>
+          <div style="font-size:11px;color:var(--ink-muted);margin-top:3px">Scope: <b style="color:var(--accent)">${scopeLabel}</b></div>
         </div>
       </div>
       <div class="pl-kpi-grid">
@@ -4463,10 +4536,10 @@ function _plRenderTurnover(el, year, month){
           <div class="pl-kpi-value">${ytdResign.length}</div>
           <div class="pl-kpi-sub">T1-T${month+1} · LY: ${ytdResignLY.length}</div>
         </div>
-        <div class="pl-kpi" style="border-left-color:${annualizedTurnoverYTD!==null && annualizedTurnoverYTD>50?'var(--danger)':annualizedTurnoverYTD!==null && annualizedTurnoverYTD>30?'var(--warning)':'var(--success)'}">
-          <div class="pl-kpi-label">Turnover Annualized</div>
-          <div class="pl-kpi-value" style="color:${annualizedTurnoverYTD!==null && annualizedTurnoverYTD>50?'var(--danger)':annualizedTurnoverYTD!==null && annualizedTurnoverYTD>30?'var(--warning)':'var(--success)'}">${annualizedTurnoverYTD!==null?annualizedTurnoverYTD.toFixed(1)+'%':'—'}</div>
-          <div class="pl-kpi-sub">LY: ${annualizedTurnoverLY!==null?annualizedTurnoverLY.toFixed(1)+'%':'—'}</div>
+        <div class="pl-kpi" style="border-left-color:${scopeTurnoverRate!==null && scopeIsAnnualized && scopeTurnoverRate>50?'var(--danger)':scopeTurnoverRate!==null && scopeIsAnnualized && scopeTurnoverRate>30?'var(--warning)':scopeTurnoverRate!==null && !scopeIsAnnualized && scopeTurnoverRate>4?'var(--warning)':'var(--success)'}">
+          <div class="pl-kpi-label">${scopeIsAnnualized?'Turnover Annualized':scope==='month'?'Turnover Rate Tháng':'Turnover Rate Năm'}</div>
+          <div class="pl-kpi-value" style="color:${scopeTurnoverRate!==null && scopeIsAnnualized && scopeTurnoverRate>50?'var(--danger)':scopeTurnoverRate!==null && scopeIsAnnualized && scopeTurnoverRate>30?'var(--warning)':scopeTurnoverRate!==null && !scopeIsAnnualized && scopeTurnoverRate>4?'var(--warning)':'var(--success)'}">${scopeTurnoverRate!==null?scopeTurnoverRate.toFixed(1)+'%':'—'}</div>
+          <div class="pl-kpi-sub">${scopeIsAnnualized?`LY: ${annualizedTurnoverLY!==null?annualizedTurnoverLY.toFixed(1)+'%':'—'}`:`${scopeSet.length}/${Math.round(scopeAvgHC)} NV`}</div>
         </div>
         <div class="pl-kpi" style="border-left-color:var(--info)">
           <div class="pl-kpi-label">Sắp nghỉ (đã nộp)</div>
@@ -4478,9 +4551,15 @@ function _plRenderTurnover(el, year, month){
           <div class="pl-kpi-value" style="color:var(--danger)">${_plFmtMoney(totalTurnoverCostYTD)}đ</div>
           <div class="pl-kpi-sub">${_plFmtMoney(costPerResign)}đ/NV × ${ytdResign.length}</div>
         </div>
+        <div class="pl-kpi" style="border-left-color:var(--warning)">
+          <div class="pl-kpi-label">Turnover Cost · ${scope==='month'?'Tháng':scope==='year'?'Cả năm':'YTD'}</div>
+          <div class="pl-kpi-value" style="color:var(--warning)">${_plFmtMoney(totalTurnoverCostScope)}đ</div>
+          <div class="pl-kpi-sub">${scopeLabel} · ${scopeSet.length} NV</div>
+        </div>
       </div>
       <div style="font-size:11px;color:var(--ink-muted);margin-top:12px;padding:10px 12px;background:var(--bg-elev);border-radius:6px;line-height:1.6">
-        💡 <b>Benchmark hospitality VN:</b> Turnover annualized 30-50%/năm là bình thường · &lt;30% rất tốt · &gt;50% cần action.<br>
+        💡 <b>Benchmark hospitality VN:</b> Turnover annualized 30-50%/năm là bình thường · &lt;30% rất tốt · &gt;50% cần action. Tỷ lệ tháng tương đương: ~4%/tháng ≈ 50%/năm.<br>
+        <b>Công thức:</b> Tháng & Năm = NV nghỉ scope / HC scope × 100. YTD = annualized projection (× 12/tháng đã qua).<br>
         <b>Turnover Cost</b> = Cost per Hire (${_plFmtMoney(costPerHire)}đ) + Training (${_plFmtMoney(trainingCostPerEmp)}đ) + Đồng phục/Setup (${_plFmtMoney(uniformCostPerEmp)}đ).
       </div>
     </div>
