@@ -2559,6 +2559,7 @@ function _plFmtPct(v, decimals){
 // Get current month's Payroll Budget from Manning & Budget
 // IMPORTANT: budgetSalary trong Manning Budget là LƯƠNG 1 NV / 1 THÁNG
 // → planned × budgetSalary = MONTHLY budget của 1 dept (KHÔNG phải annual)
+// Logic phải MATCH với Manning module's calcDeptTotal (line 26248-26254)
 function _plGetPayrollBudgetMonth(year, month){
   // Returns {salary, bonus, bh, meal, other, total, byDept:{deptId:total}} — ALL MONTHLY
   const plan = ((DB.manningPlan||{})[year]||{}).depts || {};
@@ -2567,23 +2568,34 @@ function _plGetPayrollBudgetMonth(year, month){
   Object.entries(plan).forEach(([deptId, dp])=>{
     let deptTotal = 0;
     (dp.positions||[]).forEach(p=>{
+      const bs = parseFloat(p.budgetSalary)||0;
+      const bon = parseFloat(p.budgetBonus)||0;
+      // Match Manning logic: skip positions where both salary và bonus = 0
+      if(!bs && !bon) return;
       const hc = parseInt(p.planned)||0;
-      const sal = (parseFloat(p.budgetSalary)||0) * hc;
-      const bon = (parseFloat(p.budgetBonus)||0) * hc;
-      const bh  = ((parseFloat(p.budgetBH)||0) || (sal*bhRate));
-      const meal= (parseFloat(p.mealRate)||0) * hc;
-      const oth = (parseFloat(p.budgetOther)||0) * hc;
+      // BH per person — same as getBH() in Manning module
+      const bhPerPerson = (p.budgetBH !== undefined && p.budgetBH !== null && p.budgetBH !== '')
+                          ? (parseFloat(p.budgetBH)||0)
+                          : Math.round(bs * bhRate);
+      const mealPerPerson = parseFloat(p.mealRate)||0;
+      const otherPerPerson = parseFloat(p.budgetOther)||0;
+      // Multiply everything by hc
+      const sal = bs * hc;
+      const bonus = bon * hc;
+      const bh = bhPerPerson * hc;
+      const meal = mealPerPerson * hc;
+      const other = otherPerPerson * hc;
       result.salary += sal;
-      result.bonus  += bon;
+      result.bonus  += bonus;
       result.bh     += bh;
       result.meal   += meal;
-      result.other  += oth;
-      deptTotal += sal + bon + bh + meal + oth;
+      result.other  += other;
+      deptTotal += sal + bonus + bh + meal + other;
     });
     result.byDept[deptId] = deptTotal;
   });
   result.total = result.salary + result.bonus + result.bh + result.meal + result.other;
-  return result; // MONTHLY figures
+  return result; // MONTHLY figures — matches Manning & Budget Total CP
 }
 
 // Get Payroll Actual for a month (compute from current employees + their salaries)
@@ -2617,7 +2629,8 @@ function _plGetPayrollActualMonth(year, month){
     if(base === 0 && bon === 0) return;
     salary += base;
     bonus += bon;
-    bh += (base + bon) * bhRate;
+    // BH tính trên lương cơ bản (đồng nhất với Manning convention - bonus KQCV không đóng BHXH)
+    bh += base * bhRate;
     total += base + bon;
     hc++;
     byDept[e.deptId] = (byDept[e.deptId]||0) + base + bon;
@@ -26928,7 +26941,6 @@ function renderManning(main){
         }).join('')
       : (()=>{const t=gTotals[singleMi];return `<td colspan="3" style="padding:8px;text-align:right;font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--success)">${fmtM(t.sal)}</td>
           <td style="padding:8px;text-align:right;font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--purple)">${fmtM(t.bh)}</td>
-          <td></td>
           <td style="padding:8px;text-align:right;font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--teal)">${fmtM(t.meal)}</td>
           <td style="padding:8px;text-align:right;font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--warning)">${fmtM(t.oth)}</td>
           <td style="padding:8px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:800;color:#FFCC00">${fmtM(t.tot)}</td>
