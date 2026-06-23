@@ -2679,12 +2679,17 @@ function _plGetRevenueMonth(year, month){
 }
 
 // AL/CL liability quy ra tiền
-function _plGetLeaveLiability(year){
+// statusFilter: 'active' (default) | 'exit' | 'all'
+function _plGetLeaveLiability(year, statusFilter){
+  statusFilter = statusFilter || 'active';
   const sheet = DB.leaveSheet||{};
   const cd = DB.customData||{};
   const result = {al:{total:0, days:0}, cl:{total:0, days:0}, byDept:{}};
   (DB.employees||[]).forEach(e=>{
-    if(getEffectiveStatus(e) === 'exit') return;
+    const st = getEffectiveStatus(e);
+    if(statusFilter === 'active' && st === 'exit') return;
+    if(statusFilter === 'exit' && st !== 'exit') return;
+    // 'all' → no filter
     const sh = sheet[e.id]?.[year];
     if(!sh) return;
     const ed = cd[e.id]||{};
@@ -2766,9 +2771,10 @@ function renderAnalytics(main){
       .pl-kpi-sub{font-size:11px;color:var(--ink-dim);margin-top:4px}
       .pl-table{width:100%;border-collapse:collapse;font-size:12.5px}
       .pl-table th{padding:9px 8px;text-align:left;font-size:10.5px;color:var(--ink-muted);text-transform:uppercase;letter-spacing:.04em;font-weight:600;border-bottom:1px solid var(--border-strong)}
-      .pl-table td{padding:8px;border-bottom:1px solid rgba(255,255,255,.04)}
+      .pl-table th.pl-num{text-align:right}
+      .pl-table td{padding:8px;border-bottom:1px solid rgba(255,255,255,.04);vertical-align:middle}
       .pl-table tfoot td{font-weight:700;border-top:2px solid var(--border-strong);background:var(--bg-elev)}
-      .pl-num{font-family:'JetBrains Mono',monospace;text-align:right;font-weight:600}
+      .pl-num{font-family:'JetBrains Mono',monospace;text-align:right;font-weight:600;white-space:nowrap}
       .pl-good{color:var(--success)}
       .pl-bad{color:var(--danger)}
       .pl-warn{color:var(--warning)}
@@ -2922,23 +2928,37 @@ function _plRenderLaborCost(el, year, month){
             </tr>
           </thead>
           <tbody>
-            ${(DB.departments||[]).map(d=>{
-              const a = actual.byDept[d.id]||0;
-              const bTotal = budget.byDept[d.id]||0;
-              if(a === 0 && bTotal === 0) return '';
-              // Budget byDept includes all 5 categories, actual only salary+bonus → compare just (salary+bonus)
-              const bSalBon = bTotal * (budget.salary+budget.bonus) / (budget.total||1);
-              const v = bSalBon - a;
-              const pct = bSalBon>0 ? (a/bSalBon*100) : null;
-              return `<tr>
-                <td><b>${escapeHtml(d.name)}</b></td>
-                <td class="pl-num">${_plFmtMoney(bSalBon)}đ</td>
-                <td class="pl-num">${_plFmtMoney(a)}đ</td>
-                <td class="pl-num ${v>=0?'pl-good':'pl-bad'}">${v>=0?'+':''}${_plFmtMoney(v)}đ</td>
-                <td class="pl-num">${pct!==null?pct.toFixed(0)+'%':'—'}</td>
+            ${(() => {
+              let totBudget = 0, totActual = 0;
+              const rows = (DB.departments||[]).map(d=>{
+                const a = actual.byDept[d.id]||0;
+                const bTotal = budget.byDept[d.id]||0;
+                if(a === 0 && bTotal === 0) return '';
+                const bSalBon = bTotal * (budget.salary+budget.bonus) / (budget.total||1);
+                totBudget += bSalBon;
+                totActual += a;
+                const v = bSalBon - a;
+                const pct = bSalBon>0 ? (a/bSalBon*100) : null;
+                return `<tr>
+                  <td><b>${escapeHtml(d.name)}</b></td>
+                  <td class="pl-num">${_plFmtMoney(bSalBon)}đ</td>
+                  <td class="pl-num">${_plFmtMoney(a)}đ</td>
+                  <td class="pl-num ${v>=0?'pl-good':'pl-bad'}">${v>=0?'+':''}${_plFmtMoney(v)}đ</td>
+                  <td class="pl-num">${pct!==null?pct.toFixed(0)+'%':'—'}</td>
+                </tr>`;
+              }).filter(Boolean).join('');
+              const totV = totBudget - totActual;
+              const totPct = totBudget>0 ? (totActual/totBudget*100) : null;
+              const tfoot = `<tr>
+                <td>TỔNG</td>
+                <td class="pl-num">${_plFmtMoney(totBudget)}đ</td>
+                <td class="pl-num">${_plFmtMoney(totActual)}đ</td>
+                <td class="pl-num ${totV>=0?'pl-good':'pl-bad'}">${totV>=0?'+':''}${_plFmtMoney(totV)}đ</td>
+                <td class="pl-num">${totPct!==null?totPct.toFixed(0)+'%':'—'}</td>
               </tr>`;
-            }).filter(Boolean).join('')}
-          </tbody>
+              return rows + '</tbody><tfoot>' + tfoot;
+            })()}
+          </tfoot>
         </table>
       `}
     </div>
@@ -3129,49 +3149,172 @@ function _plRenderProductivity(el, year, month){
       </div>
     </div>
 
-    <!-- Detail -->
-    <div class="pl-card">
-      <div style="font-weight:700;font-size:14px;color:var(--accent);margin-bottom:14px">Chi tiết</div>
-      <table class="pl-table">
-        <thead>
-          <tr><th>Chỉ số</th><th class="pl-num">Tháng ${month+1}/${year}</th><th class="pl-num">Tháng ${month+1}/${year-1}</th><th class="pl-num">YoY</th></tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td><b>Revenue Actual</b></td>
-            <td class="pl-num">${_plFmtMoney(rev.actual)}đ</td>
-            <td class="pl-num">${_plFmtMoney(revLY.actual)}đ</td>
-            <td class="pl-num ${rev.actual>=revLY.actual?'pl-good':'pl-bad'}">${revLY.actual>0?((rev.actual-revLY.actual)/revLY.actual*100).toFixed(1)+'%':'—'}</td>
-          </tr>
-          <tr>
-            <td>Payroll Actual</td>
-            <td class="pl-num">${_plFmtMoney(actual.total)}đ</td>
-            <td class="pl-num">${_plFmtMoney(actualLY.total)}đ</td>
-            <td class="pl-num ${actual.total<=actualLY.total?'pl-good':'pl-bad'}">${actualLY.total>0?((actual.total-actualLY.total)/actualLY.total*100).toFixed(1)+'%':'—'}</td>
-          </tr>
-          <tr>
-            <td>Headcount</td>
-            <td class="pl-num">${actual.hc}</td>
-            <td class="pl-num">${actualLY.hc}</td>
-            <td class="pl-num">${actualLY.hc>0?((actual.hc-actualLY.hc)/actualLY.hc*100).toFixed(1)+'%':'—'}</td>
-          </tr>
-          <tr>
-            <td>Total Labor Cost</td>
-            <td class="pl-num">${_plFmtMoney(totalLabor)}đ</td>
-            <td class="pl-num">—</td>
-            <td class="pl-num">—</td>
-          </tr>
-          <tr>
-            <td><b>Labor Cost %</b></td>
-            <td class="pl-num"><b>${laborPct!==null?laborPct.toFixed(1)+'%':'—'}</b></td>
-            <td class="pl-num">${laborPctLY!==null?laborPctLY.toFixed(1)+'%':'—'}</td>
-            <td class="pl-num ${laborPct!==null && laborPctLY!==null && laborPct<=laborPctLY?'pl-good':'pl-bad'}">${laborPct!==null && laborPctLY!==null?(laborPct-laborPctLY).toFixed(1)+'pp':'—'}</td>
-          </tr>
-        </tbody>
-      </table>
-      <div style="font-size:11px;color:var(--ink-muted);margin-top:10px;padding:10px 12px;background:var(--bg-elev);border-radius:6px;line-height:1.6">
-        💡 <b>Benchmark hospitality VN:</b> Labor Cost % 18-25% là tốt. <b>≤18%</b> rất tốt, <b>&gt;25%</b> cần action.<br>
-        Revenue per Employee tăng so với LY = năng suất cải thiện.
+    <!-- Monthly Trend Table -->
+    <div class="pl-card" style="overflow-x:auto">
+      <div style="font-weight:700;font-size:14px;color:var(--accent);margin-bottom:14px">📊 Chi tiết theo tháng — ${year} vs ${year-1}</div>
+      ${(() => {
+        // Compute 12 months data for both years
+        const computeMonth = (y, m) => {
+          const r = _plGetRevenueMonth(y, m);
+          const a = _plGetPayrollActualMonth(y, m);
+          const cas = _plGetCasualCost(y, m);
+          const intern = _plGetInternCost(y, m);
+          const totalLab = a.total + cas.total + intern.totalCost;
+          return {
+            revenue: r.actual,
+            revenueBudget: r.budget,
+            payroll: a.total,
+            hc: a.hc,
+            totalLabor: totalLab,
+            laborPct: r.actual > 0 ? (totalLab/r.actual*100) : null,
+            revPerEmp: a.hc > 0 ? r.actual/a.hc : null,
+          };
+        };
+
+        const curYearData = [];
+        const prevYearData = [];
+        for(let m=0; m<12; m++){
+          curYearData.push(computeMonth(year, m));
+          prevYearData.push(computeMonth(year-1, m));
+        }
+
+        // YTD = sum of months 0 to current month
+        const ytdCur = curYearData.slice(0, month+1).reduce((acc,d)=>({
+          revenue: acc.revenue + d.revenue,
+          payroll: acc.payroll + d.payroll,
+          hc: acc.hc + d.hc, // For average we'll divide
+          totalLabor: acc.totalLabor + d.totalLabor,
+        }), {revenue:0, payroll:0, hc:0, totalLabor:0});
+        const ytdPrev = prevYearData.slice(0, month+1).reduce((acc,d)=>({
+          revenue: acc.revenue + d.revenue,
+          payroll: acc.payroll + d.payroll,
+          hc: acc.hc + d.hc,
+          totalLabor: acc.totalLabor + d.totalLabor,
+        }), {revenue:0, payroll:0, hc:0, totalLabor:0});
+        const ytdCurMonths = month+1;
+        const avgHcCur = ytdCurMonths>0 ? ytdCur.hc/ytdCurMonths : 0;
+        const avgHcPrev = ytdCurMonths>0 ? ytdPrev.hc/ytdCurMonths : 0;
+        const ytdLaborPctCur = ytdCur.revenue>0 ? (ytdCur.totalLabor/ytdCur.revenue*100) : null;
+        const ytdLaborPctPrev = ytdPrev.revenue>0 ? (ytdPrev.totalLabor/ytdPrev.revenue*100) : null;
+        const ytdRevPerEmpCur = avgHcCur>0 ? ytdCur.revenue/avgHcCur : null;
+        const ytdRevPerEmpPrev = avgHcPrev>0 ? ytdPrev.revenue/avgHcPrev : null;
+
+        // YoY helpers
+        const yoyPct = (cur, prev) => prev>0 ? ((cur-prev)/prev*100) : null;
+        const yoyPp = (cur, prev) => cur!==null && prev!==null ? (cur-prev) : null;
+
+        // Render metric group
+        const renderMetricRow = (label, valuesCurArr, valuesPrevArr, ytdCurVal, ytdPrevVal, formatFn, suffix, isRate) => {
+          const fmt = (v) => v===null||v===undefined||isNaN(v) ? '—' : formatFn(v)+suffix;
+          const yoyOf = (c, p) => {
+            if(isRate){
+              if(c===null||p===null) return '—';
+              const d = c-p;
+              return (d>=0?'+':'')+d.toFixed(1)+'pp';
+            }
+            const y = yoyPct(c,p);
+            return y===null ? '—' : (y>=0?'+':'')+y.toFixed(1)+'%';
+          };
+          const yoyColor = (c, p, lowerIsBetter) => {
+            if(c===null || p===null) return '';
+            const better = lowerIsBetter ? c<=p : c>=p;
+            return better ? 'pl-good' : 'pl-bad';
+          };
+
+          const cur = valuesCurArr;
+          const prev = valuesPrevArr;
+          // Determine "lower is better" for Labor Cost & Payroll
+          const lowerIsBetter = label === 'Labor Cost %' || label === 'Payroll' || label === 'Total Labor';
+
+          return `
+            <tr style="background:rgba(212,165,116,.05)">
+              <td colspan="${14}" style="font-weight:700;color:var(--accent);padding:8px;font-size:12px">${label}</td>
+            </tr>
+            <tr>
+              <td style="font-size:11px;color:var(--ink-dim);padding-left:14px">${year}</td>
+              ${cur.map((v,i)=>{
+                const isCurrentMonth = i === month;
+                return `<td class="pl-num" style="${isCurrentMonth?'background:rgba(212,165,116,.08);font-weight:700;color:var(--accent)':''};font-size:11px">${fmt(v)}</td>`;
+              }).join('')}
+              <td class="pl-num" style="font-weight:700;background:var(--bg-elev);font-size:11px">${fmt(ytdCurVal)}</td>
+            </tr>
+            <tr>
+              <td style="font-size:11px;color:var(--ink-dim);padding-left:14px">${year-1}</td>
+              ${prev.map((v,i)=>`<td class="pl-num" style="color:var(--ink-dim);font-size:11px">${fmt(v)}</td>`).join('')}
+              <td class="pl-num" style="font-weight:700;background:var(--bg-elev);color:var(--ink-dim);font-size:11px">${fmt(ytdPrevVal)}</td>
+            </tr>
+            <tr>
+              <td style="font-size:11px;color:var(--ink-muted);padding-left:14px;font-style:italic">YoY</td>
+              ${cur.map((v,i)=>{
+                const p = prev[i];
+                const cls = yoyColor(v, p, lowerIsBetter);
+                return `<td class="pl-num ${cls}" style="font-size:10.5px">${yoyOf(v, p)}</td>`;
+              }).join('')}
+              <td class="pl-num ${yoyColor(ytdCurVal, ytdPrevVal, lowerIsBetter)}" style="font-weight:700;background:var(--bg-elev);font-size:11px">${yoyOf(ytdCurVal, ytdPrevVal)}</td>
+            </tr>
+          `;
+        };
+
+        return `
+          <table class="pl-table" style="min-width:1200px;font-size:11.5px">
+            <thead>
+              <tr>
+                <th>Chỉ số / Năm</th>
+                ${Array.from({length:12}, (_,i)=>`<th class="pl-num" style="font-size:10px;${i===month?'background:rgba(212,165,116,.1);color:var(--accent)':''}">T${i+1}</th>`).join('')}
+                <th class="pl-num" style="background:var(--bg-elev);color:var(--accent)">YTD<br><span style="font-weight:400;font-size:9px">T1-T${month+1}</span></th>
+              </tr>
+            </thead>
+            <tbody>
+              ${renderMetricRow(
+                'Revenue Actual',
+                curYearData.map(d=>d.revenue),
+                prevYearData.map(d=>d.revenue),
+                ytdCur.revenue, ytdPrev.revenue,
+                _plFmtMoney, 'đ', false
+              )}
+              ${renderMetricRow(
+                'Payroll',
+                curYearData.map(d=>d.payroll),
+                prevYearData.map(d=>d.payroll),
+                ytdCur.payroll, ytdPrev.payroll,
+                _plFmtMoney, 'đ', false
+              )}
+              ${renderMetricRow(
+                'Total Labor (Payroll + Casual + Intern)',
+                curYearData.map(d=>d.totalLabor),
+                prevYearData.map(d=>d.totalLabor),
+                ytdCur.totalLabor, ytdPrev.totalLabor,
+                _plFmtMoney, 'đ', false
+              )}
+              ${renderMetricRow(
+                'Headcount (EOM)',
+                curYearData.map(d=>d.hc),
+                prevYearData.map(d=>d.hc),
+                avgHcCur, avgHcPrev,
+                (v)=>v.toFixed(0), '', false
+              )}
+              ${renderMetricRow(
+                'Labor Cost %',
+                curYearData.map(d=>d.laborPct),
+                prevYearData.map(d=>d.laborPct),
+                ytdLaborPctCur, ytdLaborPctPrev,
+                (v)=>v.toFixed(1), '%', true
+              )}
+              ${renderMetricRow(
+                'Revenue / Employee',
+                curYearData.map(d=>d.revPerEmp),
+                prevYearData.map(d=>d.revPerEmp),
+                ytdRevPerEmpCur, ytdRevPerEmpPrev,
+                _plFmtMoney, 'đ', false
+              )}
+            </tbody>
+          </table>
+        `;
+      })()}
+      <div style="font-size:11px;color:var(--ink-muted);margin-top:14px;padding:10px 12px;background:var(--bg-elev);border-radius:6px;line-height:1.6">
+        💡 <b>Cách đọc:</b> Mỗi metric có 3 dòng — <b>${year}</b> (tháng này nổi bật), <b>${year-1}</b> cùng kỳ, và <b>YoY</b> (% chênh lệch).<br>
+        <b>Benchmark hospitality VN:</b> Labor Cost % 18-25% là tốt · <b>≤18%</b> rất tốt · <b>&gt;25%</b> cần action.<br>
+        <b>YTD</b> = cộng dồn từ T1 đến tháng hiện tại — dùng để so sánh tổng quan với cùng kỳ năm trước.
       </div>
     </div>
   `;
@@ -3179,13 +3322,44 @@ function _plRenderProductivity(el, year, month){
 
 // ===== TAB 4: AL/CL LIABILITY =====
 function _plRenderLiability(el, year, month){
-  const liab = _plGetLeaveLiability(year);
+  const statusFilter = window._plLiabStatus || 'active';
+  const liab = _plGetLeaveLiability(year, statusFilter);
   // Sort dept by total value
   const deptSorted = Object.entries(liab.byDept).sort((a,b)=>(b[1].alValue+b[1].clValue) - (a[1].alValue+a[1].clValue));
 
+  // Count NV per status (for badge)
+  const empByStatus = {active:0, exit:0};
+  (DB.employees||[]).forEach(e=>{
+    const st = getEffectiveStatus(e);
+    if(st === 'exit') empByStatus.exit++;
+    else empByStatus.active++;
+  });
+  const totalEmp = empByStatus.active + empByStatus.exit;
+
+  // Filter description
+  const filterLabel = statusFilter==='active'?'NV đang làm':statusFilter==='exit'?'NV đã nghỉ':'Tất cả NV';
+  const filterCount = statusFilter==='active'?empByStatus.active:statusFilter==='exit'?empByStatus.exit:totalEmp;
+
   el.innerHTML = `
     <div class="pl-card">
-      <div style="font-weight:700;font-size:15px;color:var(--accent);margin-bottom:14px">🏖️ AL / CL Liability — Quy ra tiền</div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:10px">
+        <div>
+          <div style="font-weight:700;font-size:15px;color:var(--accent)">🏖️ AL / CL Liability — Quy ra tiền</div>
+          <div style="font-size:11px;color:var(--ink-muted);margin-top:3px">${filterLabel} (${filterCount} NV) · Năm ${year}</div>
+        </div>
+        <!-- Status filter buttons -->
+        <div style="display:flex;gap:0;background:var(--bg-elev);border-radius:8px;padding:3px;border:1px solid var(--border)">
+          <button onclick="window._plLiabStatus='active';render()" style="background:${statusFilter==='active'?'var(--accent)':'transparent'};color:${statusFilter==='active'?'#000':'var(--ink-dim)'};border:0;padding:6px 14px;border-radius:6px;font-size:11.5px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:6px">
+            <span style="font-size:9px;${statusFilter==='active'?'color:#000':'color:var(--success)'}">●</span> Đang làm <span style="opacity:.7;font-size:10px">(${empByStatus.active})</span>
+          </button>
+          <button onclick="window._plLiabStatus='exit';render()" style="background:${statusFilter==='exit'?'var(--accent)':'transparent'};color:${statusFilter==='exit'?'#000':'var(--ink-dim)'};border:0;padding:6px 14px;border-radius:6px;font-size:11.5px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:6px">
+            <span style="font-size:9px;${statusFilter==='exit'?'color:#000':'color:var(--danger)'}">●</span> Đã nghỉ <span style="opacity:.7;font-size:10px">(${empByStatus.exit})</span>
+          </button>
+          <button onclick="window._plLiabStatus='all';render()" style="background:${statusFilter==='all'?'var(--accent)':'transparent'};color:${statusFilter==='all'?'#000':'var(--ink-dim)'};border:0;padding:6px 14px;border-radius:6px;font-size:11.5px;font-weight:600;cursor:pointer">
+            Tất cả <span style="opacity:.7;font-size:10px">(${totalEmp})</span>
+          </button>
+        </div>
+      </div>
       <div class="pl-kpi-grid">
         <div class="pl-kpi" style="border-left-color:var(--warning)">
           <div class="pl-kpi-label">AL tồn tổng</div>
@@ -3203,14 +3377,24 @@ function _plRenderLiability(el, year, month){
           <div class="pl-kpi-sub">Nếu phải thanh toán tiền</div>
         </div>
       </div>
+      ${statusFilter==='exit' ? `
+      <div style="margin-top:14px;padding:10px 12px;background:rgba(212,127,127,.04);border-left:3px solid var(--danger);border-radius:6px;font-size:11.5px;color:var(--ink-dim);line-height:1.7">
+        ⚠️ <b>NV đã nghỉ vẫn còn AL/CL tồn:</b> Đây là tiền <b>đã phải thanh toán</b> khi thanh lý HĐ. Nếu chưa thanh toán → kiểm tra lại bảng Final Settlement.
+      </div>
+      ` : statusFilter==='active' ? `
       <div style="margin-top:14px;padding:10px 12px;background:rgba(232,168,124,.04);border-left:3px solid var(--warning);border-radius:6px;font-size:11.5px;color:var(--ink-dim);line-height:1.7">
         ⚠️ Theo Luật LĐ 2019, NV không nghỉ hết phép cuối năm → công ty phải thanh toán bằng tiền. Số này là <b>liability accrual</b> sẽ ảnh hưởng P&L Q4.
       </div>
+      ` : `
+      <div style="margin-top:14px;padding:10px 12px;background:rgba(126,182,232,.04);border-left:3px solid var(--info);border-radius:6px;font-size:11.5px;color:var(--ink-dim);line-height:1.7">
+        💡 Đang xem <b>Tất cả NV</b> (active + đã nghỉ). Để xem riêng từng nhóm → click filter ở trên.
+      </div>
+      `}
     </div>
 
     <div class="pl-card">
-      <div style="font-weight:700;font-size:14px;color:var(--accent);margin-bottom:14px">Theo Phòng ban</div>
-      ${deptSorted.length === 0 ? '<div style="color:var(--ink-dim);text-align:center;padding:20px;font-size:12px">Chưa có data nghỉ phép</div>' : `
+      <div style="font-weight:700;font-size:14px;color:var(--accent);margin-bottom:14px">Theo Phòng ban · ${filterLabel}</div>
+      ${deptSorted.length === 0 ? `<div style="color:var(--ink-dim);text-align:center;padding:20px;font-size:12px">Không có data ${filterLabel.toLowerCase()}</div>` : `
       <table class="pl-table">
         <thead>
           <tr>
@@ -3239,7 +3423,7 @@ function _plRenderLiability(el, year, month){
         <tfoot>
           <tr>
             <td>TỔNG</td>
-            <td class="pl-num">—</td>
+            <td class="pl-num">${deptSorted.reduce((s,[,d])=>s+d.count,0)}</td>
             <td class="pl-num">${liab.al.days.toFixed(0)}</td>
             <td class="pl-num">${_plFmtMoney(liab.al.total)}đ</td>
             <td class="pl-num">${liab.cl.days.toFixed(0)}</td>
@@ -3256,26 +3440,81 @@ function _plRenderLiability(el, year, month){
 // ===== TAB 5: RECRUITMENT RISK =====
 function _plRenderRecruitmentRisk(el, year, month){
   const today = new Date();
+  const monthStart = new Date(year, month, 1);
+  const monthEnd = new Date(year, month+1, 0); // last day of month
+
+  // === Open vacancies ===
   const openJobs = (DB.jobs||[]).filter(j=>j.status==='open');
   const enriched = openJobs.map(j=>{
     const days = j.openDate ? _plDaysBetween(j.openDate, today) : 0;
     const hired = (typeof getJobHired === 'function') ? getJobHired(j.id) : 0;
-    const cvCount = (DB.candidates||[]).filter(c=>c.jobId===j.id).length;
+    const cvList = (DB.candidates||[]).filter(c=>c.jobId===j.id);
+    const cvCount = cvList.length;
     const positions = j.positions||1;
     const remain = Math.max(0, positions - hired);
+    // Pipeline breakdown
+    const pipeline = {
+      applied: cvList.filter(c=>c.status==='applied'||!c.status).length,
+      screening: cvList.filter(c=>c.status==='screening').length,
+      interview: cvList.filter(c=>c.status==='interview'||c.status==='reviewing').length,
+      offer: cvList.filter(c=>c.status==='offer').length,
+      hired: cvList.filter(c=>c.status==='hired').length,
+      rejected: cvList.filter(c=>c.status==='rejected').length,
+    };
     // Risk level
     let risk = 'green', riskLabel = '🟢';
     if(days >= 60) { risk='red'; riskLabel='🔴'; }
     else if(days >= 30) { risk='amber'; riskLabel='🟡'; }
     const dName = (typeof deptName === 'function') ? deptName(j.deptId) : '';
-    return {...j, days, hired, cvCount, positions, remain, risk, riskLabel, dName};
+    return {...j, days, hired, cvCount, positions, remain, risk, riskLabel, dName, pipeline};
   }).sort((a,b)=>b.days - a.days);
 
   const red = enriched.filter(j=>j.risk==='red').length;
   const amber = enriched.filter(j=>j.risk==='amber').length;
   const green = enriched.filter(j=>j.risk==='green').length;
 
+  // === Hired in selected month ===
+  const hiredInMonth = (DB.candidates||[]).filter(c=>{
+    if(c.status !== 'hired' || !c.hiredDate) return false;
+    const d = new Date(c.hiredDate);
+    return d.getFullYear()===year && d.getMonth()===month;
+  }).map(c=>{
+    const job = (DB.jobs||[]).find(j=>j.id===c.jobId);
+    const dName = job ? ((DB.departments||[]).find(d=>d.id===job.deptId)||{}).name||'' : '';
+    const timeToHire = (c.appliedDate && c.hiredDate) ? _plDaysBetween(c.appliedDate, c.hiredDate) : null;
+    const openDate = job?.openDate;
+    return {
+      name: c.name,
+      jobTitle: job?.title || '(unknown)',
+      dept: dName,
+      appliedDate: c.appliedDate,
+      hiredDate: c.hiredDate,
+      openDate,
+      timeToHire,
+      job,
+    };
+  }).sort((a,b)=>new Date(b.hiredDate) - new Date(a.hiredDate));
+
+  // === New jobs opened in selected month ===
+  const newJobsInMonth = (DB.jobs||[]).filter(j=>{
+    if(!j.openDate) return false;
+    const d = new Date(j.openDate);
+    return d.getFullYear()===year && d.getMonth()===month;
+  });
+
+  // === New CVs received in selected month ===
+  const newCVsInMonth = (DB.candidates||[]).filter(c=>{
+    if(!c.appliedDate) return false;
+    const d = new Date(c.appliedDate);
+    return d.getFullYear()===year && d.getMonth()===month;
+  });
+
+  // Average time to hire (chỉ tính những NV hire trong tháng có cả appliedDate)
+  const validTTH = hiredInMonth.filter(h=>h.timeToHire !== null && h.timeToHire >= 0);
+  const avgTTH = validTTH.length > 0 ? validTTH.reduce((s,h)=>s+h.timeToHire, 0)/validTTH.length : null;
+
   el.innerHTML = `
+    <!-- Top KPI -->
     <div class="pl-card">
       <div style="font-weight:700;font-size:15px;color:var(--accent);margin-bottom:14px">🎯 Recruitment Risk — Vacancy List</div>
       <div class="pl-kpi-grid">
@@ -3302,8 +3541,78 @@ function _plRenderRecruitmentRisk(el, year, month){
       </div>
     </div>
 
+    <!-- Activity in selected month -->
     <div class="pl-card">
-      <div style="font-weight:700;font-size:14px;color:var(--accent);margin-bottom:14px">Danh sách Vacancy</div>
+      <div style="font-weight:700;font-size:14px;color:var(--accent);margin-bottom:14px">📅 Hoạt động tuyển dụng — Tháng ${month+1}/${year}</div>
+      <div class="pl-kpi-grid">
+        <div class="pl-kpi" style="border-left-color:var(--info)">
+          <div class="pl-kpi-label">Vị trí mới mở</div>
+          <div class="pl-kpi-value">${newJobsInMonth.length}</div>
+          <div class="pl-kpi-sub">trong tháng này</div>
+        </div>
+        <div class="pl-kpi" style="border-left-color:var(--accent)">
+          <div class="pl-kpi-label">CV mới nhận</div>
+          <div class="pl-kpi-value">${newCVsInMonth.length}</div>
+          <div class="pl-kpi-sub">CV nhập trong tháng</div>
+        </div>
+        <div class="pl-kpi" style="border-left-color:var(--success)">
+          <div class="pl-kpi-label">Đã hire</div>
+          <div class="pl-kpi-value" style="color:var(--success)">${hiredInMonth.length}</div>
+          <div class="pl-kpi-sub">NV bắt đầu trong tháng</div>
+        </div>
+        <div class="pl-kpi" style="border-left-color:var(--warning)">
+          <div class="pl-kpi-label">Time to Hire TB</div>
+          <div class="pl-kpi-value">${avgTTH!==null?avgTTH.toFixed(0)+'d':'—'}</div>
+          <div class="pl-kpi-sub">apply → hire</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Hired list this month -->
+    <div class="pl-card">
+      <div style="font-weight:700;font-size:14px;color:var(--success);margin-bottom:14px">✅ Đã tuyển được trong tháng ${month+1}/${year} (${hiredInMonth.length} NV)</div>
+      ${hiredInMonth.length === 0 ? `<div style="color:var(--ink-dim);text-align:center;padding:20px;font-size:12px;font-style:italic">Chưa hire được NV nào trong tháng này</div>` : `
+      <table class="pl-table">
+        <thead>
+          <tr>
+            <th>Tên ứng viên</th>
+            <th>Vị trí</th>
+            <th>Phòng ban</th>
+            <th class="pl-num">Ngày mở job</th>
+            <th class="pl-num">Apply</th>
+            <th class="pl-num">Hire</th>
+            <th class="pl-num">Time to Hire</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${hiredInMonth.map(h=>{
+            const tthColor = h.timeToHire === null ? 'var(--ink-muted)' : h.timeToHire <= 30 ? 'var(--success)' : h.timeToHire <= 45 ? 'var(--warning)' : 'var(--danger)';
+            return `<tr>
+              <td><b>${escapeHtml(h.name||'—')}</b></td>
+              <td>${escapeHtml(h.jobTitle)}</td>
+              <td>${escapeHtml(h.dept)}</td>
+              <td class="pl-num" style="font-size:11px;color:var(--ink-dim)">${h.openDate||'—'}</td>
+              <td class="pl-num" style="font-size:11px;color:var(--ink-dim)">${h.appliedDate||'—'}</td>
+              <td class="pl-num" style="font-size:11px;color:var(--success);font-weight:600">${h.hiredDate||'—'}</td>
+              <td class="pl-num" style="color:${tthColor};font-weight:700">${h.timeToHire!==null?h.timeToHire+'d':'—'}</td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+        ${validTTH.length>0?`
+        <tfoot>
+          <tr>
+            <td colspan="6">Trung bình Time to Hire (${validTTH.length} NV có đủ data)</td>
+            <td class="pl-num"><b>${avgTTH.toFixed(0)}d</b></td>
+          </tr>
+        </tfoot>
+        `:''}
+      </table>
+      `}
+    </div>
+
+    <!-- Open vacancies detail -->
+    <div class="pl-card">
+      <div style="font-weight:700;font-size:14px;color:var(--accent);margin-bottom:14px">📋 Danh sách Vacancy đang mở (${enriched.length})</div>
       ${enriched.length === 0 ? '<div style="color:var(--ink-dim);text-align:center;padding:20px;font-size:12px">Không có vị trí đang tuyển</div>' : `
       <table class="pl-table">
         <thead>
@@ -3311,27 +3620,62 @@ function _plRenderRecruitmentRisk(el, year, month){
             <th>Risk</th>
             <th>Vị trí</th>
             <th>Phòng ban</th>
+            <th class="pl-num">Ngày mở</th>
             <th class="pl-num">Days Vacant</th>
             <th class="pl-num">Cần tuyển</th>
             <th class="pl-num">Đã hire</th>
-            <th class="pl-num">CV pool</th>
+            <th>Pipeline (Apply→Hire)</th>
           </tr>
         </thead>
         <tbody>
           ${enriched.map(j=>{
             const riskColor = j.risk==='red'?'var(--danger)':j.risk==='amber'?'var(--warning)':'var(--success)';
+            const p = j.pipeline;
+            // Pipeline visualization
+            const pipelineHtml = `
+              <span style="display:inline-flex;gap:3px;font-size:10px;font-family:'JetBrains Mono',monospace;align-items:center">
+                <span style="background:rgba(126,182,232,.15);color:var(--info);padding:2px 6px;border-radius:8px;min-width:22px;text-align:center" title="Applied">A:${p.applied}</span>
+                <span style="color:var(--ink-muted)">→</span>
+                <span style="background:rgba(212,165,116,.15);color:var(--accent);padding:2px 6px;border-radius:8px;min-width:22px;text-align:center" title="Screening">S:${p.screening}</span>
+                <span style="color:var(--ink-muted)">→</span>
+                <span style="background:rgba(255,200,120,.15);color:var(--warning);padding:2px 6px;border-radius:8px;min-width:22px;text-align:center" title="Interview">I:${p.interview}</span>
+                <span style="color:var(--ink-muted)">→</span>
+                <span style="background:rgba(126,198,153,.15);color:var(--success);padding:2px 6px;border-radius:8px;min-width:22px;text-align:center;font-weight:700" title="Hired">H:${p.hired}</span>
+              </span>
+            `;
             return `<tr style="${j.risk==='red'?'background:rgba(212,127,127,.04)':''}">
               <td style="font-size:16px">${j.riskLabel}</td>
               <td><b>${escapeHtml(j.title)}</b></td>
               <td>${escapeHtml(j.dName)}</td>
+              <td class="pl-num" style="font-size:11px;color:var(--ink-dim)">${j.openDate||'—'}</td>
               <td class="pl-num" style="color:${riskColor};font-weight:700">${j.days}d</td>
               <td class="pl-num">${j.remain}/${j.positions}</td>
               <td class="pl-num">${j.hired}</td>
-              <td class="pl-num">${j.cvCount}</td>
+              <td>${pipelineHtml}</td>
             </tr>`;
           }).join('')}
         </tbody>
+        <tfoot>
+          <tr>
+            <td colspan="4">TỔNG (${enriched.length} vị trí)</td>
+            <td class="pl-num">—</td>
+            <td class="pl-num">${enriched.reduce((s,j)=>s+j.remain,0)}/${enriched.reduce((s,j)=>s+j.positions,0)}</td>
+            <td class="pl-num">${enriched.reduce((s,j)=>s+j.hired,0)}</td>
+            <td>
+              <span style="display:inline-flex;gap:3px;font-size:10px;font-family:'JetBrains Mono',monospace">
+                <span style="background:rgba(126,182,232,.15);color:var(--info);padding:2px 6px;border-radius:8px">A:${enriched.reduce((s,j)=>s+j.pipeline.applied,0)}</span>
+                <span style="background:rgba(212,165,116,.15);color:var(--accent);padding:2px 6px;border-radius:8px">S:${enriched.reduce((s,j)=>s+j.pipeline.screening,0)}</span>
+                <span style="background:rgba(255,200,120,.15);color:var(--warning);padding:2px 6px;border-radius:8px">I:${enriched.reduce((s,j)=>s+j.pipeline.interview,0)}</span>
+                <span style="background:rgba(126,198,153,.15);color:var(--success);padding:2px 6px;border-radius:8px;font-weight:700">H:${enriched.reduce((s,j)=>s+j.pipeline.hired,0)}</span>
+              </span>
+            </td>
+          </tr>
+        </tfoot>
       </table>
+      <div style="font-size:11px;color:var(--ink-muted);margin-top:10px;padding:8px 12px;background:var(--bg-elev);border-radius:6px;line-height:1.5">
+        💡 <b>Pipeline:</b> A = Applied · S = Screening · I = Interview · H = Hired<br>
+        <b>Risk levels:</b> 🔴 RED (≥60d) · 🟡 AMBER (30-59d) · 🟢 GREEN (&lt;30d)
+      </div>
       `}
     </div>
   `;
