@@ -2640,48 +2640,50 @@ function _plGetPayrollActualMonth(year, month){
 }
 
 // Get casual cost for a month
+// Schema Casual module: r.year (numeric), r.month (1-indexed), r.qty, r.total (đã tính sẵn), r.deptId
 function _plGetCasualCost(year, month){
-  let total = 0;
+  // month is 0-indexed in P&L, but r.month in Casual is 1-indexed
+  const targetMonth = month + 1;
+  let total = 0, totalQty = 0;
   let byDept = {};
-  (DB.casuals||[]).forEach(c=>{
-    if(!c.workDate) return;
-    const d = new Date(c.workDate);
-    if(d.getFullYear() !== year || d.getMonth() !== month) return;
-    const cost = (parseFloat(c.dailyRate)||0) * (parseFloat(c.days)||1);
+  (DB.casuals||[]).forEach(r=>{
+    if(parseInt(r.year) !== year || parseInt(r.month) !== targetMonth) return;
+    const cost = parseFloat(r.total)||0;
     total += cost;
-    if(c.deptId) byDept[c.deptId] = (byDept[c.deptId]||0) + cost;
+    totalQty += parseInt(r.qty)||0;
+    if(r.deptId) byDept[r.deptId] = (byDept[r.deptId]||0) + cost;
   });
-  return {total, byDept};
+  return {total, totalQty, byDept};
 }
 
 // Get intern cost for a month
+// Đơn giản: số sinh viên × lương tháng từ data trainee
+//   t.salary = Thù lao/Trợ cấp tháng (VNĐ)
+//   t.qty = Số lượng người trong record
 function _plGetInternCost(year, month){
   const monthStart = new Date(year, month, 1);
   const monthEnd = new Date(year, month+1, 0);
   const config = DB.plConfig||{};
-  const dailyCost = parseFloat(config.internDailyCost) || 150000;
   const fteRatio = parseFloat(config.internFteRatio) || 0.5;
 
-  let activeCount = 0, totalDays = 0;
+  let activeCount = 0, totalCost = 0;
   let byDept = {};
   (DB.trainees||[]).forEach(t=>{
     if(!t.startDate) return;
     const start = new Date(t.startDate);
-    const end = t.endDate ? new Date(t.endDate) : new Date();
-    // Active during this month?
+    const end = t.endDate ? new Date(t.endDate) : new Date(2099,11,31);
+    // Active in this month?
     if(start > monthEnd || end < monthStart) return;
-    // Days in this month
-    const effectiveStart = start > monthStart ? start : monthStart;
-    const effectiveEnd = end < monthEnd ? end : monthEnd;
-    const days = Math.max(0, Math.round((effectiveEnd - effectiveStart)/86400000) + 1);
-    if(days > 0){
-      activeCount++;
-      totalDays += days;
-      const cost = days * dailyCost;
-      if(t.deptId) byDept[t.deptId] = (byDept[t.deptId]||0) + cost;
-    }
+
+    const qty = parseInt(t.qty)||1;
+    const monthlySalary = parseFloat(t.salary)||0;
+    const cost = qty * monthlySalary;
+
+    activeCount += qty;
+    totalCost += cost;
+    if(t.deptId) byDept[t.deptId] = (byDept[t.deptId]||0) + cost;
   });
-  return {activeCount, totalDays, totalCost: totalDays * dailyCost, fteEquivalent: activeCount * fteRatio, byDept};
+  return {activeCount, totalCost, fteEquivalent: activeCount * fteRatio, byDept};
 }
 
 // Get revenue for a month
@@ -2869,7 +2871,7 @@ function _plRenderLaborCost(el, year, month){
     {label:'Phụ cấp ăn', actual: 0, budget: budget.meal, note:'Chưa tích hợp module Meal/Allowance'},
     {label:'Khác (Budget Other)', actual: 0, budget: budget.other, note:'Phụ cấp khác từ Manning Budget'},
     {label:'Casual / OT', actual: casual.total, budget: 0, note:'Lương thời vụ - chưa có budget riêng'},
-    {label:'Intern / Trainee', actual: intern.totalCost, budget: 0, note:`${intern.activeCount} TTS · ${intern.totalDays} ngày`},
+    {label:'Intern / Trainee', actual: intern.totalCost, budget: 0, note:`${intern.activeCount} TTS · ~${intern.fteEquivalent.toFixed(1)} FTE`},
   ];
 
   el.innerHTML = `
@@ -2898,7 +2900,7 @@ function _plRenderLaborCost(el, year, month){
         <div class="pl-kpi" style="border-left-color:var(--warning)">
           <div class="pl-kpi-label">OT / Casual</div>
           <div class="pl-kpi-value" style="color:var(--warning)">${_plFmtMoney(casual.total)}đ</div>
-          <div class="pl-kpi-sub">Lương thời vụ tháng</div>
+          <div class="pl-kpi-sub">${casual.totalQty||0} lượt · từ module Casual</div>
         </div>
         <div class="pl-kpi" style="border-left-color:var(--info)">
           <div class="pl-kpi-label">Intern Cost</div>
