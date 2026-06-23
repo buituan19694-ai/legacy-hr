@@ -2556,6 +2556,25 @@ function _plFmtPct(v, decimals){
   return v.toFixed(decimals)+'%';
 }
 
+// Format any date string (YYYY-MM-DD, DD/MM/YYYY, ISO, etc.) to consistent DD/MM/YYYY
+function _plFmtDate(s){
+  if(!s) return '—';
+  if(typeof s !== 'string') s = String(s);
+  s = s.trim();
+  // Already in DD/MM/YYYY format
+  let m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if(m) return m[1].padStart(2,'0')+'/'+m[2].padStart(2,'0')+'/'+m[3];
+  // YYYY-MM-DD or YYYY/MM/DD format
+  m = s.match(/^(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})/);
+  if(m) return m[3].padStart(2,'0')+'/'+m[2].padStart(2,'0')+'/'+m[1];
+  // ISO datetime
+  const d = new Date(s);
+  if(!isNaN(d)){
+    return String(d.getDate()).padStart(2,'0')+'/'+String(d.getMonth()+1).padStart(2,'0')+'/'+d.getFullYear();
+  }
+  return s; // fallback - return as-is
+}
+
 // Format number with thousand separators (Vietnamese style: 1.234.567)
 window._plFmtInput = function(n){
   n = parseFloat(n)||0;
@@ -2746,18 +2765,17 @@ function _plGetLeaveLiability(year, statusFilter){
   const result = {al:{total:0, days:0}, cl:{total:0, days:0}, byDept:{}};
 
   // Helper: tính tồn cuối năm cho 1 NV - 1 loại - 1 năm
-  // Match EXACT logic with Leave module's calcRow (line 12034) — KHÔNG clamp về 0
+  // Match EXACT logic với Leave module's calcRow (line 12034) — KHÔNG clamp về 0
   const calcTon = (empId, type, yr) => {
     let sh = ((sheet[empId]||{})[yr]||{})[type];
     if(!sh){
-      // Auto-carry từ năm trước nếu chưa có entry năm hiện tại
       const prevSh = ((sheet[empId]||{})[yr-1]||{})[type];
       if(prevSh){
         const pte = (parseFloat(prevSh.carry)||0) + (Array.isArray(prevSh.entitle)?prevSh.entitle.reduce((s,v)=>s+(parseFloat(v)||0),0):0);
         const ptu = Array.isArray(prevSh.taken)?prevSh.taken.reduce((s,v)=>s+(parseFloat(v)||0),0):0;
         return Math.max(0, Math.round((pte - ptu) * 100) / 100);
       }
-      return null; // không có data cả 2 năm — skip NV này khỏi liability
+      return null;
     }
     const carry = parseFloat(sh.carry)||0;
     const entitle = Array.isArray(sh.entitle) ? sh.entitle.reduce((s,v)=>s+(parseFloat(v)||0),0) : 0;
@@ -2765,37 +2783,66 @@ function _plGetLeaveLiability(year, statusFilter){
     return Math.round((carry + entitle - taken) * 100) / 100;
   };
 
+  // Build scope: employees + active trainees (match Leave Reports module exactly)
+  const today = new Date();
+  const todayStr = today.toISOString().slice(0,10);
+  let scope = [];
+
   (DB.employees||[]).forEach(e=>{
     const st = getEffectiveStatus(e);
     if(statusFilter === 'active' && st === 'exit') return;
     if(statusFilter === 'exit' && st !== 'exit') return;
-    // 'all' → no filter
-    const ed = cd[e.id]||{};
-    const dailyRate = ((parseInt(ed.baseSalary)||0) + (parseInt(ed.bonusSalary)||0)) / 26;
-    const dName = ((DB.departments||[]).find(d=>d.id===e.deptId)||{}).name || 'Unknown';
+    scope.push({id: e.id, deptId: e.deptId, isTrainee: false});
+  });
 
-    const alTon = calcTon(e.id, 'al', year);
-    const clTon = calcTon(e.id, 'cl', year);
-    if(alTon === null && clTon === null) return; // NV không có data leave nào
+  // Add active trainees (status not exit, endDate not past, etc.)
+  (DB.trainees||[]).forEach(tr=>{
+    let isActive = true;
+    if(tr.status === 'exit' || tr.status === 'early_exit') isActive = false;
+    else if(tr.status === 'active') isActive = true;
+    else if(tr.endDate && tr.endDate < todayStr) isActive = false;
+    if(statusFilter === 'exit' && isActive) return;
+    if(statusFilter === 'active' && !isActive) return;
+    scope.push({id: 'tr_'+tr.id, deptId: tr.deptId, isTrainee: true});
+  });
+
+  scope.forEach(s=>{
+    const ed = s.isTrainee ? {} : (cd[s.id]||{});
+    const dailyRate = s.isTrainee
+      ? 0  // TTS không tính liability tiền (đã có Intern Cost riêng)
+      : ((parseInt(ed.baseSalary)||0) + (parseInt(ed.bonusSalary)||0)) / 26;
+    const dName = ((DB.departments||[]).find(d=>d.id===s.deptId)||{}).name || 'Unknown';
+
+    const alTon = calcTon(s.id, 'al', year);
+    const clTon = calcTon(s.id, 'cl', year);
+    if(alTon === null && clTon === null) return;
 
     if(!result.byDept[dName]) result.byDept[dName] = {al:0, cl:0, alValue:0, clValue:0, count:0};
 
     if(alTon !== null){
-      // Chỉ tính liability cho phần tồn dương — nếu âm (đã nghỉ vượt) coi như 0 liability
-      const remain = Math.max(0, alTon);
-      result.al.days += remain;
-      result.al.total += remain * dailyRate;
-      result.byDept[dName].al += remain;
-      result.byDept[dName].alValue += remain * dailyRate;
+      // DAYS: sum raw (cho phép âm) — match Leave module display
+      result.al.days += alTon;
+      result.byDept[dName].al += alTon;
+      // VALUE: chỉ tính phần tồn dương — không thể "âm tiền" liability
+      const remainPos = Math.max(0, alTon);
+      result.al.total += remainPos * dailyRate;
+      result.byDept[dName].alValue += remainPos * dailyRate;
     }
     if(clTon !== null){
-      const remain = Math.max(0, clTon);
-      result.cl.days += remain;
-      result.cl.total += remain * dailyRate;
-      result.byDept[dName].cl += remain;
-      result.byDept[dName].clValue += remain * dailyRate;
+      result.cl.days += clTon;
+      result.byDept[dName].cl += clTon;
+      const remainPos = Math.max(0, clTon);
+      result.cl.total += remainPos * dailyRate;
+      result.byDept[dName].clValue += remainPos * dailyRate;
     }
     result.byDept[dName].count += 1;
+  });
+  // Round days to 1 decimal for display
+  result.al.days = Math.round(result.al.days * 10) / 10;
+  result.cl.days = Math.round(result.cl.days * 10) / 10;
+  Object.values(result.byDept).forEach(d=>{
+    d.al = Math.round(d.al * 10) / 10;
+    d.cl = Math.round(d.cl * 10) / 10;
   });
   return result;
 }
@@ -2806,7 +2853,7 @@ function renderAnalytics(main){
   const today = new Date();
   const curYear = window._plYear || today.getFullYear();
   const curMonth = window._plMonth !== undefined ? window._plMonth : today.getMonth();
-  const currentTab = window._plTab || 'labor';
+  const currentTab = window._plTab || 'intel';
 
   if(!window._plYear) window._plYear = curYear;
   if(window._plMonth === undefined) window._plMonth = curMonth;
@@ -2815,6 +2862,7 @@ function renderAnalytics(main){
   const years = [today.getFullYear()-1, today.getFullYear(), today.getFullYear()+1];
 
   const tabs = [
+    {k:'intel',     icon:'🧠', label:'HR Intelligence', sub:'Executive Summary'},
     {k:'labor',     icon:'💰', label:'Labor Cost',       sub:'Budget vs Actual'},
     {k:'manpower',  icon:'👥', label:'Manpower',         sub:'HC by Dept'},
     {k:'productivity',icon:'📈',label:'Productivity',    sub:'Revenue/Employee'},
@@ -2882,13 +2930,362 @@ function renderAnalytics(main){
   `;
 
   const content = document.getElementById('plContent');
-  if(currentTab === 'labor')         _plRenderLaborCost(content, curYear, curMonth);
+  if(currentTab === 'intel')         _plRenderIntelligence(content, curYear, curMonth);
+  else if(currentTab === 'labor')    _plRenderLaborCost(content, curYear, curMonth);
   else if(currentTab === 'manpower') _plRenderManpower(content, curYear, curMonth);
   else if(currentTab === 'productivity') _plRenderProductivity(content, curYear, curMonth);
   else if(currentTab === 'liability')_plRenderLiability(content, curYear, curMonth);
   else if(currentTab === 'recruitment')_plRenderRecruitmentRisk(content, curYear, curMonth);
   else if(currentTab === 'turnover') _plRenderTurnover(content, curYear, curMonth);
   else if(currentTab === 'action')   _plRenderActionPlan(content, curYear, curMonth);
+}
+
+// ===== TAB 0: HR INTELLIGENCE — Executive Summary =====
+function _plRenderIntelligence(el, year, month){
+  // Pull data from all other modules
+  const budget = _plGetPayrollBudgetMonth(year, month);
+  const actual = _plGetPayrollActualMonth(year, month);
+  const casual = _plGetCasualCost(year, month);
+  const intern = _plGetInternCost(year, month);
+  const rev    = ((DB.plRevenue||{})[year]||{})[month] || {};
+  const revActual = parseFloat(rev.actual) || 0;
+  const revBudget = parseFloat(rev.budget) || 0;
+  const liab   = _plGetLeaveLiability(year, 'active');
+
+  // Total labor cost
+  const totalLaborActual = actual.total + casual.total + intern.totalCost;
+  const totalLaborBudget = budget.total;
+  const laborVar = totalLaborBudget - totalLaborActual; // dương = tiết kiệm
+
+  // Labor Cost % vs Revenue
+  const laborCostPct = revActual > 0 ? (totalLaborActual / revActual * 100) : null;
+  const benchmark = {good: 25, warning: 30};
+
+  // HC variance
+  const totalPlannedHC = Object.values((DB.manningPlan[year]||{}).depts||{})
+    .reduce((s,dp)=>s+(dp.positions||[]).reduce((s2,p)=>s2+(parseInt(p.planned)||0),0),0);
+  const hcVar = actual.hc - totalPlannedHC;
+
+  // Turnover YTD
+  const cd = DB.customData||{};
+  const _parseExitDate = s => {
+    if(!s) return null;
+    if(typeof s !== 'string') s = String(s);
+    let d;
+    if(s.match(/^\d{2}\/\d{2}\/\d{4}$/)) d = new Date(s.split('/').reverse().join('-'));
+    else d = new Date(s);
+    return isNaN(d) ? null : d;
+  };
+  const exitedThisYear = (DB.employees||[]).filter(e => {
+    if(e.status !== 'exit') return false;
+    const d = _parseExitDate((cd[e.id]||{}).exitDate);
+    return d && d.getFullYear() === year && d.getMonth() <= month;
+  });
+  const exitedThisMonth = exitedThisYear.filter(e => {
+    const d = _parseExitDate((cd[e.id]||{}).exitDate);
+    return d && d.getMonth() === month;
+  });
+  // Avg HC YTD
+  let avgHC = 0;
+  for(let m=0; m<=month; m++) avgHC += _plGetPayrollActualMonth(year, m).hc;
+  avgHC = (month+1) > 0 ? avgHC/(month+1) : 0;
+  const annualizedTurnover = avgHC > 0 ? (exitedThisYear.length/avgHC) * (12/(month+1)) * 100 : null;
+
+  // Pending resignations
+  const today = new Date();
+  today.setHours(0,0,0,0);
+  const pendingResign = (DB.resignations||[]).filter(r => {
+    if(r.status !== 'pending') return false;
+    const d = _parseExitDate(r.endDate);
+    return d && d > today;
+  });
+
+  // Vacancy data
+  const openJobs = (DB.jobs||[]).filter(j => j.status === 'open');
+  const vacancyData = openJobs.map(j => {
+    const openD = _plJobOpenDate(j);
+    const days = openD ? _plDaysBetween(openD, today) : null;
+    const hired = getJobHired(j.id);
+    const positions = parseInt(j.positions||j.qty||1);
+    const remain = Math.max(0, positions - hired);
+    return {title: j.title, days, remain, risk: days===null?'unknown':days>=60?'red':days>=30?'amber':'green'};
+  }).filter(v => v.remain > 0);
+  const redVacancies = vacancyData.filter(v => v.risk === 'red');
+  const amberVacancies = vacancyData.filter(v => v.risk === 'amber');
+
+  // Hired this month
+  const hiredThisMonth = (DB.candidates||[]).filter(c => {
+    if(c.status !== 'hired' || !c.hiredDate) return false;
+    const d = new Date(c.hiredDate);
+    return d.getFullYear() === year && d.getMonth() === month;
+  });
+
+  // === STORIES ENGINE — auto detect insights ===
+  const stories = [];
+
+  // 1. Labor cost % vs benchmark
+  if(laborCostPct !== null){
+    if(laborCostPct > benchmark.warning){
+      stories.push({
+        severity: 'critical',
+        icon: '🚨',
+        title: `Labor Cost ${laborCostPct.toFixed(1)}% — vượt benchmark ${benchmark.warning}%`,
+        detail: `${_plFmtMoney(totalLaborActual)}đ / ${_plFmtMoney(revActual)}đ doanh thu. Cần action: cắt giảm OT/Casual, review headcount, đẩy revenue.`,
+        action: 'Review chi tiết trong tab Labor Cost + Productivity',
+      });
+    } else if(laborCostPct > benchmark.good){
+      stories.push({
+        severity: 'warning',
+        icon: '⚠️',
+        title: `Labor Cost ${laborCostPct.toFixed(1)}% — cao hơn lý tưởng ${benchmark.good}%`,
+        detail: `Cần theo dõi sát, có thể cắt 1 vài chi phí biến đổi.`,
+      });
+    } else {
+      stories.push({
+        severity: 'success',
+        icon: '✅',
+        title: `Labor Cost ${laborCostPct.toFixed(1)}% — trong ngưỡng tốt`,
+        detail: `Dưới benchmark ${benchmark.good}% — hiệu quả vận hành tốt.`,
+      });
+    }
+  } else {
+    stories.push({
+      severity: 'info',
+      icon: '📥',
+      title: 'Chưa nhập Revenue — không tính được Labor Cost %',
+      detail: 'Vào tab Productivity → nhập Revenue Actual tháng này.',
+    });
+  }
+
+  // 2. Variance vs Budget
+  if(totalLaborBudget > 0){
+    const varPct = (laborVar / totalLaborBudget) * 100;
+    if(laborVar < 0 && Math.abs(varPct) > 5){
+      stories.push({
+        severity: 'critical',
+        icon: '💸',
+        title: `Vượt Budget ${Math.abs(varPct).toFixed(1)}% — ${_plFmtMoney(Math.abs(laborVar))}đ`,
+        detail: `Budget tháng ${_plFmtMoney(totalLaborBudget)}đ vs Actual ${_plFmtMoney(totalLaborActual)}đ. Investigate ngay.`,
+      });
+    } else if(laborVar > 0 && Math.abs(varPct) > 10){
+      stories.push({
+        severity: 'success',
+        icon: '💰',
+        title: `Tiết kiệm ${varPct.toFixed(1)}% vs Budget — ${_plFmtMoney(laborVar)}đ`,
+        detail: `Có thể do thiếu HC, OT giảm, hoặc revenue tăng. Verify nguyên nhân.`,
+      });
+    }
+  }
+
+  // 3. HC vs Planned
+  if(totalPlannedHC > 0){
+    if(hcVar < -10){
+      stories.push({
+        severity: 'warning',
+        icon: '👥',
+        title: `Thiếu ${Math.abs(hcVar)} NV so với Plan`,
+        detail: `Planned ${totalPlannedHC} - Actual ${actual.hc}. Có thể ảnh hưởng dịch vụ. Review tuyển dụng.`,
+      });
+    } else if(hcVar > 10){
+      stories.push({
+        severity: 'warning',
+        icon: '👥',
+        title: `Thừa ${hcVar} NV so với Plan`,
+        detail: `Planned ${totalPlannedHC} - Actual ${actual.hc}. Cần optimize hoặc update Plan.`,
+      });
+    }
+  }
+
+  // 4. Turnover
+  if(annualizedTurnover !== null){
+    if(annualizedTurnover > 50){
+      stories.push({
+        severity: 'critical',
+        icon: '📉',
+        title: `Turnover Annualized ${annualizedTurnover.toFixed(1)}% — RẤT CAO`,
+        detail: `${exitedThisYear.length} NV nghỉ YTD. Benchmark hospitality VN <50%. Cần action retention NGAY.`,
+        action: 'Review Turnover tab — đào sâu lý do nghỉ',
+      });
+    } else if(annualizedTurnover > 30){
+      stories.push({
+        severity: 'warning',
+        icon: '📊',
+        title: `Turnover Annualized ${annualizedTurnover.toFixed(1)}% — Cao`,
+        detail: `${exitedThisYear.length} NV nghỉ YTD. Còn trong ngưỡng VN (30-50%) nhưng cần watch.`,
+      });
+    }
+  }
+
+  // 5. This month exits
+  if(exitedThisMonth.length > 5){
+    stories.push({
+      severity: 'warning',
+      icon: '🔻',
+      title: `${exitedThisMonth.length} NV nghỉ trong tháng ${month+1}/${year}`,
+      detail: 'Cao bất thường — investigate phòng ban nào tập trung nghỉ.',
+    });
+  }
+
+  // 6. Pending resignations
+  if(pendingResign.length >= 5){
+    stories.push({
+      severity: 'warning',
+      icon: '⏳',
+      title: `${pendingResign.length} NV đã nộp đơn, sắp rời`,
+      detail: 'Chuẩn bị kế hoạch replacement, handover. Xem Turnover tab.',
+    });
+  }
+
+  // 7. Vacancies (RED)
+  if(redVacancies.length > 0){
+    stories.push({
+      severity: 'critical',
+      icon: '🎯',
+      title: `${redVacancies.length} vị trí RED — mở ≥60 ngày chưa tuyển`,
+      detail: redVacancies.slice(0,3).map(v => `${v.title} (${v.days}d)`).join(', ') + (redVacancies.length>3?'...':''),
+      action: 'Review Recruitment Risk tab',
+    });
+  }
+
+  // 8. Recruitment activity this month
+  if(hiredThisMonth.length === 0 && vacancyData.length > 0){
+    stories.push({
+      severity: 'warning',
+      icon: '⚠️',
+      title: `Không hire được NV nào trong tháng ${month+1}/${year}`,
+      detail: `${vacancyData.length} vị trí còn open. Cần đẩy mạnh source tuyển.`,
+    });
+  } else if(hiredThisMonth.length > 0){
+    stories.push({
+      severity: 'success',
+      icon: '✨',
+      title: `Đã hire ${hiredThisMonth.length} NV trong tháng`,
+      detail: 'Recruitment activity tốt, duy trì pipeline.',
+    });
+  }
+
+  // 9. AL/CL Liability
+  if(liab.al.total + liab.cl.total > 500_000_000){
+    stories.push({
+      severity: 'warning',
+      icon: '🏖️',
+      title: `Liability AL+CL = ${_plFmtMoney(liab.al.total + liab.cl.total)}đ`,
+      detail: `${liab.al.days.toFixed(0)} ngày AL + ${liab.cl.days.toFixed(0)} ngày CL. Khuyến khích NV nghỉ trước cuối năm để giảm liability.`,
+    });
+  }
+
+  // 10. Casual/OT cost
+  if(casual.total > totalLaborActual * 0.05){
+    stories.push({
+      severity: 'warning',
+      icon: '💼',
+      title: `OT/Casual = ${_plFmtMoney(casual.total)}đ — vượt 5% tổng labor`,
+      detail: `Có thể do thiếu HC hoặc workload cao. Cân nhắc tuyển thay vì OT.`,
+    });
+  }
+
+  // Sort by severity
+  const sevOrder = {critical: 0, warning: 1, info: 2, success: 3};
+  stories.sort((a,b) => sevOrder[a.severity] - sevOrder[b.severity]);
+
+  // Action items from HR Action Plan
+  const actionPlanThisMonth = ((DB.plActionPlan||{})[year]||{})[month] || [];
+  const actionItemsPending = actionPlanThisMonth.filter(a => a.status === 'Planned' || a.status === 'In Progress');
+
+  el.innerHTML = `
+    <!-- Executive Summary Header -->
+    <div class="pl-card">
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:14px">
+        <div>
+          <div style="font-weight:700;font-size:16px;color:var(--accent)">🧠 HR Intelligence — Executive Summary</div>
+          <div style="font-size:11px;color:var(--ink-muted);margin-top:3px">Tổng hợp insights & risks · Tháng ${month+1}/${year}</div>
+        </div>
+        <div style="font-size:11px;color:var(--ink-dim)">${stories.filter(s=>s.severity==='critical').length} 🚨 critical · ${stories.filter(s=>s.severity==='warning').length} ⚠️ warning · ${stories.filter(s=>s.severity==='success').length} ✅ good</div>
+      </div>
+
+      <!-- 6 Headline KPIs -->
+      <div class="pl-kpi-grid">
+        <div class="pl-kpi" style="border-left-color:${laborCostPct!==null && laborCostPct>benchmark.warning?'var(--danger)':laborCostPct!==null && laborCostPct>benchmark.good?'var(--warning)':'var(--success)'}">
+          <div class="pl-kpi-label">Labor Cost %</div>
+          <div class="pl-kpi-value">${laborCostPct!==null?laborCostPct.toFixed(1)+'%':'—'}</div>
+          <div class="pl-kpi-sub">benchmark ${benchmark.good}-${benchmark.warning}%</div>
+        </div>
+        <div class="pl-kpi" style="border-left-color:${laborVar<0?'var(--danger)':'var(--success)'}">
+          <div class="pl-kpi-label">Variance vs Budget</div>
+          <div class="pl-kpi-value" style="color:${laborVar<0?'var(--danger)':'var(--success)'}">${laborVar<0?'-':'+'}${_plFmtMoney(Math.abs(laborVar))}đ</div>
+          <div class="pl-kpi-sub">${totalLaborBudget>0?((laborVar/totalLaborBudget)*100).toFixed(1)+'%':'—'} of budget</div>
+        </div>
+        <div class="pl-kpi" style="border-left-color:${Math.abs(hcVar)>10?'var(--warning)':'var(--success)'}">
+          <div class="pl-kpi-label">HC vs Plan</div>
+          <div class="pl-kpi-value">${actual.hc} / ${totalPlannedHC}</div>
+          <div class="pl-kpi-sub">${hcVar>=0?'+':''}${hcVar} NV</div>
+        </div>
+        <div class="pl-kpi" style="border-left-color:${annualizedTurnover!==null && annualizedTurnover>50?'var(--danger)':annualizedTurnover!==null && annualizedTurnover>30?'var(--warning)':'var(--success)'}">
+          <div class="pl-kpi-label">Turnover (annualized)</div>
+          <div class="pl-kpi-value">${annualizedTurnover!==null?annualizedTurnover.toFixed(1)+'%':'—'}</div>
+          <div class="pl-kpi-sub">${exitedThisYear.length} NV YTD · ${exitedThisMonth.length} tháng này</div>
+        </div>
+        <div class="pl-kpi" style="border-left-color:${redVacancies.length>0?'var(--danger)':amberVacancies.length>0?'var(--warning)':'var(--success)'}">
+          <div class="pl-kpi-label">Vacancies open</div>
+          <div class="pl-kpi-value">${vacancyData.length}</div>
+          <div class="pl-kpi-sub">${redVacancies.length} 🔴 · ${amberVacancies.length} 🟡 · hire ${hiredThisMonth.length}/tháng</div>
+        </div>
+        <div class="pl-kpi" style="border-left-color:var(--info)">
+          <div class="pl-kpi-label">Liability AL+CL</div>
+          <div class="pl-kpi-value">${_plFmtMoney(liab.al.total + liab.cl.total)}đ</div>
+          <div class="pl-kpi-sub">${(liab.al.days + liab.cl.days).toFixed(0)} ngày tồn</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Stories / Alerts -->
+    <div class="pl-card">
+      <div style="font-weight:700;font-size:14px;color:var(--accent);margin-bottom:14px">📰 Key Insights & Alerts (${stories.length} stories)</div>
+      ${stories.length === 0 ? `<div style="color:var(--ink-dim);text-align:center;padding:20px;font-size:12px;font-style:italic">Không có cảnh báo — mọi thứ trong ngưỡng OK</div>` : `
+      <div style="display:flex;flex-direction:column;gap:10px">
+        ${stories.map(s => {
+          const borderColor = s.severity==='critical'?'var(--danger)':s.severity==='warning'?'var(--warning)':s.severity==='success'?'var(--success)':'var(--info)';
+          const bgColor = s.severity==='critical'?'rgba(212,127,127,.06)':s.severity==='warning'?'rgba(255,200,120,.05)':s.severity==='success'?'rgba(126,198,153,.05)':'rgba(126,182,232,.05)';
+          return `<div style="border-left:3px solid ${borderColor};background:${bgColor};padding:10px 14px;border-radius:0 6px 6px 0">
+            <div style="font-size:13px;font-weight:600;color:var(--ink);margin-bottom:4px">${s.icon} ${escapeHtml(s.title)}</div>
+            <div style="font-size:11.5px;color:var(--ink-dim);line-height:1.5">${escapeHtml(s.detail)}</div>
+            ${s.action ? `<div style="font-size:11px;color:var(--accent);margin-top:6px;font-weight:600">→ ${escapeHtml(s.action)}</div>` : ''}
+          </div>`;
+        }).join('')}
+      </div>
+      `}
+    </div>
+
+    <!-- Action Items pending from HR Action Plan -->
+    ${actionItemsPending.length > 0 ? `
+    <div class="pl-card">
+      <div style="font-weight:700;font-size:14px;color:var(--accent);margin-bottom:14px">📋 Action Items Pending (${actionItemsPending.length})</div>
+      <table class="pl-table">
+        <thead><tr>
+          <th>Action</th><th>Target</th><th class="pl-num">Expected Saving</th><th>Owner</th><th>Status</th>
+        </tr></thead>
+        <tbody>
+          ${actionItemsPending.map(a => {
+            const sCol = a.status==='In Progress'?'var(--warning)':'var(--info)';
+            return `<tr>
+              <td><b>${escapeHtml(a.title||'')}</b></td>
+              <td style="font-size:11.5px;color:var(--ink-dim)">${escapeHtml(a.target||'—')}</td>
+              <td class="pl-num">${a.expectedSaving?_plFmtMoney(a.expectedSaving)+'đ':'—'}</td>
+              <td>${escapeHtml(a.owner||'—')}</td>
+              <td><span style="background:${sCol}22;color:${sCol};padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600">${escapeHtml(a.status)}</span></td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>
+    ` : `
+    <div class="pl-card" style="text-align:center;padding:20px">
+      <div style="font-size:12px;color:var(--ink-muted)">📋 Chưa có Action Plan cho tháng này.
+        <a href="#" onclick="window._plTab='action';render();return false" style="color:var(--accent);text-decoration:underline">→ Thêm vào HR Action Plan</a>
+      </div>
+    </div>
+    `}
+  `;
 }
 
 // ===== TAB 1: LABOR COST =====
@@ -3410,13 +3807,25 @@ function _plRenderLiability(el, year, month){
   // Sort dept by total value
   const deptSorted = Object.entries(liab.byDept).sort((a,b)=>(b[1].alValue+b[1].clValue) - (a[1].alValue+a[1].clValue));
 
-  // Count NV per status (for badge)
+  // Count NV per status (for badge) — INCLUDE trainees to match Leave module scope
   const empByStatus = {active:0, exit:0};
   (DB.employees||[]).forEach(e=>{
     const st = getEffectiveStatus(e);
     if(st === 'exit') empByStatus.exit++;
     else empByStatus.active++;
   });
+  // Add trainees count
+  const _todayStr = new Date().toISOString().slice(0,10);
+  let traineeActive = 0, traineeExit = 0;
+  (DB.trainees||[]).forEach(tr=>{
+    let isActive = true;
+    if(tr.status === 'exit' || tr.status === 'early_exit') isActive = false;
+    else if(tr.status === 'active') isActive = true;
+    else if(tr.endDate && tr.endDate < _todayStr) isActive = false;
+    if(isActive) traineeActive++; else traineeExit++;
+  });
+  empByStatus.active += traineeActive;
+  empByStatus.exit += traineeExit;
   const totalEmp = empByStatus.active + empByStatus.exit;
 
   // Filter description
@@ -3446,12 +3855,12 @@ function _plRenderLiability(el, year, month){
       <div class="pl-kpi-grid">
         <div class="pl-kpi" style="border-left-color:var(--warning)">
           <div class="pl-kpi-label">AL tồn tổng</div>
-          <div class="pl-kpi-value">${liab.al.days.toFixed(0)} ngày</div>
+          <div class="pl-kpi-value">${liab.al.days.toFixed(1)} ngày</div>
           <div class="pl-kpi-sub">~ ${_plFmtMoney(liab.al.total)}đ</div>
         </div>
         <div class="pl-kpi" style="border-left-color:var(--info)">
           <div class="pl-kpi-label">CL tồn tổng</div>
-          <div class="pl-kpi-value">${liab.cl.days.toFixed(0)} ngày</div>
+          <div class="pl-kpi-value">${liab.cl.days.toFixed(1)} ngày</div>
           <div class="pl-kpi-sub">~ ${_plFmtMoney(liab.cl.total)}đ</div>
         </div>
         <div class="pl-kpi" style="border-left-color:var(--danger)">
@@ -3495,9 +3904,9 @@ function _plRenderLiability(el, year, month){
             <tr>
               <td><b>${escapeHtml(dName)}</b></td>
               <td class="pl-num">${d.count}</td>
-              <td class="pl-num">${d.al.toFixed(0)}</td>
+              <td class="pl-num">${d.al.toFixed(1)}</td>
               <td class="pl-num">${_plFmtMoney(d.alValue)}đ</td>
-              <td class="pl-num">${d.cl.toFixed(0)}</td>
+              <td class="pl-num">${d.cl.toFixed(1)}</td>
               <td class="pl-num">${_plFmtMoney(d.clValue)}đ</td>
               <td class="pl-num pl-warn"><b>${_plFmtMoney(d.alValue+d.clValue)}đ</b></td>
             </tr>
@@ -3507,9 +3916,9 @@ function _plRenderLiability(el, year, month){
           <tr>
             <td>TỔNG</td>
             <td class="pl-num">${deptSorted.reduce((s,[,d])=>s+d.count,0)}</td>
-            <td class="pl-num">${liab.al.days.toFixed(0)}</td>
+            <td class="pl-num">${liab.al.days.toFixed(1)}</td>
             <td class="pl-num">${_plFmtMoney(liab.al.total)}đ</td>
-            <td class="pl-num">${liab.cl.days.toFixed(0)}</td>
+            <td class="pl-num">${liab.cl.days.toFixed(1)}</td>
             <td class="pl-num">${_plFmtMoney(liab.cl.total)}đ</td>
             <td class="pl-num">${_plFmtMoney(liab.al.total+liab.cl.total)}đ</td>
           </tr>
@@ -3721,9 +4130,9 @@ function _plRenderRecruitmentRisk(el, year, month){
               <td>${escapeHtml(h.jobTitle)}</td>
               <td>${escapeHtml(h.dept)}</td>
               <td><span style="background:rgba(126,182,232,.12);color:var(--info);padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600">${escapeHtml(h.source||'Không rõ')}</span></td>
-              <td class="pl-num" style="font-size:11px;color:var(--ink-dim)">${h.openDate||'—'}</td>
-              <td class="pl-num" style="font-size:11px;color:var(--ink-dim)">${h.appliedDate||'—'}</td>
-              <td class="pl-num" style="font-size:11px;color:var(--success);font-weight:600">${h.hiredDate||'—'}</td>
+              <td class="pl-num" style="font-size:11px;color:var(--ink-dim)">${_plFmtDate(h.openDate)}</td>
+              <td class="pl-num" style="font-size:11px;color:var(--ink-dim)">${_plFmtDate(h.appliedDate)}</td>
+              <td class="pl-num" style="font-size:11px;color:var(--success);font-weight:600">${_plFmtDate(h.hiredDate)}</td>
               <td class="pl-num" style="color:${tthColor};font-weight:700">${h.timeToHire!==null?h.timeToHire+'d':'—'}</td>
             </tr>`;
           }).join('')}
@@ -3862,7 +4271,7 @@ function _plRenderRecruitmentRisk(el, year, month){
               <td style="font-size:16px" title="${j.risk==='unknown'?'Chưa có ngày mở':''}">${j.riskLabel}</td>
               <td><b>${escapeHtml(j.title)}</b></td>
               <td>${escapeHtml(j.dName)}</td>
-              <td class="pl-num" style="font-size:11px;color:var(--ink-dim)">${j.openDate||'<span style="color:var(--danger)" title="Cần cập nhật ngày mở trong module Tuyển dụng">⚠ chưa có</span>'}</td>
+              <td class="pl-num" style="font-size:11px;color:var(--ink-dim)">${j.openDate?_plFmtDate(j.openDate):'<span style="color:var(--danger)" title="Cần cập nhật ngày mở trong module Tuyển dụng">⚠ chưa có</span>'}</td>
               <td class="pl-num" style="color:${riskColor};font-weight:700">${j.days!==null?j.days+'d':'—'}</td>
               <td class="pl-num">${j.remain}</td>
               <td class="pl-num">${j.hired}</td>
@@ -3982,18 +4391,32 @@ function _plRenderTurnover(el, year, month){
   const annualizedTurnoverYTD = avgHcCurYear > 0 ? (ytdResign.length / avgHcCurYear) * (12/(month+1)) * 100 : null;
   const annualizedTurnoverLY = avgHcLY > 0 ? (ytdResignLY.length / avgHcLY) * (12/(month+1)) * 100 : null;
 
-  // === By Reason ===
+  // === SCOPE FILTER (Tháng / YTD / Cả năm) — affects sections below KPI cards ===
+  const scope = window._turnoverScope || 'ytd';
+  let scopeSet, scopeLabel;
+  if(scope === 'month'){
+    scopeSet = exitedEmps.filter(r => r.exitDate.getFullYear() === year && r.exitDate.getMonth() === month);
+    scopeLabel = `Tháng ${month+1}/${year}`;
+  } else if(scope === 'year'){
+    scopeSet = exitedEmps.filter(r => r.exitDate.getFullYear() === year);
+    scopeLabel = `Cả năm ${year}`;
+  } else {
+    scopeSet = exitedEmps.filter(r => r.exitDate.getFullYear() === year && r.exitDate.getMonth() <= month);
+    scopeLabel = `YTD T1-T${month+1}/${year}`;
+  }
+
+  // === By Reason (scoped) ===
   const byReason = {};
-  ytdResign.forEach(r => { byReason[r.reason] = (byReason[r.reason]||0) + 1; });
+  scopeSet.forEach(r => { byReason[r.reason] = (byReason[r.reason]||0) + 1; });
   const reasonsSorted = Object.entries(byReason).sort((a,b) => b[1] - a[1]);
 
-  // === By Tenure ===
+  // === By Tenure (scoped) ===
   const byTenure = {'<3m':0, '3-12m':0, '1-3y':0, '>3y':0, 'unknown':0};
-  ytdResign.forEach(r => { byTenure[r.tenureBucket] = (byTenure[r.tenureBucket]||0) + 1; });
+  scopeSet.forEach(r => { byTenure[r.tenureBucket] = (byTenure[r.tenureBucket]||0) + 1; });
 
-  // === By Department ===
+  // === By Department (scoped) ===
   const byDept = {};
-  ytdResign.forEach(r => {
+  scopeSet.forEach(r => {
     if(!byDept[r.dept]) byDept[r.dept] = {dept: r.dept, deptId: r.deptId, count:0, totalTenure:0, validTenureCount:0};
     byDept[r.dept].count++;
     if(r.tenureMonths !== null){
@@ -4009,17 +4432,26 @@ function _plRenderTurnover(el, year, month){
   });
   const deptSorted = Object.values(byDept).sort((a,b) => b.count - a.count);
 
-  // Turnover Cost
+  // Turnover Cost (scoped)
   const costPerHire = parseFloat((DB.plConfig||{}).costPerHire) || 5_000_000;
   const trainingCostPerEmp = parseFloat((DB.plConfig||{}).trainingCostPerEmp) || 3_000_000;
   const uniformCostPerEmp = parseFloat((DB.plConfig||{}).uniformCostPerEmp) || 1_500_000;
   const costPerResign = costPerHire + trainingCostPerEmp + uniformCostPerEmp;
+  const totalTurnoverCostScope = scopeSet.length * costPerResign;
   const totalTurnoverCostYTD = ytdResign.length * costPerResign;
 
   el.innerHTML = `
     <!-- KPI cards -->
     <div class="pl-card">
-      <div style="font-weight:700;font-size:15px;color:var(--accent);margin-bottom:14px">📉 Turnover Analysis — ${year}</div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:10px">
+        <div style="font-weight:700;font-size:15px;color:var(--accent)">📉 Turnover Analysis — ${year}</div>
+        <!-- Scope selector -->
+        <div style="display:flex;gap:0;background:var(--bg-elev);border-radius:8px;padding:3px;border:1px solid var(--border)">
+          <button onclick="window._turnoverScope='month';render()" style="background:${scope==='month'?'var(--accent)':'transparent'};color:${scope==='month'?'#000':'var(--ink-dim)'};border:0;padding:6px 14px;border-radius:6px;font-size:11.5px;font-weight:600;cursor:pointer">📅 Tháng ${month+1}</button>
+          <button onclick="window._turnoverScope='ytd';render()" style="background:${scope==='ytd'?'var(--accent)':'transparent'};color:${scope==='ytd'?'#000':'var(--ink-dim)'};border:0;padding:6px 14px;border-radius:6px;font-size:11.5px;font-weight:600;cursor:pointer">📊 YTD (T1-T${month+1})</button>
+          <button onclick="window._turnoverScope='year';render()" style="background:${scope==='year'?'var(--accent)':'transparent'};color:${scope==='year'?'#000':'var(--ink-dim)'};border:0;padding:6px 14px;border-radius:6px;font-size:11.5px;font-weight:600;cursor:pointer">📆 Cả năm ${year}</button>
+        </div>
+      </div>
       <div class="pl-kpi-grid">
         <div class="pl-kpi" style="border-left-color:${thisMonthResign.length>0?'var(--danger)':'var(--success)'}">
           <div class="pl-kpi-label">Nghỉ tháng này</div>
@@ -4056,8 +4488,8 @@ function _plRenderTurnover(el, year, month){
     <!-- By Tenure + By Reason -->
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
       <div class="pl-card" style="margin-bottom:0">
-        <div style="font-weight:700;font-size:14px;color:var(--accent);margin-bottom:14px">⏱ Theo Thâm niên</div>
-        ${ytdResign.length === 0 ? `<div style="color:var(--ink-dim);text-align:center;padding:20px;font-size:12px;font-style:italic">Chưa có NV nghỉ trong năm</div>` : `
+        <div style="font-weight:700;font-size:14px;color:var(--accent);margin-bottom:14px">⏱ Theo Thâm niên · <span style="font-weight:500;font-size:12px;color:var(--ink-dim)">${scopeLabel}</span></div>
+        ${scopeSet.length === 0 ? `<div style="color:var(--ink-dim);text-align:center;padding:20px;font-size:12px;font-style:italic">Chưa có NV nghỉ trong scope này</div>` : `
         <table class="pl-table">
           <thead><tr><th>Bucket</th><th class="pl-num">Số NV</th><th class="pl-num">%</th><th>Insight</th></tr></thead>
           <tbody>
@@ -4069,7 +4501,7 @@ function _plRenderTurnover(el, year, month){
               {k:'unknown', label:'Không rõ', insight:'Thiếu data ngày vào'},
             ].filter(b=>byTenure[b.k]>0).map(b=>{
               const n = byTenure[b.k];
-              const pct = ytdResign.length>0 ? (n/ytdResign.length*100) : 0;
+              const pct = scopeSet.length>0 ? (n/scopeSet.length*100) : 0;
               const color = b.k==='<3m'?'var(--danger)':b.k==='3-12m'?'var(--warning)':'var(--ink-dim)';
               return `<tr>
                 <td><b style="color:${color}">${b.label}</b></td>
@@ -4079,13 +4511,13 @@ function _plRenderTurnover(el, year, month){
               </tr>`;
             }).join('')}
           </tbody>
-          <tfoot><tr><td>TỔNG</td><td class="pl-num"><b>${ytdResign.length}</b></td><td class="pl-num">100%</td><td></td></tr></tfoot>
+          <tfoot><tr><td>TỔNG</td><td class="pl-num"><b>${scopeSet.length}</b></td><td class="pl-num">100%</td><td></td></tr></tfoot>
         </table>
         ${(()=>{
           const earlyLeave = byTenure['<3m'] + byTenure['3-12m'];
-          if(ytdResign.length>0 && earlyLeave / ytdResign.length >= 0.5){
+          if(scopeSet.length>0 && earlyLeave / scopeSet.length >= 0.5){
             return `<div style="margin-top:10px;padding:10px 12px;background:rgba(212,127,127,.04);border-left:3px solid var(--danger);border-radius:6px;font-size:11.5px;color:var(--ink-dim);line-height:1.6">
-              ⚠️ <b>${earlyLeave}/${ytdResign.length} NV nghỉ trong &lt; 1 năm</b> (${(earlyLeave/ytdResign.length*100).toFixed(0)}%) → có vấn đề về <b>onboarding hoặc retention sớm</b>. Review chương trình đào tạo và kỳ vọng tuyển dụng.
+              ⚠️ <b>${earlyLeave}/${scopeSet.length} NV nghỉ trong &lt; 1 năm</b> (${(earlyLeave/scopeSet.length*100).toFixed(0)}%) → có vấn đề về <b>onboarding hoặc retention sớm</b>. Review chương trình đào tạo và kỳ vọng tuyển dụng.
             </div>`;
           }
           return '';
@@ -4094,17 +4526,17 @@ function _plRenderTurnover(el, year, month){
       </div>
 
       <div class="pl-card" style="margin-bottom:0">
-        <div style="font-weight:700;font-size:14px;color:var(--accent);margin-bottom:14px">📋 Theo Lý do</div>
+        <div style="font-weight:700;font-size:14px;color:var(--accent);margin-bottom:14px">📋 Theo Lý do · <span style="font-weight:500;font-size:12px;color:var(--ink-dim)">${scopeLabel}</span></div>
         ${reasonsSorted.length === 0 ? `<div style="color:var(--ink-dim);text-align:center;padding:20px;font-size:12px;font-style:italic">Chưa có data</div>` : `
         <table class="pl-table">
           <thead><tr><th>Lý do</th><th class="pl-num">Số NV</th><th class="pl-num">%</th></tr></thead>
           <tbody>
             ${reasonsSorted.map(([reason, n])=>{
-              const pct = ytdResign.length>0 ? (n/ytdResign.length*100) : 0;
+              const pct = scopeSet.length>0 ? (n/scopeSet.length*100) : 0;
               return `<tr><td><b>${escapeHtml(reason)}</b></td><td class="pl-num">${n}</td><td class="pl-num">${pct.toFixed(0)}%</td></tr>`;
             }).join('')}
           </tbody>
-          <tfoot><tr><td>TỔNG</td><td class="pl-num"><b>${ytdResign.length}</b></td><td class="pl-num">100%</td></tr></tfoot>
+          <tfoot><tr><td>TỔNG</td><td class="pl-num"><b>${scopeSet.length}</b></td><td class="pl-num">100%</td></tr></tfoot>
         </table>
         `}
       </div>
@@ -4112,7 +4544,7 @@ function _plRenderTurnover(el, year, month){
 
     <!-- By Department -->
     <div class="pl-card">
-      <div style="font-weight:700;font-size:14px;color:var(--accent);margin-bottom:14px">🏢 Theo Phòng ban</div>
+      <div style="font-weight:700;font-size:14px;color:var(--accent);margin-bottom:14px">🏢 Theo Phòng ban · <span style="font-weight:500;font-size:12px;color:var(--ink-dim)">${scopeLabel}</span></div>
       ${deptSorted.length === 0 ? `<div style="color:var(--ink-dim);text-align:center;padding:20px;font-size:12px;font-style:italic">Chưa có data</div>` : `
       <table class="pl-table">
         <thead><tr>
@@ -4125,7 +4557,7 @@ function _plRenderTurnover(el, year, month){
         </tr></thead>
         <tbody>
           ${deptSorted.map(d=>{
-            const pct = ytdResign.length>0 ? (d.count/ytdResign.length*100) : 0;
+            const pct = scopeSet.length>0 ? (d.count/scopeSet.length*100) : 0;
             const tr = d.turnoverRate;
             const trColor = tr===null?'var(--ink-muted)':tr>=30?'var(--danger)':tr>=15?'var(--warning)':'var(--success)';
             const warning = tr!==null && tr>=30 ? '🔴 Rất cao' : tr!==null && tr>=15 ? '🟡 Cao' : tr!==null ? '🟢 OK' : '—';
@@ -4141,7 +4573,7 @@ function _plRenderTurnover(el, year, month){
         </tbody>
         <tfoot><tr>
           <td>TỔNG</td>
-          <td class="pl-num"><b>${ytdResign.length}</b></td>
+          <td class="pl-num"><b>${scopeSet.length}</b></td>
           <td class="pl-num">100%</td>
           <td class="pl-num">${annualizedTurnoverYTD!==null?annualizedTurnoverYTD.toFixed(1)+'% (annualized)':'—'}</td>
           <td class="pl-num">—</td>
@@ -4169,8 +4601,8 @@ function _plRenderTurnover(el, year, month){
               <td>${escapeHtml(l.role||'')}</td>
               <td>${escapeHtml(l.dept)}</td>
               <td style="font-size:11px;color:var(--ink-dim)">${escapeHtml(l.reason)}</td>
-              <td class="pl-num" style="font-size:11px">${l.submitDate||'—'}</td>
-              <td class="pl-num" style="font-size:11px;color:var(--warning);font-weight:600">${l.endDateStr||'—'}</td>
+              <td class="pl-num" style="font-size:11px">${_plFmtDate(l.submitDate)}</td>
+              <td class="pl-num" style="font-size:11px;color:var(--warning);font-weight:600">${_plFmtDate(l.endDateStr)}</td>
               <td class="pl-num" style="color:${urgColor};font-weight:700">${daysLeft}d</td>
             </tr>`;
           }).join('')}
@@ -4196,8 +4628,8 @@ function _plRenderTurnover(el, year, month){
             return `<tr>
               <td><b>${escapeHtml(r.name)}</b></td>
               <td>${escapeHtml(r.dept)}</td>
-              <td class="pl-num" style="font-size:11px;color:var(--ink-dim)">${r.joined||'—'}</td>
-              <td class="pl-num" style="font-size:11px;color:var(--danger);font-weight:600">${r.exitDateStr||'—'}</td>
+              <td class="pl-num" style="font-size:11px;color:var(--ink-dim)">${_plFmtDate(r.joined)}</td>
+              <td class="pl-num" style="font-size:11px;color:var(--danger);font-weight:600">${_plFmtDate(r.exitDateStr)}</td>
               <td class="pl-num" style="color:${tenureColor};font-weight:700">${tenureDisp}</td>
               <td style="font-size:11.5px">${escapeHtml(r.reason)}</td>
             </tr>`;
