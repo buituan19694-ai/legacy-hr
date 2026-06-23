@@ -2556,6 +2556,27 @@ function _plFmtPct(v, decimals){
   return v.toFixed(decimals)+'%';
 }
 
+// Format number with thousand separators (Vietnamese style: 1.234.567)
+window._plFmtInput = function(n){
+  n = parseFloat(n)||0;
+  return n.toLocaleString('vi-VN');
+};
+// Parse formatted input back to number
+window._plParseInput = function(s){
+  return parseFloat(String(s||'').replace(/[^\d]/g,''))||0;
+};
+// Auto-format input on the fly
+window._plOnInputNum = function(input){
+  const cursorAtEnd = input.selectionStart === input.value.length;
+  const raw = input.value.replace(/[^\d]/g,'');
+  if(!raw){ input.value = ''; return; }
+  const formatted = parseInt(raw).toLocaleString('vi-VN');
+  input.value = formatted;
+  if(cursorAtEnd){
+    input.setSelectionRange(formatted.length, formatted.length);
+  }
+};
+
 // Get current month's Payroll Budget from Manning & Budget
 // IMPORTANT: budgetSalary trong Manning Budget là LƯƠNG 1 NV / 1 THÁNG
 // → planned × budgetSalary = MONTHLY budget của 1 dept (KHÔNG phải annual)
@@ -2614,14 +2635,15 @@ function _plGetPayrollActualMonth(year, month){
     // Check if active during this month
     const joined = e.joined ? new Date(e.joined) : null;
     if(joined && joined > monthEnd) return; // not yet joined
-    // Check resignation
-    const resign = (DB.resignations||[]).find(r=>r.empId===e.id && r.status==='confirmed');
-    if(resign && resign.endDate){
-      const endD = new Date(resign.endDate);
-      if(endD < monthStart) return; // already left
-    } else {
-      // No resignation but is current status exit?
-      if(getEffectiveStatus(e) === 'exit') return;
+    // Check exit (use customData.exitDate - canonical source)
+    const exitDateStr = (cd[e.id]||{}).exitDate;
+    if(e.status === 'exit' && exitDateStr){
+      const _exit = exitDateStr.match(/^\d{2}\/\d{2}\/\d{4}$/)
+                    ? new Date(exitDateStr.split('/').reverse().join('-'))
+                    : new Date(exitDateStr);
+      if(!isNaN(_exit) && _exit < monthStart) return; // already left
+    } else if(e.status === 'exit'){
+      return; // exit without date — exclude
     }
     const ed = cd[e.id]||{};
     const base = parseInt(ed.baseSalary)||0;
@@ -2722,32 +2744,52 @@ function _plGetLeaveLiability(year, statusFilter){
   const sheet = DB.leaveSheet||{};
   const cd = DB.customData||{};
   const result = {al:{total:0, days:0}, cl:{total:0, days:0}, byDept:{}};
+
+  // Helper: tính tồn cuối năm cho 1 NV - 1 loại - 1 năm
+  // Match EXACT logic with Leave module's calcRow (line 12034) — KHÔNG clamp về 0
+  const calcTon = (empId, type, yr) => {
+    let sh = ((sheet[empId]||{})[yr]||{})[type];
+    if(!sh){
+      // Auto-carry từ năm trước nếu chưa có entry năm hiện tại
+      const prevSh = ((sheet[empId]||{})[yr-1]||{})[type];
+      if(prevSh){
+        const pte = (parseFloat(prevSh.carry)||0) + (Array.isArray(prevSh.entitle)?prevSh.entitle.reduce((s,v)=>s+(parseFloat(v)||0),0):0);
+        const ptu = Array.isArray(prevSh.taken)?prevSh.taken.reduce((s,v)=>s+(parseFloat(v)||0),0):0;
+        return Math.max(0, Math.round((pte - ptu) * 100) / 100);
+      }
+      return null; // không có data cả 2 năm — skip NV này khỏi liability
+    }
+    const carry = parseFloat(sh.carry)||0;
+    const entitle = Array.isArray(sh.entitle) ? sh.entitle.reduce((s,v)=>s+(parseFloat(v)||0),0) : 0;
+    const taken = Array.isArray(sh.taken) ? sh.taken.reduce((s,v)=>s+(parseFloat(v)||0),0) : 0;
+    return Math.round((carry + entitle - taken) * 100) / 100;
+  };
+
   (DB.employees||[]).forEach(e=>{
     const st = getEffectiveStatus(e);
     if(statusFilter === 'active' && st === 'exit') return;
     if(statusFilter === 'exit' && st !== 'exit') return;
     // 'all' → no filter
-    const sh = sheet[e.id]?.[year];
-    if(!sh) return;
     const ed = cd[e.id]||{};
     const dailyRate = ((parseInt(ed.baseSalary)||0) + (parseInt(ed.bonusSalary)||0)) / 26;
     const dName = ((DB.departments||[]).find(d=>d.id===e.deptId)||{}).name || 'Unknown';
+
+    const alTon = calcTon(e.id, 'al', year);
+    const clTon = calcTon(e.id, 'cl', year);
+    if(alTon === null && clTon === null) return; // NV không có data leave nào
+
     if(!result.byDept[dName]) result.byDept[dName] = {al:0, cl:0, alValue:0, clValue:0, count:0};
-    if(sh.al){
-      const carry = parseFloat(sh.al.carry)||0;
-      const entitle = Array.isArray(sh.al.entitle) ? sh.al.entitle.reduce((s,v)=>s+(parseFloat(v)||0),0) : 0;
-      const taken = Array.isArray(sh.al.taken) ? sh.al.taken.reduce((s,v)=>s+(parseFloat(v)||0),0) : 0;
-      const remain = Math.max(0, carry + entitle - taken);
+
+    if(alTon !== null){
+      // Chỉ tính liability cho phần tồn dương — nếu âm (đã nghỉ vượt) coi như 0 liability
+      const remain = Math.max(0, alTon);
       result.al.days += remain;
       result.al.total += remain * dailyRate;
       result.byDept[dName].al += remain;
       result.byDept[dName].alValue += remain * dailyRate;
     }
-    if(sh.cl){
-      const carry = parseFloat(sh.cl.carry)||0;
-      const entitle = Array.isArray(sh.cl.entitle) ? sh.cl.entitle.reduce((s,v)=>s+(parseFloat(v)||0),0) : 0;
-      const taken = Array.isArray(sh.cl.taken) ? sh.cl.taken.reduce((s,v)=>s+(parseFloat(v)||0),0) : 0;
-      const remain = Math.max(0, carry + entitle - taken);
+    if(clTon !== null){
+      const remain = Math.max(0, clTon);
       result.cl.days += remain;
       result.cl.total += remain * dailyRate;
       result.byDept[dName].cl += remain;
@@ -3146,17 +3188,19 @@ function _plRenderProductivity(el, year, month){
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
         <div>
           <label style="font-size:11px;color:var(--ink-muted);font-weight:600;text-transform:uppercase;letter-spacing:.04em">Revenue Budget</label>
-          <input type="number" value="${rev.budget||''}" placeholder="0" min="0" step="1000000"
-            onchange="if(!DB.plRevenue[${year}])DB.plRevenue[${year}]={};if(!DB.plRevenue[${year}][${month}])DB.plRevenue[${year}][${month}]={};DB.plRevenue[${year}][${month}].budget=parseFloat(this.value)||0;saveData(['plRevenue']);render()"
-            style="width:100%;background:var(--bg-card);border:1px solid var(--border);color:var(--ink);padding:8px 12px;border-radius:6px;font-family:'JetBrains Mono',monospace;font-size:14px;margin-top:4px">
-          <div style="font-size:11px;color:var(--ink-dim);margin-top:4px">= ${_plFmtMoney(rev.budget)}đ</div>
+          <input type="text" inputmode="numeric" value="${(parseFloat(rev.budget)||0).toLocaleString('vi-VN')}" placeholder="0"
+            oninput="window._plOnInputNum(this)"
+            onchange="const n=window._plParseInput(this.value);if(!DB.plRevenue[${year}])DB.plRevenue[${year}]={};if(!DB.plRevenue[${year}][${month}])DB.plRevenue[${year}][${month}]={};DB.plRevenue[${year}][${month}].budget=n;saveData(['plRevenue']);render()"
+            style="width:100%;background:var(--bg-card);border:1px solid var(--border);color:var(--ink);padding:8px 12px;border-radius:6px;font-family:'JetBrains Mono',monospace;font-size:14px;margin-top:4px;text-align:right">
+          <div style="font-size:11px;color:var(--ink-dim);margin-top:4px">= ${_plFmtMoney(parseFloat(rev.budget)||0)}đ</div>
         </div>
         <div>
           <label style="font-size:11px;color:var(--ink-muted);font-weight:600;text-transform:uppercase;letter-spacing:.04em">Revenue Actual</label>
-          <input type="number" value="${rev.actual||''}" placeholder="0" min="0" step="1000000"
-            onchange="if(!DB.plRevenue[${year}])DB.plRevenue[${year}]={};if(!DB.plRevenue[${year}][${month}])DB.plRevenue[${year}][${month}]={};DB.plRevenue[${year}][${month}].actual=parseFloat(this.value)||0;saveData(['plRevenue']);render()"
-            style="width:100%;background:var(--bg-card);border:1px solid var(--border);color:var(--ink);padding:8px 12px;border-radius:6px;font-family:'JetBrains Mono',monospace;font-size:14px;margin-top:4px">
-          <div style="font-size:11px;color:var(--ink-dim);margin-top:4px">= ${_plFmtMoney(rev.actual)}đ</div>
+          <input type="text" inputmode="numeric" value="${(parseFloat(rev.actual)||0).toLocaleString('vi-VN')}" placeholder="0"
+            oninput="window._plOnInputNum(this)"
+            onchange="const n=window._plParseInput(this.value);if(!DB.plRevenue[${year}])DB.plRevenue[${year}]={};if(!DB.plRevenue[${year}][${month}])DB.plRevenue[${year}][${month}]={};DB.plRevenue[${year}][${month}].actual=n;saveData(['plRevenue']);render()"
+            style="width:100%;background:var(--bg-card);border:1px solid var(--border);color:var(--ink);padding:8px 12px;border-radius:6px;font-family:'JetBrains Mono',monospace;font-size:14px;margin-top:4px;text-align:right">
+          <div style="font-size:11px;color:var(--ink-dim);margin-top:4px">= ${_plFmtMoney(parseFloat(rev.actual)||0)}đ</div>
         </div>
       </div>
     </div>
@@ -3522,8 +3566,9 @@ function _plRenderRecruitmentRisk(el, year, month){
   }).map(c=>{
     const job = (DB.jobs||[]).find(j=>j.id===c.jobId);
     const dName = job ? ((DB.departments||[]).find(d=>d.id===job.deptId)||{}).name||'' : '';
-    const timeToHire = (c.appliedDate && c.hiredDate) ? _plDaysBetween(c.appliedDate, c.hiredDate) : null;
     const openDate = _plJobOpenDate(job);
+    // Time to Hire = từ ngày MỞ JOB đến ngày HIRE (= Time to Fill thực sự)
+    const timeToHire = (openDate && c.hiredDate) ? _plDaysBetween(openDate, c.hiredDate) : null;
     return {
       name: c.name,
       jobTitle: job?.title || '(unknown)',
@@ -3646,7 +3691,7 @@ function _plRenderRecruitmentRisk(el, year, month){
         <div class="pl-kpi" style="border-left-color:var(--warning)">
           <div class="pl-kpi-label">Time to Hire TB</div>
           <div class="pl-kpi-value">${avgTTH!==null?avgTTH.toFixed(0)+'d':'—'}</div>
-          <div class="pl-kpi-sub">apply → hire</div>
+          <div class="pl-kpi-sub">từ mở job → hire</div>
         </div>
       </div>
     </div>
@@ -3670,7 +3715,7 @@ function _plRenderRecruitmentRisk(el, year, month){
         </thead>
         <tbody>
           ${hiredInMonth.map(h=>{
-            const tthColor = h.timeToHire === null ? 'var(--ink-muted)' : h.timeToHire <= 30 ? 'var(--success)' : h.timeToHire <= 45 ? 'var(--warning)' : 'var(--danger)';
+            const tthColor = h.timeToHire === null ? 'var(--ink-muted)' : h.timeToHire <= 30 ? 'var(--success)' : h.timeToHire <= 60 ? 'var(--warning)' : 'var(--danger)';
             return `<tr>
               <td><b>${escapeHtml(h.name||'—')}</b></td>
               <td>${escapeHtml(h.jobTitle)}</td>
@@ -3819,7 +3864,7 @@ function _plRenderRecruitmentRisk(el, year, month){
               <td>${escapeHtml(j.dName)}</td>
               <td class="pl-num" style="font-size:11px;color:var(--ink-dim)">${j.openDate||'<span style="color:var(--danger)" title="Cần cập nhật ngày mở trong module Tuyển dụng">⚠ chưa có</span>'}</td>
               <td class="pl-num" style="color:${riskColor};font-weight:700">${j.days!==null?j.days+'d':'—'}</td>
-              <td class="pl-num">${j.remain}/${j.positions}</td>
+              <td class="pl-num">${j.remain}</td>
               <td class="pl-num">${j.hired}</td>
               <td>${pipelineHtml}</td>
             </tr>`;
@@ -3829,7 +3874,7 @@ function _plRenderRecruitmentRisk(el, year, month){
           <tr>
             <td colspan="4">TỔNG (${enriched.length} vị trí)</td>
             <td class="pl-num">—</td>
-            <td class="pl-num">${enriched.reduce((s,j)=>s+j.remain,0)}/${enriched.reduce((s,j)=>s+j.positions,0)}</td>
+            <td class="pl-num">${enriched.reduce((s,j)=>s+j.remain,0)}</td>
             <td class="pl-num">${enriched.reduce((s,j)=>s+j.hired,0)}</td>
             <td>
               <span style="display:inline-flex;gap:3px;font-size:10px;font-family:'JetBrains Mono',monospace">
@@ -3854,66 +3899,101 @@ function _plRenderRecruitmentRisk(el, year, month){
 // ===== TAB 6: TURNOVER =====
 function _plRenderTurnover(el, year, month){
   const today = new Date();
+  today.setHours(0,0,0,0);
   const monthStart = new Date(year, month, 1);
-  const monthEnd = new Date(year, month+1, 0);
+  const monthEnd = new Date(year, month+1, 0); monthEnd.setHours(23,59,59,999);
   const cd = DB.customData||{};
 
-  const allResign = (DB.resignations||[]).filter(r=>r.status==='confirmed' || r.status==='confirm' || !r.status);
+  // Helper: parse various date formats (YYYY-MM-DD or DD/MM/YYYY)
+  const _parseExitDate = s => {
+    if(!s) return null;
+    if(typeof s !== 'string') s = String(s);
+    let d;
+    if(s.match(/^\d{2}\/\d{2}\/\d{4}$/)) d = new Date(s.split('/').reverse().join('-'));
+    else d = new Date(s);
+    return isNaN(d) ? null : d;
+  };
 
-  // Enrich each resignation
-  const enriched = allResign.map(r=>{
-    const emp = empById(r.empId);
-    if(!emp) return null;
-    const dept = (DB.departments||[]).find(d=>d.id===emp.deptId);
-    const endDate = r.endDate || cd[emp.id]?.exitDate;
-    if(!endDate) return null;
-    const endD = new Date(endDate);
-    if(isNaN(endD)) return null;
-    const reason = r.reason || cd[emp.id]?.exitReason || 'Không rõ';
-    const joined = emp.joined ? new Date(emp.joined) : null;
-    const tenureMonths = joined && !isNaN(joined) ? _plMonthsBetween(joined, endD) : null;
+  // === NGUỒN 1: NV đã nghỉ THỰC TẾ (e.status==='exit' + cd.exitDate) ===
+  const exitedEmps = (DB.employees||[]).filter(e => e.status === 'exit').map(e => {
+    const empCd = cd[e.id] || {};
+    const exitDate = _parseExitDate(empCd.exitDate);
+    if(!exitDate) return null;
+    const dept = (DB.departments||[]).find(d => d.id === e.deptId);
+    const reason = empCd.exitReason || 'Không rõ';
+    const joined = e.joined ? _parseExitDate(e.joined) : null;
+    const tenureMonths = joined ? _plMonthsBetween(joined, exitDate) : null;
     const tenureBucket = tenureMonths === null ? 'unknown' :
                           tenureMonths < 3 ? '<3m' :
                           tenureMonths < 12 ? '3-12m' :
                           tenureMonths < 36 ? '1-3y' : '>3y';
     return {
-      empId: emp.id, name: emp.name, role: emp.role,
-      dept: dept?.name || 'Unknown', deptId: emp.deptId,
-      submitDate: r.submitDate, endDate, endD, reason,
-      tenureMonths, tenureBucket, joined: emp.joined,
+      empId: e.id, name: e.name, role: e.role,
+      dept: dept?.name || 'Unknown', deptId: e.deptId,
+      exitDate, exitDateStr: empCd.exitDate,
+      reason, tenureMonths, tenureBucket, joined: e.joined,
     };
   }).filter(Boolean);
 
-  const thisMonthResign = enriched.filter(r=>r.endD.getFullYear()===year && r.endD.getMonth()===month);
-  const ytdResign = enriched.filter(r=>r.endD.getFullYear()===year && r.endD.getMonth()<=month);
-  const ytdResignLY = enriched.filter(r=>r.endD.getFullYear()===year-1 && r.endD.getMonth()<=month);
+  // === NGUỒN 2: Đơn nghỉ PENDING (đã nộp đơn, chưa rời) ===
+  const pendingResign = (DB.resignations||[]).filter(r => r.status === 'pending').map(r => {
+    const emp = empById(r.empId);
+    if(!emp) return null;
+    const dept = (DB.departments||[]).find(d => d.id === emp.deptId);
+    const endDate = _parseExitDate(r.endDate || r.submitDate);
+    if(!endDate) return null;
+    const reason = r.reason || cd[emp.id]?.exitReason || 'Không rõ';
+    const joined = emp.joined ? _parseExitDate(emp.joined) : null;
+    const tenureMonths = joined ? _plMonthsBetween(joined, endDate) : null;
+    return {
+      empId: emp.id, name: emp.name, role: emp.role,
+      dept: dept?.name || 'Unknown', deptId: emp.deptId,
+      submitDate: r.submitDate, endDate, endDateStr: r.endDate,
+      reason, tenureMonths,
+    };
+  }).filter(Boolean);
 
-  // Average HC
-  const avgHcYTD = (year_) => {
+  // === THIS MONTH & YTD ===
+  const thisMonthResign = exitedEmps.filter(r =>
+    r.exitDate.getFullYear() === year && r.exitDate.getMonth() === month
+  );
+  const ytdResign = exitedEmps.filter(r =>
+    r.exitDate.getFullYear() === year && r.exitDate.getMonth() <= month
+  );
+  const ytdResignLY = exitedEmps.filter(r =>
+    r.exitDate.getFullYear() === year-1 && r.exitDate.getMonth() <= month
+  );
+
+  // === UPCOMING — Đã nộp đơn, chưa rời ===
+  // Filter những đơn pending mà endDate > today (chưa rời)
+  const upcomingLeavers = pendingResign
+    .filter(r => r.endDate > today)
+    .sort((a,b) => a.endDate - b.endDate)
+    .slice(0, 15);
+
+  // === Avg HC ===
+  const avgHcYTD = (yr) => {
     let sum = 0;
-    for(let m=0; m<=month; m++){ sum += _plGetPayrollActualMonth(year_, m).hc; }
+    for(let m=0; m<=month; m++){ sum += _plGetPayrollActualMonth(yr, m).hc; }
     return (month+1) > 0 ? sum/(month+1) : 0;
   };
   const avgHcCurYear = avgHcYTD(year);
   const avgHcLY = avgHcYTD(year-1);
-
   const annualizedTurnoverYTD = avgHcCurYear > 0 ? (ytdResign.length / avgHcCurYear) * (12/(month+1)) * 100 : null;
   const annualizedTurnoverLY = avgHcLY > 0 ? (ytdResignLY.length / avgHcLY) * (12/(month+1)) * 100 : null;
 
-  const upcomingLeavers = enriched.filter(r=>r.endD > today).sort((a,b)=>a.endD - b.endD).slice(0, 10);
-
-  // By Reason
+  // === By Reason ===
   const byReason = {};
-  ytdResign.forEach(r=>{ byReason[r.reason] = (byReason[r.reason]||0) + 1; });
-  const reasonsSorted = Object.entries(byReason).sort((a,b)=>b[1]-a[1]);
+  ytdResign.forEach(r => { byReason[r.reason] = (byReason[r.reason]||0) + 1; });
+  const reasonsSorted = Object.entries(byReason).sort((a,b) => b[1] - a[1]);
 
-  // By Tenure
+  // === By Tenure ===
   const byTenure = {'<3m':0, '3-12m':0, '1-3y':0, '>3y':0, 'unknown':0};
-  ytdResign.forEach(r=>{ byTenure[r.tenureBucket] = (byTenure[r.tenureBucket]||0) + 1; });
+  ytdResign.forEach(r => { byTenure[r.tenureBucket] = (byTenure[r.tenureBucket]||0) + 1; });
 
-  // By Department
+  // === By Department ===
   const byDept = {};
-  ytdResign.forEach(r=>{
+  ytdResign.forEach(r => {
     if(!byDept[r.dept]) byDept[r.dept] = {dept: r.dept, deptId: r.deptId, count:0, totalTenure:0, validTenureCount:0};
     byDept[r.dept].count++;
     if(r.tenureMonths !== null){
@@ -3921,13 +4001,13 @@ function _plRenderTurnover(el, year, month){
       byDept[r.dept].validTenureCount++;
     }
   });
-  Object.values(byDept).forEach(d=>{
+  Object.values(byDept).forEach(d => {
     d.avgTenure = d.validTenureCount > 0 ? d.totalTenure/d.validTenureCount : null;
-    const currentHC = (DB.employees||[]).filter(e=>e.deptId===d.deptId && getEffectiveStatus(e)!=='exit').length;
+    const currentHC = (DB.employees||[]).filter(e => e.deptId === d.deptId && e.status !== 'exit').length;
     const totalEverHC = currentHC + d.count;
     d.turnoverRate = totalEverHC > 0 ? (d.count/totalEverHC)*100 : null;
   });
-  const deptSorted = Object.values(byDept).sort((a,b)=>b.count - a.count);
+  const deptSorted = Object.values(byDept).sort((a,b) => b.count - a.count);
 
   // Turnover Cost
   const costPerHire = parseFloat((DB.plConfig||{}).costPerHire) || 5_000_000;
@@ -4082,7 +4162,7 @@ function _plRenderTurnover(el, year, month){
         </tr></thead>
         <tbody>
           ${upcomingLeavers.map(l=>{
-            const daysLeft = _plDaysBetween(today, l.endD);
+            const daysLeft = _plDaysBetween(today, l.endDate);
             const urgColor = daysLeft<=7?'var(--danger)':daysLeft<=14?'var(--warning)':'var(--info)';
             return `<tr>
               <td><b>${escapeHtml(l.name)}</b></td>
@@ -4090,7 +4170,7 @@ function _plRenderTurnover(el, year, month){
               <td>${escapeHtml(l.dept)}</td>
               <td style="font-size:11px;color:var(--ink-dim)">${escapeHtml(l.reason)}</td>
               <td class="pl-num" style="font-size:11px">${l.submitDate||'—'}</td>
-              <td class="pl-num" style="font-size:11px;color:var(--warning);font-weight:600">${l.endDate||'—'}</td>
+              <td class="pl-num" style="font-size:11px;color:var(--warning);font-weight:600">${l.endDateStr||'—'}</td>
               <td class="pl-num" style="color:${urgColor};font-weight:700">${daysLeft}d</td>
             </tr>`;
           }).join('')}
@@ -4117,7 +4197,7 @@ function _plRenderTurnover(el, year, month){
               <td><b>${escapeHtml(r.name)}</b></td>
               <td>${escapeHtml(r.dept)}</td>
               <td class="pl-num" style="font-size:11px;color:var(--ink-dim)">${r.joined||'—'}</td>
-              <td class="pl-num" style="font-size:11px;color:var(--danger);font-weight:600">${r.endDate}</td>
+              <td class="pl-num" style="font-size:11px;color:var(--danger);font-weight:600">${r.exitDateStr||'—'}</td>
               <td class="pl-num" style="color:${tenureColor};font-weight:700">${tenureDisp}</td>
               <td style="font-size:11.5px">${escapeHtml(r.reason)}</td>
             </tr>`;
@@ -4176,9 +4256,10 @@ function _plRenderActionPlan(el, year, month){
                     <input type="text" value="${escapeHtml(it.target||'')}" placeholder="Target (vd: -40 ngày AL)..."
                       onchange="DB.plActionPlan[${year}][${month}][${idx}].target=this.value;saveData(['plActionPlan'])"
                       style="background:var(--bg-card);border:1px solid var(--border);color:var(--ink-dim);padding:5px 8px;border-radius:5px;font-size:11.5px">
-                    <input type="number" value="${it.expectedSaving||''}" placeholder="Expected saving (đ)" min="0" step="1000000"
-                      onchange="DB.plActionPlan[${year}][${month}][${idx}].expectedSaving=parseFloat(this.value)||0;saveData(['plActionPlan']);render()"
-                      style="background:var(--bg-card);border:1px solid var(--border);color:var(--success);padding:5px 8px;border-radius:5px;font-size:11.5px;font-family:'JetBrains Mono',monospace">
+                    <input type="text" inputmode="numeric" value="${it.expectedSaving?Number(it.expectedSaving).toLocaleString('vi-VN'):''}" placeholder="Expected saving (đ)"
+                      oninput="this.value=this.value.replace(/[^\\d]/g,'').replace(/\\B(?=(\\d{3})+(?!\\d))/g,'.')"
+                      onchange="DB.plActionPlan[${year}][${month}][${idx}].expectedSaving=parseFloat(this.value.replace(/\\./g,''))||0;saveData(['plActionPlan']);render()"
+                      style="background:var(--bg-card);border:1px solid var(--border);color:var(--success);padding:5px 8px;border-radius:5px;font-size:11.5px;font-family:'JetBrains Mono',monospace;text-align:right">
                     <input type="text" value="${escapeHtml(it.owner||'')}" placeholder="Owner..."
                       onchange="DB.plActionPlan[${year}][${month}][${idx}].owner=this.value;saveData(['plActionPlan'])"
                       style="background:var(--bg-card);border:1px solid var(--border);color:var(--ink-dim);padding:5px 8px;border-radius:5px;font-size:11.5px">
@@ -26777,11 +26858,12 @@ function renderManning(main){
             } else {
               // Tổng CP Budget cho NV này — chỉ hiện khi đã nhập budgetSalary
               const budSal  = parseFloat(pos.budgetSalary)||0;
-              const hasBudget = budSal > 0; // chưa nhập lương = chưa có budget
+              const budBon  = parseFloat(pos.budgetBonus)||0;
+              const hasBudget = budSal > 0 || budBon > 0; // chưa nhập lương/phụ cấp = chưa có budget
               const budBH   = hasBudget ? getBH(pos, budSal, BH_RATE_LOCAL) : 0;
               const budMeal = hasBudget ? (parseFloat(pos.mealRate)||0) : 0;
               const budOth  = hasBudget ? (parseFloat(pos.budgetOther)||0) : 0;
-              const budTot  = hasBudget ? (budSal+budBH+budMeal+budOth) : 0;
+              const budTot  = hasBudget ? (budSal+budBon+budBH+budMeal+budOth) : 0;
               const diff    = hasBudget ? (budTot - tot) : 0;
               const diffColor = diff > 0 ? 'var(--success)' : diff < 0 ? 'var(--danger)' : 'var(--ink-muted)';
 
@@ -26833,7 +26915,7 @@ function renderManning(main){
             })()}
             ${mealRate?`<span style="font-size:9px;padding:1px 5px;border-radius:3px;margin-left:5px;background:rgba(125,211,192,.12);color:var(--teal)">Meal ${(mealRate).toLocaleString('vi')}/ngày</span>`:''}
           </td>
-          <td colspan="${multiMode?sortedMonths.length*5:8}" style="padding:5px 8px;text-align:right;font-size:10px;color:var(--ink-muted)">${roleEmps.length} NV</td>
+          <td colspan="${multiMode?sortedMonths.length*5:10}" style="padding:5px 8px;text-align:right;font-size:10px;color:var(--ink-muted)">${roleEmps.length} NV</td>
         </tr>${empRows.replace(/<tr style="border-bottom/g, `<tr data-dept-actual="${dept.id}" ${isCollapsed?'style="display:none"':''} class="actual-emp-row" style="border-bottom`)}`;
       }).join('');
 
@@ -26876,6 +26958,8 @@ function renderManning(main){
               onchange="_saveExtraActual(this,'${encodeURIComponent(dept.id)}','${encodeURIComponent(tempId)}',${curYear},${singleMi},'other')"
               style="width:80px;padding:3px 5px;background:var(--bg-elev);border:1px solid var(--warning)44;border-radius:4px;color:var(--warning);font-family:'JetBrains Mono',monospace;font-size:11px;text-align:right"></td>
             <td style="padding:3px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:#FFCC00"><span data-tot="">${tot.toLocaleString('vi')}</span></td>
+            <td style="padding:3px 8px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--ink-muted)">—</td>
+            <td style="padding:3px 8px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--ink-muted)">—</td>
             <td><input type="text" value="${escapeHtml(eact.note||'')}" placeholder="Ghi chú..."
               onchange="_saveExtraActual(this,'${encodeURIComponent(dept.id)}','${encodeURIComponent(tempId)}',${curYear},${singleMi},'note')"
               style="width:120px;padding:3px 6px;background:var(--bg-elev);border:1px solid var(--border);border-radius:4px;color:var(--ink-muted);font-size:11px"></td>
@@ -26915,7 +26999,7 @@ function renderManning(main){
             onkeydown="if(event.key==='Enter'&&this.value.trim()){_addExtraRole(this,'${encodeURIComponent(dept.id)}',${curYear},${singleMi});}"
             style="width:300px;padding:4px 8px;background:transparent;border:1px dashed rgba(212,165,116,.4);border-radius:5px;color:var(--ink-muted);font-size:11px">
         </td>
-        <td colspan="8"></td>
+        <td colspan="10"></td>
       </tr>` : ''}`;
     }).join('');
 
