@@ -2546,6 +2546,27 @@ function _plFmtMoney(v){
   return v.toFixed(0);
 }
 
+// Period selector — handle merged Month + Scope selection
+window._plSetPeriod = function(val){
+  if(!val) return;
+  const today = new Date();
+  if(val.startsWith('m')){
+    // m0..m11 = chọn tháng cụ thể
+    window._plMonth = parseInt(val.substring(1));
+    window._plScope = 'month';
+  } else if(val === 'ytd'){
+    window._plScope = 'ytd';
+    // _plMonth giữ nguyên (xác định cận trên của YTD: T1→TX)
+    // Nếu chưa set thì mặc định tháng hiện tại
+    if(window._plMonth === undefined) window._plMonth = today.getMonth();
+  } else if(val === 'year'){
+    window._plScope = 'year';
+    // Khi xem Cả năm, các tab tháng cụ thể dùng tháng 12 (hết năm)
+    window._plMonth = 11;
+  }
+  render();
+};
+
 function _plFmtMoneyFull(v){
   return (v||0).toLocaleString('vi-VN')+' đ';
 }
@@ -2883,15 +2904,17 @@ function renderAnalytics(main){
         <select onchange="window._plYear=parseInt(this.value);render()" style="background:var(--bg-card);color:var(--ink);border:1px solid var(--border);padding:6px 12px;border-radius:6px;font-size:12px">
           ${years.map(y=>`<option value="${y}" ${y===curYear?'selected':''}>${y}</option>`).join('')}
         </select>
-        <select onchange="window._plMonth=parseInt(this.value);render()" style="background:var(--bg-card);color:var(--ink);border:1px solid var(--border);padding:6px 12px;border-radius:6px;font-size:12px">
-          ${MN_FULL.map((m,i)=>`<option value="${i}" ${i===curMonth?'selected':''}>${m}</option>`).join('')}
+        <select onchange="_plSetPeriod(this.value)" style="background:var(--bg-card);color:var(--ink);border:1px solid var(--border);padding:6px 12px;border-radius:6px;font-size:12px;min-width:160px" title="Phạm vi thời gian — áp dụng cho Turnover & Intelligence. Các tab khác hiển thị tháng cuối trong phạm vi.">
+          <optgroup label="📅 Theo tháng">
+            ${MN_FULL.map((m,i)=>`<option value="m${i}" ${(window._plScope||'month')==='month' && i===curMonth?'selected':''}>${m}/${curYear}</option>`).join('')}
+          </optgroup>
+          <optgroup label="📊 Lũy kế">
+            <option value="ytd" ${(window._plScope||'month')==='ytd'?'selected':''}>YTD · T1→T${curMonth+1}/${curYear}</option>
+          </optgroup>
+          <optgroup label="📆 Cả năm">
+            <option value="year" ${(window._plScope||'month')==='year'?'selected':''}>Cả năm ${curYear}</option>
+          </optgroup>
         </select>
-        <!-- Scope selector — applies to Intelligence + Turnover -->
-        <div style="display:flex;gap:0;background:var(--bg-card);border-radius:8px;padding:3px;border:1px solid var(--border)" title="Phạm vi xem cho Turnover & một số chỉ số nhạy thời gian">
-          <button onclick="window._plScope='month';render()" style="background:${(window._plScope||'ytd')==='month'?'var(--accent)':'transparent'};color:${(window._plScope||'ytd')==='month'?'#000':'var(--ink-dim)'};border:0;padding:5px 11px;border-radius:6px;font-size:11.5px;font-weight:600;cursor:pointer">📅 Tháng</button>
-          <button onclick="window._plScope='ytd';render()" style="background:${(window._plScope||'ytd')==='ytd'?'var(--accent)':'transparent'};color:${(window._plScope||'ytd')==='ytd'?'#000':'var(--ink-dim)'};border:0;padding:5px 11px;border-radius:6px;font-size:11.5px;font-weight:600;cursor:pointer">📊 YTD</button>
-          <button onclick="window._plScope='year';render()" style="background:${(window._plScope||'ytd')==='year'?'var(--accent)':'transparent'};color:${(window._plScope||'ytd')==='year'?'#000':'var(--ink-dim)'};border:0;padding:5px 11px;border-radius:6px;font-size:11.5px;font-weight:600;cursor:pointer">📆 Cả năm</button>
-        </div>
         <button onclick="window.print()" style="background:transparent;color:var(--ink-dim);border:1px solid var(--border);padding:6px 12px;border-radius:6px;font-size:12px;cursor:pointer" title="In ra để mang vào họp P&L">🖨 In</button>
       </div>
     </div>
@@ -2919,7 +2942,8 @@ function renderAnalytics(main){
     </style>
 
     <!-- Tab navigation -->
-    <div style="display:flex;gap:4px;border-bottom:1px solid var(--border);margin-bottom:20px;overflow-x:auto;padding-bottom:0">
+    <div class="pl-tabs-bar" style="display:flex;gap:4px;border-bottom:1px solid var(--border);margin-bottom:20px;overflow-x:auto;padding-bottom:0;scrollbar-width:none">
+    <style>.pl-tabs-bar::-webkit-scrollbar{display:none}</style>
       ${tabs.map(t=>`
         <button onclick="window._plTab='${t.k}';navigate('analytics')"
           style="background:${currentTab===t.k?'var(--bg-card)':'transparent'};border:0;border-bottom:2px solid ${currentTab===t.k?'var(--accent)':'transparent'};color:${currentTab===t.k?'var(--accent)':'var(--ink-dim)'};padding:11px 16px;cursor:pointer;font-weight:600;font-size:12.5px;white-space:nowrap;display:flex;align-items:center;gap:9px">
@@ -2985,7 +3009,7 @@ function _plRenderIntelligence(el, year, month){
   };
 
   // === SCOPE-AWARE: Tháng / YTD / Cả năm ===
-  const scope = window._plScope || 'ytd';
+  const scope = window._plScope || 'month';
   let scopeLabel;
   const allExits = (DB.employees||[]).filter(e => e.status === 'exit').map(e => ({
     ...e, _exitD: _parseExitDate((cd[e.id]||{}).exitDate)
@@ -3233,6 +3257,87 @@ function _plRenderIntelligence(el, year, month){
       icon: '💼',
       title: `OT/Casual = ${_plFmtMoney(casual.total)}đ — vượt 5% tổng labor`,
       detail: `Có thể do thiếu HC hoặc workload cao. Cân nhắc tuyển thay vì OT.`,
+    });
+  }
+
+  // 11. CONTRACT WARNINGS — hợp đồng sắp hết / quá hạn / chưa có HĐ
+  const _today = new Date(); _today.setHours(0,0,0,0);
+  const _addDays = (d, n) => { const x = new Date(d); x.setDate(x.getDate()+n); return x; };
+  const activeEmps = (DB.employees||[]).filter(e => getEffectiveStatus(e) !== 'exit');
+
+  // Build empId → latest contract
+  const latestContractByEmp = {};
+  (DB.contracts||[]).forEach(c => {
+    if(!c.empId || !c.startDate) return;
+    const cur = latestContractByEmp[c.empId];
+    if(!cur || c.startDate > cur.startDate) latestContractByEmp[c.empId] = c;
+  });
+
+  let probationEndingSoon = [];   // ≤7d
+  let termEndingSoon = [];        // ≤30d
+  let expiredContracts = [];      // endDate < today, emp still active
+  let noContractEmps = [];        // joined > 30d ago, no contract record
+
+  activeEmps.forEach(e => {
+    const ct = latestContractByEmp[e.id];
+    if(!ct){
+      // Check if joined > 30 days ago (otherwise still in onboarding)
+      const joinedD = _parseExitDate(e.joined);
+      if(joinedD && _plDaysBetween(joinedD, _today) > 30){
+        noContractEmps.push({id:e.id, name:e.name, days: _plDaysBetween(joinedD, _today)});
+      }
+      return;
+    }
+    if(!ct.endDate || ct.type === 'indefinite') return; // vô thời hạn → OK
+    const endD = _parseExitDate(ct.endDate);
+    if(!endD) return;
+    const daysToEnd = Math.round((endD - _today) / 86400000);
+    if(daysToEnd < 0){
+      expiredContracts.push({id:e.id, name:e.name, type:ct.type, endDate:ct.endDate, daysPast: -daysToEnd});
+    } else if(ct.type === 'probation' && daysToEnd <= 7){
+      probationEndingSoon.push({id:e.id, name:e.name, endDate:ct.endDate, daysToEnd});
+    } else if((ct.type === 'term12' || ct.type === 'term24') && daysToEnd <= 30){
+      termEndingSoon.push({id:e.id, name:e.name, type:ct.type, endDate:ct.endDate, daysToEnd});
+    }
+  });
+
+  if(expiredContracts.length > 0){
+    stories.push({
+      severity: 'critical',
+      icon: '📄',
+      title: `${expiredContracts.length} HĐ đã quá hạn, NV vẫn đang làm`,
+      detail: `Rủi ro pháp lý — phải gia hạn/ký mới NGAY. Ví dụ: ${expiredContracts.slice(0,3).map(c => `${c.name} (quá ${c.daysPast}d)`).join(', ')}${expiredContracts.length>3?'...':''}`,
+      action: 'Review module Hợp đồng',
+    });
+  }
+
+  if(probationEndingSoon.length > 0){
+    stories.push({
+      severity: 'warning',
+      icon: '⏰',
+      title: `${probationEndingSoon.length} NV thử việc sắp kết thúc (≤7 ngày)`,
+      detail: `Cần đánh giá KQCV thử việc và quyết định ký chính thức/không. Ví dụ: ${probationEndingSoon.slice(0,3).map(c => `${c.name} (${c.daysToEnd}d)`).join(', ')}${probationEndingSoon.length>3?'...':''}`,
+      action: 'Review module Hợp đồng → lọc Thử việc',
+    });
+  }
+
+  if(termEndingSoon.length > 0){
+    stories.push({
+      severity: 'warning',
+      icon: '📋',
+      title: `${termEndingSoon.length} HĐ xác định thời hạn sắp hết (≤30 ngày)`,
+      detail: `Chuẩn bị tái ký hoặc thanh lý. Ví dụ: ${termEndingSoon.slice(0,3).map(c => `${c.name} (${c.daysToEnd}d)`).join(', ')}${termEndingSoon.length>3?'...':''}`,
+      action: 'Review module Hợp đồng → lọc sắp hết hạn',
+    });
+  }
+
+  if(noContractEmps.length > 0){
+    stories.push({
+      severity: 'warning',
+      icon: '⚠️',
+      title: `${noContractEmps.length} NV chưa có thông tin HĐ`,
+      detail: `Đã vào làm >30 ngày nhưng chưa có record HĐ. Cần cập nhật để tránh rủi ro tuân thủ. Ví dụ: ${noContractEmps.slice(0,3).map(c => `${c.name} (${c.days}d)`).join(', ')}${noContractEmps.length>3?'...':''}`,
+      action: 'Review module Hợp đồng',
     });
   }
 
@@ -4446,7 +4551,7 @@ function _plRenderTurnover(el, year, month){
   // Scope-adapted turnover rate computed below after scopeSet is defined
 
   // === SCOPE FILTER (Tháng / YTD / Cả năm) — affects sections below KPI cards ===
-  const scope = window._plScope || 'ytd';
+  const scope = window._plScope || 'month';
   let scopeSet, scopeLabel;
   if(scope === 'month'){
     scopeSet = exitedEmps.filter(r => r.exitDate.getFullYear() === year && r.exitDate.getMonth() === month);
