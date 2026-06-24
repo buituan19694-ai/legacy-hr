@@ -1024,7 +1024,7 @@ const FS_DOC_MAP = {
   config:     ['customFields','rewardTypes','perfReviewTypes','promoTypes','company',
                'dashboardConfig','brandConfig',
                'disciplineSeverityConfig','requiredFieldsConfig',
-               'contractTemplates','quickFilterPrefs','recReportConfig','perfReportConfig','plConfig',
+               'contractTemplates','quickFilterPrefs','recReportConfig','perfReportConfig','plConfig','trainingKpi',
                '_rewardTypesV2','_levelReset2026','_removedProbationStatus','_normalizedDates2026','_cleanedCandYearShards'],
 };
 // manningPlan + manningActual được shard theo năm qua _pushDynamicKey → KHÔNG để trong FS_DOC_MAP
@@ -1534,6 +1534,8 @@ if(!DB.promoTypes   || Array.isArray(DB.promoTypes))   DB.promoTypes   = {};
 if(!DB.plRevenue    || Array.isArray(DB.plRevenue))    DB.plRevenue    = {};
 if(!DB.plActionPlan || Array.isArray(DB.plActionPlan)) DB.plActionPlan = {};
 if(!DB.plConfig     || Array.isArray(DB.plConfig))     DB.plConfig     = {};
+// Training KPI config — {monthlyHoursTarget: 1} mặc định 1h/tháng/NV
+if(!DB.trainingKpi  || Array.isArray(DB.trainingKpi))  DB.trainingKpi  = {monthlyHoursTarget: 1};
 window._dirtyKeys = new Set();
 DB = new Proxy(DB, {
   set(target, key, value){
@@ -2546,6 +2548,24 @@ function _plFmtMoney(v){
   return v.toFixed(0);
 }
 
+// Money with raw tooltip — for amount displays
+function _plMoneyTip(v){
+  const raw = (parseFloat(v)||0).toLocaleString('vi-VN') + 'đ';
+  return `<span title="${raw}">${_plFmtMoney(v)}đ</span>`;
+}
+
+// Department filter helpers — read window._plDept
+window._plFilterEmp = function(emp){
+  const dept = window._plDept;
+  if(!dept) return true;
+  return emp && emp.deptId === dept;
+};
+window._plFilterByDeptKey = function(deptId){
+  const dept = window._plDept;
+  if(!dept) return true;
+  return deptId === dept;
+};
+
 // Period selector — handle merged Month + Scope selection
 window._plSetPeriod = function(val){
   if(!val) return;
@@ -2564,6 +2584,35 @@ window._plSetPeriod = function(val){
     // Khi xem Cả năm, các tab tháng cụ thể dùng tháng 12 (hết năm)
     window._plMonth = 11;
   }
+  render();
+};
+
+// Create Action Plan item from a Story (Intelligence tab)
+window._plAddActionFromStory = function(title, target){
+  const y = window._plYear || new Date().getFullYear();
+  const m = window._plMonth !== undefined ? window._plMonth : new Date().getMonth();
+  if(!DB.plActionPlan) DB.plActionPlan = {};
+  if(!DB.plActionPlan[y]) DB.plActionPlan[y] = {};
+  if(!DB.plActionPlan[y][m]) DB.plActionPlan[y][m] = [];
+
+  // Check duplicate
+  if(DB.plActionPlan[y][m].some(a => a.title === title)){
+    if(typeof toast === 'function') toast('Action này đã tồn tại trong Action Plan tháng này', 'info');
+    return;
+  }
+  DB.plActionPlan[y][m].push({
+    id: (Date.now()+Math.random()).toString(36),
+    title: title,
+    target: target || '',
+    expectedSaving: 0,
+    owner: '',
+    status: 'Planned',
+    createdAt: new Date().toISOString(),
+    createdFromStory: true,
+  });
+  if(typeof saveData === 'function') saveData(['plActionPlan']);
+  if(typeof toast === 'function') toast('✓ Đã thêm vào HR Action Plan tháng '+(m+1)+'/'+y, 'success');
+  window._plTab = 'action';
   render();
 };
 
@@ -2626,7 +2675,9 @@ function _plGetPayrollBudgetMonth(year, month){
   const plan = ((DB.manningPlan||{})[year]||{}).depts || {};
   const bhRate = parseFloat((DB.manningConfig||{}).bhRate) || 0.225;
   const result = {salary:0, bonus:0, bh:0, meal:0, other:0, total:0, byDept:{}};
+  const deptFilter = window._plDept || null; // null = all
   Object.entries(plan).forEach(([deptId, dp])=>{
+    if(deptFilter && deptId !== deptFilter) return;
     let deptTotal = 0;
     (dp.positions||[]).forEach(p=>{
       const bs = parseFloat(p.budgetSalary)||0;
@@ -2672,6 +2723,7 @@ function _plGetPayrollActualMonth(year, month){
   const byDept = {};
 
   (DB.employees||[]).forEach(e=>{
+    if(window._plDept && e.deptId !== window._plDept) return; // dept filter
     // Check if active during this month
     const joined = e.joined ? new Date(e.joined) : null;
     if(joined && joined > monthEnd) return; // not yet joined
@@ -2709,6 +2761,7 @@ function _plGetCasualCost(year, month){
   let total = 0, totalQty = 0;
   let byDept = {};
   (DB.casuals||[]).forEach(r=>{
+    if(window._plDept && r.deptId !== window._plDept) return;
     if(parseInt(r.year) !== year || parseInt(r.month) !== targetMonth) return;
     const cost = parseFloat(r.total)||0;
     total += cost;
@@ -2731,6 +2784,7 @@ function _plGetInternCost(year, month){
   let activeCount = 0, totalCost = 0;
   let byDept = {};
   (DB.trainees||[]).forEach(t=>{
+    if(window._plDept && t.deptId !== window._plDept) return;
     if(!t.startDate) return;
     const start = new Date(t.startDate);
     const end = t.endDate ? new Date(t.endDate) : new Date(2099,11,31);
@@ -2810,6 +2864,7 @@ function _plGetLeaveLiability(year, statusFilter){
   let scope = [];
 
   (DB.employees||[]).forEach(e=>{
+    if(window._plDept && e.deptId !== window._plDept) return;
     const st = getEffectiveStatus(e);
     if(statusFilter === 'active' && st === 'exit') return;
     if(statusFilter === 'exit' && st !== 'exit') return;
@@ -2818,6 +2873,7 @@ function _plGetLeaveLiability(year, statusFilter){
 
   // Add active trainees (status not exit, endDate not past, etc.)
   (DB.trainees||[]).forEach(tr=>{
+    if(window._plDept && tr.deptId !== window._plDept) return;
     let isActive = true;
     if(tr.status === 'exit' || tr.status === 'early_exit') isActive = false;
     else if(tr.status === 'active') isActive = true;
@@ -2871,6 +2927,11 @@ function _plGetLeaveLiability(year, statusFilter){
 
 // ===== MAIN RENDER =====
 function renderAnalytics(main){
+  // Permission gate — block if user lacks plreview access (match pattern các module khác)
+  if(!window.canDo('plreview','view')){
+    main.innerHTML='<div class="topbar"><div class="topbar-left"><h1 class="page-title">🔒 Không có quyền</h1><div class="page-sub">Bạn không được cấp quyền truy cập HR P&L Review. Liên hệ admin để được trao quyền.</div></div></div>';
+    return;
+  }
   const today = new Date();
   const curYear = window._plYear || today.getFullYear();
   const curMonth = window._plMonth !== undefined ? window._plMonth : today.getMonth();
@@ -2898,7 +2959,7 @@ function renderAnalytics(main){
       <div class="topbar-left">
         <div class="crumb">Tổng quan · <span>HR P&L Review</span></div>
         <h1 class="page-title">HR <em>P&L Review</em></h1>
-        <div class="page-sub">Dashboard cho cuộc họp P&L hàng tháng · Labor Cost · Productivity · Recruitment Risk</div>
+        <div class="page-sub">Dashboard cho cuộc họp P&L hàng tháng · Labor Cost · Productivity · Recruitment Risk${window._plDept ? ` · <span style="background:var(--accent);color:#000;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:700">🏢 ${escapeHtml(((DB.departments||[]).find(d=>d.id===window._plDept)||{}).name||'?')}</span>` : ''}</div>
       </div>
       <div class="topbar-right" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
         <select onchange="window._plYear=parseInt(this.value);render()" style="background:var(--bg-card);color:var(--ink);border:1px solid var(--border);padding:6px 12px;border-radius:6px;font-size:12px">
@@ -2915,6 +2976,10 @@ function renderAnalytics(main){
             <option value="year" ${(window._plScope||'month')==='year'?'selected':''}>Cả năm ${curYear}</option>
           </optgroup>
         </select>
+        <select onchange="window._plDept=this.value;render()" style="background:var(--bg-card);color:var(--ink);border:1px solid var(--border);padding:6px 12px;border-radius:6px;font-size:12px;min-width:140px" title="Lọc theo phòng ban — áp dụng cho tất cả tabs">
+          <option value="" ${!window._plDept?'selected':''}>🏢 Tất cả phòng ban</option>
+          ${(DB.departments||[]).map(d=>`<option value="${d.id}" ${window._plDept===d.id?'selected':''}>${escapeHtml(d.name)}</option>`).join('')}
+        </select>
         <button onclick="window.print()" style="background:transparent;color:var(--ink-dim);border:1px solid var(--border);padding:6px 12px;border-radius:6px;font-size:12px;cursor:pointer" title="In ra để mang vào họp P&L">🖨 In</button>
       </div>
     </div>
@@ -2922,7 +2987,8 @@ function renderAnalytics(main){
     <style>
       .pl-card{background:var(--bg-card);border:1px solid var(--border);border-radius:12px;padding:18px 20px;margin-bottom:16px}
       .pl-kpi-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}
-      .pl-kpi{background:var(--bg-elev);padding:14px 16px;border-radius:10px;border-left:3px solid var(--accent)}
+      .pl-kpi{background:var(--bg-elev);padding:14px 16px;border-radius:10px;border-left:3px solid var(--accent);transition:transform .15s,background .15s}
+      .pl-kpi[onclick]:hover{transform:translateY(-1px);background:var(--bg-card)}
       .pl-kpi-label{font-size:10.5px;color:var(--ink-muted);text-transform:uppercase;letter-spacing:.05em;font-weight:600;margin-bottom:6px}
       .pl-kpi-value{font-family:'JetBrains Mono',monospace;font-size:22px;font-weight:700;color:var(--ink)}
       .pl-kpi-sub{font-size:11px;color:var(--ink-dim);margin-top:4px}
@@ -3341,6 +3407,61 @@ function _plRenderIntelligence(el, year, month){
     });
   }
 
+  // 12. BIRTHDAYS — NV sinh nhật tháng này (nhắc budget quà)
+  const birthdayThisMonth = activeEmps.filter(e => {
+    const dob = (cd[e.id]||{}).dob || e.dob;
+    if(!dob) return false;
+    const d = _parseExitDate(dob);
+    return d && d.getMonth() === month;
+  });
+  if(birthdayThisMonth.length >= 10){
+    stories.push({
+      severity: 'info',
+      icon: '🎂',
+      title: `${birthdayThisMonth.length} NV sinh nhật tháng ${month+1}`,
+      detail: `Chuẩn bị budget quà sinh nhật (thường 200-300k/NV). Total ước ${_plFmtMoney(birthdayThisMonth.length * 250000)}đ.`,
+    });
+  }
+
+  // 13. KPI REVIEW pending — Performance review chưa hoàn thành
+  const allKpiReviews = DB.kpiReviews || [];
+  const pendingReviews = allKpiReviews.filter(r => {
+    if(r.year !== year) return false;
+    return r.status === 'pending' || r.status === 'draft' || !r.status;
+  });
+  if(pendingReviews.length >= 5){
+    stories.push({
+      severity: 'warning',
+      icon: '📝',
+      title: `${pendingReviews.length} đánh giá KPI chưa hoàn thành`,
+      detail: `Năm ${year} có ${pendingReviews.length} review pending. Nhắc managers hoàn thành để có dữ liệu cho thưởng/thăng chức.`,
+      action: 'Review module Đánh giá Performance',
+    });
+  }
+
+  // 14. DISCIPLINE trending up — vi phạm tăng
+  const disThisMonth = (DB.disciplineRecords||[]).filter(d => {
+    if(!d.date) return false;
+    const dd = _parseExitDate(d.date);
+    return dd && dd.getFullYear()===year && dd.getMonth()===month;
+  });
+  const disLastMonth = (DB.disciplineRecords||[]).filter(d => {
+    if(!d.date) return false;
+    const dd = _parseExitDate(d.date);
+    if(!dd) return false;
+    const pm = month === 0 ? 11 : month-1;
+    const py = month === 0 ? year-1 : year;
+    return dd.getFullYear()===py && dd.getMonth()===pm;
+  });
+  if(disThisMonth.length >= 3 && disThisMonth.length > disLastMonth.length){
+    stories.push({
+      severity: 'warning',
+      icon: '⚠️',
+      title: `Vi phạm kỷ luật tăng: ${disThisMonth.length} vs ${disLastMonth.length} tháng trước`,
+      detail: `Cần investigate nguyên nhân — có thể do quản lý lỏng, áp lực công việc, hoặc cultural drift.`,
+    });
+  }
+
   // Sort by severity
   const sevOrder = {critical: 0, warning: 1, info: 2, success: 3};
   stories.sort((a,b) => sevOrder[a.severity] - sevOrder[b.severity]);
@@ -3360,37 +3481,37 @@ function _plRenderIntelligence(el, year, month){
         <div style="font-size:11px;color:var(--ink-dim)">${stories.filter(s=>s.severity==='critical').length} 🚨 critical · ${stories.filter(s=>s.severity==='warning').length} ⚠️ warning · ${stories.filter(s=>s.severity==='success').length} ✅ good</div>
       </div>
 
-      <!-- 6 Headline KPIs -->
+      <!-- 6 Headline KPIs - clickable to drill into relevant tab -->
       <div class="pl-kpi-grid">
-        <div class="pl-kpi" style="border-left-color:${laborCostPct!==null && laborCostPct>benchmark.warning?'var(--danger)':laborCostPct!==null && laborCostPct>benchmark.good?'var(--warning)':'var(--success)'}">
+        <div class="pl-kpi" onclick="window._plTab='labor';render()" style="cursor:pointer;border-left-color:${laborCostPct!==null && laborCostPct>benchmark.warning?'var(--danger)':laborCostPct!==null && laborCostPct>benchmark.good?'var(--warning)':'var(--success)'}" title="Click → Labor Cost tab">
           <div class="pl-kpi-label">Labor Cost %</div>
           <div class="pl-kpi-value">${laborCostPct!==null?laborCostPct.toFixed(1)+'%':'—'}</div>
-          <div class="pl-kpi-sub">benchmark ${benchmark.good}-${benchmark.warning}%</div>
+          <div class="pl-kpi-sub">benchmark ${benchmark.good}-${benchmark.warning}% · click để xem</div>
         </div>
-        <div class="pl-kpi" style="border-left-color:${laborVar<0?'var(--danger)':'var(--success)'}">
+        <div class="pl-kpi" onclick="window._plTab='labor';render()" style="cursor:pointer;border-left-color:${laborVar<0?'var(--danger)':'var(--success)'}" title="Click → Labor Cost tab">
           <div class="pl-kpi-label">Variance vs Budget</div>
           <div class="pl-kpi-value" style="color:${laborVar<0?'var(--danger)':'var(--success)'}">${laborVar<0?'-':'+'}${_plFmtMoney(Math.abs(laborVar))}đ</div>
-          <div class="pl-kpi-sub">${totalLaborBudget>0?((laborVar/totalLaborBudget)*100).toFixed(1)+'%':'—'} of budget</div>
+          <div class="pl-kpi-sub">${totalLaborBudget>0?((laborVar/totalLaborBudget)*100).toFixed(1)+'%':'—'} of budget · click để xem</div>
         </div>
-        <div class="pl-kpi" style="border-left-color:${Math.abs(hcVar)>10?'var(--warning)':'var(--success)'}">
+        <div class="pl-kpi" onclick="window._plTab='manpower';render()" style="cursor:pointer;border-left-color:${Math.abs(hcVar)>10?'var(--warning)':'var(--success)'}" title="Click → Manpower tab">
           <div class="pl-kpi-label">HC vs Plan</div>
           <div class="pl-kpi-value">${currentActiveHC} / ${totalPlannedHC}</div>
-          <div class="pl-kpi-sub">${hcVar>=0?'+':''}${hcVar} NV</div>
+          <div class="pl-kpi-sub">${hcVar>=0?'+':''}${hcVar} NV · click để xem</div>
         </div>
-        <div class="pl-kpi" style="border-left-color:${turnoverRate!==null && turnoverIsAnnualized && turnoverRate>50?'var(--danger)':turnoverRate!==null && turnoverIsAnnualized && turnoverRate>30?'var(--warning)':'var(--success)'}">
+        <div class="pl-kpi" onclick="window._plTab='turnover';render()" style="cursor:pointer;border-left-color:${turnoverRate!==null && turnoverIsAnnualized && turnoverRate>50?'var(--danger)':turnoverRate!==null && turnoverIsAnnualized && turnoverRate>30?'var(--warning)':'var(--success)'}" title="Click → Turnover tab">
           <div class="pl-kpi-label">${turnoverIsAnnualized?'Turnover (annualized)':scope==='month'?'Turnover rate tháng':'Turnover rate năm'}</div>
           <div class="pl-kpi-value">${turnoverRate!==null?turnoverRate.toFixed(1)+'%':'—'}</div>
           <div class="pl-kpi-sub">${scopeExits.length} NV · ${scopeLabel}</div>
         </div>
-        <div class="pl-kpi" style="border-left-color:${redVacancies.length>0?'var(--danger)':amberVacancies.length>0?'var(--warning)':'var(--success)'}">
+        <div class="pl-kpi" onclick="window._plTab='recruitment';render()" style="cursor:pointer;border-left-color:${redVacancies.length>0?'var(--danger)':amberVacancies.length>0?'var(--warning)':'var(--success)'}" title="Click → Recruitment Risk tab">
           <div class="pl-kpi-label">Vacancies open</div>
           <div class="pl-kpi-value">${vacancyData.length}</div>
           <div class="pl-kpi-sub">${redVacancies.length} 🔴 · ${amberVacancies.length} 🟡 · hire ${hiredThisMonth.length}/tháng</div>
         </div>
-        <div class="pl-kpi" style="border-left-color:var(--info)">
+        <div class="pl-kpi" onclick="window._plTab='liability';render()" style="cursor:pointer;border-left-color:var(--info)" title="Click → AL/CL Liability tab">
           <div class="pl-kpi-label">Liability AL+CL</div>
-          <div class="pl-kpi-value">${_plFmtMoney(liab.al.total + liab.cl.total)}đ</div>
-          <div class="pl-kpi-sub">${(liab.al.days + liab.cl.days).toFixed(0)} ngày tồn</div>
+          <div class="pl-kpi-value" title="Raw: ${(liab.al.total + liab.cl.total).toLocaleString('vi-VN')}đ">${_plFmtMoney(liab.al.total + liab.cl.total)}đ</div>
+          <div class="pl-kpi-sub">${(liab.al.days + liab.cl.days).toFixed(0)} ngày tồn · click để xem</div>
         </div>
       </div>
     </div>
@@ -3403,8 +3524,15 @@ function _plRenderIntelligence(el, year, month){
         ${stories.map(s => {
           const borderColor = s.severity==='critical'?'var(--danger)':s.severity==='warning'?'var(--warning)':s.severity==='success'?'var(--success)':'var(--info)';
           const bgColor = s.severity==='critical'?'rgba(212,127,127,.06)':s.severity==='warning'?'rgba(255,200,120,.05)':s.severity==='success'?'rgba(126,198,153,.05)':'rgba(126,182,232,.05)';
+          const canAct = s.severity === 'critical' || s.severity === 'warning';
+          // Escape quotes for inline onclick
+          const escTitle = (s.title||'').replace(/'/g,"\\'").replace(/"/g,'&quot;');
+          const escTarget = (s.action||s.detail||'').replace(/'/g,"\\'").replace(/"/g,'&quot;');
           return `<div style="border-left:3px solid ${borderColor};background:${bgColor};padding:10px 14px;border-radius:0 6px 6px 0">
-            <div style="font-size:13px;font-weight:600;color:var(--ink);margin-bottom:4px">${s.icon} ${escapeHtml(s.title)}</div>
+            <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:4px">
+              <div style="font-size:13px;font-weight:600;color:var(--ink);flex:1">${s.icon} ${escapeHtml(s.title)}</div>
+              ${canAct ? `<button onclick="_plAddActionFromStory('${escTitle}', '${escTarget}')" style="background:transparent;border:1px solid var(--border);color:var(--ink-dim);padding:3px 10px;border-radius:4px;font-size:10.5px;font-weight:600;cursor:pointer;white-space:nowrap" title="Thêm vào HR Action Plan tháng này">➕ Tạo Action</button>` : ''}
+            </div>
             <div style="font-size:11.5px;color:var(--ink-dim);line-height:1.5">${escapeHtml(s.detail)}</div>
             ${s.action ? `<div style="font-size:11px;color:var(--accent);margin-top:6px;font-weight:600">→ ${escapeHtml(s.action)}</div>` : ''}
           </div>`;
@@ -3459,6 +3587,24 @@ function _plRenderLaborCost(el, year, month){
   const variance = totalBudget - totalActual; // positive = under budget (good)
   const variancePct = totalBudget > 0 ? (variance/totalBudget*100) : null;
 
+  // MoM — Last Month comparison
+  const prevMonth = month === 0 ? 11 : month - 1;
+  const prevYear = month === 0 ? year - 1 : year;
+  const prevActual = _plGetPayrollActualMonth(prevYear, prevMonth);
+  const prevCasual = _plGetCasualCost(prevYear, prevMonth);
+  const prevIntern = _plGetInternCost(prevYear, prevMonth);
+  const prevTotalActual = prevActual.total + prevCasual.total + prevIntern.totalCost;
+  const momDelta = totalActual - prevTotalActual;
+  const momPct = prevTotalActual > 0 ? (momDelta/prevTotalActual*100) : null;
+
+  // LY — Last Year same month
+  const lyActual = _plGetPayrollActualMonth(year-1, month);
+  const lyCasual = _plGetCasualCost(year-1, month);
+  const lyIntern = _plGetInternCost(year-1, month);
+  const lyTotalActual = lyActual.total + lyCasual.total + lyIntern.totalCost;
+  const yoyDelta = totalActual - lyTotalActual;
+  const yoyPct = lyTotalActual > 0 ? (yoyDelta/lyTotalActual*100) : null;
+
   // 5 categories breakdown rows
   const categories = [
     {label:'Lương cơ bản', actual: actual.salary, budget: budget.salary},
@@ -3480,22 +3626,22 @@ function _plRenderLaborCost(el, year, month){
       <div class="pl-kpi-grid">
         <div class="pl-kpi" style="border-left-color:var(--accent)">
           <div class="pl-kpi-label">Budget tháng</div>
-          <div class="pl-kpi-value">${_plFmtMoney(totalBudget)}đ</div>
+          <div class="pl-kpi-value" title="Raw: ${(totalBudget).toLocaleString('vi-VN')}đ">${_plFmtMoney(totalBudget)}đ</div>
           <div class="pl-kpi-sub">${actual.hc > 0 ? `Annual ≈ ${_plFmtMoney(totalBudget*12)}đ` : 'theo Manning Plan'}</div>
         </div>
         <div class="pl-kpi" style="border-left-color:${variance<0?'var(--danger)':'var(--success)'}">
           <div class="pl-kpi-label">Actual tháng</div>
-          <div class="pl-kpi-value">${_plFmtMoney(totalActual)}đ</div>
-          <div class="pl-kpi-sub">${actual.hc} NV active</div>
+          <div class="pl-kpi-value" title="Raw: ${(totalActual).toLocaleString('vi-VN')}đ">${_plFmtMoney(totalActual)}đ</div>
+          <div class="pl-kpi-sub">${actual.hc} NV · MoM ${momPct!==null?(momPct>=0?'<span style="color:var(--danger)">↑':'<span style="color:var(--success)">↓')+Math.abs(momPct).toFixed(1)+'%</span>':'—'} · LY ${yoyPct!==null?(yoyPct>=0?'<span style="color:var(--danger)">↑':'<span style="color:var(--success)">↓')+Math.abs(yoyPct).toFixed(1)+'%</span>':'—'}</div>
         </div>
         <div class="pl-kpi" style="border-left-color:${variance>=0?'var(--success)':'var(--danger)'}">
           <div class="pl-kpi-label">Variance</div>
-          <div class="pl-kpi-value" style="color:${variance>=0?'var(--success)':'var(--danger)'}">${variance>=0?'+':''}${_plFmtMoney(variance)}đ</div>
+          <div class="pl-kpi-value" title="Raw: ${(variance).toLocaleString('vi-VN')}đ" style="color:${variance>=0?'var(--success)':'var(--danger)'}">${variance>=0?'+':''}${_plFmtMoney(variance)}đ</div>
           <div class="pl-kpi-sub">${variancePct!==null?(variancePct>=0?'+':'')+variancePct.toFixed(1)+'% vs Budget':'—'}</div>
         </div>
         <div class="pl-kpi" style="border-left-color:var(--warning)">
           <div class="pl-kpi-label">OT / Casual</div>
-          <div class="pl-kpi-value" style="color:var(--warning)">${_plFmtMoney(casual.total)}đ</div>
+          <div class="pl-kpi-value" title="Raw: ${(casual.total).toLocaleString('vi-VN')}đ" style="color:var(--warning)">${_plFmtMoney(casual.total)}đ</div>
           <div class="pl-kpi-sub">${casual.totalQty||0} lượt · từ module Casual</div>
         </div>
         <div class="pl-kpi" style="border-left-color:var(--info)">
@@ -3605,12 +3751,23 @@ function _plRenderManpower(el, year, month){
   // Get planned headcount from manningPlan + actual from current employees
   const plan = ((DB.manningPlan||{})[year]||{}).depts || {};
   const cd = DB.customData||{};
+  const deptFilter = window._plDept || null;
+
+  // MoM — last month's HC for delta
+  const prevMonth = month === 0 ? 11 : month - 1;
+  const prevYear = month === 0 ? year - 1 : year;
+  const prevActual = _plGetPayrollActualMonth(prevYear, prevMonth);
+  const momHcDelta = (() => {
+    const currentHC = (DB.employees||[]).filter(e => getEffectiveStatus(e)!=='exit' && (!deptFilter || e.deptId===deptFilter)).length;
+    return currentHC - prevActual.hc;
+  })();
 
   const rows = [];
   let totBudget = 0, totActual = 0, totSalaryBudget = 0, totSalaryActual = 0;
   const bhRate = parseFloat((DB.manningConfig||{}).bhRate) || 0.225;
 
   (DB.departments||[]).forEach(d=>{
+    if(deptFilter && d.id !== deptFilter) return;
     const dp = plan[d.id]||{positions:[]};
     const budgetHC = (dp.positions||[]).reduce((s,p)=>s+(parseInt(p.planned)||0),0);
     const actualHC = (DB.employees||[]).filter(e=>e.deptId===d.id && getEffectiveStatus(e)!=='exit').length;
@@ -3653,7 +3810,7 @@ function _plRenderManpower(el, year, month){
         <div class="pl-kpi" style="border-left-color:${totActual<totBudget?'var(--danger)':'var(--success)'}">
           <div class="pl-kpi-label">Tổng Actual HC</div>
           <div class="pl-kpi-value">${totActual}</div>
-          <div class="pl-kpi-sub">NV đang làm</div>
+          <div class="pl-kpi-sub">NV đang làm · MoM ${momHcDelta>0?'<span style="color:var(--success)">+'+momHcDelta+'</span>':momHcDelta<0?'<span style="color:var(--danger)">'+momHcDelta+'</span>':'0'} NV</div>
         </div>
         <div class="pl-kpi" style="border-left-color:${totActual-totBudget<0?'var(--danger)':'var(--warning)'}">
           <div class="pl-kpi-label">Variance</div>
@@ -3723,12 +3880,23 @@ function _plRenderProductivity(el, year, month){
   const revLY = _plGetRevenueMonth(year-1, month);
   const actualLY = _plGetPayrollActualMonth(year-1, month);
 
+  // Last Month (MoM)
+  const prevMonth = month === 0 ? 11 : month - 1;
+  const prevYear = month === 0 ? year - 1 : year;
+  const revLM = _plGetRevenueMonth(prevYear, prevMonth);
+  const actualLM = _plGetPayrollActualMonth(prevYear, prevMonth);
+  const casualLM = _plGetCasualCost(prevYear, prevMonth);
+  const internLM = _plGetInternCost(prevYear, prevMonth);
+  const totalLaborLM = actualLM.total + casualLM.total + internLM.totalCost;
+
   // Compute KPIs
   const laborPct = rev.actual > 0 ? (totalLabor/rev.actual*100) : null;
   const laborPctBudget = rev.budget > 0 ? (totalLabor/rev.budget*100) : null;
   const laborPctLY = revLY.actual > 0 ? (actualLY.total/revLY.actual*100) : null;
+  const laborPctLM = revLM.actual > 0 ? (totalLaborLM/revLM.actual*100) : null;
   const revPerEmp = actual.hc > 0 ? rev.actual/actual.hc : null;
   const revPerEmpLY = actualLY.hc > 0 ? revLY.actual/actualLY.hc : null;
+  const revPerEmpLM = actualLM.hc > 0 ? revLM.actual/actualLM.hc : null;
 
   el.innerHTML = `
     <!-- Revenue input -->
@@ -3766,22 +3934,22 @@ function _plRenderProductivity(el, year, month){
         <div class="pl-kpi" style="border-left-color:${laborPct===null?'var(--ink-muted)':laborPct<=18?'var(--success)':laborPct<=25?'var(--warning)':'var(--danger)'}">
           <div class="pl-kpi-label">Labor Cost %</div>
           <div class="pl-kpi-value" style="color:${laborPct===null?'var(--ink-muted)':laborPct<=18?'var(--success)':laborPct<=25?'var(--warning)':'var(--danger)'}">${laborPct!==null?laborPct.toFixed(1)+'%':'—'}</div>
-          <div class="pl-kpi-sub">${laborPctBudget!==null?`Budget: ${laborPctBudget.toFixed(1)}%`:'cần nhập Revenue'}</div>
-        </div>
-        <div class="pl-kpi" style="border-left-color:var(--info)">
-          <div class="pl-kpi-label">Labor Cost %</div>
-          <div class="pl-kpi-value" style="color:var(--ink-dim);font-size:20px">${laborPctLY!==null?laborPctLY.toFixed(1)+'%':'—'}</div>
-          <div class="pl-kpi-sub">cùng kỳ năm ${year-1}</div>
+          <div class="pl-kpi-sub">${laborPctBudget!==null?`Budget ${laborPctBudget.toFixed(1)}%`:'cần nhập Revenue'} · LM ${laborPctLM!==null?laborPctLM.toFixed(1)+'%':'—'} · LY ${laborPctLY!==null?laborPctLY.toFixed(1)+'%':'—'}</div>
         </div>
         <div class="pl-kpi" style="border-left-color:var(--accent)">
           <div class="pl-kpi-label">Revenue / Employee</div>
-          <div class="pl-kpi-value">${revPerEmp!==null?_plFmtMoney(revPerEmp)+'đ':'—'}</div>
-          <div class="pl-kpi-sub">tháng này</div>
+          <div class="pl-kpi-value" title="Raw: ${revPerEmp!==null?revPerEmp.toLocaleString('vi-VN')+'đ':'—'}">${revPerEmp!==null?_plFmtMoney(revPerEmp)+'đ':'—'}</div>
+          <div class="pl-kpi-sub">LM ${revPerEmpLM!==null?_plFmtMoney(revPerEmpLM)+'đ':'—'} · LY ${revPerEmpLY!==null?_plFmtMoney(revPerEmpLY)+'đ':'—'}</div>
         </div>
         <div class="pl-kpi" style="border-left-color:var(--info)">
-          <div class="pl-kpi-label">Revenue / Employee</div>
-          <div class="pl-kpi-value" style="color:var(--ink-dim);font-size:20px">${revPerEmpLY!==null?_plFmtMoney(revPerEmpLY)+'đ':'—'}</div>
-          <div class="pl-kpi-sub">cùng kỳ năm ${year-1}</div>
+          <div class="pl-kpi-label">Revenue tháng này</div>
+          <div class="pl-kpi-value" title="Raw: ${(parseFloat(rev.actual)||0).toLocaleString('vi-VN')}đ">${_plFmtMoney(parseFloat(rev.actual)||0)}đ</div>
+          <div class="pl-kpi-sub">LM ${_plFmtMoney(parseFloat(revLM.actual)||0)}đ · LY ${_plFmtMoney(parseFloat(revLY.actual)||0)}đ</div>
+        </div>
+        <div class="pl-kpi" style="border-left-color:var(--warning)">
+          <div class="pl-kpi-label">Total Labor Cost</div>
+          <div class="pl-kpi-value" title="Raw: ${totalLabor.toLocaleString('vi-VN')}đ">${_plFmtMoney(totalLabor)}đ</div>
+          <div class="pl-kpi-sub">LM ${_plFmtMoney(totalLaborLM)}đ · LY ${_plFmtMoney(actualLY.total)}đ</div>
         </div>
       </div>
     </div>
@@ -18090,6 +18258,177 @@ function renderTraining(main){
       ` : ''}
     </div>
 
+    <!-- TRAINING KPI tracking -->
+    ${(() => {
+      const cfg = DB.trainingKpi || {monthlyHoursTarget: 1};
+      const monthlyTarget = parseFloat(cfg.monthlyHoursTarget) || 1;
+      // Number of months in the period
+      let monthsInPeriod = 1;
+      if(p.mode === 'year') monthsInPeriod = 12;
+      else if(p.mode === 'all') monthsInPeriod = 0; // no target meaningful
+      const targetPerEmp = monthsInPeriod * monthlyTarget;
+
+      // Compute hours per emp in this period
+      const empHoursMap = {};
+      periodCourses.forEach(c => {
+        const h = parseFloat(c.hours)||0;
+        if(!h) return;
+        if(c.attendeeIds && c.attendeeIds.length){
+          c.attendeeIds.forEach(eid => {
+            empHoursMap[eid] = (empHoursMap[eid]||0) + h;
+          });
+        }
+        // Nếu chỉ có deptIds (không có attendeeIds cụ thể) → bỏ qua per-NV tracking
+      });
+
+      // Active employees
+      const activeEmps = (DB.employees||[]).filter(e => getEffectiveStatus(e) !== 'exit');
+
+      // Per-department aggregation
+      const deptKpi = (DB.departments||[]).map(d => {
+        const empsInDept = activeEmps.filter(e => e.deptId === d.id);
+        const hc = empsInDept.length;
+        const target = hc * targetPerEmp;
+        const actual = empsInDept.reduce((s,e) => s + (empHoursMap[e.id]||0), 0);
+        const achievedCount = empsInDept.filter(e => (empHoursMap[e.id]||0) >= targetPerEmp).length;
+        const pct = target > 0 ? (actual/target*100) : null;
+        return {dept: d.name, deptId: d.id, color: d.color, hc, target, actual, achievedCount, pct};
+      }).filter(d => d.hc > 0).sort((a,b) => (b.pct||0)-(a.pct||0));
+
+      const totHc = deptKpi.reduce((s,d)=>s+d.hc,0);
+      const totTarget = deptKpi.reduce((s,d)=>s+d.target,0);
+      const totActual = deptKpi.reduce((s,d)=>s+d.actual,0);
+      const totAchieved = deptKpi.reduce((s,d)=>s+d.achievedCount,0);
+      const totPct = totTarget > 0 ? (totActual/totTarget*100) : null;
+
+      // Per-emp detail
+      const empKpi = activeEmps.map(e => {
+        const dept = (DB.departments||[]).find(d => d.id === e.deptId);
+        const actual = empHoursMap[e.id] || 0;
+        const pct = targetPerEmp > 0 ? (actual/targetPerEmp*100) : null;
+        return {id:e.id, name:e.name, dept:dept?.name||'—', deptId:e.deptId, actual, target:targetPerEmp, pct, achieved: actual >= targetPerEmp};
+      }).sort((a,b) => (a.pct||0) - (b.pct||0)); // worst first
+
+      if(!window._trnKpiShow) window._trnKpiShow = 'fail'; // 'fail' | 'all'
+      const showAll = window._trnKpiShow === 'all';
+      const empList = showAll ? empKpi : empKpi.filter(e => !e.achieved);
+
+      const periodLabel = p.mode==='month' ? `Tháng ${p.month}/${p.year}` : p.mode==='year' ? `Năm ${p.year}` : 'Toàn bộ';
+      const targetLabel = monthsInPeriod > 0 ? `${targetPerEmp.toFixed(1)}h/NV (${monthlyTarget}h × ${monthsInPeriod} tháng)` : '— (chế độ Toàn bộ không tính KPI)';
+
+      return `
+    <div class="card" style="margin-top:16px">
+      <div class="card-head" style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:10px">
+        <div>
+          <div class="card-title">🎯 KPI <em>Đào tạo</em></div>
+          <div class="card-sub">${periodLabel} · Mục tiêu: ${targetLabel}</div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <label style="font-size:11.5px;color:var(--ink-dim)">Mục tiêu h/NV/tháng:</label>
+          <input type="number" min="0" step="0.5" value="${monthlyTarget}"
+            onchange="DB.trainingKpi=DB.trainingKpi||{};DB.trainingKpi.monthlyHoursTarget=parseFloat(this.value)||0;saveData(['trainingKpi']);render()"
+            style="background:var(--bg-card);color:var(--ink);border:1px solid var(--border);padding:5px 8px;border-radius:5px;font-size:12px;width:70px;font-family:'JetBrains Mono',monospace">
+        </div>
+      </div>
+
+      ${monthsInPeriod === 0 ? '<div style="color:var(--ink-dim);text-align:center;padding:20px;font-size:12px;font-style:italic">Chọn Tháng hoặc Năm để xem KPI</div>' : `
+      <!-- KPI summary cards -->
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:16px">
+        <div style="background:var(--bg-elev);padding:12px 14px;border-radius:8px;border-left:3px solid var(--accent)">
+          <div style="font-size:10.5px;color:var(--ink-muted);text-transform:uppercase;letter-spacing:.05em;font-weight:600;margin-bottom:4px">Tổng HC</div>
+          <div style="font-family:'JetBrains Mono',monospace;font-size:20px;font-weight:700">${totHc} NV</div>
+          <div style="font-size:11px;color:var(--ink-dim)">đang làm việc</div>
+        </div>
+        <div style="background:var(--bg-elev);padding:12px 14px;border-radius:8px;border-left:3px solid var(--info)">
+          <div style="font-size:10.5px;color:var(--ink-muted);text-transform:uppercase;letter-spacing:.05em;font-weight:600;margin-bottom:4px">Target</div>
+          <div style="font-family:'JetBrains Mono',monospace;font-size:20px;font-weight:700">${totTarget.toFixed(0)}h</div>
+          <div style="font-size:11px;color:var(--ink-dim)">${targetPerEmp.toFixed(1)}h/NV × ${totHc}</div>
+        </div>
+        <div style="background:var(--bg-elev);padding:12px 14px;border-radius:8px;border-left:3px solid ${totPct!==null && totPct>=100?'var(--success)':totPct!==null && totPct>=70?'var(--warning)':'var(--danger)'}">
+          <div style="font-size:10.5px;color:var(--ink-muted);text-transform:uppercase;letter-spacing:.05em;font-weight:600;margin-bottom:4px">Actual</div>
+          <div style="font-family:'JetBrains Mono',monospace;font-size:20px;font-weight:700;color:${totPct!==null && totPct>=100?'var(--success)':totPct!==null && totPct>=70?'var(--warning)':'var(--danger)'}">${totActual.toFixed(1)}h</div>
+          <div style="font-size:11px;color:var(--ink-dim)">${totPct!==null?totPct.toFixed(1)+'% đạt mục tiêu':'—'}</div>
+        </div>
+        <div style="background:var(--bg-elev);padding:12px 14px;border-radius:8px;border-left:3px solid ${totAchieved/totHc>=0.8?'var(--success)':totAchieved/totHc>=0.5?'var(--warning)':'var(--danger)'}">
+          <div style="font-size:10.5px;color:var(--ink-muted);text-transform:uppercase;letter-spacing:.05em;font-weight:600;margin-bottom:4px">NV đạt KPI</div>
+          <div style="font-family:'JetBrains Mono',monospace;font-size:20px;font-weight:700">${totAchieved} / ${totHc}</div>
+          <div style="font-size:11px;color:var(--ink-dim)">${totHc>0?((totAchieved/totHc*100).toFixed(1)):'0'}% NV đạt</div>
+        </div>
+      </div>
+
+      <!-- Per-dept achievement -->
+      <div style="font-weight:700;font-size:13px;color:var(--accent);margin:14px 0 10px">📊 Theo phòng ban</div>
+      <div style="overflow-x:auto">
+      <table class="tbl" style="width:100%;font-size:12.5px">
+        <thead>
+          <tr><th>Phòng ban</th><th class="num">HC</th><th class="num">Target (h)</th><th class="num">Actual (h)</th><th class="num">NV đạt</th><th class="num">% đạt</th><th>Thanh tiến độ</th></tr>
+        </thead>
+        <tbody>
+          ${deptKpi.map(d => {
+            const col = d.pct!==null && d.pct>=100 ? 'var(--success)' : d.pct!==null && d.pct>=70 ? 'var(--warning)' : 'var(--danger)';
+            const barPct = Math.min(100, Math.round(d.pct||0));
+            return `<tr>
+              <td><b>${escapeHtml(d.dept)}</b></td>
+              <td class="num">${d.hc}</td>
+              <td class="num">${d.target.toFixed(0)}</td>
+              <td class="num" style="color:${col};font-weight:700">${d.actual.toFixed(1)}</td>
+              <td class="num">${d.achievedCount}/${d.hc}</td>
+              <td class="num" style="color:${col};font-weight:700">${d.pct!==null?d.pct.toFixed(0)+'%':'—'}</td>
+              <td><div style="background:var(--bg-elev);height:8px;border-radius:4px;overflow:hidden;min-width:120px"><div style="background:${col};height:100%;width:${barPct}%;transition:width .3s"></div></div></td>
+            </tr>`;
+          }).join('')}
+          <tr style="font-weight:700;background:var(--bg-elev)">
+            <td>Tổng</td>
+            <td class="num">${totHc}</td>
+            <td class="num">${totTarget.toFixed(0)}</td>
+            <td class="num" style="color:${totPct!==null && totPct>=100?'var(--success)':totPct!==null && totPct>=70?'var(--warning)':'var(--danger)'}">${totActual.toFixed(1)}</td>
+            <td class="num">${totAchieved}/${totHc}</td>
+            <td class="num" style="color:${totPct!==null && totPct>=100?'var(--success)':totPct!==null && totPct>=70?'var(--warning)':'var(--danger)'}">${totPct!==null?totPct.toFixed(0)+'%':'—'}</td>
+            <td>—</td>
+          </tr>
+        </tbody>
+      </table>
+      </div>
+
+      <!-- Per-emp detail -->
+      <div style="display:flex;justify-content:space-between;align-items:center;margin:20px 0 10px;flex-wrap:wrap;gap:10px">
+        <div style="font-weight:700;font-size:13px;color:var(--accent)">👤 Chi tiết theo nhân viên</div>
+        <div style="display:flex;gap:0;background:var(--bg-elev);border-radius:6px;padding:2px;border:1px solid var(--border)">
+          <button onclick="window._trnKpiShow='fail';render()" style="background:${!showAll?'var(--accent)':'transparent'};color:${!showAll?'#000':'var(--ink-dim)'};border:0;padding:5px 11px;border-radius:4px;font-size:11.5px;font-weight:600;cursor:pointer">⚠️ Chưa đạt (${empKpi.filter(e=>!e.achieved).length})</button>
+          <button onclick="window._trnKpiShow='all';render()" style="background:${showAll?'var(--accent)':'transparent'};color:${showAll?'#000':'var(--ink-dim)'};border:0;padding:5px 11px;border-radius:4px;font-size:11.5px;font-weight:600;cursor:pointer">Tất cả (${empKpi.length})</button>
+        </div>
+      </div>
+      <div style="overflow-x:auto;max-height:400px;overflow-y:auto">
+      ${empList.length === 0 ? '<div style="color:var(--ink-dim);text-align:center;padding:20px;font-size:12px;font-style:italic">🎉 Tất cả NV đã đạt KPI</div>' : `
+      <table class="tbl" style="width:100%;font-size:12px">
+        <thead style="position:sticky;top:0;background:var(--bg-card);z-index:1">
+          <tr><th>NV</th><th>Phòng ban</th><th class="num">Target (h)</th><th class="num">Actual (h)</th><th class="num">%</th><th>Trạng thái</th></tr>
+        </thead>
+        <tbody>
+          ${empList.map(e => {
+            const col = e.achieved ? 'var(--success)' : e.pct>=70 ? 'var(--warning)' : 'var(--danger)';
+            return `<tr>
+              <td><b>${escapeHtml(e.name||'')}</b></td>
+              <td>${escapeHtml(e.dept)}</td>
+              <td class="num">${e.target.toFixed(1)}</td>
+              <td class="num" style="color:${col};font-weight:700">${e.actual.toFixed(1)}</td>
+              <td class="num" style="color:${col};font-weight:700">${e.pct!==null?e.pct.toFixed(0)+'%':'—'}</td>
+              <td><span style="background:${col}22;color:${col};padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600">${e.achieved?'✓ Đạt':'✗ Chưa đạt'}</span></td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+      `}
+      </div>
+
+      <div style="font-size:11px;color:var(--ink-muted);margin-top:12px;padding:8px 12px;background:var(--bg-elev);border-radius:6px;line-height:1.5">
+        💡 <b>Cách tính:</b> Per-NV chỉ tính các khoá có danh sách người tham gia cụ thể (attendeeIds). Khoá chỉ chọn phòng ban (không chọn NV cụ thể) sẽ KHÔNG được tính vào KPI cá nhân.
+      </div>
+      `}
+    </div>
+      `;
+    })()}
+
     <!-- Chart trend 12 tháng -->
     <div class="card" style="margin-top:16px">
       <div class="card-head">
@@ -22317,6 +22656,7 @@ const MODULE_LIST = [
   {key:'salary',      label:'Phân tích Lương'},
   {key:'dormitory',   label:'Staff House'},
   {key:'manning',     label:'Manning & Budget'},
+  {key:'plreview',    label:'HR P&L Review'},
 ];
 const PERM_LEVELS = ['none','view','edit','full'];
 const PERM_LABELS = {none:(_lang==="en"?"🚫 No access":"🚫 Không xem"), view:(_lang==="en"?"👁 View only":"👁 Chỉ xem"), edit:(_lang==="en"?"✏️ View & Edit":"✏️ Xem & Sửa"), full:(_lang==="en"?"⭐ Full access":"⭐ Toàn quyền")};
@@ -26107,7 +26447,9 @@ fbAuth.onAuthStateChanged(async user => {
           document.querySelectorAll('.nav-item[data-page]').forEach(item=>{
             const pg = item.dataset.page;
             if(pg==='dashboard'||pg==='settings'||pg==='accounts') return;
-            const lvl = perms[pg] || 'none';
+            // Map data-page → permission key (nav uses data-page for routing, perms use module keys)
+            const permKey = pg === 'analytics' ? 'plreview' : pg;
+            const lvl = perms[permKey] || 'none';
             item.style.display = lvl === 'none' ? 'none' : '';
           });
         }
