@@ -3347,6 +3347,10 @@ function _plRenderIntelligence(el, year, month){
   activeEmps.forEach(e => {
     const ct = latestContractByEmp[e.id];
     if(!ct){
+      // Fallback: check legacy customData (1 số NV có HĐ lưu trong customData chưa migrate sang DB.contracts)
+      const cdRow = (DB.customData||{})[e.id] || {};
+      const hasLegacyContract = cdRow.currentContractType || cdRow.contractType || cdRow.currentContractEnd || cdRow.contractEnd;
+      if(hasLegacyContract) return; // coi như có HĐ
       // Check if joined > 30 days ago (otherwise still in onboarding)
       const joinedD = _parseExitDate(e.joined);
       if(joinedD && _plDaysBetween(joinedD, _today) > 30){
@@ -10633,23 +10637,26 @@ function renderContracts(main){
   };
 
   const typeCount = {};
+  // Set của empId đã có HĐ trong DB.contracts (đã count rồi)
+  const _empIdsWithContract = new Set(currentContracts.map(c => c.empId));
   currentContracts.forEach(c => {
     const k = _normalizeContractType(c.type);
     typeCount[k] = (typeCount[k]||0) + 1;
   });
-  // Đếm thêm NV có HĐ trong customData nhưng chưa có record trong DB.contracts
-  empContractEndList.forEach(c => {
-    if(c.type){
-      const k = _normalizeContractType(c.type);
+  // Đếm tất cả NV active còn lại — đọc customData để fallback
+  // (Bao gồm cả NV vô thời hạn không có endDate, hoặc legacy data thiếu endDate)
+  activeEmpsAll.forEach(e => {
+    if(!['active','probation','leave'].includes(e.status)) return;
+    if(_empIdsWithContract.has(e.id)) return; // đã count từ DB.contracts
+    const cd = DB.customData[e.id] || {};
+    const customType = cd.currentContractType || cd.contractType || '';
+    if(customType){
+      const k = _normalizeContractType(customType);
       typeCount[k] = (typeCount[k]||0) + 1;
+    } else {
+      typeCount['unknown'] = (typeCount['unknown']||0) + 1;
     }
   });
-  // Số NV đang làm nhưng KHÔNG có thông tin HĐ (cả trong DB.contracts và customData)
-  const totalCounted = Object.values(typeCount).reduce((s,v)=>s+v, 0);
-  const noContractCount = totalActive - totalCounted;
-  if(noContractCount > 0){
-    typeCount['unknown'] = (typeCount['unknown']||0) + noContractCount;
-  }
   // Sắp xếp lại theo thứ tự logic: probation → term12 → term24 → indefinite → contractor → unknown
   const _typeOrder = ['probation','term12','term24','indefinite','contractor','unknown'];
   const _sortedTypeCount = {};
@@ -10780,6 +10787,110 @@ function renderContracts(main){
         </div></div>
         <div id="expiringList"></div>
       </div>
+    </div>
+
+    <!-- Follow-up theo từng loại HĐ -->
+    <div class="card" style="margin-top:16px">
+      <div class="card-head"><div>
+        <div class="card-title">Follow-up <em>theo loại HĐ</em></div>
+        <div class="card-sub">Click vào từng loại để xem danh sách NV</div>
+      </div></div>
+      ${(() => {
+        // Build per-emp contract info
+        const empContractInfo = activeEmpsAll
+          .filter(e => ['active','probation','leave'].includes(e.status))
+          .map(e => {
+            const dbContract = currentContracts.find(c => c.empId === e.id);
+            const cd = DB.customData[e.id] || {};
+            const customType = cd.currentContractType || cd.contractType || '';
+            const customEnd = cd.currentContractEnd || cd.contractEnd || '';
+            let type, startDate, endDate, source;
+            if(dbContract){
+              type = _normalizeContractType(dbContract.type);
+              startDate = dbContract.startDate;
+              endDate = dbContract.endDate;
+              source = 'db';
+            } else if(customType){
+              type = _normalizeContractType(customType);
+              startDate = cd.contractStart || cd.currentContractStart || '';
+              endDate = customEnd;
+              source = 'legacy';
+            } else {
+              type = 'unknown';
+              startDate = '';
+              endDate = '';
+              source = 'none';
+            }
+            const endISO = endDate ? (endDate.includes('/') ? endDate.split('/').reverse().join('-') : endDate) : '';
+            const endD = endISO ? new Date(endISO) : null;
+            const days = (endD && !isNaN(endD)) ? Math.round((endD - today) / 86400000) : null;
+            return {empId: e.id, name: e.name, deptId: e.deptId, type, startDate, endDate, days, source};
+          });
+
+        // Default filter
+        if(!window._ctrFollowupType) window._ctrFollowupType = 'unknown'; // mặc định focus vào "Chưa có HĐ"
+        const sel = window._ctrFollowupType;
+        const filtered = empContractInfo.filter(x => x.type === sel);
+        // Sort: NV gần hết hạn lên trước, no-end cuối
+        filtered.sort((a,b) => {
+          if(a.days === null && b.days === null) return 0;
+          if(a.days === null) return 1;
+          if(b.days === null) return -1;
+          return a.days - b.days;
+        });
+
+        return `
+        <!-- Type filter buttons -->
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px">
+          ${_typeOrder.filter(k => typeCount[k]).map(k => {
+            const active = sel === k;
+            const label = CONTRACT_TYPE[k] || k;
+            const cnt = typeCount[k] || 0;
+            const accent = k==='unknown'?'var(--danger)':k==='probation'?'var(--warning)':k==='term12'?'var(--info)':k==='term24'?'#a78bfa':k==='indefinite'?'var(--success)':'var(--ink-dim)';
+            return `<button onclick="window._ctrFollowupType='${k}';render()" style="background:${active?accent:'transparent'};color:${active?'#000':accent};border:1px solid ${accent};padding:5px 12px;border-radius:6px;font-size:11.5px;font-weight:600;cursor:pointer">${label} <span style="opacity:.8;margin-left:4px">${cnt}</span></button>`;
+          }).join('')}
+        </div>
+
+        ${filtered.length === 0 ? `<div style="color:var(--ink-dim);text-align:center;padding:20px;font-size:12px;font-style:italic">Không có NV trong loại này</div>` : `
+        <div style="overflow-x:auto">
+        <table class="tbl" style="width:100%;font-size:12.5px">
+          <thead>
+            <tr>
+              <th>NV</th>
+              <th>Phòng ban</th>
+              <th>Ngày bắt đầu</th>
+              <th>Ngày hết</th>
+              <th class="num">Còn (ngày)</th>
+              <th>Nguồn</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${filtered.slice(0, 100).map(x => {
+              const dCol = x.days === null ? 'var(--ink-dim)' : x.days < 0 ? 'var(--danger)' : x.days <= 30 ? 'var(--warning)' : x.days <= 60 ? '#facc15' : 'var(--success)';
+              const dText = x.days === null ? '∞' : x.days < 0 ? `quá ${-x.days}d` : x.days+'d';
+              const srcBadge = x.source==='db'?'<span style="background:rgba(126,198,153,.15);color:var(--success);padding:2px 6px;border-radius:8px;font-size:10px">📋 DB.contracts</span>':x.source==='legacy'?'<span style="background:rgba(255,200,120,.15);color:var(--warning);padding:2px 6px;border-radius:8px;font-size:10px">📦 Legacy</span>':'<span style="background:rgba(212,127,127,.15);color:var(--danger);padding:2px 6px;border-radius:8px;font-size:10px">⚠️ Chưa có</span>';
+              return `<tr>
+                <td><b>${escapeHtml(x.name||'')}</b></td>
+                <td>${deptName(x.deptId)}</td>
+                <td style="font-family:'JetBrains Mono',monospace;font-size:11px">${x.startDate ? (x.startDate.includes('-') ? x.startDate.split('-').reverse().join('/') : x.startDate) : '—'}</td>
+                <td style="font-family:'JetBrains Mono',monospace;font-size:11px">${x.endDate ? (x.endDate.includes('-') ? x.endDate.split('-').reverse().join('/') : x.endDate) : (sel==='indefinite' ? '∞' : '—')}</td>
+                <td class="num" style="color:${dCol};font-weight:700">${dText}</td>
+                <td>${srcBadge}</td>
+                <td>
+                  <div class="row-actions">
+                    <button class="btn btn-sm" onclick="viewEmployee('${x.empId}')" title="Mở hồ sơ NV để xem & sửa HĐ" style="background:transparent;color:var(--accent);border:1px solid var(--accent);font-size:11px;padding:3px 10px;border-radius:5px;white-space:nowrap">📂 Mở hồ sơ</button>
+                  </div>
+                </td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+        ${filtered.length > 100 ? `<div style="text-align:center;padding:10px;font-size:11px;color:var(--ink-muted)">Hiển thị 100/${filtered.length} NV đầu tiên</div>` : ''}
+        </div>
+        `}
+        `;
+      })()}
     </div>
   `;
 
@@ -18285,13 +18396,15 @@ function renderTraining(main){
       const activeEmps = (DB.employees||[]).filter(e => getEffectiveStatus(e) !== 'exit');
 
       // Per-department aggregation
+      // % đạt = số NV đạt KPI / HC (KHÔNG dùng tổng giờ vì 1 NV không thể học hộ cả phòng)
       const deptKpi = (DB.departments||[]).map(d => {
         const empsInDept = activeEmps.filter(e => e.deptId === d.id);
         const hc = empsInDept.length;
         const target = hc * targetPerEmp;
         const actual = empsInDept.reduce((s,e) => s + (empHoursMap[e.id]||0), 0);
         const achievedCount = empsInDept.filter(e => (empHoursMap[e.id]||0) >= targetPerEmp).length;
-        const pct = target > 0 ? (actual/target*100) : null;
+        // % đạt theo SỐ NV ĐẠT — không phải tổng giờ
+        const pct = hc > 0 ? (achievedCount/hc*100) : null;
         return {dept: d.name, deptId: d.id, color: d.color, hc, target, actual, achievedCount, pct};
       }).filter(d => d.hc > 0).sort((a,b) => (b.pct||0)-(a.pct||0));
 
@@ -18299,7 +18412,10 @@ function renderTraining(main){
       const totTarget = deptKpi.reduce((s,d)=>s+d.target,0);
       const totActual = deptKpi.reduce((s,d)=>s+d.actual,0);
       const totAchieved = deptKpi.reduce((s,d)=>s+d.achievedCount,0);
-      const totPct = totTarget > 0 ? (totActual/totTarget*100) : null;
+      // Card "Actual" dùng % giờ (totActual/totTarget) — để show coverage chung
+      const totPctHours = totTarget > 0 ? (totActual/totTarget*100) : null;
+      // Card "NV đạt" và bảng dept dùng % NV (totAchieved/totHc) — đo NV thực sự đạt KPI
+      const totPct = totHc > 0 ? (totAchieved/totHc*100) : null;
 
       // Per-emp detail
       const empKpi = activeEmps.map(e => {
@@ -18344,10 +18460,10 @@ function renderTraining(main){
           <div style="font-family:'JetBrains Mono',monospace;font-size:20px;font-weight:700">${totTarget.toFixed(0)}h</div>
           <div style="font-size:11px;color:var(--ink-dim)">${targetPerEmp.toFixed(1)}h/NV × ${totHc}</div>
         </div>
-        <div style="background:var(--bg-elev);padding:12px 14px;border-radius:8px;border-left:3px solid ${totPct!==null && totPct>=100?'var(--success)':totPct!==null && totPct>=70?'var(--warning)':'var(--danger)'}">
+        <div style="background:var(--bg-elev);padding:12px 14px;border-radius:8px;border-left:3px solid ${totPctHours!==null && totPctHours>=100?'var(--success)':totPctHours!==null && totPctHours>=70?'var(--warning)':'var(--danger)'}">
           <div style="font-size:10.5px;color:var(--ink-muted);text-transform:uppercase;letter-spacing:.05em;font-weight:600;margin-bottom:4px">Actual</div>
-          <div style="font-family:'JetBrains Mono',monospace;font-size:20px;font-weight:700;color:${totPct!==null && totPct>=100?'var(--success)':totPct!==null && totPct>=70?'var(--warning)':'var(--danger)'}">${totActual.toFixed(1)}h</div>
-          <div style="font-size:11px;color:var(--ink-dim)">${totPct!==null?totPct.toFixed(1)+'% đạt mục tiêu':'—'}</div>
+          <div style="font-family:'JetBrains Mono',monospace;font-size:20px;font-weight:700;color:${totPctHours!==null && totPctHours>=100?'var(--success)':totPctHours!==null && totPctHours>=70?'var(--warning)':'var(--danger)'}">${totActual.toFixed(1)}h</div>
+          <div style="font-size:11px;color:var(--ink-dim)">${totPctHours!==null?totPctHours.toFixed(1)+'% tổng giờ đạt':'—'}</div>
         </div>
         <div style="background:var(--bg-elev);padding:12px 14px;border-radius:8px;border-left:3px solid ${totAchieved/totHc>=0.8?'var(--success)':totAchieved/totHc>=0.5?'var(--warning)':'var(--danger)'}">
           <div style="font-size:10.5px;color:var(--ink-muted);text-transform:uppercase;letter-spacing:.05em;font-weight:600;margin-bottom:4px">NV đạt KPI</div>
@@ -18361,18 +18477,18 @@ function renderTraining(main){
       <div style="overflow-x:auto">
       <table class="tbl" style="width:100%;font-size:12.5px">
         <thead>
-          <tr><th>Phòng ban</th><th class="num">HC</th><th class="num">Target (h)</th><th class="num">Actual (h)</th><th class="num">NV đạt</th><th class="num">% đạt</th><th>Thanh tiến độ</th></tr>
+          <tr><th>Phòng ban</th><th class="num">HC</th><th class="num">Target (h)</th><th class="num">Actual (h)</th><th class="num">NV đạt</th><th class="num" title="% NV đạt KPI cá nhân (số NV đạt / HC)">% đạt</th><th>Thanh tiến độ</th></tr>
         </thead>
         <tbody>
           ${deptKpi.map(d => {
-            const col = d.pct!==null && d.pct>=100 ? 'var(--success)' : d.pct!==null && d.pct>=70 ? 'var(--warning)' : 'var(--danger)';
+            const col = d.pct!==null && d.pct>=80 ? 'var(--success)' : d.pct!==null && d.pct>=50 ? 'var(--warning)' : 'var(--danger)';
             const barPct = Math.min(100, Math.round(d.pct||0));
-            return `<tr>
-              <td><b>${escapeHtml(d.dept)}</b></td>
+            return `<tr onclick="window._trnKpiDeptDetail='${d.deptId}';render()" style="cursor:pointer" title="Click để xem các khóa học của phòng ${escapeHtml(d.dept)} trong period">
+              <td><b>${escapeHtml(d.dept)}</b> <span style="color:var(--ink-muted);font-size:10px">📂</span></td>
               <td class="num">${d.hc}</td>
               <td class="num">${d.target.toFixed(0)}</td>
-              <td class="num" style="color:${col};font-weight:700">${d.actual.toFixed(1)}</td>
-              <td class="num">${d.achievedCount}/${d.hc}</td>
+              <td class="num" style="font-weight:700">${d.actual.toFixed(1)}</td>
+              <td class="num"><b>${d.achievedCount}/${d.hc}</b></td>
               <td class="num" style="color:${col};font-weight:700">${d.pct!==null?d.pct.toFixed(0)+'%':'—'}</td>
               <td><div style="background:var(--bg-elev);height:8px;border-radius:4px;overflow:hidden;min-width:120px"><div style="background:${col};height:100%;width:${barPct}%;transition:width .3s"></div></div></td>
             </tr>`;
@@ -18381,9 +18497,9 @@ function renderTraining(main){
             <td>Tổng</td>
             <td class="num">${totHc}</td>
             <td class="num">${totTarget.toFixed(0)}</td>
-            <td class="num" style="color:${totPct!==null && totPct>=100?'var(--success)':totPct!==null && totPct>=70?'var(--warning)':'var(--danger)'}">${totActual.toFixed(1)}</td>
+            <td class="num">${totActual.toFixed(1)}</td>
             <td class="num">${totAchieved}/${totHc}</td>
-            <td class="num" style="color:${totPct!==null && totPct>=100?'var(--success)':totPct!==null && totPct>=70?'var(--warning)':'var(--danger)'}">${totPct!==null?totPct.toFixed(0)+'%':'—'}</td>
+            <td class="num" style="color:${totPct!==null && totPct>=80?'var(--success)':totPct!==null && totPct>=50?'var(--warning)':'var(--danger)'}">${totPct!==null?totPct.toFixed(0)+'%':'—'}</td>
             <td>—</td>
           </tr>
         </tbody>
@@ -18426,6 +18542,85 @@ function renderTraining(main){
       </div>
       `}
     </div>
+      `;
+    })()}
+
+    <!-- Modal: courses của 1 phòng ban (mở khi click row dept ở bảng KPI) -->
+    ${(() => {
+      if(!window._trnKpiDeptDetail) return '';
+      const dId = window._trnKpiDeptDetail;
+      const dept = (DB.departments||[]).find(d => d.id === dId);
+      if(!dept) return '';
+      // Find courses involving this dept in period
+      const deptEmpIds = new Set((DB.employees||[]).filter(e => e.deptId === dId && getEffectiveStatus(e) !== 'exit').map(e => e.id));
+      const deptCourses = periodCourses.filter(c => {
+        // dept involved if: c.deptIds includes dId, OR any attendee belongs to dept
+        if((c.deptIds||[]).includes(dId)) return true;
+        if(c.attendeeIds && c.attendeeIds.some(aid => deptEmpIds.has(aid))) return true;
+        return false;
+      });
+      // Sort newest first
+      deptCourses.sort((a,b) => (b.startDate||'').localeCompare(a.startDate||''));
+      const periodLabel2 = p.mode==='month' ? `T${p.month}/${p.year}` : p.mode==='year' ? `${p.year}` : 'Toàn bộ';
+      return `
+      <div style="position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px" onclick="if(event.target===this){window._trnKpiDeptDetail=null;render()}">
+        <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:12px;max-width:900px;width:100%;max-height:85vh;overflow:hidden;display:flex;flex-direction:column">
+          <div style="padding:16px 20px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">
+            <div>
+              <div style="font-weight:700;font-size:15px;color:var(--accent)">📚 Khóa học · ${escapeHtml(dept.name)} · ${periodLabel2}</div>
+              <div style="font-size:11px;color:var(--ink-muted);margin-top:3px">${deptCourses.length} khóa có liên quan đến phòng ban này · ${deptEmpIds.size} NV active</div>
+            </div>
+            <button onclick="window._trnKpiDeptDetail=null;render()" style="background:transparent;color:var(--ink-dim);border:1px solid var(--border);padding:5px 12px;border-radius:6px;font-size:12px;cursor:pointer">✕ Đóng</button>
+          </div>
+          <div style="overflow-y:auto;padding:16px 20px;flex:1">
+            ${deptCourses.length === 0 ? `<div style="color:var(--ink-dim);text-align:center;padding:30px;font-size:12.5px;font-style:italic">Phòng ban này chưa có khóa đào tạo nào trong ${periodLabel2}</div>` : `
+            <table class="tbl" style="width:100%;font-size:12.5px">
+              <thead>
+                <tr>
+                  <th>Tên khóa học</th>
+                  <th>Trainer</th>
+                  <th>Ngày</th>
+                  <th class="num">Giờ/khóa</th>
+                  <th class="num">NV ${escapeHtml(dept.name)} tham gia</th>
+                  <th>Cách gán</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${deptCourses.map(c => {
+                  const inDept = c.attendeeIds ? c.attendeeIds.filter(aid => deptEmpIds.has(aid)).length : 0;
+                  const wholeDept = (c.deptIds||[]).includes(dId);
+                  const dateLabel = c.startDate ? (c.startDate === c.endDate || !c.endDate ? c.startDate.split('-').reverse().join('/') : (c.startDate.split('-').reverse().join('/') + ' → ' + c.endDate.split('-').reverse().join('/'))) : '—';
+                  const assignmentLabel = wholeDept && c.attendeeIds && c.attendeeIds.length
+                    ? `<span style="background:rgba(126,182,232,.15);color:var(--accent);padding:2px 6px;border-radius:8px;font-size:10px">👥 ${inDept} NV cụ thể</span>`
+                    : wholeDept
+                    ? `<span style="background:rgba(255,200,120,.15);color:var(--warning);padding:2px 6px;border-radius:8px;font-size:10px" title="Khóa chỉ gán phòng ban, chưa chọn NV cụ thể → KHÔNG tính vào KPI cá nhân">🏢 Cả phòng ban</span>`
+                    : `<span style="background:rgba(126,182,232,.15);color:var(--accent);padding:2px 6px;border-radius:8px;font-size:10px">👥 ${inDept} NV cụ thể</span>`;
+                  return `<tr>
+                    <td><b>${escapeHtml(c.name||'Khóa chưa đặt tên')}</b></td>
+                    <td>${escapeHtml(c.trainer||'—')}</td>
+                    <td style="font-family:'JetBrains Mono',monospace;font-size:11px">${dateLabel}</td>
+                    <td class="num"><b>${c.hours||0}h</b></td>
+                    <td class="num"><b>${inDept}</b>${c.attendeeIds?'/'+c.attendeeIds.length:''}</td>
+                    <td>${assignmentLabel}</td>
+                  </tr>`;
+                }).join('')}
+                <tr style="font-weight:700;background:var(--bg-elev)">
+                  <td>Tổng</td>
+                  <td>—</td>
+                  <td>—</td>
+                  <td class="num">${deptCourses.reduce((s,c)=>s+(parseFloat(c.hours)||0),0).toFixed(0)}h</td>
+                  <td class="num">${deptCourses.reduce((s,c)=>s+(c.attendeeIds||[]).filter(aid=>deptEmpIds.has(aid)).length,0)} lượt</td>
+                  <td>—</td>
+                </tr>
+              </tbody>
+            </table>
+            <div style="font-size:11px;color:var(--ink-muted);margin-top:14px;padding:8px 12px;background:var(--bg-elev);border-radius:6px;line-height:1.5">
+              💡 <b>Lưu ý:</b> Khóa "🏢 Cả phòng ban" KHÔNG được tính vào KPI cá nhân vì không xác định được NV nào thực sự tham gia. Để KPI chính xác, hãy edit khóa học và chọn cụ thể NV trong tab Attendees.
+            </div>
+            `}
+          </div>
+        </div>
+      </div>
       `;
     })()}
 
