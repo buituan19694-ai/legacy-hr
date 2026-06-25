@@ -19368,15 +19368,17 @@ function editCourse(id){
         </div>
         <!-- Hidden field tracking state — read on save -->
         <input type="hidden" id="f_trainerExternal" value="${(c.trainerExternal || (c.trainer && !c.trainerEmpId)) ? '1' : '0'}">
-        <!-- Internal: dropdown chọn NV -->
-        <select id="f_trainerEmpId" style="${(c.trainerExternal || (c.trainer && !c.trainerEmpId)) ? 'display:none' : ''}">
-          <option value="">— Chọn nhân viên đào tạo —</option>
-          ${(DB.employees||[]).filter(e => getEffectiveStatus(e)!=='exit').sort((a,b)=>(a.name||'').localeCompare(b.name||'')).map(e => {
-            const dept = (DB.departments||[]).find(d => d.id === e.deptId);
-            const deptLabel = dept ? ` · ${escapeHtml(dept.name)}` : '';
-            return `<option value="${e.id}" ${c.trainerEmpId === e.id ? 'selected' : ''}>${escapeHtml(e.name||'')}${deptLabel}</option>`;
-          }).join('')}
-        </select>
+        <!-- Internal: search-as-you-type chọn NV -->
+        <div id="f_trainerInternalWrap" style="position:relative;${(c.trainerExternal || (c.trainer && !c.trainerEmpId)) ? 'display:none' : ''}">
+          <input type="text" id="f_trainerSearch" placeholder="🔍 Gõ tên NV để tìm..."
+            value="${c.trainerEmpId ? escapeHtml(((DB.employees||[]).find(e=>e.id===c.trainerEmpId)||{}).name||'') : ''}"
+            oninput="_trnSearchTrainer(this.value)"
+            onfocus="_trnSearchTrainer(this.value)"
+            onblur="setTimeout(()=>document.getElementById('f_trainerResults').style.display='none', 200)"
+            autocomplete="off">
+          <input type="hidden" id="f_trainerEmpId" value="${c.trainerEmpId || ''}">
+          <div id="f_trainerResults" style="display:none;position:absolute;top:100%;left:0;right:0;max-height:240px;overflow-y:auto;background:var(--bg-card);border:1px solid var(--accent);border-radius:6px;margin-top:2px;z-index:100;box-shadow:0 4px 12px rgba(0,0,0,.3)"></div>
+        </div>
         <!-- External: text input -->
         <input id="f_trainer" value="${escapeHtml(c.trainer||'')}" placeholder="VD: Apollo English Center, Mr. John Smith (AccorAcademy)..." style="${(c.trainerExternal || (c.trainer && !c.trainerEmpId)) ? '' : 'display:none'}">
       </div>
@@ -19515,14 +19517,13 @@ function trnClearAllAttendees(){
 // Toggle giữa "Nội bộ" (chọn NV) và "Bên ngoài" (gõ tay)
 function _trnSetMode(isExt){
   const hidden = document.getElementById('f_trainerExternal');
-  const sel = document.getElementById('f_trainerEmpId');
+  const wrapInt = document.getElementById('f_trainerInternalWrap');
   const inp = document.getElementById('f_trainer');
   const btnInt = document.getElementById('f_trainerModeInternal');
   const btnExt = document.getElementById('f_trainerModeExternal');
   if(hidden) hidden.value = isExt ? '1' : '0';
-  if(sel) sel.style.display = isExt ? 'none' : '';
+  if(wrapInt) wrapInt.style.display = isExt ? 'none' : '';
   if(inp) inp.style.display = isExt ? '' : 'none';
-  // Update button styles
   if(btnInt){
     btnInt.style.background = isExt ? 'transparent' : 'var(--success)';
     btnInt.style.color = isExt ? 'var(--ink-dim)' : '#000';
@@ -19531,12 +19532,67 @@ function _trnSetMode(isExt){
     btnExt.style.background = isExt ? 'var(--accent)' : 'transparent';
     btnExt.style.color = isExt ? '#000' : 'var(--ink-dim)';
   }
-  // Clear opposite field để tránh confusion
+  // Clear opposite field
   if(isExt){
-    if(sel) sel.value = '';
+    const empSel = document.getElementById('f_trainerEmpId');
+    const search = document.getElementById('f_trainerSearch');
+    if(empSel) empSel.value = '';
+    if(search) search.value = '';
   } else {
     if(inp) inp.value = '';
   }
+}
+
+// Search NV theo tên để chọn làm trainer
+function _trnSearchTrainer(query){
+  const results = document.getElementById('f_trainerResults');
+  const empSel = document.getElementById('f_trainerEmpId');
+  if(!results) return;
+  // Nếu input value KHÁC tên của empId hiện tại → reset empId (user đang gõ tìm cái khác)
+  if(empSel && empSel.value){
+    const emp = (DB.employees||[]).find(e => e.id === empSel.value);
+    if(emp && (emp.name||'').toLowerCase() !== (query||'').toLowerCase().trim()){
+      empSel.value = '';
+    }
+  }
+  const q = (query||'').toLowerCase().trim();
+  const emps = (DB.employees||[])
+    .filter(e => getEffectiveStatus(e) !== 'exit')
+    .filter(e => {
+      if(!q) return true;
+      const name = (e.name||'').toLowerCase();
+      const code = (e.code||'').toLowerCase();
+      const role = (e.role||'').toLowerCase();
+      return name.includes(q) || code.includes(q) || role.includes(q);
+    })
+    .sort((a,b) => (a.name||'').localeCompare(b.name||''))
+    .slice(0, 50); // limit 50 results
+
+  if(emps.length === 0){
+    results.innerHTML = '<div style="padding:12px;color:var(--ink-muted);font-size:12px;text-align:center;font-style:italic">Không tìm thấy NV nào</div>';
+  } else {
+    results.innerHTML = emps.map(e => {
+      const dept = (DB.departments||[]).find(d => d.id === e.deptId);
+      const deptLabel = dept ? escapeHtml(dept.name) : '—';
+      const roleLabel = e.role ? ' · ' + escapeHtml(e.role) : '';
+      const nameEsc = escapeHtml(e.name||'').replace(/'/g,"\\'");
+      return `<div onclick="_trnSelectTrainer('${e.id}','${nameEsc}')" style="padding:8px 12px;cursor:pointer;border-bottom:1px solid var(--border);transition:background .12s" onmouseover="this.style.background='var(--bg-elev)'" onmouseout="this.style.background=''">
+        <div style="font-size:12.5px;font-weight:600">${escapeHtml(e.name||'')}</div>
+        <div style="font-size:10.5px;color:var(--ink-muted);margin-top:2px">${escapeHtml(e.code||'—')} · ${deptLabel}${roleLabel}</div>
+      </div>`;
+    }).join('');
+  }
+  results.style.display = 'block';
+}
+
+// Khi user click chọn 1 NV trong dropdown
+function _trnSelectTrainer(empId, name){
+  const empSel = document.getElementById('f_trainerEmpId');
+  const search = document.getElementById('f_trainerSearch');
+  const results = document.getElementById('f_trainerResults');
+  if(empSel) empSel.value = empId;
+  if(search) search.value = name;
+  if(results) results.style.display = 'none';
 }
 
 function saveCourse(id, isNew){
@@ -19552,6 +19608,15 @@ function saveCourse(id, isNew){
   if(trainerEmpId){
     const emp = (DB.employees||[]).find(e => e.id === trainerEmpId);
     trainerName = emp ? (emp.name||'') : '';
+  } else if(!isExternal){
+    // Mode "Nội bộ" nhưng chưa chọn NV từ dropdown — check input value
+    const typed = ($('#f_trainerSearch')?.value||'').trim();
+    if(typed){
+      toast('Bạn đang ở chế độ "🏨 Nội bộ" — hãy click chọn NV trong dropdown, hoặc chuyển sang "🌐 Bên ngoài" nếu là người ngoài','error');
+      return;
+    }
+    // Empty là OK (khoá chưa có trainer)
+    trainerName = '';
   } else {
     trainerName = ($('#f_trainer')?.value||'').trim();
   }
