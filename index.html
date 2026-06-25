@@ -25348,9 +25348,13 @@ function renderTrainee(main){
   if(!window._traineeStatusFilter) window._traineeStatusFilter = sessionStorage.getItem('_traineeStatus') || 'active';
   if(window._traineeMonthFilter===undefined)  window._traineeMonthFilter  = parseInt(sessionStorage.getItem('_traineeMonth'))||0;
   if(window._traineeYearFilter===undefined)   window._traineeYearFilter   = parseInt(sessionStorage.getItem('_traineeYear'))||0;
+  if(window._traineeDeptFilter===undefined)   window._traineeDeptFilter   = sessionStorage.getItem('_traineeDept') || '';
+  if(window._traineeNameFilter===undefined)   window._traineeNameFilter   = sessionStorage.getItem('_traineeName') || '';
   const tsf = window._traineeStatusFilter;
   const tmf = window._traineeMonthFilter;
   const tyf = window._traineeYearFilter;
+  const tdf = window._traineeDeptFilter;
+  const tnf = window._traineeNameFilter;
 
   const today = new Date();
   const curYear  = today.getFullYear();
@@ -25373,18 +25377,26 @@ function renderTrainee(main){
                    : (!t.endDate || t.endDate >= now);
     if(tsf === 'active' && !isActive) return false;
     if(tsf === 'exit'   &&  isActive) return false;
-    // Year filter: TTS đang thực tập trong năm đó (startDate <= cuối năm AND (endDate >= đầu năm OR không có endDate))
+    // Year filter
     if(tyf !== 0){
       const sYear = t.startDate ? new Date(t.startDate).getFullYear() : null;
       const eYear = t.endDate   ? new Date(t.endDate).getFullYear()   : null;
       const activeInYear = sYear && sYear <= tyf && (!eYear || eYear >= tyf);
       if(!activeInYear) return false;
     }
-    // Month filter — theo tháng/năm của startDate
+    // Month filter
     if(tmf !== 0){
       const yr = tyf !== 0 ? tyf : new Date().getFullYear();
       const sDate = t.startDate ? new Date(t.startDate) : null;
       if(!sDate || sDate.getMonth()+1 !== tmf || sDate.getFullYear() !== yr) return false;
+    }
+    // Department filter
+    if(tdf && t.deptId !== tdf) return false;
+    // Name filter (search by name, code, phone, school)
+    if(tnf){
+      const q = tnf.toLowerCase().trim();
+      const haystack = `${t.name||''} ${t.code||''} ${t.phone||''} ${t.school||''}`.toLowerCase();
+      if(!haystack.includes(q)) return false;
     }
     return true;
   });
@@ -25449,9 +25461,18 @@ function renderTrainee(main){
       <div class="topbar-left">
         <div class="crumb">Nhân sự · <span>Trainee</span></div>
         <h1 class="page-title">🎓 Thực tập <em>sinh</em></h1>
-        <div class="page-sub">${total} sinh viên · ${totalActive} đang thực tập · ${schools} trường${tyf?` · <b style="color:var(--accent)">${tmf?'T'+tmf+'/':''}${tyf}</b>`:''}</div>
+        <div class="page-sub">${total} sinh viên · ${totalActive} đang thực tập · ${schools} trường${tyf?` · <b style="color:var(--accent)">${tmf?'T'+tmf+'/':''}${tyf}</b>`:''}${(tdf||tnf)?` · <span style="background:var(--accent);color:#000;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:600">🔍 ${filteredTrainees.length}/${total}</span>`:''}</div>
       </div>
       <div class="topbar-actions">
+        <!-- 🔍 Search theo tên/mã/SĐT/trường -->
+        <input type="search" placeholder="🔍 Tên, mã, SĐT, trường..." value="${escapeHtml(tnf)}"
+          oninput="window._traineeNameFilter=this.value;sessionStorage.setItem('_traineeName',this.value);clearTimeout(window._trnSearchTimer);window._trnSearchTimer=setTimeout(()=>render(),250)"
+          style="background:var(--bg-card);color:var(--ink);border:1px solid var(--border);padding:6px 12px;border-radius:8px;font-size:12px;min-width:220px">
+        <!-- 🏢 Filter theo phòng ban -->
+        <select class="filter-select" onchange="window._traineeDeptFilter=this.value;sessionStorage.setItem('_traineeDept',this.value);render()">
+          <option value="" ${!tdf?'selected':''}>🏢 Tất cả phòng ban</option>
+          ${(DB.departments||[]).map(d=>`<option value="${d.id}" ${tdf===d.id?'selected':''}>${escapeHtml(d.name)}</option>`).join('')}
+        </select>
         <!-- Filter năm/tháng -->
         <select class="filter-select" onchange="window._traineeYearFilter=parseInt(this.value);sessionStorage.setItem('_traineeYear',this.value);window._traineeMonthFilter=0;sessionStorage.setItem('_traineeMonth','0');render()">
           <option value="0" ${tyf===0?'selected':''}>Tất cả năm</option>
