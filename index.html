@@ -194,10 +194,6 @@
         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 14l9-5-9-5-9 5 9 5z"/><path stroke-linecap="round" stroke-linejoin="round" d="M12 14l6.16-3.422a12.083 12.083 0 01.665 6.479A11.952 11.952 0 0012 20.055a11.952 11.952 0 00-6.824-2.998 12.078 12.078 0 01.665-6.479L12 14z"/></svg>
         <span data-i18n="nav_training">Đào tạo</span>
       </div>
-      <div class="nav-item" data-page="training-kpi">
-        <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-        <span>KPI Đào tạo</span>
-      </div>
       <div class="nav-item" data-page="performance">
         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z"/></svg>
         <span data-i18n="nav_performance">Đánh giá Performance</span>
@@ -2109,7 +2105,6 @@ function _doRender(){
       recruitment: renderRecruitment,
       'job-detail': renderJobDetail,
       training: renderTraining,
-      'training-kpi': renderTrainingKPI,
       performance: renderPerformance,
       workforce: renderWorkforce,
       dormitory: renderDormitory,
@@ -18154,30 +18149,9 @@ function confirmAddTrainingYear(){
   toast(`✅ Đã thêm năm ${yr}`,'success');
 }
 
-// ============ TRAINING KPI MODULE (tách riêng) ============
-function renderTrainingKPI(main){
-  if(!window.canDo('training-kpi') && !window.canDo('training')){
-    main.innerHTML='<div class="topbar"><div class="topbar-left"><h1 class="page-title">🔒 Không có quyền</h1><div class="page-sub">Bạn không được cấp quyền truy cập KPI Đào tạo</div></div></div>';
-    return;
-  }
+// ============ TRAINING KPI — helper trả về HTML (dùng trong tab của renderTraining) ============
+function _buildKpiContent(p, periodCourses){
   const today = new Date();
-
-  if(!window._trnKpiPeriod){ const _tsp=sessionStorage.getItem('_trnKpiPeriod'); window._trnKpiPeriod=_tsp?JSON.parse(_tsp):{mode:'month',month:today.getMonth()+1,year:today.getFullYear()}; }
-  const p = window._trnKpiPeriod;
-
-  function courseInPeriod(c, mode, month, year){
-    if(mode === 'all') return true;
-    if(!c.startDate) return mode === 'all';
-    const start = new Date(c.startDate);
-    const end = c.endDate ? new Date(c.endDate) : start;
-    if(mode === 'year') return start.getFullYear() <= year && end.getFullYear() >= year;
-    const periodStart = new Date(year, month - 1, 1);
-    const periodEnd = new Date(year, month, 0);
-    return start <= periodEnd && end >= periodStart;
-  }
-
-  const periodCourses = (DB.courses||[]).filter(c => courseInPeriod(c, p.mode, p.month, p.year));
-
   const cfg = DB.trainingKpi || {monthlyHoursTarget: 1};
   const monthlyTarget = parseFloat(cfg.monthlyHoursTarget) || 1;
   let monthsInPeriod = 1;
@@ -18185,7 +18159,6 @@ function renderTrainingKPI(main){
   else if(p.mode === 'all') monthsInPeriod = 0;
   const targetPerEmp = monthsInPeriod * monthlyTarget;
 
-  // Compute hours per emp in this period
   const empHoursMap = {};
   periodCourses.forEach(c => {
     const h = parseFloat(c.hours)||0;
@@ -18197,7 +18170,6 @@ function renderTrainingKPI(main){
 
   const activeEmps = (DB.employees||[]).filter(e => getEffectiveStatus(e) !== 'exit');
 
-  // Per-department aggregation
   const deptKpi = (DB.departments||[]).map(d => {
     const empsInDept = activeEmps.filter(e => e.deptId === d.id);
     const hc = empsInDept.length;
@@ -18215,7 +18187,6 @@ function renderTrainingKPI(main){
   const totPctHours = totTarget > 0 ? (totActual/totTarget*100) : null;
   const totPct = totHc > 0 ? (totAchieved/totHc*100) : null;
 
-  // Per-emp detail
   const empKpi = activeEmps.map(e => {
     const dept = (DB.departments||[]).find(d => d.id === e.deptId);
     const actual = empHoursMap[e.id] || 0;
@@ -18230,34 +18201,7 @@ function renderTrainingKPI(main){
   const periodLabel = p.mode==='month' ? `Tháng ${p.month}/${p.year}` : p.mode==='year' ? `Năm ${p.year}` : 'Toàn bộ';
   const targetLabel = monthsInPeriod > 0 ? `${targetPerEmp.toFixed(1)}h/NV (${monthlyTarget}h × ${monthsInPeriod} tháng)` : '— (chế độ Toàn bộ không tính KPI)';
 
-  const yearOpts = [];
-  const curY = today.getFullYear();
-  for(let y=curY-2; y<=curY+1; y++) yearOpts.push(y);
-
-  main.innerHTML = `
-    <div class="topbar">
-      <div class="topbar-left">
-        <div class="crumb">Phát triển · <span>KPI Đào tạo</span></div>
-        <h1 class="page-title">🎯 KPI <em>Đào tạo</em></h1>
-        <div class="page-sub">Theo dõi giờ học so với mục tiêu — theo phòng ban và từng NV</div>
-      </div>
-      <div class="topbar-right" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-        <select onchange="window._trnKpiPeriod.mode=this.value;sessionStorage.setItem('_trnKpiPeriod',JSON.stringify(window._trnKpiPeriod));render()" style="background:var(--bg-card);color:var(--ink);border:1px solid var(--border);padding:6px 12px;border-radius:6px;font-size:12px">
-          <option value="month" ${p.mode==='month'?'selected':''}>📅 Theo tháng</option>
-          <option value="year" ${p.mode==='year'?'selected':''}>📆 Theo năm</option>
-          <option value="all" ${p.mode==='all'?'selected':''}>∞ Toàn bộ</option>
-        </select>
-        ${p.mode==='month' ? `
-        <select onchange="window._trnKpiPeriod.month=parseInt(this.value);sessionStorage.setItem('_trnKpiPeriod',JSON.stringify(window._trnKpiPeriod));render()" style="background:var(--bg-card);color:var(--ink);border:1px solid var(--border);padding:6px 12px;border-radius:6px;font-size:12px">
-          ${Array.from({length:12},(_,i)=>`<option value="${i+1}" ${p.month===i+1?'selected':''}>Tháng ${i+1}</option>`).join('')}
-        </select>` : ''}
-        ${p.mode!=='all' ? `
-        <select onchange="window._trnKpiPeriod.year=parseInt(this.value);sessionStorage.setItem('_trnKpiPeriod',JSON.stringify(window._trnKpiPeriod));render()" style="background:var(--bg-card);color:var(--ink);border:1px solid var(--border);padding:6px 12px;border-radius:6px;font-size:12px">
-          ${yearOpts.map(y=>`<option value="${y}" ${p.year===y?'selected':''}>${y}</option>`).join('')}
-        </select>` : ''}
-      </div>
-    </div>
-
+  return `
     <div class="card" style="margin-top:16px">
       <div class="card-head" style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:10px">
         <div>
@@ -18279,7 +18223,6 @@ function renderTrainingKPI(main){
       <div style="color:var(--ink-dim);font-size:13px">Chọn <b>Tháng</b> hoặc <b>Năm</b> ở topbar để xem KPI cụ thể</div>
     </div>
     ` : `
-    <!-- 4 KPI summary cards -->
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px;margin-top:16px">
       <div class="card" style="border-left:3px solid var(--accent);margin:0">
         <div style="font-size:10.5px;color:var(--ink-muted);text-transform:uppercase;letter-spacing:.05em;font-weight:600;margin-bottom:4px">Tổng HC</div>
@@ -18303,7 +18246,6 @@ function renderTrainingKPI(main){
       </div>
     </div>
 
-    <!-- Per-dept table -->
     <div class="card" style="margin-top:16px">
       <div class="card-head"><div>
         <div class="card-title">📊 Theo <em>phòng ban</em></div>
@@ -18342,7 +18284,6 @@ function renderTrainingKPI(main){
       </div>
     </div>
 
-    <!-- Per-emp detail -->
     <div class="card" style="margin-top:16px">
       <div class="card-head" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
         <div>
@@ -18380,9 +18321,80 @@ function renderTrainingKPI(main){
         💡 <b>Cách tính:</b> Per-NV chỉ tính các khóa có danh sách người tham gia cụ thể (attendeeIds). Khóa chỉ gán phòng ban (không chọn NV cụ thể) sẽ KHÔNG được tính vào KPI cá nhân.
       </div>
     </div>
+
+    <!-- TRAINER TRACKING — giờ ĐÀO TẠO (không nhân số người học) -->
+    ${(() => {
+      const trainerMap = {};
+      periodCourses.forEach(c => {
+        const h = parseFloat(c.hours)||0;
+        if(!h) return;
+        const trainer = (c.trainer||'').trim() || 'Chưa rõ';
+        if(!trainerMap[trainer]) trainerMap[trainer] = {hours:0, courses:0, attendees:0, courseList:[]};
+        trainerMap[trainer].hours += h; // KHÔNG × attendees — 1 lớp 10 NV × 1h = 1h trainer
+        trainerMap[trainer].courses += 1;
+        trainerMap[trainer].attendees += (c.attendeeIds?.length || parseInt(c.attendees) || 0);
+        trainerMap[trainer].courseList.push({name:c.name, hours:h, startDate:c.startDate, attendees:c.attendeeIds?.length||c.attendees||0});
+      });
+      const trainerList = Object.entries(trainerMap)
+        .map(([name, data]) => ({name, ...data}))
+        .sort((a,b) => b.hours - a.hours);
+      if(trainerList.length === 0) return '';
+      const totTrainerHours = trainerList.reduce((s,t)=>s+t.hours, 0);
+      const totTrainerCourses = trainerList.reduce((s,t)=>s+t.courses, 0);
+      return `
+    <div class="card" style="margin-top:16px">
+      <div class="card-head"><div>
+        <div class="card-title">👨‍🏫 Theo <em>người đào tạo</em></div>
+        <div class="card-sub">${trainerList.length} trainer · ${totTrainerCourses} khóa · ${totTrainerHours.toFixed(1)}h dạy tổng cộng · ${periodLabel}</div>
+      </div></div>
+      <div style="overflow-x:auto">
+      <table class="tbl" style="width:100%;font-size:12.5px">
+        <thead>
+          <tr>
+            <th>Trainer</th>
+            <th class="num">Số khóa</th>
+            <th class="num" title="Tổng giờ dạy — KHÔNG nhân số người học (1 lớp 10 NV × 1h = 1h dạy)">Giờ dạy</th>
+            <th class="num">Lượt người học</th>
+            <th class="num">TB giờ/khóa</th>
+            <th>Phân loại</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${trainerList.map(t => {
+            // Check if trainer is internal employee (match by name)
+            const matchEmp = (DB.employees||[]).find(e => e.name && t.name.toLowerCase().includes(e.name.toLowerCase()));
+            const typeLabel = matchEmp
+              ? `<span style="background:rgba(126,198,153,.15);color:var(--success);padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600">🏨 Nội bộ</span>`
+              : `<span style="background:rgba(126,182,232,.15);color:var(--accent);padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600">🌐 Bên ngoài</span>`;
+            const avg = t.courses > 0 ? (t.hours/t.courses) : 0;
+            return `<tr>
+              <td><b>${escapeHtml(t.name)}</b>${matchEmp ? `<div style="font-size:10.5px;color:var(--ink-muted);margin-top:2px">${escapeHtml((DB.departments||[]).find(d=>d.id===matchEmp.deptId)?.name || '')}</div>` : ''}</td>
+              <td class="num"><b>${t.courses}</b></td>
+              <td class="num" style="color:var(--accent);font-weight:700">${t.hours.toFixed(1)}h</td>
+              <td class="num">${t.attendees}</td>
+              <td class="num">${avg.toFixed(1)}h</td>
+              <td>${typeLabel}</td>
+            </tr>`;
+          }).join('')}
+          <tr style="font-weight:700;background:var(--bg-elev)">
+            <td>Tổng</td>
+            <td class="num">${totTrainerCourses}</td>
+            <td class="num" style="color:var(--accent)">${totTrainerHours.toFixed(1)}h</td>
+            <td class="num">${trainerList.reduce((s,t)=>s+t.attendees,0)}</td>
+            <td class="num">${totTrainerCourses>0?(totTrainerHours/totTrainerCourses).toFixed(1):'0'}h</td>
+            <td>—</td>
+          </tr>
+        </tbody>
+      </table>
+      </div>
+      <div style="font-size:11.5px;color:var(--ink-muted);margin-top:12px;padding:10px 12px;background:var(--bg-elev);border-radius:6px;line-height:1.5">
+        💡 <b>Giờ dạy</b> = tổng giờ của các khóa trainer đó đứng lớp, KHÔNG nhân với số người học. Vd: 1 lớp 10 NV trong 1h = 1h dạy. <b>Nội bộ</b> = trainer là NV của resort (match tên với danh sách NV).
+      </div>
+    </div>
+      `;
+    })()}
     `}
 
-    <!-- Modal: courses của 1 phòng ban -->
     ${(() => {
       if(!window._trnKpiDeptDetail) return '';
       const dId = window._trnKpiDeptDetail;
@@ -18451,12 +18463,14 @@ function renderTrainingKPI(main){
   `;
 }
 
+
 function renderTraining(main){
   if(!window.canDo('training')){
     main.innerHTML='<div class="topbar"><div class="topbar-left"><h1 class="page-title">🔒 Không có quyền</h1><div class="page-sub">Bạn không được cấp quyền truy cập module Đào tạo</div></div></div>';
     return;
   }
   const today = new Date();
+  const currentTab = window._trainingTab || 'overview';
 
   if(!window._trnPeriod){ const _tsp=sessionStorage.getItem('_trnPeriod'); window._trnPeriod=_tsp?JSON.parse(_tsp):{mode:'month',month:today.getMonth()+1,year:today.getFullYear()}; }
   const p = window._trnPeriod;
@@ -18638,6 +18652,13 @@ function renderTraining(main){
         </div>
       </div>
 
+      <!-- Tab switcher: Tổng quan đào tạo ↔ KPI Đào tạo -->
+      <div style="display:flex;gap:4px;border-bottom:1px solid var(--border);margin-top:14px;padding:0">
+        <button onclick="window._trainingTab='overview';render()" style="background:transparent;color:${currentTab==='overview'?'var(--accent)':'var(--ink-dim)'};border:0;border-bottom:2px solid ${currentTab==='overview'?'var(--accent)':'transparent'};padding:10px 18px;font-size:13px;font-weight:600;cursor:pointer;margin-bottom:-1px">📊 Tổng quan đào tạo</button>
+        <button onclick="window._trainingTab='kpi';render()" style="background:transparent;color:${currentTab==='kpi'?'var(--accent)':'var(--ink-dim)'};border:0;border-bottom:2px solid ${currentTab==='kpi'?'var(--accent)':'transparent'};padding:10px 18px;font-size:13px;font-weight:600;cursor:pointer;margin-bottom:-1px">🎯 KPI Đào tạo</button>
+      </div>
+
+      ${currentTab === 'kpi' ? _buildKpiContent(p, periodCourses) : `
       <!-- KPI trong period -->
       <div class="kpi-grid">
         ${kpiCard('Khoá học', periodCourses.length, periodLabel + (prevP?` · ${prevLabel}: ${prevCourses.length}`:''), '', 'accent')}
@@ -18823,7 +18844,11 @@ function renderTraining(main){
         </div>
       `}
     </div>
+    `}
   `;
+
+  // Skip chart rendering when on KPI tab — không có chart DOM elements
+  if(currentTab === 'kpi') return;
 
   const trendEl = $('#chartTrend');
   if(trendEl){
@@ -20735,13 +20760,13 @@ function editPromotion(id, presetEmpId, isHistorical=false){
             <div>
               <div style="font-size:10.5px;color:var(--ink-muted);margin-bottom:3px">💰 ${_lang==="en"?"Base salary":"Lương cơ bản"} (VNĐ)</div>
               <input type="text" id="pr_oldSalary" value="${(p.oldSalary||(initEmp?(DB.customData[initEmp.id]||{}).baseSalary:0)||0).toLocaleString('vi-VN')}"
-                ${p.isHistorical?'oninput="prUpdateSalaryTotal()"':'readonly'}
+                ${p.isHistorical?'oninput="prCalcDelta()"':'readonly'}
                 style="${p.isHistorical?'font-family:\'JetBrains Mono\',monospace':'background:var(--bg-elev);color:var(--ink-dim);cursor:not-allowed;border-style:dashed;font-family:\'JetBrains Mono\',monospace'}">
             </div>
             <div>
               <div style="font-size:10.5px;color:var(--ink-muted);margin-bottom:3px">🎯 ${_lang==="en"?"Perf. Bonus":"Bổ sung KQCV"} (VNĐ)</div>
               <input type="text" id="pr_oldBonus" value="${(p.oldBonus||(initEmp?(DB.customData[initEmp.id]||{}).bonusSalary:0)||0).toLocaleString('vi-VN')}"
-                ${p.isHistorical?'oninput="prUpdateSalaryTotal()"':'readonly'}
+                ${p.isHistorical?'oninput="prCalcDelta()"':'readonly'}
                 style="${p.isHistorical?'font-family:\'JetBrains Mono\',monospace':'background:var(--bg-elev);color:var(--ink-dim);cursor:not-allowed;border-style:dashed;font-family:\'JetBrains Mono\',monospace'}">
             </div>
             <div style="padding:8px;background:var(--bg-elev);border-radius:5px;font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--ink-muted)">
@@ -22890,7 +22915,6 @@ const MODULE_LIST = [
   {key:'casual',      label:'Lao động Casual'},
   {key:'trainee',     label:(_lang==="en"?"Trainees":"Thực tập sinh")},
   {key:'training',    label:(_lang==="en"?"Training":"Đào tạo")},
-  {key:'training-kpi', label:'KPI Đào tạo'},
   {key:'performance', label:'Đánh giá KPI'},
   {key:'awards',      label:'Khen thưởng'},
   {key:'warnings',    label:'Kỷ luật / Cảnh cáo'},
@@ -26787,7 +26811,6 @@ fbAuth.onAuthStateChanged(async user => {
           performance: renderPerformance, awards: renderAwards,
           warnings: renderWarnings, settings: renderSettings,
           salary: renderSalaryAnalysis, training: renderTraining,
-          'training-kpi': renderTrainingKPI,
           workforce: renderWorkforce,
           dormitory: renderDormitory,
         };
