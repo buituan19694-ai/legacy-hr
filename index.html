@@ -16845,6 +16845,19 @@ function renderRecruitment(main){
     });
   }
 
+  // Sort: vị trí đang tuyển lên trước (urgency), sau đó theo ngày bắt đầu mới nhất → cũ nhất
+  // Trong cùng nhóm status, sort ngày bắt đầu DESC (mới nhất lên đầu)
+  const _statusOrder = {open:0, paused:1, filled:2, closed:3};
+  filtered = [...filtered].sort((a,b) => {
+    const sa = _statusOrder[a.status] ?? 9;
+    const sb = _statusOrder[b.status] ?? 9;
+    if(sa !== sb) return sa - sb; // status nhỏ hơn (open) lên trước
+    // Cùng status: sort theo startDate DESC (mới nhất trước)
+    const da = a.startDate ? new Date(a.startDate).getTime() : 0;
+    const db = b.startDate ? new Date(b.startDate).getTime() : 0;
+    return db - da;
+  });
+
   main.innerHTML = `
     <div class="topbar">
       <div class="topbar-left">
@@ -26620,6 +26633,11 @@ render();
     </div>
     <button class="auth-btn" id="loginBtn" onclick="doLogin()">Đăng nhập</button>
     <div class="auth-error" id="loginError"></div>
+    <div id="loginStuckHelp" style="display:none;margin-top:12px;padding:10px 12px;background:rgba(255,200,120,.08);border:1px solid rgba(255,200,120,.3);border-radius:6px;font-size:11.5px;line-height:1.5">
+      <div style="color:#ffc878;font-weight:600;margin-bottom:6px">⚠️ Đăng nhập lâu hơn bình thường</div>
+      <div style="color:var(--ink-dim)">Có thể do cache trình duyệt bị lỗi. Thử xoá cache rồi đăng nhập lại:</div>
+      <button onclick="window.clearFirestoreCache()" style="margin-top:8px;background:var(--accent);color:#000;border:0;padding:6px 12px;border-radius:5px;font-size:12px;font-weight:600;cursor:pointer;width:100%">🔄 Xoá cache & tải lại</button>
+    </div>
     <div class="auth-footer">Liên hệ quản trị viên nếu quên mật khẩu</div>
   </div>
 </div>
@@ -27579,15 +27597,26 @@ window.doLogin = async function(){
   const pass  = document.getElementById('loginPass').value;
   const btn   = document.getElementById('loginBtn');
   const err   = document.getElementById('loginError');
+  const stuckHelp = document.getElementById('loginStuckHelp');
   if(!email || !pass){ showAuthError('Vui lòng nhập email và mật khẩu'); return; }
   btn.disabled = true;
   btn.textContent = 'Đang đăng nhập...';
   err.textContent = '';
+  if(stuckHelp) stuckHelp.style.display = 'none';
+
+  // Watchdog: nếu sau 8s vẫn loading → hiện help box
+  if(window._loginStuckTimer) clearTimeout(window._loginStuckTimer);
+  window._loginStuckTimer = setTimeout(()=>{
+    if(btn && btn.disabled && stuckHelp) stuckHelp.style.display = '';
+  }, 8000);
+
   try{
     await fbAuth.signInWithEmailAndPassword(email, pass);
   } catch(e){
     btn.disabled = false;
     btn.textContent = 'Đăng nhập';
+    if(window._loginStuckTimer) clearTimeout(window._loginStuckTimer);
+    if(stuckHelp) stuckHelp.style.display = 'none';
     const msgs = {
       'auth/user-not-found': 'Email không tồn tại trong hệ thống',
       'auth/wrong-password': 'Mật khẩu không đúng',
@@ -27596,6 +27625,36 @@ window.doLogin = async function(){
       'auth/invalid-credential': 'Email hoặc mật khẩu không đúng',
     };
     showAuthError(msgs[e.code] || e.message);
+  }
+};
+
+// Helper xoá Firestore IndexedDB cache + reload — dùng khi cache bị corrupt (400 Bad Request từ Listen/Write channel)
+window.clearFirestoreCache = async function(){
+  const btn = event && event.target;
+  if(btn){ btn.disabled = true; btn.textContent = '⏳ Đang xoá...'; }
+  try{
+    // 1. Sign out để clear auth state
+    try{ await fbAuth.signOut(); }catch(_){}
+    // 2. Disable network để force flush
+    try{ await fbDb.disableNetwork(); }catch(_){}
+    // 3. Xoá tất cả IndexedDB của Firestore
+    const dbs = await indexedDB.databases();
+    const fsDbs = (dbs||[]).filter(db => db.name && (db.name.includes('firestore') || db.name.includes('firebase')));
+    for(const db of fsDbs){
+      await new Promise((res, rej)=>{
+        const req = indexedDB.deleteDatabase(db.name);
+        req.onsuccess = res; req.onerror = res; req.onblocked = res;
+      });
+    }
+    // 4. Clear localStorage (data cache local)
+    try{
+      Object.keys(localStorage).filter(k => k.includes('firebase') || k.includes('firestore')).forEach(k => localStorage.removeItem(k));
+    }catch(_){}
+    // 5. Reload
+    location.reload();
+  }catch(e){
+    alert('Không thể xoá cache: '+e.message+'\n\nThử mở Chrome Settings → Privacy → Clear browsing data → cookies + site data cho legacy-hr.vercel.app');
+    if(btn){ btn.disabled = false; btn.textContent = '🔄 Xoá cache & tải lại'; }
   }
 };
 
