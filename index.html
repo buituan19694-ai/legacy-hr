@@ -4714,6 +4714,12 @@ function _plRenderTurnover(el, year, month){
   const thisMonthResign = exitedEmps.filter(r =>
     r.exitDate.getFullYear() === year && r.exitDate.getMonth() === month
   );
+  // Sort theo Phòng ban (alphabetical), trong cùng dept sort theo ngày rời (mới nhất trước)
+  thisMonthResign.sort((a, b) => {
+    const deptCmp = (a.dept||'').localeCompare(b.dept||'');
+    if(deptCmp !== 0) return deptCmp;
+    return (b.exitDate?.getTime()||0) - (a.exitDate?.getTime()||0);
+  });
   const ytdResign = exitedEmps.filter(r =>
     r.exitDate.getFullYear() === year && r.exitDate.getMonth() <= month
   );
