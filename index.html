@@ -7482,113 +7482,59 @@ function renderEmployeeProfile(main){
     ` : ''}
 
     ${(() => {
-      // Lịch sử đào tạo của NV — vừa với role học, vừa với role dạy
+      // Lịch sử khóa NV đứng lớp (đã DẠY)
+      // Note: phần "Khóa đã học" đã có trong section "Khoá đào tạo đã tham gia" phía trên — không lặp lại
       const allCourses = DB.courses || [];
-      const courseAttended = allCourses.filter(c => (c.attendeeIds||[]).includes(e.id));
       const courseTaught = allCourses.filter(c => c.trainerEmpId === e.id);
-      if(courseAttended.length === 0 && courseTaught.length === 0) return '';
+      if(courseTaught.length === 0) return '';
 
-      courseAttended.sort((a,b) => (b.startDate||'').localeCompare(a.startDate||''));
       courseTaught.sort((a,b) => (b.startDate||'').localeCompare(a.startDate||''));
-
-      const totHoursLearned = courseAttended.reduce((s,c)=>s+(parseFloat(c.hours)||0), 0);
       const totHoursTaught = courseTaught.reduce((s,c)=>s+(parseFloat(c.hours)||0), 0);
-
+      const totLearners = courseTaught.reduce((s,c)=>s+(c.attendeeIds?.length||parseInt(c.attendees)||0),0);
       const fmtDateCol = (s) => s ? (s.includes('-')?s.split('-').reverse().join('/'):s) : '—';
 
       return `
       <div class="card" style="margin-top:16px">
         <div class="card-head"><div>
-          <div class="card-title">📚 Lịch sử <em>đào tạo</em></div>
-          <div class="card-sub">${courseAttended.length} khóa đã học (${totHoursLearned.toFixed(1)}h) · ${courseTaught.length} khóa đã dạy (${totHoursTaught.toFixed(1)}h)</div>
+          <div class="card-title">👨‍🏫 Khóa <em>đã dạy</em></div>
+          <div class="card-sub">${courseTaught.length} khóa · ${totHoursTaught.toFixed(1)}h dạy · ${totLearners} lượt người học</div>
         </div></div>
-
-        ${courseTaught.length > 0 ? `
-        <div style="margin-bottom:16px">
-          <div style="font-weight:700;font-size:13px;color:var(--success);margin-bottom:10px">👨‍🏫 Khóa đã dạy (${courseTaught.length})</div>
-          <div style="overflow-x:auto">
-          <table class="tbl" style="width:100%;font-size:12.5px">
-            <thead>
-              <tr>
-                <th>Tên khóa</th>
-                <th>Ngày</th>
-                <th class="num">Giờ</th>
-                <th class="num">Lượt người</th>
-                <th>Phòng ban tham gia</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${courseTaught.map(c => {
-                const learners = c.attendeeIds?.length || parseInt(c.attendees) || 0;
-                const deptList = (c.deptIds||[]).map(did => {
-                  const d = DB.departments.find(x => x.id === did);
-                  return d ? escapeHtml(d.name) : '';
-                }).filter(Boolean).join(', ') || '—';
-                return `<tr style="cursor:pointer" onclick="editCourse('${c.id}')">
-                  <td><b>${escapeHtml(c.name||'(chưa đặt tên)')}</b></td>
-                  <td style="font-family:'JetBrains Mono',monospace;font-size:11px">${fmtDateCol(c.startDate)}${c.endDate && c.endDate !== c.startDate ? ' → '+fmtDateCol(c.endDate) : ''}</td>
-                  <td class="num"><b style="color:var(--accent)">${c.hours||0}h</b></td>
-                  <td class="num">${learners}</td>
-                  <td style="font-size:11.5px;color:var(--ink-dim)">${deptList}</td>
-                </tr>`;
-              }).join('')}
-              <tr style="font-weight:700;background:var(--bg-elev)">
-                <td>Tổng</td>
-                <td>—</td>
-                <td class="num" style="color:var(--accent)">${totHoursTaught.toFixed(1)}h</td>
-                <td class="num">${courseTaught.reduce((s,c)=>s+(c.attendeeIds?.length||parseInt(c.attendees)||0),0)}</td>
-                <td>—</td>
-              </tr>
-            </tbody>
-          </table>
-          </div>
+        <div style="overflow-x:auto">
+        <table class="tbl" style="width:100%;font-size:12.5px">
+          <thead>
+            <tr>
+              <th>Tên khóa</th>
+              <th>Ngày</th>
+              <th class="num">Giờ</th>
+              <th class="num">Lượt người</th>
+              <th>Phòng ban tham gia</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${courseTaught.map(c => {
+              const learners = c.attendeeIds?.length || parseInt(c.attendees) || 0;
+              const deptList = (c.deptIds||[]).map(did => {
+                const d = DB.departments.find(x => x.id === did);
+                return d ? escapeHtml(d.name) : '';
+              }).filter(Boolean).join(', ') || '—';
+              return `<tr style="cursor:pointer" onclick="editCourse('${c.id}')">
+                <td><b>${escapeHtml(c.name||'(chưa đặt tên)')}</b></td>
+                <td style="font-family:'JetBrains Mono',monospace;font-size:11px">${fmtDateCol(c.startDate)}${c.endDate && c.endDate !== c.startDate ? ' → '+fmtDateCol(c.endDate) : ''}</td>
+                <td class="num"><b style="color:var(--accent)">${c.hours||0}h</b></td>
+                <td class="num">${learners}</td>
+                <td style="font-size:11.5px;color:var(--ink-dim)">${deptList}</td>
+              </tr>`;
+            }).join('')}
+            <tr style="font-weight:700;background:var(--bg-elev)">
+              <td>Tổng</td>
+              <td>—</td>
+              <td class="num" style="color:var(--accent)">${totHoursTaught.toFixed(1)}h</td>
+              <td class="num">${totLearners}</td>
+              <td>—</td>
+            </tr>
+          </tbody>
+        </table>
         </div>
-        ` : ''}
-
-        ${courseAttended.length > 0 ? `
-        <div>
-          <div style="font-weight:700;font-size:13px;color:var(--info);margin-bottom:10px">🎓 Khóa đã học (${courseAttended.length})</div>
-          <div style="overflow-x:auto">
-          <table class="tbl" style="width:100%;font-size:12.5px">
-            <thead>
-              <tr>
-                <th>Tên khóa</th>
-                <th>Trainer</th>
-                <th>Ngày</th>
-                <th class="num">Giờ</th>
-                <th>Phân loại</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${courseAttended.map(c => {
-                const trainerLabel = c.trainerEmpId
-                  ? `<span style="background:rgba(126,198,153,.15);color:var(--success);padding:1px 6px;border-radius:8px;font-size:10px;margin-left:4px">🏨 NB</span>`
-                  : (c.trainerExternal || (c.trainer && !c.trainerEmpId))
-                  ? `<span style="background:rgba(126,182,232,.15);color:var(--accent);padding:1px 6px;border-radius:8px;font-size:10px;margin-left:4px">🌐 N</span>`
-                  : '';
-                const catLabel = c.category && typeof COURSE_CAT !== 'undefined' && COURSE_CAT[c.category]
-                  ? COURSE_CAT[c.category]
-                  : (c.category || '—');
-                return `<tr style="cursor:pointer" onclick="editCourse('${c.id}')">
-                  <td><b>${escapeHtml(c.name||'(chưa đặt tên)')}</b></td>
-                  <td style="font-size:12px">${escapeHtml(c.trainer||'—')}${trainerLabel}</td>
-                  <td style="font-family:'JetBrains Mono',monospace;font-size:11px">${fmtDateCol(c.startDate)}${c.endDate && c.endDate !== c.startDate ? ' → '+fmtDateCol(c.endDate) : ''}</td>
-                  <td class="num"><b>${c.hours||0}h</b></td>
-                  <td style="font-size:11.5px;color:var(--ink-dim)">${escapeHtml(catLabel)}</td>
-                </tr>`;
-              }).join('')}
-              <tr style="font-weight:700;background:var(--bg-elev)">
-                <td>Tổng</td>
-                <td>—</td>
-                <td>—</td>
-                <td class="num">${totHoursLearned.toFixed(1)}h</td>
-                <td>—</td>
-              </tr>
-            </tbody>
-          </table>
-          </div>
-        </div>
-        ` : ''}
       </div>
       `;
     })()}
@@ -25340,6 +25286,34 @@ function importCasualXLSX(){
 /* =========================================================
    TRAINEE / THỰC TẬP SINH
    ========================================================= */
+// DOM filter for trainee search — chỉ ẩn/hiện rows, không re-render → giữ focus mượt
+function _trnFilterByName(query){
+  const q = (query||'').toLowerCase().trim();
+  // Save to state + sessionStorage (persist khi reload)
+  window._traineeNameFilter = query;
+  try{ sessionStorage.setItem('_traineeName', query); }catch(_){}
+  // Filter rows by data-name
+  const rows = document.querySelectorAll('tr.trainee-row');
+  let visible = 0;
+  rows.forEach(r => {
+    const name = r.dataset.name || '';
+    const match = !q || name.includes(q);
+    r.style.display = match ? '' : 'none';
+    if(match) visible++;
+  });
+  // Update count badge in subtitle (nếu có)
+  const badge = document.getElementById('trainee_filter_badge');
+  const total = rows.length;
+  if(badge){
+    if(q || window._traineeDeptFilter){
+      badge.style.display = '';
+      badge.textContent = `🔍 ${visible}/${total}`;
+    } else {
+      badge.style.display = 'none';
+    }
+  }
+}
+
 function renderTrainee(main){
   if(!window.canDo('trainee')){
     main.innerHTML='<div class="topbar"><div class="topbar-left"><h1 class="page-title">🔒 Không có quyền</h1><div class="page-sub">Bạn không được cấp quyền truy cập module Thực tập sinh</div></div></div>';
@@ -25392,11 +25366,10 @@ function renderTrainee(main){
     }
     // Department filter
     if(tdf && t.deptId !== tdf) return false;
-    // Name filter (search by name, code, phone, school)
+    // Name filter — chỉ search theo TÊN (initial render). DOM filter handle thêm khi user gõ.
     if(tnf){
       const q = tnf.toLowerCase().trim();
-      const haystack = `${t.name||''} ${t.code||''} ${t.phone||''} ${t.school||''}`.toLowerCase();
-      if(!haystack.includes(q)) return false;
+      if(!((t.name||'').toLowerCase().includes(q))) return false;
     }
     return true;
   });
@@ -25420,7 +25393,7 @@ function renderTrainee(main){
   const rows = filteredTrainees.map(t => {
     const isActive = t.status==='active'?true:(t.status==='exit'||t.status==='early_exit')?false:(!t.endDate||t.endDate>=now);
     const daysLeft = t.endDate ? Math.ceil((new Date(t.endDate)-today)/864e5) : null;
-    return `<tr style="cursor:pointer" onclick="viewTrainee('${t.id}')">
+    return `<tr class="trainee-row" data-name="${escapeHtml((t.name||'').toLowerCase())}" style="cursor:pointer" onclick="viewTrainee('${t.id}')">
       <td>
         <div style="font-weight:600;font-size:13px">${escapeHtml(t.name||'')}</div>
         <div style="font-size:11px;color:var(--ink-muted)">${[t.code,t.school].filter(Boolean).join(' · ')}</div>
@@ -25461,13 +25434,13 @@ function renderTrainee(main){
       <div class="topbar-left">
         <div class="crumb">Nhân sự · <span>Trainee</span></div>
         <h1 class="page-title">🎓 Thực tập <em>sinh</em></h1>
-        <div class="page-sub">${total} sinh viên · ${totalActive} đang thực tập · ${schools} trường${tyf?` · <b style="color:var(--accent)">${tmf?'T'+tmf+'/':''}${tyf}</b>`:''}${(tdf||tnf)?` · <span style="background:var(--accent);color:#000;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:600">🔍 ${filteredTrainees.length}/${total}</span>`:''}</div>
+        <div class="page-sub">${total} sinh viên · ${totalActive} đang thực tập · ${schools} trường${tyf?` · <b style="color:var(--accent)">${tmf?'T'+tmf+'/':''}${tyf}</b>`:''} <span id="trainee_filter_badge" style="background:var(--accent);color:#000;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:600;margin-left:6px;display:${(tdf||tnf)?'':'none'}">🔍 ${filteredTrainees.length}/${total}</span></div>
       </div>
       <div class="topbar-actions">
-        <!-- 🔍 Search theo tên/mã/SĐT/trường -->
-        <input type="search" placeholder="🔍 Tên, mã, SĐT, trường..." value="${escapeHtml(tnf)}"
-          oninput="window._traineeNameFilter=this.value;sessionStorage.setItem('_traineeName',this.value);clearTimeout(window._trnSearchTimer);window._trnSearchTimer=setTimeout(()=>render(),250)"
-          style="background:var(--bg-card);color:var(--ink);border:1px solid var(--border);padding:6px 12px;border-radius:8px;font-size:12px;min-width:220px">
+        <!-- 🔍 Search theo TÊN — DOM filter, không re-render để giữ focus mượt -->
+        <input type="search" id="trainee_search" placeholder="🔍 Tìm theo tên..." value="${escapeHtml(tnf)}"
+          oninput="_trnFilterByName(this.value)"
+          style="background:var(--bg-card);color:var(--ink);border:1px solid var(--border);padding:6px 12px;border-radius:8px;font-size:12px;min-width:200px">
         <!-- 🏢 Filter theo phòng ban -->
         <select class="filter-select" onchange="window._traineeDeptFilter=this.value;sessionStorage.setItem('_traineeDept',this.value);render()">
           <option value="" ${!tdf?'selected':''}>🏢 Tất cả phòng ban</option>
