@@ -7461,6 +7461,118 @@ function renderEmployeeProfile(main){
         })()}
       </div>
     ` : ''}
+
+    ${(() => {
+      // Lịch sử đào tạo của NV — vừa với role học, vừa với role dạy
+      const allCourses = DB.courses || [];
+      const courseAttended = allCourses.filter(c => (c.attendeeIds||[]).includes(e.id));
+      const courseTaught = allCourses.filter(c => c.trainerEmpId === e.id);
+      if(courseAttended.length === 0 && courseTaught.length === 0) return '';
+
+      courseAttended.sort((a,b) => (b.startDate||'').localeCompare(a.startDate||''));
+      courseTaught.sort((a,b) => (b.startDate||'').localeCompare(a.startDate||''));
+
+      const totHoursLearned = courseAttended.reduce((s,c)=>s+(parseFloat(c.hours)||0), 0);
+      const totHoursTaught = courseTaught.reduce((s,c)=>s+(parseFloat(c.hours)||0), 0);
+
+      const fmtDateCol = (s) => s ? (s.includes('-')?s.split('-').reverse().join('/'):s) : '—';
+
+      return `
+      <div class="card" style="margin-top:16px">
+        <div class="card-head"><div>
+          <div class="card-title">📚 Lịch sử <em>đào tạo</em></div>
+          <div class="card-sub">${courseAttended.length} khóa đã học (${totHoursLearned.toFixed(1)}h) · ${courseTaught.length} khóa đã dạy (${totHoursTaught.toFixed(1)}h)</div>
+        </div></div>
+
+        ${courseTaught.length > 0 ? `
+        <div style="margin-bottom:16px">
+          <div style="font-weight:700;font-size:13px;color:var(--success);margin-bottom:10px">👨‍🏫 Khóa đã dạy (${courseTaught.length})</div>
+          <div style="overflow-x:auto">
+          <table class="tbl" style="width:100%;font-size:12.5px">
+            <thead>
+              <tr>
+                <th>Tên khóa</th>
+                <th>Ngày</th>
+                <th class="num">Giờ</th>
+                <th class="num">Lượt người</th>
+                <th>Phòng ban tham gia</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${courseTaught.map(c => {
+                const learners = c.attendeeIds?.length || parseInt(c.attendees) || 0;
+                const deptList = (c.deptIds||[]).map(did => {
+                  const d = DB.departments.find(x => x.id === did);
+                  return d ? escapeHtml(d.name) : '';
+                }).filter(Boolean).join(', ') || '—';
+                return `<tr style="cursor:pointer" onclick="editCourse('${c.id}')">
+                  <td><b>${escapeHtml(c.name||'(chưa đặt tên)')}</b></td>
+                  <td style="font-family:'JetBrains Mono',monospace;font-size:11px">${fmtDateCol(c.startDate)}${c.endDate && c.endDate !== c.startDate ? ' → '+fmtDateCol(c.endDate) : ''}</td>
+                  <td class="num"><b style="color:var(--accent)">${c.hours||0}h</b></td>
+                  <td class="num">${learners}</td>
+                  <td style="font-size:11.5px;color:var(--ink-dim)">${deptList}</td>
+                </tr>`;
+              }).join('')}
+              <tr style="font-weight:700;background:var(--bg-elev)">
+                <td>Tổng</td>
+                <td>—</td>
+                <td class="num" style="color:var(--accent)">${totHoursTaught.toFixed(1)}h</td>
+                <td class="num">${courseTaught.reduce((s,c)=>s+(c.attendeeIds?.length||parseInt(c.attendees)||0),0)}</td>
+                <td>—</td>
+              </tr>
+            </tbody>
+          </table>
+          </div>
+        </div>
+        ` : ''}
+
+        ${courseAttended.length > 0 ? `
+        <div>
+          <div style="font-weight:700;font-size:13px;color:var(--info);margin-bottom:10px">🎓 Khóa đã học (${courseAttended.length})</div>
+          <div style="overflow-x:auto">
+          <table class="tbl" style="width:100%;font-size:12.5px">
+            <thead>
+              <tr>
+                <th>Tên khóa</th>
+                <th>Trainer</th>
+                <th>Ngày</th>
+                <th class="num">Giờ</th>
+                <th>Phân loại</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${courseAttended.map(c => {
+                const trainerLabel = c.trainerEmpId
+                  ? `<span style="background:rgba(126,198,153,.15);color:var(--success);padding:1px 6px;border-radius:8px;font-size:10px;margin-left:4px">🏨 NB</span>`
+                  : (c.trainerExternal || (c.trainer && !c.trainerEmpId))
+                  ? `<span style="background:rgba(126,182,232,.15);color:var(--accent);padding:1px 6px;border-radius:8px;font-size:10px;margin-left:4px">🌐 N</span>`
+                  : '';
+                const catLabel = c.category && typeof COURSE_CAT !== 'undefined' && COURSE_CAT[c.category]
+                  ? COURSE_CAT[c.category]
+                  : (c.category || '—');
+                return `<tr style="cursor:pointer" onclick="editCourse('${c.id}')">
+                  <td><b>${escapeHtml(c.name||'(chưa đặt tên)')}</b></td>
+                  <td style="font-size:12px">${escapeHtml(c.trainer||'—')}${trainerLabel}</td>
+                  <td style="font-family:'JetBrains Mono',monospace;font-size:11px">${fmtDateCol(c.startDate)}${c.endDate && c.endDate !== c.startDate ? ' → '+fmtDateCol(c.endDate) : ''}</td>
+                  <td class="num"><b>${c.hours||0}h</b></td>
+                  <td style="font-size:11.5px;color:var(--ink-dim)">${escapeHtml(catLabel)}</td>
+                </tr>`;
+              }).join('')}
+              <tr style="font-weight:700;background:var(--bg-elev)">
+                <td>Tổng</td>
+                <td>—</td>
+                <td>—</td>
+                <td class="num">${totHoursLearned.toFixed(1)}h</td>
+                <td>—</td>
+              </tr>
+            </tbody>
+          </table>
+          </div>
+        </div>
+        ` : ''}
+      </div>
+      `;
+    })()}
   `;
 }
 
