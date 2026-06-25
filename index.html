@@ -998,6 +998,25 @@ function loadData(){
         data._normalizedDates2026 = true;
         try{ localStorage.setItem(STORE_KEY, JSON.stringify(data)); }catch(_){}
       }
+      // Backfill code TTS cho các trainees cũ chưa có mã
+      if(!data._backfillTraineeCodes){
+        const trainees = data.trainees || [];
+        // Tìm max number trong codes hiện có
+        const numsNew = trainees.map(x=>(x.code||'').match(/^TTS(\d+)$/i)).filter(Boolean).map(m=>parseInt(m[1]));
+        const numsOld = trainees.map(x=>(x.code||'').match(/^MG-Trainee(\d+)$/i)).filter(Boolean).map(m=>parseInt(m[1]));
+        let nextNum = ([...numsNew, ...numsOld].length ? Math.max(...numsNew, ...numsOld) : 0) + 1;
+        let backfilled = 0;
+        trainees.forEach(t => {
+          if(!t.code || t.code.trim() === ''){
+            t.code = 'TTS' + String(nextNum).padStart(5,'0');
+            nextNum++;
+            backfilled++;
+          }
+        });
+        data._backfillTraineeCodes = true;
+        if(backfilled > 0) console.log('[MIGRATION] Backfilled', backfilled, 'trainee codes');
+        try{ localStorage.setItem(STORE_KEY, JSON.stringify(data)); }catch(_){}
+      }
       const existingKeys = new Set(data.customFields.map(cf=>cf.key));
       DEFAULT_DATA.customFields.forEach(cf=>{
         if(!existingKeys.has(cf.key)){
@@ -1025,7 +1044,7 @@ const FS_DOC_MAP = {
                'dashboardConfig','brandConfig',
                'disciplineSeverityConfig','requiredFieldsConfig',
                'contractTemplates','quickFilterPrefs','recReportConfig','perfReportConfig','plConfig','trainingKpi',
-               '_rewardTypesV2','_levelReset2026','_removedProbationStatus','_normalizedDates2026','_cleanedCandYearShards'],
+               '_rewardTypesV2','_levelReset2026','_removedProbationStatus','_normalizedDates2026','_cleanedCandYearShards','_backfillTraineeCodes'],
 };
 // manningPlan + manningActual được shard theo năm qua _pushDynamicKey → KHÔNG để trong FS_DOC_MAP
 const FS_DYNAMIC_KEYS = ['leaves','kpiReviews','rewardRecords','casuals','candidates',
@@ -26142,13 +26161,15 @@ function viewTrainee(id){
 
 function editTrainee(id){
   const isNew = !id;
+  // Auto-gen mã TTS theo pattern TTS00001 (giống NV: MG00001) — đồng bộ nhất quán
   const nextTraineeCode = (()=>{
-    const nums = (DB.trainees||[])
-      .map(x=>(x.code||'').match(/^MG-Trainee(\d+)$/i))
-      .filter(Boolean)
-      .map(m=>parseInt(m[1]));
-    const max = nums.length ? Math.max(...nums) : 0;
-    return 'MG-Trainee' + (max+1);
+    const allTrainees = DB.trainees || [];
+    // Lấy max từ cả pattern mới (TTS00001) và pattern cũ (MG-Trainee1) — backward compat
+    const numsNew = allTrainees.map(x=>(x.code||'').match(/^TTS(\d+)$/i)).filter(Boolean).map(m=>parseInt(m[1]));
+    const numsOld = allTrainees.map(x=>(x.code||'').match(/^MG-Trainee(\d+)$/i)).filter(Boolean).map(m=>parseInt(m[1]));
+    const allNums = [...numsNew, ...numsOld];
+    const max = allNums.length ? Math.max(...allNums) : 0;
+    return 'TTS' + String(max+1).padStart(5,'0');
   })();
   const tr = isNew
     ? {id:'',name:'',code:nextTraineeCode,dob:'',phone:'',school:'',deptId:'',startDate:'',endDate:'',qty:1,cccd:'',bank:'',bankName:'',notes:''}
