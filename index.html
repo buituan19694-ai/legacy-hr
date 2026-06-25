@@ -18168,7 +18168,23 @@ function _buildKpiContent(p, periodCourses){
     }
   });
 
-  const activeEmps = (DB.employees||[]).filter(e => getEffectiveStatus(e) !== 'exit');
+  // activeEmps = NV chính thức + trainees đang active (TTS cũng cần đào tạo + lưu lịch sử)
+  const _activeNV = (DB.employees||[]).filter(e => getEffectiveStatus(e) !== 'exit').map(e => ({id:e.id, name:e.name, deptId:e.deptId, isTrainee:false}));
+  const _today = new Date();
+  const _activeTr = (DB.trainees||[]).filter(tr => {
+    if(tr.status === 'exit') return false;
+    if(tr.endDate){
+      const end = new Date(tr.endDate);
+      if(!isNaN(end) && end < _today) return false;
+    }
+    return true;
+  }).map(tr => ({
+    id: 'tr_'+tr.id,
+    name: (tr.name || '(TTS chưa đặt tên)') + ' 🎓',
+    deptId: tr.deptId,
+    isTrainee: true,
+  }));
+  const activeEmps = [..._activeNV, ..._activeTr];
 
   const deptKpi = (DB.departments||[]).map(d => {
     const empsInDept = activeEmps.filter(e => e.deptId === d.id);
@@ -18324,28 +18340,45 @@ function _buildKpiContent(p, periodCourses){
 
     <!-- TRAINER TRACKING — giờ ĐÀO TẠO (không nhân số người học) -->
     ${(() => {
+      // Key = empId nếu là NV nội bộ, ngược lại = trainer name (string)
+      // → Cùng 1 NV trainer dù tên gõ khác chữ vẫn group đúng
       const trainerMap = {};
       periodCourses.forEach(c => {
         const h = parseFloat(c.hours)||0;
         if(!h) return;
-        const trainer = (c.trainer||'').trim() || 'Chưa rõ';
-        if(!trainerMap[trainer]) trainerMap[trainer] = {hours:0, courses:0, attendees:0, courseList:[]};
-        trainerMap[trainer].hours += h; // KHÔNG × attendees — 1 lớp 10 NV × 1h = 1h trainer
-        trainerMap[trainer].courses += 1;
-        trainerMap[trainer].attendees += (c.attendeeIds?.length || parseInt(c.attendees) || 0);
-        trainerMap[trainer].courseList.push({name:c.name, hours:h, startDate:c.startDate, attendees:c.attendeeIds?.length||c.attendees||0});
+        let key, displayName, empId, isExternal;
+        if(c.trainerEmpId){
+          // NV nội bộ — group by empId
+          const emp = (DB.employees||[]).find(e => e.id === c.trainerEmpId);
+          if(!emp) return; // skip orphan reference
+          key = 'emp:' + c.trainerEmpId;
+          displayName = emp.name||'';
+          empId = c.trainerEmpId;
+          isExternal = false;
+        } else {
+          // Người ngoài hoặc legacy text
+          const name = (c.trainer||'').trim() || 'Chưa rõ';
+          key = 'ext:' + name;
+          displayName = name;
+          empId = null;
+          isExternal = true;
+        }
+        if(!trainerMap[key]) trainerMap[key] = {name:displayName, empId, isExternal, hours:0, courses:0, attendees:0};
+        trainerMap[key].hours += h; // KHÔNG × attendees — 1 lớp 10 NV × 1h = 1h trainer
+        trainerMap[key].courses += 1;
+        trainerMap[key].attendees += (c.attendeeIds?.length || parseInt(c.attendees) || 0);
       });
-      const trainerList = Object.entries(trainerMap)
-        .map(([name, data]) => ({name, ...data}))
-        .sort((a,b) => b.hours - a.hours);
+      const trainerList = Object.values(trainerMap).sort((a,b) => b.hours - a.hours);
       if(trainerList.length === 0) return '';
       const totTrainerHours = trainerList.reduce((s,t)=>s+t.hours, 0);
       const totTrainerCourses = trainerList.reduce((s,t)=>s+t.courses, 0);
+      const internalCount = trainerList.filter(t => !t.isExternal).length;
+      const externalCount = trainerList.filter(t => t.isExternal).length;
       return `
     <div class="card" style="margin-top:16px">
       <div class="card-head"><div>
         <div class="card-title">👨‍🏫 Theo <em>người đào tạo</em></div>
-        <div class="card-sub">${trainerList.length} trainer · ${totTrainerCourses} khóa · ${totTrainerHours.toFixed(1)}h dạy tổng cộng · ${periodLabel}</div>
+        <div class="card-sub">${trainerList.length} trainer (${internalCount} 🏨 nội bộ, ${externalCount} 🌐 bên ngoài) · ${totTrainerCourses} khóa · ${totTrainerHours.toFixed(1)}h dạy tổng cộng · ${periodLabel}</div>
       </div></div>
       <div style="overflow-x:auto">
       <table class="tbl" style="width:100%;font-size:12.5px">
@@ -18361,14 +18394,17 @@ function _buildKpiContent(p, periodCourses){
         </thead>
         <tbody>
           ${trainerList.map(t => {
-            // Check if trainer is internal employee (match by name)
-            const matchEmp = (DB.employees||[]).find(e => e.name && t.name.toLowerCase().includes(e.name.toLowerCase()));
-            const typeLabel = matchEmp
-              ? `<span style="background:rgba(126,198,153,.15);color:var(--success);padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600">🏨 Nội bộ</span>`
-              : `<span style="background:rgba(126,182,232,.15);color:var(--accent);padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600">🌐 Bên ngoài</span>`;
+            const emp = t.empId ? (DB.employees||[]).find(e => e.id === t.empId) : null;
+            const dept = emp ? (DB.departments||[]).find(d => d.id === emp.deptId) : null;
+            const typeLabel = t.isExternal
+              ? `<span style="background:rgba(126,182,232,.15);color:var(--accent);padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600">🌐 Bên ngoài</span>`
+              : `<span style="background:rgba(126,198,153,.15);color:var(--success);padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600">🏨 Nội bộ</span>`;
             const avg = t.courses > 0 ? (t.hours/t.courses) : 0;
+            const nameCell = emp
+              ? `<a href="#" onclick="viewEmployee('${t.empId}');return false" style="color:var(--accent);text-decoration:none;font-weight:600">${escapeHtml(t.name)}</a>${dept ? `<div style="font-size:10.5px;color:var(--ink-muted);margin-top:2px">${escapeHtml(dept.name)}</div>` : ''}`
+              : `<b>${escapeHtml(t.name)}</b>`;
             return `<tr>
-              <td><b>${escapeHtml(t.name)}</b>${matchEmp ? `<div style="font-size:10.5px;color:var(--ink-muted);margin-top:2px">${escapeHtml((DB.departments||[]).find(d=>d.id===matchEmp.deptId)?.name || '')}</div>` : ''}</td>
+              <td>${nameCell}</td>
               <td class="num"><b>${t.courses}</b></td>
               <td class="num" style="color:var(--accent);font-weight:700">${t.hours.toFixed(1)}h</td>
               <td class="num">${t.attendees}</td>
@@ -18388,7 +18424,7 @@ function _buildKpiContent(p, periodCourses){
       </table>
       </div>
       <div style="font-size:11.5px;color:var(--ink-muted);margin-top:12px;padding:10px 12px;background:var(--bg-elev);border-radius:6px;line-height:1.5">
-        💡 <b>Giờ dạy</b> = tổng giờ của các khóa trainer đó đứng lớp, KHÔNG nhân với số người học. Vd: 1 lớp 10 NV trong 1h = 1h dạy. <b>Nội bộ</b> = trainer là NV của resort (match tên với danh sách NV).
+        💡 <b>Giờ dạy</b> = tổng giờ của các khóa trainer đó đứng lớp, KHÔNG nhân với số người học. <b>Nội bộ</b> = NV resort (link vào hồ sơ NV để xem lịch sử khóa đã dạy).
       </div>
     </div>
       `;
@@ -18817,7 +18853,7 @@ function renderTraining(main){
               return `<tr style="${isRunning?'background:rgba(125,211,192,.04)':''};cursor:pointer" onclick="editCourse('${c.id}')">
                 <td>
                   <div class="cell-emp-name">${escapeHtml(c.name)}</div>
-                  ${c.trainer ? `<div class="cell-emp-meta">👤 ${escapeHtml(c.trainer)}</div>` : ''}
+                  ${c.trainer ? `<div class="cell-emp-meta">👤 ${escapeHtml(c.trainer)} ${(c.trainerEmpId && !c.trainerExternal) ? '<span style="background:rgba(126,198,153,.15);color:var(--success);padding:1px 6px;border-radius:8px;font-size:9.5px;font-weight:600;margin-left:4px">🏨 Nội bộ</span>' : (c.trainerExternal || (!c.trainerEmpId && c.trainer)) ? '<span style="background:rgba(126,182,232,.15);color:var(--accent);padding:1px 6px;border-radius:8px;font-size:9.5px;font-weight:600;margin-left:4px">🌐 Ngoài</span>' : ''}</div>` : ''}
                 </td>
                 <td style="font-size:12px">${COURSE_CAT[c.category]||c.category}</td>
                 <td style="font-size:12px">${c.format?COURSE_FORMAT[c.format]:'<span style="color:var(--ink-muted)">—</span>'}</td>
@@ -19193,7 +19229,8 @@ function editCourse(id){
   const c = isNew ? {
     id:uid(), name:'', category:'hard', hours:8, attendees:0,
     status:'upcoming', startDate:new Date().toISOString().slice(0,10), endDate:'',
-    cost:0, trainer:'', provider:'', format:'offline', location:'',
+    cost:0, trainer:'', trainerEmpId:null, trainerExternal:false,
+    provider:'', format:'offline', location:'',
     description:'', targetAudience:'', deptIds:[], materials:'', notes:''
   } : {...DB.courses.find(x=>x.id===id)};
   if(!c) return;
@@ -19268,7 +19305,17 @@ function editCourse(id){
         <div id="att_list_wrap" style="max-height:280px;overflow-y:auto;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:6px">
           ${(()=>{
             const activeEmps = DB.employees.filter(emp => emp.status !== 'exit');
-            return activeEmps.map(emp => {
+            // Trainees đang active (chưa exit, chưa hết hạn)
+            const _today = new Date();
+            const activeTrainees = (DB.trainees||[]).filter(tr => {
+              if(tr.status === 'exit') return false;
+              if(tr.endDate){
+                const end = new Date(tr.endDate);
+                if(!isNaN(end) && end < _today) return false;
+              }
+              return true;
+            });
+            const empHtml = activeEmps.map(emp => {
               const sel = c.attendeeIds.includes(emp.id);
               return `<label class="att-item" data-id="${emp.id}" data-name="${escapeHtml((emp.name||'').toLowerCase())}" data-code="${escapeHtml((emp.code||'').toLowerCase())}" data-dept="${emp.deptId}" style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:4px;cursor:pointer;transition:background .15s;${sel?'background:rgba(212,165,116,.08)':''}">
                 <input type="checkbox" ${sel?'checked':''} onchange="toggleCourseAttendee('${emp.id}', this.checked, this)" style="width:auto;margin:0;cursor:pointer">
@@ -19279,6 +19326,19 @@ function editCourse(id){
                 </div>
               </label>`;
             }).join('');
+            const trHtml = activeTrainees.map(tr => {
+              const trId = 'tr_'+tr.id; // prefix để phân biệt với NV thực
+              const sel = c.attendeeIds.includes(trId);
+              return `<label class="att-item" data-id="${trId}" data-name="${escapeHtml((tr.name||'').toLowerCase())}" data-code="tts" data-dept="${tr.deptId||''}" style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:4px;cursor:pointer;transition:background .15s;border-left:2px solid rgba(167,139,250,.5);${sel?'background:rgba(167,139,250,.08)':''}">
+                <input type="checkbox" ${sel?'checked':''} onchange="toggleCourseAttendee('${trId}', this.checked, this)" style="width:auto;margin:0;cursor:pointer">
+                <div style="width:26px;height:26px;border-radius:50%;background:rgba(167,139,250,.2);display:flex;align-items:center;justify-content:center;font-size:13px;flex-shrink:0">🎓</div>
+                <div style="flex:1;min-width:0;overflow:hidden">
+                  <div style="font-size:12.5px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(tr.name||'(chưa đặt tên)')} <span style="background:rgba(167,139,250,.15);color:#a78bfa;padding:1px 6px;border-radius:8px;font-size:9.5px;font-weight:600;margin-left:4px">🎓 TTS</span></div>
+                  <div style="font-size:10.5px;color:var(--ink-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(deptName(tr.deptId))}${tr.endDate?' · đến '+fmtDate(tr.endDate):''}</div>
+                </div>
+              </label>`;
+            }).join('');
+            return empHtml + trHtml;
           })()}
         </div>
         <input type="hidden" id="f_attendeeIds" value="${c.attendeeIds.join(',')}">
@@ -19297,9 +19357,31 @@ function editCourse(id){
       <div class="field"><label>Ngày kết thúc</label><input lang="vi" type="date" id="f_end" value="${dispToIso(c.endDate||'')}"></div>
 
       <!-- Giảng viên & địa điểm -->
-      <div class="field"><label>Giảng viên</label><input id="f_trainer" value="${escapeHtml(c.trainer||'')}" placeholder="VD: Mr. John Smith"></div>
+      <div class="field full">
+        <label style="margin-bottom:8px">Giảng viên</label>
+        <!-- Toggle 2 options: 🏨 Nội bộ / 🌐 Bên ngoài -->
+        <div style="display:flex;gap:0;background:var(--bg-elev);border-radius:6px;padding:3px;border:1px solid var(--border);width:fit-content;margin-bottom:10px">
+          <button type="button" id="f_trainerModeInternal" onclick="_trnSetMode(false)"
+            style="background:${!(c.trainerExternal || (c.trainer && !c.trainerEmpId)) ? 'var(--success)' : 'transparent'};color:${!(c.trainerExternal || (c.trainer && !c.trainerEmpId)) ? '#000' : 'var(--ink-dim)'};border:0;padding:6px 14px;border-radius:4px;font-size:12px;font-weight:600;cursor:pointer">🏨 Nội bộ</button>
+          <button type="button" id="f_trainerModeExternal" onclick="_trnSetMode(true)"
+            style="background:${(c.trainerExternal || (c.trainer && !c.trainerEmpId)) ? 'var(--accent)' : 'transparent'};color:${(c.trainerExternal || (c.trainer && !c.trainerEmpId)) ? '#000' : 'var(--ink-dim)'};border:0;padding:6px 14px;border-radius:4px;font-size:12px;font-weight:600;cursor:pointer">🌐 Bên ngoài</button>
+        </div>
+        <!-- Hidden field tracking state — read on save -->
+        <input type="hidden" id="f_trainerExternal" value="${(c.trainerExternal || (c.trainer && !c.trainerEmpId)) ? '1' : '0'}">
+        <!-- Internal: dropdown chọn NV -->
+        <select id="f_trainerEmpId" style="${(c.trainerExternal || (c.trainer && !c.trainerEmpId)) ? 'display:none' : ''}">
+          <option value="">— Chọn nhân viên đào tạo —</option>
+          ${(DB.employees||[]).filter(e => getEffectiveStatus(e)!=='exit').sort((a,b)=>(a.name||'').localeCompare(b.name||'')).map(e => {
+            const dept = (DB.departments||[]).find(d => d.id === e.deptId);
+            const deptLabel = dept ? ` · ${escapeHtml(dept.name)}` : '';
+            return `<option value="${e.id}" ${c.trainerEmpId === e.id ? 'selected' : ''}>${escapeHtml(e.name||'')}${deptLabel}</option>`;
+          }).join('')}
+        </select>
+        <!-- External: text input -->
+        <input id="f_trainer" value="${escapeHtml(c.trainer||'')}" placeholder="VD: Apollo English Center, Mr. John Smith (AccorAcademy)..." style="${(c.trainerExternal || (c.trainer && !c.trainerEmpId)) ? '' : 'display:none'}">
+      </div>
       <div class="field"><label>Đơn vị tổ chức</label><input id="f_provider" value="${escapeHtml(c.provider||'')}" placeholder="VD: AccorAcademy, VTOS Vietnam"></div>
-      <div class="field full"><label>Địa điểm tổ chức</label><input id="f_location" value="${escapeHtml(c.location||'')}" placeholder="VD: Phòng đào tạo tầng 2, Hội trường, Online qua Zoom..."></div>
+      <div class="field"><label>Địa điểm tổ chức</label><input id="f_location" value="${escapeHtml(c.location||'')}" placeholder="VD: Phòng đào tạo tầng 2, Hội trường, Online qua Zoom..."></div>
 
       <!-- Mô tả & đối tượng -->
       <div class="field full"><label>Mô tả khoá học / Mục tiêu</label><textarea id="f_description" placeholder="Mô tả nội dung, mục tiêu đào tạo của khoá học...">${escapeHtml(c.description||'')}</textarea></div>
@@ -19395,16 +19477,29 @@ function trnSelectAllByDept(){
   const empIds = DB.employees
     .filter(emp => emp.status !== 'exit' && deptIds.includes(emp.deptId))
     .map(emp => emp.id);
-  document.getElementById('f_attendeeIds').value = empIds.join(',');
+  // Include trainees active của các dept đã chọn (prefix tr_)
+  const _today = new Date();
+  const trainees = (DB.trainees||[]).filter(tr => {
+    if(tr.status === 'exit') return false;
+    if(!deptIds.includes(tr.deptId)) return false;
+    if(tr.endDate){
+      const end = new Date(tr.endDate);
+      if(!isNaN(end) && end < _today) return false;
+    }
+    return true;
+  }).map(tr => 'tr_'+tr.id);
+  const allIds = [...empIds, ...trainees];
+  document.getElementById('f_attendeeIds').value = allIds.join(',');
   document.querySelectorAll('.att-item').forEach(el => {
     const id = el.dataset.id;
-    const on = empIds.includes(id);
+    const on = allIds.includes(id);
     const cb = el.querySelector('input[type=checkbox]');
     if(cb) cb.checked = on;
-    el.style.background = on ? 'rgba(212,165,116,.08)' : '';
+    el.style.background = on ? (id.startsWith('tr_') ? 'rgba(167,139,250,.08)' : 'rgba(212,165,116,.08)') : '';
   });
-  document.getElementById('att_count_badge').textContent = `Đã chọn ${empIds.length} người`;
-  toast(`Đã chọn ${empIds.length} NV thuộc ${deptIds.length} phòng ban`);
+  document.getElementById('att_count_badge').textContent = `Đã chọn ${allIds.length} người`;
+  const ttsCount = trainees.length;
+  toast(`Đã chọn ${empIds.length} NV${ttsCount?` + ${ttsCount} TTS`:''} thuộc ${deptIds.length} phòng ban`);
 }
 
 function trnClearAllAttendees(){
@@ -19417,11 +19512,49 @@ function trnClearAllAttendees(){
   document.getElementById('att_count_badge').textContent = 'Đã chọn 0 người';
 }
 
+// Toggle giữa "Nội bộ" (chọn NV) và "Bên ngoài" (gõ tay)
+function _trnSetMode(isExt){
+  const hidden = document.getElementById('f_trainerExternal');
+  const sel = document.getElementById('f_trainerEmpId');
+  const inp = document.getElementById('f_trainer');
+  const btnInt = document.getElementById('f_trainerModeInternal');
+  const btnExt = document.getElementById('f_trainerModeExternal');
+  if(hidden) hidden.value = isExt ? '1' : '0';
+  if(sel) sel.style.display = isExt ? 'none' : '';
+  if(inp) inp.style.display = isExt ? '' : 'none';
+  // Update button styles
+  if(btnInt){
+    btnInt.style.background = isExt ? 'transparent' : 'var(--success)';
+    btnInt.style.color = isExt ? 'var(--ink-dim)' : '#000';
+  }
+  if(btnExt){
+    btnExt.style.background = isExt ? 'var(--accent)' : 'transparent';
+    btnExt.style.color = isExt ? '#000' : 'var(--ink-dim)';
+  }
+  // Clear opposite field để tránh confusion
+  if(isExt){
+    if(sel) sel.value = '';
+  } else {
+    if(inp) inp.value = '';
+  }
+}
+
 function saveCourse(id, isNew){
   const name = $('#f_name').value.trim();
   if(!name){ toast('Vui lòng nhập tên khoá học','error'); return; }
   const startDate = dispToIso($('#f_start')?.value||'');
   if(!startDate){ toast('Vui lòng chọn ngày bắt đầu','error'); return; }
+
+  // Trainer: nội bộ (chọn NV) hoặc ngoài (gõ tay)
+  const isExternal = document.getElementById('f_trainerExternal')?.value === '1';
+  const trainerEmpId = isExternal ? '' : ($('#f_trainerEmpId')?.value || '');
+  let trainerName = '';
+  if(trainerEmpId){
+    const emp = (DB.employees||[]).find(e => e.id === trainerEmpId);
+    trainerName = emp ? (emp.name||'') : '';
+  } else {
+    trainerName = ($('#f_trainer')?.value||'').trim();
+  }
 
   const data = {
     id, name,
@@ -19433,7 +19566,9 @@ function saveCourse(id, isNew){
     cost: $si('f_cost'),
     startDate: startDate,
     endDate: dispToIso($('#f_end')?.value||''),
-    trainer: $('#f_trainer').value.trim(),
+    trainer: trainerName,
+    trainerEmpId: trainerEmpId || null, // empId nếu là NV nội bộ
+    trainerExternal: isExternal,        // true nếu là người ngoài (kể cả khi gõ tay)
     provider: $('#f_provider').value.trim(),
     location: $('#f_location').value.trim(),
     description: $('#f_description').value.trim(),
@@ -25891,6 +26026,45 @@ function editTrainee(id){
       </div>
       <div class="field full"><label>Ghi chú</label><input id="tr_notes" value="${escapeHtml(tr.notes||'')}"></div>
     </div>
+
+    ${(() => {
+      // Lịch sử đào tạo của TTS này (nếu đã có id)
+      if(isNew || !id) return '';
+      const trAttId = 'tr_' + id;
+      const myCourses = (DB.courses||[]).filter(c => (c.attendeeIds||[]).includes(trAttId));
+      if(myCourses.length === 0){
+        return `
+        <div style="margin-top:14px;padding:12px 14px;background:var(--bg-elev);border-radius:8px;border:1px dashed var(--border)">
+          <div style="font-weight:600;font-size:12.5px;color:var(--ink-dim);margin-bottom:4px">📚 Lịch sử đào tạo</div>
+          <div style="font-size:11.5px;color:var(--ink-muted);font-style:italic">Chưa tham gia khóa đào tạo nào. Trong form khóa học, chọn TTS này vào danh sách "Người tham gia" để bắt đầu track.</div>
+        </div>`;
+      }
+      myCourses.sort((a,b) => (b.startDate||'').localeCompare(a.startDate||''));
+      const totalHours = myCourses.reduce((s,c)=>s+(parseFloat(c.hours)||0), 0);
+      return `
+      <div style="margin-top:14px;padding:12px 14px;background:var(--bg-elev);border-radius:8px;border-left:3px solid var(--purple)">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <div style="font-weight:700;font-size:13px;color:#a78bfa">📚 Lịch sử đào tạo</div>
+          <div style="font-size:11.5px;color:var(--ink-dim)"><b>${myCourses.length}</b> khóa · <b>${totalHours.toFixed(1)}h</b> tổng cộng</div>
+        </div>
+        <div style="overflow-x:auto;max-height:200px;overflow-y:auto">
+        <table class="tbl" style="width:100%;font-size:11.5px">
+          <thead style="position:sticky;top:0;background:var(--bg-elev)">
+            <tr><th>Khóa học</th><th>Trainer</th><th>Ngày</th><th class="num">Giờ</th></tr>
+          </thead>
+          <tbody>
+            ${myCourses.map(c => `<tr>
+              <td><b>${escapeHtml(c.name||'')}</b></td>
+              <td>${escapeHtml(c.trainer||'—')}</td>
+              <td style="font-family:'JetBrains Mono',monospace;font-size:10.5px">${c.startDate ? c.startDate.split('-').reverse().join('/') : '—'}</td>
+              <td class="num"><b>${c.hours||0}h</b></td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+        </div>
+      </div>`;
+    })()}
+
     <div class="modal-actions">
       ${isNew?'':`<button class="btn btn-danger left" onclick="deleteTrainee('${tr.id}',true)">${ICONS.trash} Xoá</button>`}
       <button class="btn" onclick="closeModal()">${'Huỷ'}</button>
