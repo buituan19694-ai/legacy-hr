@@ -14651,9 +14651,27 @@ function renderLeaves(main){
     const yr = bal.year || today.getFullYear();
     // Dùng cùng status filter với bảng Theo dõi
     const _costFilter = bal.statusFilter||'active';
-    const activePool = _costFilter==='all' ? DB.employees
+    let activePool = _costFilter==='all' ? DB.employees
       : _costFilter==='exit' ? DB.employees.filter(e=>getEffectiveStatus(e)==='exit')
       : DB.employees.filter(e=>getEffectiveStatus(e)!=='exit');
+
+    // Include trainees để khớp với bảng phòng ban phía trên (id phải có prefix 'tr_' match leaveSheet)
+    const _nowIso = today.toISOString().slice(0,10);
+    const _costTrainees = (DB.trainees||[])
+      .filter(tr => {
+        let isActive = true;
+        if(tr.status === 'exit' || tr.status === 'early_exit') isActive = false;
+        else if(tr.status === 'active') isActive = true;
+        else if(tr.endDate && tr.endDate < _nowIso) isActive = false;
+        if(_costFilter === 'exit') return !isActive;
+        if(_costFilter === 'active') return isActive;
+        return true;
+      })
+      .map(tr => ({id:'tr_'+tr.id, code:tr.code||'', name:tr.name||'',
+        role:'Thực tập sinh', deptId:tr.deptId||'',
+        joined:tr.startDate||'', status:'active', _isTrainee:true, _salary:tr.salary||0}));
+    activePool = [...activePool, ..._costTrainees];
+
     const fmtM = n => Math.round(n||0).toLocaleString('vi-VN');
 
     // Per-emp: lấy stdDays từ custom field, lương tổng, tồn AL/CL
@@ -14673,8 +14691,10 @@ function renderLeaves(main){
       // Ngày công tiêu chuẩn từ hồ sơ NV (custom field stdWorkDays)
       const stdDays = parseFloat(cd.stdWorkDays)||26;
 
-      // Tổng lương = baseSalary + bonusSalary
-      const totalSalary = (parseFloat(cd.baseSalary)||0) + (parseFloat(cd.bonusSalary)||0);
+      // Tổng lương: NV chính thức = base + bonus | Trainee = tr.salary
+      const totalSalary = e._isTrainee
+        ? (parseFloat(e._salary)||0)
+        : (parseFloat(cd.baseSalary)||0) + (parseFloat(cd.bonusSalary)||0);
 
       // Đơn giá ngày công
       const dayRate = stdDays > 0 ? totalSalary / stdDays : 0;
