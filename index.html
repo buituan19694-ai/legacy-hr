@@ -1140,6 +1140,8 @@ async function loadEmpProfiles(localPhotos){
     }
     DB.employees = employees;
     DB.customData = customData;
+    // Cache empIds đã có trên Firestore để pushMissingEmpProfiles không cần re-fetch
+    window._existingEmpIds = new Set(employees.map(e=>e.id));
     return true;
   }catch(e){
     console.warn('[EMP] loadEmpProfiles error:', e.message);
@@ -1148,19 +1150,23 @@ async function loadEmpProfiles(localPhotos){
 }
 
 // Đẩy NV chưa có trên Firestore (thường là NV exit chưa được migrate) lên emp_profiles
+// OPTIMIZED: dùng existingEmpIds từ loadEmpProfiles thay vì re-fetch full collection (tiết kiệm ~226 reads/load)
 async function pushMissingEmpProfiles(){
   if(!window.fbDb || !window.currentUser) return;
+  if(!window._existingEmpIds){
+    console.log('[Migration] Skip pushMissingEmpProfiles — chưa có _existingEmpIds cache');
+    return;
+  }
   try{
-    const snap = await window.fbDb.collection(EMP_COLLECTION).get();
-    const existingIds = new Set(snap.docs.map(d=>d.data()._empId||d.id));
     let pushed = 0;
     (DB.employees||[]).forEach(e=>{
-      if(!existingIds.has(e.id)){
+      if(!window._existingEmpIds.has(e.id)){
         saveEmpProfile(e.id);
+        window._existingEmpIds.add(e.id); // track để không push lại
         pushed++;
       }
     });
-    if(pushed>0) console.log('[Migration] Pushed',pushed,'missing emp profiles to Firestore');
+    if(pushed>0) console.log('[Migration] Pushed',pushed,'missing emp profiles to Firestore (no extra reads)');
   }catch(err){
     console.warn('[Migration] pushMissingEmpProfiles error:', err.message);
   }
@@ -13973,9 +13979,15 @@ function renderLeaves(main){
   })();
   const fnum = n => (Math.round((n||0)*100)/100).toString();
 
-  const allActive = DB.employees.filter(e=> getEffectiveStatus(e)!=='exit');
-  let scopeEmps = bal.emp ? allActive.filter(e=>e.id===bal.emp)
-                          : (bal.dept ? allActive.filter(e=>e.deptId===bal.dept) : allActive);
+  // Follow statusFilter giống tab Theo dõi để 2 nơi khớp số (active/exit/all)
+  const _balStatusFilter = bal.statusFilter || 'active';
+  const _balPool = _balStatusFilter==='all' ? DB.employees
+    : _balStatusFilter==='exit' ? DB.employees.filter(e=>getEffectiveStatus(e)==='exit')
+    : DB.employees.filter(e=>getEffectiveStatus(e)!=='exit');
+  let scopeEmps = bal.emp ? _balPool.filter(e=>e.id===bal.emp)
+                          : (bal.dept ? _balPool.filter(e=>e.deptId===bal.dept) : _balPool);
+  // Backward compat: expose allActive cho code phía dưới
+  const allActive = _balPool;
 
   // Include trainees (TTS) — phải khớp với tab Theo dõi
   if(!bal.emp){
@@ -13986,7 +13998,10 @@ function renderLeaves(main){
         if(tr.status === 'exit' || tr.status === 'early_exit') isActive = false;
         else if(tr.status === 'active') isActive = true;
         else if(tr.endDate && tr.endDate < now) isActive = false;
-        return isActive;
+        // Theo statusFilter
+        if(_balStatusFilter === 'exit') return !isActive;
+        if(_balStatusFilter === 'active') return isActive;
+        return true; // 'all'
       })
       .filter(tr => !bal.dept || tr.deptId === bal.dept)
       .map(tr => ({
@@ -14417,7 +14432,7 @@ function renderLeaves(main){
       <div class="topbar-left">
         <div class="crumb">Nhân sự · <span>Nghỉ phép</span></div>
         <h1 class="page-title">Nghỉ <em>phép</em></h1>
-        <div class="page-sub">Theo dõi nghỉ phép năm ${today.getFullYear()} · ${DB.employees.filter(e=>getEffectiveStatus(e)!=='exit').length} nhân viên</div>
+        <div class="page-sub">Theo dõi nghỉ phép năm ${today.getFullYear()} · ${scopeEmps.length} nhân viên${bal.dept?' · '+deptName(bal.dept):''}</div>
       </div>
       <div class="topbar-actions">
         <button class="btn" onclick="exportLeaveXLSX()">${ICONS.download} ${t('btn_export')}</button>
@@ -14431,23 +14446,22 @@ function renderLeaves(main){
       let activeEmps = _sf==='all' ? DB.employees
         : _sf==='exit' ? DB.employees.filter(e=>getEffectiveStatus(e)==='exit')
         : DB.employees.filter(e=>getEffectiveStatus(e)!=='exit');
-      // Thêm trainee đang hoạt động (giống bảng Theo dõi: id phải có prefix 'tr_' để match leaveSheet key)
-      if(_sf!=='exit'){
-        const _now = today.toISOString().slice(0,10);
-        const _trainees = (DB.trainees||[])
-          .filter(tr => {
-            // Cho phép TTS không có startDate (giống Theo dõi)
-            let isActive = true;
-            if(tr.status === 'exit' || tr.status === 'early_exit') isActive = false;
-            else if(tr.status === 'active') isActive = true;
-            else if(tr.endDate && tr.endDate < _now) isActive = false;
-            return isActive;
-          })
-          .map(tr=>({id:'tr_'+tr.id, code:tr.code||'', name:tr.name||'',
-            role:'Thực tập sinh', deptId:tr.deptId||'',
-            joined:tr.startDate||'', status:'active', _isTrainee:true}));
-        activeEmps = [...activeEmps, ..._trainees];
-      }
+      // Thêm trainee — filter giống Theo dõi (active/exit/all)
+      const _now = today.toISOString().slice(0,10);
+      const _trainees = (DB.trainees||[])
+        .filter(tr => {
+          let isActive = true;
+          if(tr.status === 'exit' || tr.status === 'early_exit') isActive = false;
+          else if(tr.status === 'active') isActive = true;
+          else if(tr.endDate && tr.endDate < _now) isActive = false;
+          if(_sf === 'exit') return !isActive;
+          if(_sf === 'active') return isActive;
+          return true; // 'all'
+        })
+        .map(tr=>({id:'tr_'+tr.id, code:tr.code||'', name:tr.name||'',
+          role:'Thực tập sinh', deptId:tr.deptId||'',
+          joined:tr.startDate||'', status:'active', _isTrainee:true}));
+      activeEmps = [...activeEmps, ..._trainees];
       const fnum = v => Math.round((v||0)*100)/100;
       const fmt = v => v===0?'0':(fnum(v)%1===0?fnum(v).toString():fnum(v).toFixed(1));
 
