@@ -13976,50 +13976,67 @@ function renderLeaves(main){
   const allActive = DB.employees.filter(e=> getEffectiveStatus(e)!=='exit');
   let scopeEmps = bal.emp ? allActive.filter(e=>e.id===bal.emp)
                           : (bal.dept ? allActive.filter(e=>e.deptId===bal.dept) : allActive);
+
+  // Include trainees (TTS) — phải khớp với tab Theo dõi
+  if(!bal.emp){
+    const now = today.toISOString().slice(0,10);
+    const activeTrainees = (DB.trainees||[])
+      .filter(tr => {
+        let isActive = true;
+        if(tr.status === 'exit' || tr.status === 'early_exit') isActive = false;
+        else if(tr.status === 'active') isActive = true;
+        else if(tr.endDate && tr.endDate < now) isActive = false;
+        return isActive;
+      })
+      .filter(tr => !bal.dept || tr.deptId === bal.dept)
+      .map(tr => ({
+        id: 'tr_'+tr.id, code: tr.code||'', name: tr.name||'',
+        role: 'Thực tập sinh', deptId: tr.deptId||'',
+        joined: tr.startDate||'', status: 'active', _isTrainee: true,
+      }));
+    scopeEmps = [...scopeEmps, ...activeTrainees];
+  }
+
   const isSingle = !!bal.emp;
   const scopeEmp = isSingle ? DB.employees.find(e=>e.id===bal.emp) : null;
   const scopeIds = new Set(scopeEmps.map(e=>e.id));
 
-  const leavesThisYear = (DB.leaves||[]).filter(l=>
-    l.status==='approved' && scopeIds.has(l.empId) && l.startDate &&
-    new Date(l.startDate).getFullYear() === bal.year
-  );
-  const usedLookup = {}; // usedLookup[empId][month] = {al, cl}
-  leavesThisYear.forEach(l=>{
-    const m = new Date(l.startDate).getMonth()+1;
-    if(!usedLookup[l.empId]) usedLookup[l.empId] = {};
-    if(!usedLookup[l.empId][m]) usedLookup[l.empId][m] = {al:0, cl:0};
-    const isAL = AL_TYPES.includes(l.type);
-    const isCL = CL_TYPES.includes(l.type);
-    if(isAL) usedLookup[l.empId][m].al += (l.days||0);
-    if(isCL) usedLookup[l.empId][m].cl += (l.days||0);
-  });
-  const alRateCache = {};
-  scopeEmps.forEach(e=>{ alRateCache[e.id] = alAccrualPerMonthForEmp(e.id, bal.year); });
+  // DÙNG leaveSheet (cùng nguồn với tab Theo dõi) để đảm bảo số liệu khớp
+  // leaveSheet[empId][year][type] = {carry, entitle:Array(12), taken:Array(12)}
+  if(!DB.leaveSheet) DB.leaveSheet = {};
+  const _balGetSheet = (empId, type) => {
+    if(typeof getLeaveSheet === 'function') return getLeaveSheet(empId, type, bal.year);
+    // Fallback inline
+    if(!DB.leaveSheet[empId]) DB.leaveSheet[empId] = {};
+    if(!DB.leaveSheet[empId][bal.year]) DB.leaveSheet[empId][bal.year] = {};
+    if(!DB.leaveSheet[empId][bal.year][type]) DB.leaveSheet[empId][bal.year][type] = {carry:0, entitle:Array(12).fill(0), taken:Array(12).fill(0)};
+    return DB.leaveSheet[empId][bal.year][type];
+  };
 
+  // Build per-month aggregates từ leaveSheet
   const balMonths = [];
-  for(let m=1;m<=12;m++){
-    let alAccr=0, alUsed=0, alRun=0, clAccr=0, clUsed=0, clRun=0;
-    scopeEmps.forEach(e=>{
-      const alRate = alRateCache[e.id];
-      const clRate = balRates.cl;
-      const op = (DB.leaveOpening && DB.leaveOpening[e.id]) || {al:0, cl:0};
-      let alUsedBefore=0, clUsedBefore=0, alUsedM=0, clUsedM=0;
-      for(let mm=1; mm<m; mm++){
-        const u = (usedLookup[e.id]||{})[mm]||{};
-        alUsedBefore += u.al||0; clUsedBefore += u.cl||0;
-      }
-      const uM = (usedLookup[e.id]||{})[m]||{};
-      alUsedM = uM.al||0; clUsedM = uM.cl||0;
-      const alClose = (op.al||0) + alRate*m - alUsedBefore - alUsedM;
-      const clClose = (op.cl||0) + clRate*m - clUsedBefore - clUsedM;
-      alAccr += alRate; alUsed += alUsedM; alRun += alClose;
-      clAccr += clRate; clUsed += clUsedM; clRun += clClose;
+  for(let m=1; m<=12; m++){
+    let alAccr=0, alUsed=0, clAccr=0, clUsed=0;
+    scopeEmps.forEach(e => {
+      const shAL = _balGetSheet(e.id, 'al');
+      const shCL = _balGetSheet(e.id, 'cl');
+      alAccr += parseFloat(shAL.entitle[m-1])||0;
+      alUsed += parseFloat(shAL.taken[m-1])||0;
+      clAccr += parseFloat(shCL.entitle[m-1])||0;
+      clUsed += parseFloat(shCL.taken[m-1])||0;
     });
-    balMonths.push({m, alAccr, alUsed, alRun, clAccr, clUsed, clRun});
+    // Running balance: carry-over + accr累 - used累 đến tháng m
+    balMonths.push({m, alAccr, alUsed, clAccr, clUsed});
   }
+
+  // Tổng cộng cả năm — KHỚP với cách tính Tồn cuối năm của Theo dõi
   let alOpenTot=0, clOpenTot=0;
-  scopeEmps.forEach(e=>{ const o=(DB.leaveOpening&&DB.leaveOpening[e.id])||{al:0,cl:0}; alOpenTot+=o.al||0; clOpenTot+=o.cl||0; });
+  scopeEmps.forEach(e => {
+    const shAL = _balGetSheet(e.id, 'al');
+    const shCL = _balGetSheet(e.id, 'cl');
+    alOpenTot += parseFloat(shAL.carry)||0;
+    clOpenTot += parseFloat(shCL.carry)||0;
+  });
   const alAccrYear = balMonths.reduce((s,x)=>s+x.alAccr,0);
   const clAccrYear = balMonths.reduce((s,x)=>s+x.clAccr,0);
   const alUsedYear = balMonths.reduce((s,x)=>s+x.alUsed,0);
@@ -14028,6 +14045,15 @@ function renderLeaves(main){
   const clEntitle = clOpenTot + clAccrYear;
   const alRemain = alEntitle - alUsedYear;
   const clRemain = clEntitle - clUsedYear;
+
+  // Build running balance per month (chạy lũy kế cho hiển thị bảng tháng)
+  let alRun = alOpenTot, clRun = clOpenTot;
+  balMonths.forEach(x => {
+    alRun = alRun + x.alAccr - x.alUsed;
+    clRun = clRun + x.clAccr - x.clUsed;
+    x.alRun = Math.round(alRun*100)/100;
+    x.clRun = Math.round(clRun*100)/100;
+  });
 
   const thisYear = today.getFullYear(), thisMonth = today.getMonth()+1;
   const balRows = balMonths.map(x=>{
@@ -14405,14 +14431,21 @@ function renderLeaves(main){
       let activeEmps = _sf==='all' ? DB.employees
         : _sf==='exit' ? DB.employees.filter(e=>getEffectiveStatus(e)==='exit')
         : DB.employees.filter(e=>getEffectiveStatus(e)!=='exit');
-      // Thêm trainee đang hoạt động (giống bảng Theo dõi)
+      // Thêm trainee đang hoạt động (giống bảng Theo dõi: id phải có prefix 'tr_' để match leaveSheet key)
       if(_sf!=='exit'){
         const _now = today.toISOString().slice(0,10);
         const _trainees = (DB.trainees||[])
-          .filter(tr=>tr.startDate&&(!tr.endDate||tr.endDate>=_now))
-          .map(tr=>({id:tr.id,code:tr.code||'',name:tr.name||'',
-            role:'Thực tập sinh',deptId:tr.deptId||'',
-            joined:tr.startDate||'',status:'active',_isTrainee:true}));
+          .filter(tr => {
+            // Cho phép TTS không có startDate (giống Theo dõi)
+            let isActive = true;
+            if(tr.status === 'exit' || tr.status === 'early_exit') isActive = false;
+            else if(tr.status === 'active') isActive = true;
+            else if(tr.endDate && tr.endDate < _now) isActive = false;
+            return isActive;
+          })
+          .map(tr=>({id:'tr_'+tr.id, code:tr.code||'', name:tr.name||'',
+            role:'Thực tập sinh', deptId:tr.deptId||'',
+            joined:tr.startDate||'', status:'active', _isTrainee:true}));
         activeEmps = [...activeEmps, ..._trainees];
       }
       const fnum = v => Math.round((v||0)*100)/100;
