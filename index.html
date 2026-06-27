@@ -15875,6 +15875,14 @@ function renderWorkforce(main){
     return d&&!isNaN(d)&&d.getFullYear()===yr&&d.getMonth()===mi;
   }).length);
 
+  // Ứng viên đã offer + có ngày dự kiến onboard
+  const upcomingByMonth = MN.map((_,mi)=>(DB.candidates||[]).filter(c=>{
+    if(c.status !== 'offer' && c.status !== 'hired') return false;
+    if(!c.expectedOnboardDate) return false;
+    const d=_parseAnyDate(c.expectedOnboardDate);
+    return d&&!isNaN(d)&&d.getFullYear()===yr&&d.getMonth()===mi;
+  }).length);
+
   const newByDept={}, exitByDept={}, exitReasons={};
   newEmps.forEach(e=>{ const d=deptName(e.deptId)||'Khác'; newByDept[d]=(newByDept[d]||0)+1; });
   exitEmps.forEach(e=>{
@@ -15978,9 +15986,12 @@ function renderWorkforce(main){
     </div>
 
     <!-- Tabs -->
-    <div style="display:flex;gap:6px;margin-bottom:14px">
+    <div style="display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap">
       <button class="rec-tab ${tab==='new'?'active':''}" onclick="window._wfTab='new';sessionStorage.setItem('_wfTab','new');render()">
         🟢 NV Mới <span style="background:rgba(126,198,153,.2);color:var(--success);border-radius:10px;padding:1px 8px;font-size:11px;margin-left:4px">${newEmps.length}</span>
+      </button>
+      <button class="rec-tab ${tab==='upcoming'?'active':''}" onclick="window._wfTab='upcoming';sessionStorage.setItem('_wfTab','upcoming');render()">
+        🟡 Dự kiến onboard <span style="background:rgba(232,185,116,.2);color:var(--accent);border-radius:10px;padding:1px 8px;font-size:11px;margin-left:4px">${(DB.candidates||[]).filter(c=>(c.status==='offer'||c.status==='hired')&&c.expectedOnboardDate&&new Date(c.expectedOnboardDate)>=new Date()).length}</span>
       </button>
       <button class="rec-tab ${tab==='exit'?'active':''}" onclick="window._wfTab='exit';sessionStorage.setItem('_wfTab','exit');render()">
         🔴 Nghỉ việc <span style="background:rgba(229,115,115,.2);color:var(--danger);border-radius:10px;padding:1px 8px;font-size:11px;margin-left:4px">${exitEmps.length}</span>
@@ -15990,7 +16001,10 @@ function renderWorkforce(main){
       </button>
 
     </div>
-    ${tab==='new' ? _wfNewTab(newEmps,newByDept,PAL,yr,mon) : tab==='resign' ? _wfResignTab() : _wfExitTab(exitEmps,exitByDept,exitReasons,PAL,yr,mon)}
+    ${tab==='new' ? _wfNewTab(newEmps,newByDept,PAL,yr,mon)
+      : tab==='upcoming' ? _wfUpcomingTab(PAL,yr,mon)
+      : tab==='resign' ? _wfResignTab()
+      : _wfExitTab(exitEmps,exitByDept,exitReasons,PAL,yr,mon)}
   `;
 
   setTimeout(()=>{
@@ -16011,9 +16025,14 @@ function renderWorkforce(main){
         if(isFut(i)) return mon===0||mon===i+1?'rgba(229,115,115,.35)':'rgba(229,115,115,.12)';
         return mon===0||mon===i+1?'rgba(229,115,115,.45)':'rgba(229,115,115,.18)';
       });
+      // Cột "Dự kiến onboard" — vàng accent
+      const upcomingColors = upcomingByMonth.map((_,i)=>{
+        return mon===0||mon===i+1?'rgba(232,185,116,.75)':'rgba(232,185,116,.3)';
+      });
       new Chart(ovEl,{type:'bar',
         data:{labels:MN,datasets:[
           {label:'NV Mới',data:newByMonth.map((v,i)=>isFut(i)?null:v),backgroundColor:newColors,borderRadius:4,borderSkipped:false},
+          {label:'Dự kiến onboard',data:upcomingByMonth.map(v=>v||null),backgroundColor:upcomingColors,borderRadius:4,borderSkipped:false},
           {label:'Nghỉ việc',data:exitByMonth.map((v,i)=>isFut(i)?null:v),backgroundColor:exitColors,borderRadius:4,borderSkipped:false},
           {label:'Đơn nghỉ (chờ duyệt)',data:resignByMonth.map((v,i)=>v||null),backgroundColor:resignColors,borderRadius:4,borderSkipped:false},
         ]},
@@ -16768,6 +16787,152 @@ function resignAction(rid, action){
     render();
     toast(`Đã huỷ đơn — ${empName} về trạng thái bình thường`,'success');
   }
+}
+
+function _wfUpcomingTab(PAL, yr, mon){
+  const today = new Date();
+  today.setHours(0,0,0,0);
+  // Lấy candidates có status offer/hired + expectedOnboardDate trong tương lai (hoặc trong khoảng yr/mon)
+  const candidates = (DB.candidates||[]).filter(c => {
+    if(c.status !== 'offer' && c.status !== 'hired') return false;
+    if(!c.expectedOnboardDate) return false;
+    const d = new Date(c.expectedOnboardDate);
+    if(isNaN(d)) return false;
+    // Filter theo yr/mon nếu user chọn cụ thể
+    if(d.getFullYear() !== yr) return false;
+    if(mon !== 0 && d.getMonth()+1 !== mon) return false;
+    return true;
+  });
+
+  // Sort theo ngày dự kiến gần nhất trước
+  candidates.sort((a,b) => new Date(a.expectedOnboardDate) - new Date(b.expectedOnboardDate));
+
+  // Tổng theo dept
+  const byDept = {};
+  candidates.forEach(c => {
+    const job = (DB.jobs||[]).find(j => j.id === c.jobId);
+    const dId = job?.deptId || '_unknown';
+    const dName = (DB.departments||[]).find(d => d.id === dId)?.name || 'Chưa xác định';
+    if(!byDept[dName]) byDept[dName] = 0;
+    byDept[dName]++;
+  });
+
+  // Theo tháng (chart)
+  const byMonth = Array(12).fill(0);
+  candidates.forEach(c => {
+    const m = new Date(c.expectedOnboardDate).getMonth();
+    byMonth[m]++;
+  });
+
+  // Stats
+  const totalCount = candidates.length;
+  const next30 = candidates.filter(c => {
+    const d = new Date(c.expectedOnboardDate);
+    const diff = (d - today)/(1000*60*60*24);
+    return diff >= 0 && diff <= 30;
+  }).length;
+  const overdue = candidates.filter(c => new Date(c.expectedOnboardDate) < today).length;
+
+  if(totalCount === 0){
+    return `
+      <div class="card" style="text-align:center;padding:48px 24px">
+        <div style="font-size:48px;margin-bottom:12px">📅</div>
+        <div style="font-weight:700;font-size:15px;margin-bottom:6px">Chưa có ứng viên nào đang chờ onboard</div>
+        <div style="font-size:12.5px;color:var(--ink-muted);max-width:480px;margin:0 auto">
+          Trong module <b>Tuyển dụng</b>, mở hồ sơ ứng viên đang ở trạng thái <b>"Đã gửi offer"</b> hoặc <b>"Đã nhận việc"</b>, điền <b>Ngày dự kiến onboard</b> để hiển thị ở đây.
+        </div>
+      </div>
+    `;
+  }
+
+  return `
+    <!-- Summary cards -->
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin-bottom:16px">
+      <div class="card" style="padding:14px;border-left:3px solid var(--accent)">
+        <div style="font-size:11px;color:var(--ink-muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Tổng dự kiến onboard</div>
+        <div style="font-size:24px;font-weight:700;color:var(--accent)">${totalCount}</div>
+        <div style="font-size:11px;color:var(--ink-dim);margin-top:2px">trong ${mon===0?yr:'tháng '+mon+'/'+yr}</div>
+      </div>
+      <div class="card" style="padding:14px;border-left:3px solid var(--success)">
+        <div style="font-size:11px;color:var(--ink-muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">30 ngày tới</div>
+        <div style="font-size:24px;font-weight:700;color:var(--success)">${next30}</div>
+        <div style="font-size:11px;color:var(--ink-dim);margin-top:2px">cần chuẩn bị</div>
+      </div>
+      ${overdue > 0 ? `
+      <div class="card" style="padding:14px;border-left:3px solid var(--danger)">
+        <div style="font-size:11px;color:var(--ink-muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Quá hạn</div>
+        <div style="font-size:24px;font-weight:700;color:var(--danger)">${overdue}</div>
+        <div style="font-size:11px;color:var(--ink-dim);margin-top:2px">cần xử lý</div>
+      </div>
+      ` : ''}
+    </div>
+
+    <!-- Chart theo tháng -->
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-head"><div>
+        <div class="card-title">📊 Dự kiến onboard <em>theo tháng</em></div>
+        <div class="card-sub">Phân bổ ${totalCount} ứng viên dự kiến vào làm trong năm ${yr}</div>
+      </div></div>
+      <div style="height:200px;position:relative"><canvas id="chartWfUpcoming"></canvas></div>
+    </div>
+
+    <!-- Bảng chi tiết -->
+    <div class="card">
+      <div class="card-head"><div>
+        <div class="card-title">📋 Chi tiết <em>ứng viên dự kiến onboard</em></div>
+        <div class="card-sub">${totalCount} ứng viên · Sort theo ngày gần nhất</div>
+      </div></div>
+      <div style="overflow-x:auto">
+      <table class="tbl" style="width:100%;font-size:12.5px">
+        <thead>
+          <tr>
+            <th>Ứng viên</th>
+            <th>Vị trí</th>
+            <th>Phòng ban</th>
+            <th>Ngày dự kiến</th>
+            <th>Còn lại</th>
+            <th>Trạng thái</th>
+            <th class="num">Lương offer</th>
+            <th>Liên hệ</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          ${candidates.map(c => {
+            const job = (DB.jobs||[]).find(j => j.id === c.jobId);
+            const dept = job ? (DB.departments||[]).find(d => d.id === job.deptId) : null;
+            const d = new Date(c.expectedOnboardDate);
+            const diffDays = Math.round((d - today)/(1000*60*60*24));
+            const daysLabel = diffDays < 0 ? `<span style="color:var(--danger);font-weight:600">${Math.abs(diffDays)}d quá hạn</span>`
+              : diffDays === 0 ? `<span style="color:var(--accent);font-weight:600">HÔM NAY</span>`
+              : diffDays <= 7 ? `<span style="color:var(--warning);font-weight:600">${diffDays}d nữa</span>`
+              : diffDays <= 30 ? `<span style="color:var(--success);font-weight:600">${diffDays}d nữa</span>`
+              : `<span style="color:var(--ink-muted)">${diffDays}d nữa</span>`;
+            const statusBadge = c.status === 'hired'
+              ? `<span style="background:rgba(126,198,153,.15);color:var(--success);padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600">✓ Đã nhận việc</span>`
+              : `<span style="background:rgba(232,185,116,.15);color:var(--accent);padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600">📤 Đã gửi offer</span>`;
+            const offerStr = c.offerSalary ? (c.offerSalary).toLocaleString('vi-VN')+'đ' : '—';
+            const fmtDate = (s) => s ? s.split('-').reverse().join('/') : '—';
+            return `<tr style="cursor:pointer" onclick="editCandidate('${c.id}','${c.jobId}')">
+              <td>
+                <div style="font-weight:600">${escapeHtml(c.name||'(chưa đặt tên)')}</div>
+                <div style="font-size:10.5px;color:var(--ink-muted);margin-top:2px">${escapeHtml(c.phone||'')}</div>
+              </td>
+              <td><b>${escapeHtml(job?.title||'?')}</b></td>
+              <td style="font-size:12px;color:var(--ink-dim)">${escapeHtml(dept?.name||'—')}</td>
+              <td style="font-family:'JetBrains Mono',monospace;font-size:11.5px;font-weight:600">${fmtDate(c.expectedOnboardDate)}</td>
+              <td>${daysLabel}</td>
+              <td>${statusBadge}</td>
+              <td class="num" style="font-size:12px">${offerStr}</td>
+              <td style="font-size:11.5px;color:var(--ink-dim)">${escapeHtml(c.email||c.phone||'—')}</td>
+              <td><button class="btn" style="font-size:11px;padding:4px 8px" onclick="event.stopPropagation();editCandidate('${c.id}','${c.jobId}')">${ICONS.edit}</button></td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+      </div>
+    </div>
+  `;
 }
 
 function _wfResignTab(){
@@ -17794,11 +17959,16 @@ function editCandidate(id, jobId){
         ${SOURCES.map(s=>`<option value="${s}" ${a.source===s?'selected':''}>${s}</option>`).join('')}
       </select></div>
 
-      <div class="field"><label>Trạng thái *</label><select id="ca_status">
+      <div class="field"><label>Trạng thái *</label><select id="ca_status" onchange="_caToggleOnboard(this.value)">
         ${Object.entries(CANDIDATE_STATUS).map(([k,v])=>`<option value="${k}" ${a.status===k?'selected':''}>${CANDIDATE_STATUS_ICON[k]} ${v}</option>`).join('')}
       </select></div>
       <div class="field"><label>Lương kỳ vọng (VNĐ) <span style="font-size:10px;color:var(--ink-muted);font-weight:400">· ứng viên yêu cầu</span></label><input type="number" id="ca_salary" value="${a.expectedSalary||0}" min="0" step="500000"></div>
       <div class="field"><label>Lương Offer (VNĐ) <span style="font-size:10px;color:var(--accent);font-weight:400">· DN đề nghị</span></label><input type="number" id="ca_offerSalary" value="${a.offerSalary||0}" min="0" step="500000" placeholder="Mức lương DN đề nghị"></div>
+      <div class="field full" id="ca_onboardWrap" style="${(a.status==='offer'||a.status==='hired')?'':'display:none'};background:rgba(126,198,153,.06);padding:14px;border-radius:8px;border:1px solid rgba(126,198,153,.2)">
+        <label style="color:var(--success);font-weight:600">📅 Ngày dự kiến onboard <span style="font-size:10px;color:var(--ink-muted);font-weight:400">· hiển thị trong HR Movement</span></label>
+        <input type="date" id="ca_onboardDate" value="${dispToIso(a.expectedOnboardDate||'')}" style="margin-top:6px">
+        <div style="font-size:11px;color:var(--ink-muted);margin-top:6px">Sau khi ứng viên đồng ý offer, điền ngày dự kiến vào làm để track trong tab "Dự kiến onboard" của HR Movement</div>
+      </div>
 
       <div class="field full"><label>Kinh nghiệm tóm tắt</label><input id="ca_exp" value="${escapeHtml(a.experience||'')}" placeholder="VD: 3 năm Housekeeping ở Vinpearl"></div>
 
@@ -17972,6 +18142,13 @@ function handleCvUpload(event){
   reader.readAsDataURL(file);
 }
 
+// Toggle hiển thị field "Ngày dự kiến onboard" khi status = offer/hired
+function _caToggleOnboard(status){
+  const wrap = document.getElementById('ca_onboardWrap');
+  if(!wrap) return;
+  wrap.style.display = (status === 'offer' || status === 'hired') ? '' : 'none';
+}
+
 function saveCandidate(id, jobId, isNew){
   const name = $('#ca_name').value.trim();
   if(!name){ toast('Vui lòng nhập tên ứng viên','error'); return; }
@@ -18016,6 +18193,7 @@ function saveCandidate(id, jobId, isNew){
     experience: $s('ca_exp'),
     expectedSalary: $si('ca_salary'),
     offerSalary: $si('ca_offerSalary'),
+    expectedOnboardDate: $sd('ca_onboardDate'),
     rating: $si('ca_rating'),
     notes: $s('ca_notes'),
     screeningBy: $s('ca_screeningBy'),
