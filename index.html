@@ -1097,7 +1097,17 @@ function saveEmpProfile(empId){
 async function loadEmpProfiles(localPhotos){
   if(!window.fbDb) return false;
   try{
-    const snap = await window.fbDb.collection(EMP_COLLECTION).get();
+    // Cache-first: thử cache (0 reads) → fallback server nếu cache rỗng
+    let snap;
+    try {
+      snap = await window.fbDb.collection(EMP_COLLECTION).get({ source: 'cache' });
+      if(snap.empty){
+        // Cache rỗng (lần đầu) → load từ server
+        snap = await window.fbDb.collection(EMP_COLLECTION).get({ source: 'server' });
+      }
+    } catch(_) {
+      snap = await window.fbDb.collection(EMP_COLLECTION).get({ source: 'server' });
+    }
     if(snap.empty) return false;
     const employees = [];
     const customData = {};
@@ -15991,7 +16001,7 @@ function renderWorkforce(main){
         🟢 NV Mới <span style="background:rgba(126,198,153,.2);color:var(--success);border-radius:10px;padding:1px 8px;font-size:11px;margin-left:4px">${newEmps.length}</span>
       </button>
       <button class="rec-tab ${tab==='upcoming'?'active':''}" onclick="window._wfTab='upcoming';sessionStorage.setItem('_wfTab','upcoming');render()">
-        🟡 Dự kiến onboard <span style="background:rgba(232,185,116,.2);color:var(--accent);border-radius:10px;padding:1px 8px;font-size:11px;margin-left:4px">${(DB.candidates||[]).filter(c=>(c.status==='offer'||c.status==='hired')&&c.expectedOnboardDate&&new Date(c.expectedOnboardDate)>=new Date()).length}</span>
+        🟢 Dự kiến onboard <span style="background:rgba(126,198,153,.15);color:var(--success);border-radius:10px;padding:1px 8px;font-size:11px;margin-left:4px;opacity:.85">${(DB.candidates||[]).filter(c=>(c.status==='offer'||c.status==='hired')&&c.expectedOnboardDate&&new Date(c.expectedOnboardDate)>=new Date()).length}</span>
       </button>
       <button class="rec-tab ${tab==='exit'?'active':''}" onclick="window._wfTab='exit';sessionStorage.setItem('_wfTab','exit');render()">
         🔴 Nghỉ việc <span style="background:rgba(229,115,115,.2);color:var(--danger);border-radius:10px;padding:1px 8px;font-size:11px;margin-left:4px">${exitEmps.length}</span>
@@ -16025,9 +16035,9 @@ function renderWorkforce(main){
         if(isFut(i)) return mon===0||mon===i+1?'rgba(229,115,115,.35)':'rgba(229,115,115,.12)';
         return mon===0||mon===i+1?'rgba(229,115,115,.45)':'rgba(229,115,115,.18)';
       });
-      // Cột "Dự kiến onboard" — vàng accent
+      // Cột "Dự kiến onboard" — xanh lá nhạt (giống pattern đỏ nhạt của "Đơn nghỉ chờ duyệt")
       const upcomingColors = upcomingByMonth.map((_,i)=>{
-        return mon===0||mon===i+1?'rgba(232,185,116,.75)':'rgba(232,185,116,.3)';
+        return mon===0||mon===i+1?'rgba(126,198,153,.45)':'rgba(126,198,153,.18)';
       });
       new Chart(ovEl,{type:'bar',
         data:{labels:MN,datasets:[
@@ -16848,9 +16858,9 @@ function _wfUpcomingTab(PAL, yr, mon){
   return `
     <!-- Summary cards -->
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin-bottom:16px">
-      <div class="card" style="padding:14px;border-left:3px solid var(--accent)">
+      <div class="card" style="padding:14px;border-left:3px solid rgba(126,198,153,.5)">
         <div style="font-size:11px;color:var(--ink-muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Tổng dự kiến onboard</div>
-        <div style="font-size:24px;font-weight:700;color:var(--accent)">${totalCount}</div>
+        <div style="font-size:24px;font-weight:700;color:var(--success);opacity:.85">${totalCount}</div>
         <div style="font-size:11px;color:var(--ink-dim);margin-top:2px">trong ${mon===0?yr:'tháng '+mon+'/'+yr}</div>
       </div>
       <div class="card" style="padding:14px;border-left:3px solid var(--success)">
@@ -16910,7 +16920,7 @@ function _wfUpcomingTab(PAL, yr, mon){
               : `<span style="color:var(--ink-muted)">${diffDays}d nữa</span>`;
             const statusBadge = c.status === 'hired'
               ? `<span style="background:rgba(126,198,153,.15);color:var(--success);padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600">✓ Đã nhận việc</span>`
-              : `<span style="background:rgba(232,185,116,.15);color:var(--accent);padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600">📤 Đã gửi offer</span>`;
+              : `<span style="background:rgba(126,198,153,.12);color:var(--success);padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;opacity:.85">📤 Đã gửi offer</span>`;
             const offerStr = c.offerSalary ? (c.offerSalary).toLocaleString('vi-VN')+'đ' : '—';
             const fmtDate = (s) => s ? s.split('-').reverse().join('/') : '—';
             return `<tr style="cursor:pointer" onclick="editCandidate('${c.id}','${c.jobId}')">
@@ -26953,9 +26963,15 @@ window.currentUserData = null; // role, permissions, name
 // ── Preload brand cho auth screen ──────────────────────────
 // Lấy logo/tên từ sidebar HTML tĩnh (luôn đúng) + DB.brandConfig nếu có
 (async ()=>{
-  // Thử load brandConfig từ Firestore để có logo image
+  // Thử load brandConfig từ Firestore để có logo image (cache-first)
   try{
-    const cfgDoc = await fbDb.collection('hrdata').doc('config').get();
+    let cfgDoc;
+    try {
+      cfgDoc = await fbDb.collection('hrdata').doc('config').get({source: 'cache'});
+      if(!cfgDoc.exists) cfgDoc = await fbDb.collection('hrdata').doc('config').get({source: 'server'});
+    } catch(_) {
+      cfgDoc = await fbDb.collection('hrdata').doc('config').get({source: 'server'});
+    }
     if(cfgDoc.exists){
       const d = cfgDoc.data();
       if(d.brandConfig) DB.brandConfig = d.brandConfig;
@@ -27034,8 +27050,18 @@ fbAuth.onAuthStateChanged(async user => {
           try{ const pm=JSON.parse(localStorage.getItem(STORE_KEY+'_photos')||'{}'); Object.assign(localPhotos,pm); }catch(e2){}
 
           const docIds = Object.keys(FS_DOC_MAP);
+
+          // Helper cache-first: thử đọc cache trước (0 reads), fallback server nếu cache miss
+          const _getCacheFirst = async (ref) => {
+            try {
+              const snap = await ref.get({ source: 'cache' });
+              if(snap && (snap.exists || (snap.docs && snap.docs.length > 0))) return snap;
+            } catch(_) { /* cache miss/empty → fallback server */ }
+            return await ref.get({ source: 'server' });
+          };
+
           const [snaps, _empResult] = await Promise.all([
-            Promise.all(docIds.map(id=>window.fbDb.collection('hrdata').doc(id).get())),
+            Promise.all(docIds.map(id => _getCacheFirst(window.fbDb.collection('hrdata').doc(id)))),
             loadEmpProfiles(localPhotos).then(r=>{ empLoaded=r; return r; })
           ]);
           let hasCloud = empLoaded;
@@ -27048,7 +27074,8 @@ fbAuth.onAuthStateChanged(async user => {
             FS_DOC_MAP[docIds[i]].forEach(key=>{ if(data[key] !== undefined) DB[key] = data[key]; });
           });
 
-          const hrdataSnap = await window.fbDb.collection('hrdata').get();
+          // hrdata full collection — cache-first
+          const hrdataSnap = await _getCacheFirst(window.fbDb.collection('hrdata'));
           const dynamicAccum = {
             leaves:[], kpiReviews:[], rewardRecords:[], casuals:[], candidates:[],
             promotions:[], disciplineRecords:[],
@@ -27413,13 +27440,41 @@ fbAuth.onAuthStateChanged(async user => {
         if(window._hrListeners) window._hrListeners.forEach(u=>u());
         window._hrListeners = [];
 
-        // ── Tối ưu reads: Tăng debounce khi tab inactive ──
-        // Khi user chuyển tab khác → tăng debounce 5s thay vì 120ms
-        // → Giảm reads khi máy không dùng
+        // ── Tối ưu reads: Pause Firestore khi tab idle ──
+        // Khi user chuyển tab khác >5 phút → disable network → listeners ngừng nhận updates
+        // Khi quay lại tab → enable network → sync lại
+        // Tiết kiệm reads khi máy mở tab background suốt đêm
         if(!window._visibilityHandler){
           window._tabActive = !document.hidden;
+          window._fsNetworkDisabled = false;
+          window._fsPauseTimer = null;
           window._visibilityHandler = () => {
             window._tabActive = !document.hidden;
+            if(document.hidden){
+              // Tab bị ẩn → đợi 5 phút rồi pause network
+              if(window._fsPauseTimer) clearTimeout(window._fsPauseTimer);
+              window._fsPauseTimer = setTimeout(async () => {
+                if(document.hidden && window.fbDb && !window._fsNetworkDisabled){
+                  try{
+                    await window.fbDb.disableNetwork();
+                    window._fsNetworkDisabled = true;
+                    console.log('[Optimize] Tab idle 5min → Firestore network paused (tiết kiệm reads)');
+                  }catch(e){ console.warn('[Optimize] disableNetwork failed:', e.message); }
+                }
+              }, 5*60*1000); // 5 phút
+            } else {
+              // Tab visible trở lại → cancel pause + re-enable network
+              if(window._fsPauseTimer){
+                clearTimeout(window._fsPauseTimer);
+                window._fsPauseTimer = null;
+              }
+              if(window._fsNetworkDisabled && window.fbDb){
+                window.fbDb.enableNetwork().then(()=>{
+                  window._fsNetworkDisabled = false;
+                  console.log('[Optimize] Tab visible → Firestore network resumed');
+                }).catch(e => console.warn('[Optimize] enableNetwork failed:', e.message));
+              }
+            }
           };
           document.addEventListener('visibilitychange', window._visibilityHandler);
         }
