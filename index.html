@@ -661,7 +661,8 @@ const CANDIDATE_STATUS = {
   screening: (_lang==="en"?"CV Screening":"Sàng lọc CV"),
   interview: (_lang==="en"?"Interviewing":"Đang phỏng vấn"),
   offer: (_lang==="en"?"Offer sent":"Đã gửi offer"),
-  hired: (_lang==="en"?"Accepted":"Đã nhận việc"),
+  accepted: (_lang==="en"?"Offer accepted":"Đã nhận offer"),
+  hired: (_lang==="en"?"Started work":"Đã nhận việc"),
   rejected: (_lang==="en"?"Rejected":"Từ chối"),
   withdrawn: (_lang==="en"?"Withdrew":"Rút hồ sơ")
 };
@@ -670,6 +671,7 @@ const CANDIDATE_STATUS_COLOR = {
   screening: '#b794d4',
   interview: 'var(--warning)',
   offer: 'var(--accent)',
+  accepted: 'var(--teal)',
   hired: 'var(--success)',
   rejected: 'var(--danger)',
   withdrawn: 'var(--ink-muted)'
@@ -679,6 +681,7 @@ const CANDIDATE_STATUS_ICON = {
   screening: '🔍',
   interview: '🗣',
   offer: '📩',
+  accepted: '🤝',
   hired: '✓',
   rejected: '✗',
   withdrawn: '↩'
@@ -4355,6 +4358,54 @@ function _plRenderRecruitmentRisk(el, year, month){
     };
   }).sort((a,b)=>new Date(b.hiredDate) - new Date(a.hiredDate));
 
+  // === New employees who JOINED in selected month (from DB.employees) ===
+  const newEmpsInMonth = (DB.employees||[]).filter(e=>{
+    if(!e.joined) return false;
+    const d = _parseAnyDate(e.joined);
+    return d && d.getFullYear()===year && d.getMonth()===month;
+  }).map(e=>{
+    const dept = (DB.departments||[]).find(d=>d.id===e.deptId);
+    const cd = (DB.customData||{})[e.id] || {};
+    // Try to find linked candidate by phone/email/name
+    const linked = (DB.candidates||[]).find(c=>
+      (c.status==='hired') && (
+        (e.phone && c.phone && e.phone===c.phone) ||
+        (e.email && c.email && e.email===c.email) ||
+        (e.name && c.name && e.name.trim().toLowerCase()===c.name.trim().toLowerCase())
+      )
+    );
+    const job = linked ? (DB.jobs||[]).find(j=>j.id===linked.jobId) : null;
+    const openDate = job ? _plJobOpenDate(job) : null;
+    const timeToHire = (openDate && e.joined) ? _plDaysBetween(openDate, e.joined) : null;
+    return {
+      id: e.id,
+      name: e.name,
+      code: e.code || '',
+      role: e.role || cd.position || '—',
+      dept: dept?.name || '—',
+      joined: e.joined,
+      source: linked?.source || '',
+      timeToHire,
+      status: getEffectiveStatus(e),
+    };
+  }).sort((a,b)=>new Date(b.joined) - new Date(a.joined));
+
+  // === Upcoming onboard candidates ===
+  const today_rec = new Date(); today_rec.setHours(0,0,0,0);
+  const upcomingOnboard = (DB.candidates||[]).filter(c=>{
+    if(c.status !== 'offer' && c.status !== 'accepted' && c.status !== 'hired') return false;
+    if(!c.expectedOnboardDate) return false;
+    const d = new Date(c.expectedOnboardDate);
+    if(isNaN(d)) return false;
+    // Chỉ show ứng viên chưa convert thành NV (kiểm tra phone/email/name không trùng employee)
+    const alreadyEmp = (DB.employees||[]).some(e=>
+      (c.phone && e.phone && c.phone===e.phone) ||
+      (c.email && e.email && c.email===e.email) ||
+      (c.name && e.name && c.name.trim().toLowerCase()===e.name.trim().toLowerCase())
+    );
+    return !alreadyEmp;
+  }).sort((a,b)=>new Date(a.expectedOnboardDate) - new Date(b.expectedOnboardDate));
+
   // === New jobs opened in selected month ===
   const newJobsInMonth = (DB.jobs||[]).filter(j=>{
     const od = _plJobOpenDate(j);
@@ -4457,61 +4508,102 @@ function _plRenderRecruitmentRisk(el, year, month){
           <div class="pl-kpi-sub">CV nhập trong tháng</div>
         </div>
         <div class="pl-kpi" style="border-left-color:var(--success)">
-          <div class="pl-kpi-label">Đã hire</div>
-          <div class="pl-kpi-value" style="color:var(--success)">${hiredInMonth.length}</div>
-          <div class="pl-kpi-sub">NV bắt đầu trong tháng</div>
+          <div class="pl-kpi-label">NV nhận việc</div>
+          <div class="pl-kpi-value" style="color:var(--success)">${newEmpsInMonth.length}</div>
+          <div class="pl-kpi-sub">nhân viên mới trong tháng</div>
         </div>
         <div class="pl-kpi" style="border-left-color:var(--warning)">
           <div class="pl-kpi-label">Time to Hire TB</div>
-          <div class="pl-kpi-value">${avgTTH!==null?avgTTH.toFixed(0)+'d':'—'}</div>
-          <div class="pl-kpi-sub">từ mở job → hire</div>
+          <div class="pl-kpi-value">${(()=>{const vt=newEmpsInMonth.filter(ne=>ne.timeToHire!==null&&ne.timeToHire>=0);return vt.length>0?(vt.reduce((s,ne)=>s+ne.timeToHire,0)/vt.length).toFixed(0)+'d':'—';})()}</div>
+          <div class="pl-kpi-sub">từ mở job → nhận việc</div>
         </div>
       </div>
     </div>
 
-    <!-- Hired list this month -->
+    <!-- New employees joined this month -->
     <div class="pl-card">
-      <div style="font-weight:700;font-size:14px;color:var(--success);margin-bottom:14px">✅ Đã tuyển được trong tháng ${month+1}/${year} (${hiredInMonth.length} NV)</div>
-      ${hiredInMonth.length === 0 ? `<div style="color:var(--ink-dim);text-align:center;padding:20px;font-size:12px;font-style:italic">Chưa hire được NV nào trong tháng này</div>` : `
+      <div style="font-weight:700;font-size:14px;color:var(--success);margin-bottom:14px">✅ Nhân viên nhận việc trong tháng ${month+1}/${year} (${newEmpsInMonth.length} NV)</div>
+      ${newEmpsInMonth.length === 0 ? `<div style="color:var(--ink-dim);text-align:center;padding:20px;font-size:12px;font-style:italic">Chưa có NV nào nhận việc trong tháng này</div>` : `
       <table class="pl-table">
         <thead>
           <tr>
-            <th>Tên ứng viên</th>
+            <th>Nhân viên</th>
+            <th>Mã NV</th>
             <th>Vị trí</th>
             <th>Phòng ban</th>
             <th>Nguồn</th>
-            <th class="pl-num">Ngày mở job</th>
-            <th class="pl-num">Apply</th>
-            <th class="pl-num">Hire</th>
+            <th class="pl-num">Ngày nhận việc</th>
             <th class="pl-num">Time to Hire</th>
           </tr>
         </thead>
         <tbody>
-          ${hiredInMonth.map(h=>{
-            const tthColor = h.timeToHire === null ? 'var(--ink-muted)' : h.timeToHire <= 30 ? 'var(--success)' : h.timeToHire <= 60 ? 'var(--warning)' : 'var(--danger)';
-            return `<tr>
-              <td><b>${escapeHtml(h.name||'—')}</b></td>
-              <td>${escapeHtml(h.jobTitle)}</td>
-              <td>${escapeHtml(h.dept)}</td>
-              <td><span style="background:rgba(126,182,232,.12);color:var(--info);padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600">${escapeHtml(h.source||'Không rõ')}</span></td>
-              <td class="pl-num" style="font-size:11px;color:var(--ink-dim)">${_plFmtDate(h.openDate)}</td>
-              <td class="pl-num" style="font-size:11px;color:var(--ink-dim)">${_plFmtDate(h.appliedDate)}</td>
-              <td class="pl-num" style="font-size:11px;color:var(--success);font-weight:600">${_plFmtDate(h.hiredDate)}</td>
-              <td class="pl-num" style="color:${tthColor};font-weight:700">${h.timeToHire!==null?h.timeToHire+'d':'—'}</td>
+          ${newEmpsInMonth.map(ne=>{
+            const tthColor = ne.timeToHire === null ? 'var(--ink-muted)' : ne.timeToHire <= 30 ? 'var(--success)' : ne.timeToHire <= 60 ? 'var(--warning)' : 'var(--danger)';
+            const statusBadge = ne.status === 'active' ? '<span style="background:rgba(126,198,153,.12);color:var(--success);padding:1px 6px;border-radius:8px;font-size:10px;font-weight:600;margin-left:4px">✓</span>' : ne.status === 'probation' ? '<span style="background:rgba(255,193,7,.12);color:var(--warning);padding:1px 6px;border-radius:8px;font-size:10px;font-weight:600;margin-left:4px">Thử việc</span>' : '';
+            return `<tr style="cursor:pointer" onclick="viewEmployee('${ne.id}')">
+              <td><b>${escapeHtml(ne.name||'—')}</b>${statusBadge}</td>
+              <td style="font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--ink-dim)">${escapeHtml(ne.code)}</td>
+              <td>${escapeHtml(ne.role)}</td>
+              <td>${escapeHtml(ne.dept)}</td>
+              <td>${ne.source ? `<span style="background:rgba(126,182,232,.12);color:var(--info);padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600">${escapeHtml(ne.source)}</span>` : `<span style="color:var(--ink-muted);font-size:11px">—</span>`}</td>
+              <td class="pl-num" style="font-size:11px;color:var(--success);font-weight:600">${_plFmtDate(ne.joined)}</td>
+              <td class="pl-num" style="color:${tthColor};font-weight:700">${ne.timeToHire!==null?ne.timeToHire+'d':'—'}</td>
             </tr>`;
           }).join('')}
         </tbody>
-        ${validTTH.length>0?`
-        <tfoot>
-          <tr>
-            <td colspan="7">Trung bình Time to Hire (${validTTH.length} NV có đủ data)</td>
-            <td class="pl-num"><b>${avgTTH.toFixed(0)}d</b></td>
-          </tr>
-        </tfoot>
-        `:''}
+        ${(()=>{
+          const empValidTTH = newEmpsInMonth.filter(ne=>ne.timeToHire !== null && ne.timeToHire >= 0);
+          const empAvgTTH = empValidTTH.length > 0 ? empValidTTH.reduce((s,ne)=>s+ne.timeToHire,0)/empValidTTH.length : null;
+          return empValidTTH.length > 0 ? `<tfoot><tr><td colspan="6">Trung bình Time to Hire (${empValidTTH.length} NV có đủ data)</td><td class="pl-num"><b>${empAvgTTH.toFixed(0)}d</b></td></tr></tfoot>` : '';
+        })()}
       </table>
       `}
     </div>
+
+    <!-- Upcoming onboard candidates -->
+    ${upcomingOnboard.length > 0 ? `
+    <div class="pl-card">
+      <div style="font-weight:700;font-size:14px;color:rgba(126,198,153,.85);margin-bottom:14px">🟢 Ứng viên dự kiến onboard (${upcomingOnboard.length})</div>
+      <table class="pl-table">
+        <thead>
+          <tr>
+            <th>Ứng viên</th>
+            <th>Vị trí</th>
+            <th>Phòng ban</th>
+            <th>Trạng thái</th>
+            <th class="pl-num">Ngày dự kiến</th>
+            <th class="pl-num">Còn lại</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${upcomingOnboard.map(c=>{
+            const job = (DB.jobs||[]).find(j=>j.id===c.jobId);
+            const dept = job ? (DB.departments||[]).find(d=>d.id===job.deptId) : null;
+            const d = new Date(c.expectedOnboardDate);
+            const diffDays = Math.round((d - today_rec)/(1000*60*60*24));
+            const daysLabel = diffDays < 0 ? `<span style="color:var(--danger);font-weight:600">${Math.abs(diffDays)}d quá hạn</span>`
+              : diffDays === 0 ? `<span style="color:var(--accent);font-weight:600">HÔM NAY</span>`
+              : diffDays <= 7 ? `<span style="color:var(--warning);font-weight:600">${diffDays}d</span>`
+              : diffDays <= 30 ? `<span style="color:var(--success);font-weight:600">${diffDays}d</span>`
+              : `<span style="color:var(--ink-muted)">${diffDays}d</span>`;
+            const statusBadge = c.status === 'hired'
+              ? `<span style="background:rgba(126,198,153,.15);color:var(--success);padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600">✓ Đã nhận việc</span>`
+              : c.status === 'accepted'
+              ? `<span style="background:rgba(125,211,192,.12);color:var(--teal);padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600">🤝 Đã nhận offer</span>`
+              : `<span style="background:rgba(255,193,7,.12);color:var(--warning);padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600">📤 Đã gửi offer</span>`;
+            return `<tr style="cursor:pointer" onclick="editCandidate('${c.id}','${c.jobId}')">
+              <td><b>${escapeHtml(c.name||'—')}</b></td>
+              <td>${escapeHtml(job?.title||'—')}</td>
+              <td style="font-size:12px;color:var(--ink-dim)">${escapeHtml(dept?.name||'—')}</td>
+              <td>${statusBadge}</td>
+              <td class="pl-num" style="font-family:'JetBrains Mono',monospace;font-size:11.5px;font-weight:600">${_plFmtDate(c.expectedOnboardDate)}</td>
+              <td class="pl-num">${daysLabel}</td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>
+    ` : ''}
 
     <!-- Source Analysis -->
     <div class="pl-card">
@@ -9969,7 +10061,7 @@ function exportRecruitmentXLSX(){
   const cvRows = (DB.candidates||[]).map(c => {
     const job = DB.jobs.find(j=>j.id===c.jobId);
     const dept = job ? DB.departments.find(d=>d.id===job.deptId) : null;
-    const statusMap = {applied:(_lang==="en"?"Applied":"Đã nộp"),screening:(_lang==="en"?"Screening":"Đang lọc"),interview:(_lang==="en"?"Interview":"Phỏng vấn"),offer:(_lang==="en"?"Offer":"Offer"),hired:(_lang==="en"?"Hired":"Đã tuyển"),rejected:(_lang==="en"?"Rejected":"Từ chối")};
+    const statusMap = {applied:(_lang==="en"?"Applied":"Đã nộp"),screening:(_lang==="en"?"Screening":"Đang lọc"),interview:(_lang==="en"?"Interview":"Phỏng vấn"),offer:(_lang==="en"?"Offer":"Offer"),accepted:(_lang==="en"?"Accepted offer":"Nhận offer"),hired:(_lang==="en"?"Hired":"Đã tuyển"),rejected:(_lang==="en"?"Rejected":"Từ chối")};
     return [
       job?.title||'', dept?.name||'',
       c.name||'', c.phone||'', c.email||'',
@@ -10063,18 +10155,18 @@ function exportRecruitmentPDF(){
   // ── Chi tiết CV theo từng vị trí ──
   const CAND_STATUS_LABEL = {
     new:'Mới nhận', screening:'Đang xét', interview1:'PV vòng 1', interview2:'PV vòng 2',
-    interview3:'PV vòng 3', offer:'Đã offer', hired:'Đã tuyển', rejected:'Từ chối', withdrawn:'Rút hồ sơ'
+    interview3:'PV vòng 3', offer:'Đã offer', accepted:'Nhận offer', hired:'Đã tuyển', rejected:'Từ chối', withdrawn:'Rút hồ sơ'
   };
   const CAND_STATUS_COLOR = {
     new:'#607d8b', screening:'#ff9800', interview1:'#2196f3', interview2:'#3f51b5',
-    interview3:'#673ab7', offer:'#009688', hired:'#4caf50', rejected:'#f44336', withdrawn:'#9e9e9e'
+    interview3:'#673ab7', offer:'#009688', accepted:'#7dd3c0', hired:'#4caf50', rejected:'#f44336', withdrawn:'#9e9e9e'
   };
 
   const cvDetailBlocks = filteredJobs.map(j=>{
     const dept = DB.departments.find(d=>d.id===j.deptId);
     const cands = (DB.candidates||[]).filter(c=>c.jobId===j.id)
       .sort((a,b)=>{
-        const order = ['hired','offer','interview3','interview2','interview1','screening','new','withdrawn','rejected'];
+        const order = ['hired','accepted','offer','interview3','interview2','interview1','screening','new','withdrawn','rejected'];
         return (order.indexOf(a.status)||99)-(order.indexOf(b.status)||99);
       });
     if(!cands.length) return `<div style="break-inside:avoid;margin-bottom:20px">
@@ -15887,10 +15979,16 @@ function renderWorkforce(main){
 
   // Ứng viên đã offer + có ngày dự kiến onboard
   const upcomingByMonth = MN.map((_,mi)=>(DB.candidates||[]).filter(c=>{
-    if(c.status !== 'offer' && c.status !== 'hired') return false;
+    if(c.status !== 'offer' && c.status !== 'accepted' && c.status !== 'hired') return false;
     if(!c.expectedOnboardDate) return false;
     const d=_parseAnyDate(c.expectedOnboardDate);
-    return d&&!isNaN(d)&&d.getFullYear()===yr&&d.getMonth()===mi;
+    if(!d||isNaN(d)||d.getFullYear()!==yr||d.getMonth()!==mi) return false;
+    const alreadyEmp = (DB.employees||[]).some(e=>
+      (c.phone && e.phone && c.phone===e.phone) ||
+      (c.email && e.email && c.email===e.email) ||
+      (c.name && e.name && c.name.trim().toLowerCase()===e.name.trim().toLowerCase())
+    );
+    return !alreadyEmp;
   }).length);
 
   const newByDept={}, exitByDept={}, exitReasons={};
@@ -16001,7 +16099,7 @@ function renderWorkforce(main){
         🟢 NV Mới <span style="background:rgba(126,198,153,.2);color:var(--success);border-radius:10px;padding:1px 8px;font-size:11px;margin-left:4px">${newEmps.length}</span>
       </button>
       <button class="rec-tab ${tab==='upcoming'?'active':''}" onclick="window._wfTab='upcoming';sessionStorage.setItem('_wfTab','upcoming');render()">
-        🟢 Dự kiến onboard <span style="background:rgba(126,198,153,.15);color:var(--success);border-radius:10px;padding:1px 8px;font-size:11px;margin-left:4px;opacity:.85">${(DB.candidates||[]).filter(c=>(c.status==='offer'||c.status==='hired')&&c.expectedOnboardDate&&new Date(c.expectedOnboardDate)>=new Date()).length}</span>
+        🟢 Dự kiến onboard <span style="background:rgba(126,198,153,.15);color:var(--success);border-radius:10px;padding:1px 8px;font-size:11px;margin-left:4px;opacity:.85">${(DB.candidates||[]).filter(c=>(c.status==='offer'||c.status==='accepted'||c.status==='hired')&&c.expectedOnboardDate&&new Date(c.expectedOnboardDate)>=new Date()&&!(DB.employees||[]).some(e=>(c.phone&&e.phone&&c.phone===e.phone)||(c.email&&e.email&&c.email===e.email)||(c.name&&e.name&&c.name.trim().toLowerCase()===e.name.trim().toLowerCase()))).length}</span>
       </button>
       <button class="rec-tab ${tab==='exit'?'active':''}" onclick="window._wfTab='exit';sessionStorage.setItem('_wfTab','exit');render()">
         🔴 Nghỉ việc <span style="background:rgba(229,115,115,.2);color:var(--danger);border-radius:10px;padding:1px 8px;font-size:11px;margin-left:4px">${exitEmps.length}</span>
@@ -16804,35 +16902,23 @@ function _wfUpcomingTab(PAL, yr, mon){
   today.setHours(0,0,0,0);
   // Lấy candidates có status offer/hired + expectedOnboardDate trong tương lai (hoặc trong khoảng yr/mon)
   const candidates = (DB.candidates||[]).filter(c => {
-    if(c.status !== 'offer' && c.status !== 'hired') return false;
+    if(c.status !== 'offer' && c.status !== 'accepted' && c.status !== 'hired') return false;
     if(!c.expectedOnboardDate) return false;
     const d = new Date(c.expectedOnboardDate);
     if(isNaN(d)) return false;
-    // Filter theo yr/mon nếu user chọn cụ thể
     if(d.getFullYear() !== yr) return false;
     if(mon !== 0 && d.getMonth()+1 !== mon) return false;
-    return true;
+    // Loại ứng viên đã convert thành NV
+    const alreadyEmp = (DB.employees||[]).some(e=>
+      (c.phone && e.phone && c.phone===e.phone) ||
+      (c.email && e.email && c.email===e.email) ||
+      (c.name && e.name && c.name.trim().toLowerCase()===e.name.trim().toLowerCase())
+    );
+    return !alreadyEmp;
   });
 
   // Sort theo ngày dự kiến gần nhất trước
   candidates.sort((a,b) => new Date(a.expectedOnboardDate) - new Date(b.expectedOnboardDate));
-
-  // Tổng theo dept
-  const byDept = {};
-  candidates.forEach(c => {
-    const job = (DB.jobs||[]).find(j => j.id === c.jobId);
-    const dId = job?.deptId || '_unknown';
-    const dName = (DB.departments||[]).find(d => d.id === dId)?.name || 'Chưa xác định';
-    if(!byDept[dName]) byDept[dName] = 0;
-    byDept[dName]++;
-  });
-
-  // Theo tháng (chart)
-  const byMonth = Array(12).fill(0);
-  candidates.forEach(c => {
-    const m = new Date(c.expectedOnboardDate).getMonth();
-    byMonth[m]++;
-  });
 
   // Stats
   const totalCount = candidates.length;
@@ -16877,15 +16963,6 @@ function _wfUpcomingTab(PAL, yr, mon){
       ` : ''}
     </div>
 
-    <!-- Chart theo tháng -->
-    <div class="card" style="margin-bottom:16px">
-      <div class="card-head"><div>
-        <div class="card-title">📊 Dự kiến onboard <em>theo tháng</em></div>
-        <div class="card-sub">Phân bổ ${totalCount} ứng viên dự kiến vào làm trong năm ${yr}</div>
-      </div></div>
-      <div style="height:200px;position:relative"><canvas id="chartWfUpcoming"></canvas></div>
-    </div>
-
     <!-- Bảng chi tiết -->
     <div class="card">
       <div class="card-head"><div>
@@ -16920,6 +16997,8 @@ function _wfUpcomingTab(PAL, yr, mon){
               : `<span style="color:var(--ink-muted)">${diffDays}d nữa</span>`;
             const statusBadge = c.status === 'hired'
               ? `<span style="background:rgba(126,198,153,.15);color:var(--success);padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600">✓ Đã nhận việc</span>`
+              : c.status === 'accepted'
+              ? `<span style="background:rgba(125,211,192,.12);color:var(--teal);padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600">🤝 Đã nhận offer</span>`
               : `<span style="background:rgba(126,198,153,.12);color:var(--success);padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;opacity:.85">📤 Đã gửi offer</span>`;
             const offerStr = c.offerSalary ? (c.offerSalary).toLocaleString('vi-VN')+'đ' : '—';
             const fmtDate = (s) => s ? s.split('-').reverse().join('/') : '—';
@@ -17445,6 +17524,7 @@ function renderJobDetail(main){
       <div class="profile-stat"><div class="profile-stat-label">${CANDIDATE_STATUS_ICON.screening} Sàng lọc</div><div class="profile-stat-value" style="color:${CANDIDATE_STATUS_COLOR.screening};font-size:22px">${byStatus.screening||0}</div></div>
       <div class="profile-stat"><div class="profile-stat-label">${CANDIDATE_STATUS_ICON.interview} Phỏng vấn</div><div class="profile-stat-value" style="color:${CANDIDATE_STATUS_COLOR.interview};font-size:22px">${byStatus.interview||0}</div></div>
       <div class="profile-stat"><div class="profile-stat-label">${CANDIDATE_STATUS_ICON.offer} Đã offer</div><div class="profile-stat-value" style="color:${CANDIDATE_STATUS_COLOR.offer};font-size:22px">${byStatus.offer||0}</div></div>
+      <div class="profile-stat"><div class="profile-stat-label">${CANDIDATE_STATUS_ICON.accepted} Nhận offer</div><div class="profile-stat-value" style="color:${CANDIDATE_STATUS_COLOR.accepted};font-size:22px">${byStatus.accepted||0}</div></div>
       <div class="profile-stat"><div class="profile-stat-label">${CANDIDATE_STATUS_ICON.hired} Đã nhận</div><div class="profile-stat-value" style="color:${CANDIDATE_STATUS_COLOR.hired};font-size:22px">${byStatus.hired||0}</div></div>
       <div class="profile-stat"><div class="profile-stat-label">${CANDIDATE_STATUS_ICON.rejected} Từ chối</div><div class="profile-stat-value" style="color:${CANDIDATE_STATUS_COLOR.rejected};font-size:22px">${(byStatus.rejected||0)+(byStatus.withdrawn||0)}</div></div>
     </div>
@@ -17529,7 +17609,7 @@ function renderJobDetail(main){
                   ${a.status === 'offer' ? `
                     <button class="btn btn-icon" onclick="acceptOffer('${a.id}')" title="Ứng viên chấp nhận offer → Nhận việc" style="color:var(--success);font-size:15px;font-weight:700">✓</button>
                     <button class="btn btn-icon btn-danger" onclick="rejectOffer('${a.id}')" title="Ứng viên từ chối offer" style="font-size:14px;font-weight:700">✗</button>
-                  ` : a.status !== 'hired' && a.status !== 'rejected' ? `<button class="btn btn-icon" onclick="advanceCandidate('${a.id}')" title="Chuyển bước tiếp" style="color:var(--success)">→</button>` : ''}
+                  ` : a.status !== 'hired' && a.status !== 'rejected' && a.status !== 'withdrawn' ? `<button class="btn btn-icon" onclick="advanceCandidate('${a.id}')" title="Chuyển bước tiếp" style="color:var(--success)">→</button>` : ''}
                   <button class="btn btn-icon" onclick="editCandidate('${a.id}', '${j.id}')" title="Sửa">${ICONS.edit}</button>
                   <button class="btn btn-icon btn-danger" onclick="deleteCandidate('${a.id}')" title="Xoá">${ICONS.trash}</button>
                 </div></td>
@@ -17704,7 +17784,7 @@ function viewCandidate(id){
       ${a.status === 'offer' ? `
         <button class="btn" onclick="closeModal();acceptOffer('${a.id}')" style="color:var(--success);border-color:rgba(126,198,153,.3);font-weight:600">✓ Chấp nhận offer → Nhận việc</button>
         <button class="btn btn-danger" onclick="closeModal();rejectOffer('${a.id}')" style="opacity:.85">✗ Từ chối offer</button>
-      ` : a.status !== 'hired' && a.status !== 'rejected' ? `<button class="btn" onclick="closeModal();advanceCandidate('${a.id}')" style="color:var(--success);border-color:rgba(126,198,153,.3)">→ Chuyển bước tiếp</button>` : ''}
+      ` : a.status !== 'hired' && a.status !== 'rejected' && a.status !== 'withdrawn' ? `<button class="btn" onclick="closeModal();advanceCandidate('${a.id}')" style="color:var(--success);border-color:rgba(126,198,153,.3)">→ Chuyển bước tiếp</button>` : ''}
       <button class="btn" onclick="closeModal();editCandidate('${a.id}', '${a.jobId}')">${ICONS.edit} Chỉnh sửa</button>
       ${a.status === 'hired' ? `<button class="btn btn-primary" onclick="convertCandidateToEmployee('${a.id}')" title="Tạo hồ sơ nhân viên với thông tin auto pre-fill">📥 Tạo hồ sơ NV</button>` : ''}
     </div>
@@ -17761,15 +17841,25 @@ function convertCandidateToEmployee(candidateId){
 function advanceCandidate(id){
   const a = (DB.candidates||[]).find(x=>x.id===id);
   if(!a) return;
-  const flow = {new:'screening', screening:'interview', interview:'offer', offer:'hired'};
+  const flow = {new:'screening', screening:'interview', interview:'offer', offer:'accepted', accepted:'hired'};
   const next = flow[a.status];
   if(!next){ toast((_lang==="en"?"No next step":"Không có bước tiếp theo"),'error'); return; }
+
+  // Khi chuyển sang "Đã nhận offer" → bắt buộc có lương offer + ngày onboard
+  if(next === 'accepted'){
+    if(!a.offerSalary || a.offerSalary <= 0 || !a.expectedOnboardDate){
+      toast('Cần điền Lương Offer và Ngày dự kiến onboard trước khi chuyển sang "Đã nhận offer"','error');
+      editCandidate(a.id, a.jobId);
+      return;
+    }
+  }
+
   a.status = next;
   if(next === 'hired'){
+    if(!a.hiredDate) a.hiredDate = new Date().toISOString().slice(0,10);
     const j = DB.jobs.find(j=>j.id===a.jobId);
     if(j){
-      // j.hired bỏ - dùng candidate count làm source of truth
-      const hiredCount = (DB.candidates||[]).filter(c=>c.jobId===j.id&&c.status==='hired').length + 1; // +1 vì a chưa save
+      const hiredCount = (DB.candidates||[]).filter(c=>c.jobId===j.id&&c.status==='hired').length + 1;
       if(hiredCount >= j.positions){
         if(confirm(`Đã tuyển đủ ${j.positions} người cho "${j.title}". Đánh dấu vị trí "Đã đủ"?`)){
           j.status = 'filled';
@@ -17974,10 +18064,14 @@ function editCandidate(id, jobId){
       </select></div>
       <div class="field"><label>Lương kỳ vọng (VNĐ) <span style="font-size:10px;color:var(--ink-muted);font-weight:400">· ứng viên yêu cầu</span></label><input type="number" id="ca_salary" value="${a.expectedSalary||0}" min="0" step="500000"></div>
       <div class="field"><label>Lương Offer (VNĐ) <span style="font-size:10px;color:var(--accent);font-weight:400">· DN đề nghị</span></label><input type="number" id="ca_offerSalary" value="${a.offerSalary||0}" min="0" step="500000" placeholder="Mức lương DN đề nghị"></div>
-      <div class="field full" id="ca_onboardWrap" style="${(a.status==='offer'||a.status==='hired')?'':'display:none'};background:rgba(126,198,153,.06);padding:14px;border-radius:8px;border:1px solid rgba(126,198,153,.2)">
+      <div class="field full" id="ca_onboardWrap" style="${(a.status==='offer'||a.status==='accepted'||a.status==='hired')?'':'display:none'};background:rgba(126,198,153,.06);padding:14px;border-radius:8px;border:1px solid rgba(126,198,153,.2)">
         <label style="color:var(--success);font-weight:600">📅 Ngày dự kiến onboard <span style="font-size:10px;color:var(--ink-muted);font-weight:400">· hiển thị trong HR Movement</span></label>
         <input type="date" id="ca_onboardDate" value="${dispToIso(a.expectedOnboardDate||'')}" style="margin-top:6px">
         <div style="font-size:11px;color:var(--ink-muted);margin-top:6px">Sau khi ứng viên đồng ý offer, điền ngày dự kiến vào làm để track trong tab "Dự kiến onboard" của HR Movement</div>
+      </div>
+      <div class="field full" id="ca_hiredWrap" style="${a.status==='hired'?'':'display:none'};background:rgba(126,198,153,.06);padding:14px;border-radius:8px;border:1px solid rgba(126,198,153,.2)">
+        <label style="color:var(--success);font-weight:600">✓ Ngày nhận việc <span style="font-size:10px;color:var(--ink-muted);font-weight:400">· ngày chính thức bắt đầu làm việc</span></label>
+        <input type="date" id="ca_hiredDate" value="${dispToIso(a.hiredDate||'')}" style="margin-top:6px">
       </div>
 
       <div class="field full"><label>Kinh nghiệm tóm tắt</label><input id="ca_exp" value="${escapeHtml(a.experience||'')}" placeholder="VD: 3 năm Housekeeping ở Vinpearl"></div>
@@ -18155,8 +18249,16 @@ function handleCvUpload(event){
 // Toggle hiển thị field "Ngày dự kiến onboard" khi status = offer/hired
 function _caToggleOnboard(status){
   const wrap = document.getElementById('ca_onboardWrap');
-  if(!wrap) return;
-  wrap.style.display = (status === 'offer' || status === 'hired') ? '' : 'none';
+  if(wrap) wrap.style.display = (status === 'offer' || status === 'accepted' || status === 'hired') ? '' : 'none';
+  const hiredWrap = document.getElementById('ca_hiredWrap');
+  if(hiredWrap){
+    hiredWrap.style.display = status === 'hired' ? '' : 'none';
+    // Auto-fill ngày nhận việc = hôm nay nếu chưa có
+    if(status === 'hired'){
+      const hiredInput = document.getElementById('ca_hiredDate');
+      if(hiredInput && !hiredInput.value) hiredInput.value = new Date().toISOString().slice(0,10);
+    }
+  }
 }
 
 function saveCandidate(id, jobId, isNew){
@@ -18181,6 +18283,15 @@ function saveCandidate(id, jobId, isNew){
   }
   const phone = $('#ca_phone')?.value.trim()||'';
 
+  // Validate "Đã nhận offer": bắt buộc có Lương offer + Ngày dự kiến onboard
+  const statusVal = $s('ca_status');
+  if(statusVal === 'accepted'){
+    const offerSal = $si('ca_offerSalary');
+    const onboardDate = $sd('ca_onboardDate');
+    if(!offerSal || offerSal <= 0){ toast('Trạng thái "Đã nhận offer" yêu cầu điền Lương Offer','error'); document.getElementById('ca_offerSalary')?.focus(); return; }
+    if(!onboardDate){ toast('Trạng thái "Đã nhận offer" yêu cầu điền Ngày dự kiến onboard','error'); document.getElementById('ca_onboardDate')?.focus(); return; }
+  }
+
   // Helper: get field value safely, returns '' instead of undefined
   // Using global helpers: $s $si $sf $sb $sd
 
@@ -18204,6 +18315,7 @@ function saveCandidate(id, jobId, isNew){
     expectedSalary: $si('ca_salary'),
     offerSalary: $si('ca_offerSalary'),
     expectedOnboardDate: $sd('ca_onboardDate'),
+    hiredDate: $sd('ca_hiredDate'),
     rating: $si('ca_rating'),
     notes: $s('ca_notes'),
     screeningBy: $s('ca_screeningBy'),
@@ -18236,10 +18348,9 @@ function saveCandidate(id, jobId, isNew){
   } else {
     const i = (DB.candidates||[]).findIndex(x=>x.id===id);
     const oldStatus = DB.candidates[i].status;
-    const oldHiredDate = DB.candidates[i].hiredDate;
     DB.candidates[i] = data;
     if(data.status === 'hired' && oldStatus !== 'hired'){
-      DB.candidates[i].hiredDate = oldHiredDate || data.hiredDate || new Date().toISOString().slice(0,10);
+      if(!DB.candidates[i].hiredDate) DB.candidates[i].hiredDate = new Date().toISOString().slice(0,10);
       const j = DB.jobs.find(j=>j.id===jobId);
       if(j) j.hired = (j.hired||0) + 1;
     } else if(oldStatus === 'hired' && data.status !== 'hired'){
@@ -18247,7 +18358,7 @@ function saveCandidate(id, jobId, isNew){
       const j = DB.jobs.find(j=>j.id===jobId);
       if(j) j.hired = Math.max(0, (j.hired||0) - 1);
     } else if(data.status === 'hired'){
-      DB.candidates[i].hiredDate = oldHiredDate || data.hiredDate || '';
+      // hiredDate đã lưu từ form field — giữ nguyên
     }
   }
   // Close modal và render ngay (data đã update trong memory)
