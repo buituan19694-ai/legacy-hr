@@ -1234,13 +1234,17 @@ function _pushDynamicKey(key, meta){
     };
     const byJob = {};
     arr.forEach(r=>{ const j=r.jobId||'_nojob'; (byJob[j]=byJob[j]||[]).push(sanitize(r)); });
+    // Bổ sung empty array CHỈ cho jobs đã được đăng ký cần clear (qua window._candEmptyShards)
+    // Tránh ghi empty cho jobs không liên quan → overwrite data của user khác
+    const emptyShards = window._candEmptyShards || new Set();
+    emptyShards.forEach(jid=>{ if(!byJob[jid]) byJob[jid] = []; });
+    window._candEmptyShards = new Set(); // clear sau khi dùng
     const writes = Object.entries(byJob).map(([jid,records])=>
       window.fbDb.collection('hrdata').doc(`cand_${jid}`)
         .set({...meta, candidates:records, _shard:jid}, {merge:false})
         .catch(err=>{ console.error(`[saveData] ❌ cand_${jid}`, err.message); toast('❌ Lỗi lưu ứng viên: '+err.message,'error'); })
     );
-    // Không cần await — fire and forget nhưng log xác nhận
-    Promise.all(writes).then(()=>console.log('[saveData] ✅ candidates saved', arr.length, 'records'));
+    Promise.all(writes).then(()=>console.log('[saveData] ✅ candidates saved', arr.length, 'records, ', Object.keys(byJob).length, 'shards'));
     return;
   }
 
@@ -4387,7 +4391,7 @@ function _plRenderRecruitmentRisk(el, year, month){
       role: e.role || cd.position || '—',
       dept: dept?.name || '—',
       joined: e.joined,
-      source: linked?.source || '',
+      source: cd.recruitSource || linked?.source || '',
       timeToHire,
       status: getEffectiveStatus(e),
     };
@@ -4396,7 +4400,7 @@ function _plRenderRecruitmentRisk(el, year, month){
   // === Upcoming onboard candidates ===
   const today_rec = new Date(); today_rec.setHours(0,0,0,0);
   const upcomingOnboard = (DB.candidates||[]).filter(c=>{
-    if(c.status !== 'offer' && c.status !== 'accepted' && c.status !== 'hired') return false;
+    if(c.status !== 'offer' && c.status !== 'accepted') return false;
     if(!c.expectedOnboardDate) return false;
     const d = new Date(c.expectedOnboardDate);
     if(isNaN(d)) return false;
@@ -8791,7 +8795,12 @@ function editEmployee(id, prefill = null){
     Object.assign(e, prefill);
   }
 
-  const customData = DB.customData[e.id] || {};
+  const customData = {...(DB.customData[e.id] || {})};
+  // Hỗ trợ pre-fill customData từ prefill._customData (dùng khi tạo NV từ candidate)
+  if(isNew && prefill && prefill._customData){
+    Object.assign(customData, prefill._customData);
+    delete e._customData; // không phải field employee
+  }
 
   const grouped = {};
   DB.customFields.forEach(cf=>{
@@ -10153,11 +10162,11 @@ function exportRecruitmentPDF(){
 
   // ── Chi tiết CV theo từng vị trí ──
   const CAND_STATUS_LABEL = {
-    new:'Mới nhận', screening:'Đang xét', interview1:'PV vòng 1', interview2:'PV vòng 2',
+    new:'Mới nhận', screening:'Đang xét', interview:'Phỏng vấn', interview1:'PV vòng 1', interview2:'PV vòng 2',
     interview3:'PV vòng 3', offer:'Đã offer', accepted:'Nhận offer', hired:'Đã tuyển', rejected:'Từ chối', withdrawn:'Rút hồ sơ'
   };
   const CAND_STATUS_COLOR = {
-    new:'#607d8b', screening:'#ff9800', interview1:'#2196f3', interview2:'#3f51b5',
+    new:'#607d8b', screening:'#ff9800', interview:'#2196f3', interview1:'#2196f3', interview2:'#3f51b5',
     interview3:'#673ab7', offer:'#009688', accepted:'#7dd3c0', hired:'#4caf50', rejected:'#f44336', withdrawn:'#9e9e9e'
   };
 
@@ -10165,7 +10174,7 @@ function exportRecruitmentPDF(){
     const dept = DB.departments.find(d=>d.id===j.deptId);
     const cands = (DB.candidates||[]).filter(c=>c.jobId===j.id)
       .sort((a,b)=>{
-        const order = ['hired','accepted','offer','interview3','interview2','interview1','screening','new','withdrawn','rejected'];
+        const order = ['hired','accepted','offer','interview3','interview2','interview1','interview','screening','new','withdrawn','rejected'];
         return (order.indexOf(a.status)||99)-(order.indexOf(b.status)||99);
       });
     if(!cands.length) return `<div style="break-inside:avoid;margin-bottom:20px">
@@ -15441,7 +15450,7 @@ function renderRecruitmentReports(main){
 
   const stageNew = cvInPeriod.filter(a=>a.status==='new').length;
   const stageScreening = cvInPeriod.filter(a=>a.status==='screening').length;
-  const stageInterview = cvInPeriod.filter(a=>['interview1','interview2','interview3'].includes(a.status)).length;
+  const stageInterview = cvInPeriod.filter(a=>['interview','interview1','interview2','interview3'].includes(a.status)).length;
   const stageOffer = cvInPeriod.filter(a=>a.status==='offer').length;
   const stageAccepted = cvInPeriod.filter(a=>a.status==='accepted').length;
   const stageHired = cvInPeriod.filter(a=>a.status==='hired').length;
@@ -15981,7 +15990,7 @@ function renderWorkforce(main){
 
   // Ứng viên đã offer + có ngày dự kiến onboard
   const upcomingByMonth = MN.map((_,mi)=>(DB.candidates||[]).filter(c=>{
-    if(c.status !== 'offer' && c.status !== 'accepted' && c.status !== 'hired') return false;
+    if(c.status !== 'offer' && c.status !== 'accepted') return false;
     if(!c.expectedOnboardDate) return false;
     const d=_parseAnyDate(c.expectedOnboardDate);
     if(!d||isNaN(d)||d.getFullYear()!==yr||d.getMonth()!==mi) return false;
@@ -16101,7 +16110,15 @@ function renderWorkforce(main){
         🟢 NV Mới <span style="background:rgba(126,198,153,.2);color:var(--success);border-radius:10px;padding:1px 8px;font-size:11px;margin-left:4px">${newEmps.length}</span>
       </button>
       <button class="rec-tab ${tab==='upcoming'?'active':''}" onclick="window._wfTab='upcoming';sessionStorage.setItem('_wfTab','upcoming');render()">
-        🟢 Dự kiến onboard <span style="background:rgba(126,198,153,.15);color:var(--success);border-radius:10px;padding:1px 8px;font-size:11px;margin-left:4px;opacity:.85">${(DB.candidates||[]).filter(c=>(c.status==='offer'||c.status==='accepted'||c.status==='hired')&&c.expectedOnboardDate&&new Date(c.expectedOnboardDate)>=new Date()&&!(DB.employees||[]).some(e=>(c.phone&&e.phone&&c.phone===e.phone)||(c.email&&e.email&&c.email===e.email)||(c.name&&e.name&&c.name.trim().toLowerCase()===e.name.trim().toLowerCase()))).length}</span>
+        🟢 Dự kiến onboard <span style="background:rgba(126,198,153,.15);color:var(--success);border-radius:10px;padding:1px 8px;font-size:11px;margin-left:4px;opacity:.85">${(DB.candidates||[]).filter(c=>{
+          if(c.status!=='offer'&&c.status!=='accepted') return false;
+          if(!c.expectedOnboardDate) return false;
+          const d=new Date(c.expectedOnboardDate);
+          if(isNaN(d)) return false;
+          if(d.getFullYear()!==yr) return false;
+          if(mon!==0 && d.getMonth()+1!==mon) return false;
+          return !(DB.employees||[]).some(e=>(c.phone&&e.phone&&c.phone===e.phone)||(c.email&&e.email&&c.email===e.email)||(c.name&&e.name&&c.name.trim().toLowerCase()===e.name.trim().toLowerCase()));
+        }).length}</span>
       </button>
       <button class="rec-tab ${tab==='exit'?'active':''}" onclick="window._wfTab='exit';sessionStorage.setItem('_wfTab','exit');render()">
         🔴 Nghỉ việc <span style="background:rgba(229,115,115,.2);color:var(--danger);border-radius:10px;padding:1px 8px;font-size:11px;margin-left:4px">${exitEmps.length}</span>
@@ -16904,7 +16921,7 @@ function _wfUpcomingTab(PAL, yr, mon){
   today.setHours(0,0,0,0);
   // Lấy candidates có status offer/hired + expectedOnboardDate trong tương lai (hoặc trong khoảng yr/mon)
   const candidates = (DB.candidates||[]).filter(c => {
-    if(c.status !== 'offer' && c.status !== 'accepted' && c.status !== 'hired') return false;
+    if(c.status !== 'offer' && c.status !== 'accepted') return false;
     if(!c.expectedOnboardDate) return false;
     const d = new Date(c.expectedOnboardDate);
     if(isNaN(d)) return false;
@@ -16932,13 +16949,35 @@ function _wfUpcomingTab(PAL, yr, mon){
   const overdue = candidates.filter(c => new Date(c.expectedOnboardDate) < today).length;
 
   if(totalCount === 0){
+    // Đếm tổng số ứng viên đang chờ onboard ngoài kỳ đang xem (để gợi ý cho user)
+    const allUpcoming = (DB.candidates||[]).filter(c=>{
+      if(c.status !== 'offer' && c.status !== 'accepted') return false;
+      if(!c.expectedOnboardDate) return false;
+      const d = new Date(c.expectedOnboardDate);
+      if(isNaN(d)) return false;
+      const alreadyEmp = (DB.employees||[]).some(e=>
+        (c.phone && e.phone && c.phone===e.phone) ||
+        (c.email && e.email && c.email===e.email) ||
+        (c.name && e.name && c.name.trim().toLowerCase()===e.name.trim().toLowerCase())
+      );
+      return !alreadyEmp;
+    });
+    const totalAll = allUpcoming.length;
+    const periodLabel = mon===0 ? `năm ${yr}` : `tháng ${mon}/${yr}`;
     return `
       <div class="card" style="text-align:center;padding:48px 24px">
         <div style="font-size:48px;margin-bottom:12px">📅</div>
-        <div style="font-weight:700;font-size:15px;margin-bottom:6px">Chưa có ứng viên nào đang chờ onboard</div>
-        <div style="font-size:12.5px;color:var(--ink-muted);max-width:480px;margin:0 auto">
-          Trong module <b>Tuyển dụng</b>, mở hồ sơ ứng viên đang ở trạng thái <b>"Đã gửi offer"</b> hoặc <b>"Đã nhận việc"</b>, điền <b>Ngày dự kiến onboard</b> để hiển thị ở đây.
+        <div style="font-weight:700;font-size:15px;margin-bottom:6px">Không có ứng viên onboard trong ${periodLabel}</div>
+        ${totalAll > 0 ? `
+        <div style="font-size:13px;color:var(--ink);margin-bottom:14px">
+          Hiện có <b style="color:var(--success)">${totalAll} ứng viên</b> đang chờ onboard ở các kỳ khác.
         </div>
+        <button class="btn btn-primary" onclick="window._wfMonth=0;sessionStorage.setItem('_wfMonth',0);render()" style="font-size:13px">Xem cả năm</button>
+        ` : `
+        <div style="font-size:12.5px;color:var(--ink-muted);max-width:480px;margin:0 auto">
+          Trong module <b>Tuyển dụng</b>, mở hồ sơ ứng viên đang ở trạng thái <b>"Đã gửi offer"</b> hoặc <b>"Đã nhận offer"</b>, điền <b>Ngày dự kiến onboard</b> để hiển thị ở đây.
+        </div>
+        `}
       </div>
     `;
   }
@@ -17840,6 +17879,9 @@ function convertCandidateToEmployee(candidateId){
     role: job?.title || '',
     joined: joined,
     status: 'probation',  // mặc định thử việc
+    _customData: {
+      recruitSource: a.source || '',
+    },
   };
 
   closeModal();
@@ -18387,13 +18429,18 @@ function saveCandidate(id, jobId, isNew){
   }
   // Close modal và render ngay (data đã update trong memory)
   closeModal(); render();
+  // Block snapshot 5s để tránh bị overwrite ngay sau save
+  window._selfSaveAt = Date.now();
   // Save lên Firestore async — không chặn UI
   const savePromise = new Promise(resolve=>{
     const meta2 = {_syncBy: window.currentUser?.uid||'', _syncAt: Date.now(), _lastSaved: Date.now()};
     const sanitize2 = (obj)=>{ const out={}; Object.keys(obj).forEach(k=>{ const v=obj[k]; out[k]=(v===undefined||(typeof v==='number'&&isNaN(v)))?'':v; }); return out; };
     const byJob2 = {};
     (DB.candidates||[]).forEach(r=>{ const j2=r.jobId||'_nojob'; (byJob2[j2]=byJob2[j2]||[]).push(sanitize2(r)); });
-    const writes2 = Object.entries(byJob2).filter(([jid])=>jid===jobId||jid===(data.jobId||'_nojob')).map(([jid,recs])=>
+    // Đảm bảo cả jobId cũ và mới đều được ghi (kể cả empty) — tránh shard cũ bị giữ lại
+    const targetJobs = new Set([jobId, data.jobId||'_nojob']);
+    targetJobs.forEach(jid=>{ if(!byJob2[jid]) byJob2[jid] = []; });
+    const writes2 = Object.entries(byJob2).filter(([jid])=>targetJobs.has(jid)).map(([jid,recs])=>
       window.fbDb?.collection('hrdata').doc(`cand_${jid}`).set({...meta2, candidates:recs, _shard:jid},{merge:false})
     ).filter(Boolean);
     Promise.all(writes2).then(()=>{ toast(isNew?'✅ Đã thêm ứng viên':(_lang==="en"?"✅ Updated":"✅ Đã cập nhật")); resolve(); })
@@ -18408,13 +18455,21 @@ function deleteCandidate(id, fromModal=false){
   const a = (DB.candidates||[]).find(x=>x.id===id);
   if(!a) return;
   confirmDialog(`Xoá ứng viên ${a.name}?`, 'Toàn bộ thông tin và CV sẽ bị xoá.', ()=>{
+    const oldJobId = a.jobId;
     DB.candidates = (DB.candidates||[]).filter(x=>x.id!==id);
     const j = DB.jobs.find(j=>j.id===a.jobId);
     if(j){
       j.applicants = Math.max(0, (j.applicants||0) - 1);
       if(a.status === 'hired') j.hired = Math.max(0, (j.hired||0) - 1);
     }
-    saveData(['jobs']); // jobs not sharded
+    // Nếu job này không còn candidate nào → đăng ký clear shard cũ trên Firestore
+    const remaining = (DB.candidates||[]).filter(c=>c.jobId===oldJobId).length;
+    if(remaining === 0){
+      if(!window._candEmptyShards) window._candEmptyShards = new Set();
+      window._candEmptyShards.add(oldJobId);
+    }
+    window._selfSaveAt = Date.now();
+    saveData(['jobs']);
     saveData(['candidates']); toast('Đã xoá ứng viên'); render();
   });
 }
@@ -30361,7 +30416,7 @@ function exportUpcomingOnboardPDF(){
   const periodLabel = mon===0 ? `Năm ${yr}` : `${MN_FULL[mon]} ${yr}`;
 
   const candidates = (DB.candidates||[]).filter(c => {
-    if(c.status !== 'offer' && c.status !== 'accepted' && c.status !== 'hired') return false;
+    if(c.status !== 'offer' && c.status !== 'accepted') return false;
     if(!c.expectedOnboardDate) return false;
     const d = new Date(c.expectedOnboardDate);
     if(isNaN(d)) return false;
