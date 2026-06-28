@@ -15116,6 +15116,35 @@ function getJobHired(jobId){
   return Math.max(fromCandidates, parseInt(job?.hired)||0);
 }
 
+// Pipeline % cho từng stage (6 bước tuyển dụng)
+const STAGE_PCT = {
+  new: 20, applied: 20,  // applied = legacy alias
+  screening: 40,
+  interview: 60,
+  offer: 80,
+  accepted: 90,
+  hired: 100
+  // rejected, withdrawn → 0 (mặc định)
+};
+
+// Tính % tiến độ tuyển dụng cho 1 job theo cách C (top N theo positions)
+// Ví dụ: job cần 2, có 3 CV (offer 80%, interview 60%, screening 40%)
+//   → top 2: (80 + 60) / 2 = 70%
+// Job cần 2, có 1 CV offer (80%) → (80 + 0) / 2 = 40%
+function calcJobProgressPct(jobId, positions){
+  positions = Math.max(1, parseInt(positions)||1);
+  const cands = (DB.candidates||[]).filter(c => c.jobId === jobId);
+  if(cands.length === 0) return 0;
+  // % theo stage của từng CV, sort giảm dần
+  const cvPcts = cands.map(c => STAGE_PCT[c.status] || 0).sort((a,b)=>b-a);
+  // Top N = positions, pad 0 nếu thiếu CV
+  let total = 0;
+  for(let i = 0; i < positions; i++){
+    total += (cvPcts[i] || 0);
+  }
+  return total / positions;
+}
+
 /* ---------- View + period state ---------- */
 function setRecView(view){
   window._recView = view;
@@ -17410,7 +17439,7 @@ function renderRecruitment(main){
       <div class="card">
         <div class="card-head"><div>
           <div class="card-title">📊 Tiến độ <em>theo vị trí</em></div>
-          <div class="card-sub">Hired / Cần tuyển</div>
+          <div class="card-sub">% theo stage pipeline (offer=80%, accepted=90%, hired=100%) · top theo slot cần tuyển</div>
         </div></div>
         <div id="jobBars"></div>
       </div>
@@ -17424,19 +17453,30 @@ function renderRecruitment(main){
     </div>
   `;
 
-  const openJobsList = DB.jobs.filter(j=>j.status==='open');
+  const openJobsList = DB.jobs.filter(j => {
+    // Phương án I: hiện theo slot còn trống, không phụ thuộc status='open'
+    // - Ẩn nếu admin đã đóng dứt khoát (status='closed')
+    // - Hiện cả filled (đã đủ theo admin) NẾU còn slot trống về số liệu
+    // - Hiện cả paused (tạm hoãn) vì sẽ resume
+    if(j.status === 'closed') return false;
+    const hired = getJobHired(j.id);
+    const positions = parseInt(j.positions)||1;
+    return hired < positions;
+  });
   // Sort: vị trí còn thiếu nhiều nhất + chưa hire xong lên đầu
   // → (positions - hired) DESC, sau đó pct DESC
   const openSorted = openJobsList.map(j=>{
     const hired = getJobHired(j.id);
-    const remain = Math.max(0, j.positions - hired);
-    const pct = j.positions > 0 ? hired / j.positions * 100 : 0;
+    const positions = parseInt(j.positions)||1;
+    const remain = Math.max(0, positions - hired);
+    // Tính % theo cách C (top N theo positions, dựa trên stage cao nhất của CV)
+    const pct = calcJobProgressPct(j.id, positions);
     const cvCount = (DB.candidates||[]).filter(c=>c.jobId===j.id).length;
     return {j, hired, remain, pct, cvCount};
   }).sort((a,b)=>{
     if(b.remain !== a.remain) return b.remain - a.remain;
     return b.pct - a.pct;
-  }).slice(0,12);
+  }).slice(0,15);
   const barsEl = $('#jobBars');
   if(barsEl){
     if(openSorted.length === 0){
@@ -17456,8 +17496,14 @@ function renderRecruitment(main){
             ${openSorted.map(({j,hired,remain,pct,cvCount})=>{
               const barColor = pct>=100?'var(--success)':pct>=50?'var(--accent)':pct>0?'var(--warning)':'var(--ink-muted)';
               const dispPct = Math.max(pct, 3); // luôn hiện 3% tối thiểu để có dấu hiệu
+              // Badge nhỏ cho jobs đã mark "Đã đủ" nhưng còn slot trống → user thấy bất thường
+              const statusBadge = j.status==='filled'
+                ? `<span style="display:inline-block;margin-left:6px;padding:1px 6px;border-radius:10px;background:rgba(255,193,7,.15);color:#ff9800;font-size:9.5px;font-weight:700;letter-spacing:.04em" title="Admin đã mark 'Đã đủ' nhưng còn ${remain} slot trống">⚠️ Đã đủ</span>`
+                : j.status==='paused'
+                ? `<span style="display:inline-block;margin-left:6px;padding:1px 6px;border-radius:10px;background:rgba(96,125,139,.2);color:#90a4ae;font-size:9.5px;font-weight:700;letter-spacing:.04em">⏸ Tạm hoãn</span>`
+                : '';
               return `<tr style="border-bottom:1px solid rgba(255,255,255,.04)">
-                <td style="padding:8px 6px;font-weight:600;line-height:1.3">${escapeHtml(j.title)}<div style="font-size:10.5px;color:var(--ink-muted);font-weight:400">${escapeHtml(deptName(j.deptId))}</div></td>
+                <td style="padding:8px 6px;font-weight:600;line-height:1.3">${escapeHtml(j.title)}${statusBadge}<div style="font-size:10.5px;color:var(--ink-muted);font-weight:400">${escapeHtml(deptName(j.deptId))}</div></td>
                 <td style="padding:8px 6px;text-align:center;font-family:'JetBrains Mono',monospace;color:var(--info);font-weight:600">${cvCount}</td>
                 <td style="padding:8px 6px;text-align:center;font-family:'JetBrains Mono',monospace;color:var(--success);font-weight:600">${hired}/${j.positions}</td>
                 <td style="padding:8px 6px">
@@ -31414,10 +31460,18 @@ function openLeaveByDeptExportModal(){
         <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:6px;max-height:280px;overflow-y:auto;padding:10px;background:var(--bg-elev);border-radius:8px;border:1px solid var(--border)">
           ${depts.map(d=>{
             const empCount = (DB.employees||[]).filter(e=>e.deptId===d.id && getEffectiveStatus(e)!=='exit').length;
+            const nowStr = new Date().toISOString().slice(0,10);
+            const trCount = (DB.trainees||[]).filter(tr=>{
+              if(tr.deptId !== d.id) return false;
+              if(tr.status === 'exit' || tr.status === 'early_exit') return false;
+              if(tr.endDate && tr.endDate < nowStr) return false;
+              return true;
+            }).length;
+            const countLabel = trCount > 0 ? `${empCount} NV + ${trCount} TTS` : `${empCount} NV`;
             return `<label style="display:flex;align-items:center;gap:8px;font-size:13px;padding:6px 8px;border-radius:6px;cursor:pointer;background:var(--bg-card);border:1px solid var(--border)">
               <input type="checkbox" class="ldExpDept" value="${d.id}" checked style="width:auto;cursor:pointer">
               <span style="flex:1">${escapeHtml(d.name)}</span>
-              <span style="font-size:11px;color:var(--ink-muted);background:var(--bg-elev);padding:1px 7px;border-radius:8px">${empCount} NV</span>
+              <span style="font-size:11px;color:var(--ink-muted);background:var(--bg-elev);padding:1px 7px;border-radius:8px">${countLabel}</span>
             </label>`;
           }).join('')}
         </div>
@@ -31439,8 +31493,9 @@ function openLeaveByDeptExportModal(){
       <div class="field full">
         <label>Trạng thái NV</label>
         <select id="ldExpStatus">
-          <option value="active" selected>Đang làm (active + probation + leave)</option>
-          <option value="all">Tất cả (kể cả đã nghỉ)</option>
+          <option value="active" selected>Đang làm (chính thức + thử việc)</option>
+          <option value="all">Tất cả (cả nghỉ dài hạn + đã nghỉ việc)</option>
+          <option value="hasRemain">Chỉ NV còn ngày AL/CL (có số ≠ 0, kể cả âm)</option>
         </select>
       </div>
     </div>
@@ -31469,11 +31524,40 @@ async function exportLeaveByDeptZip(){
   let _exportedDepts = 0;
   const _skippedDepts = [];
 
-  // Helper: get filtered employees for a dept
+  // Helper: get filtered employees + trainees for a dept
+  // statusFilter có 3 modes:
+  //   - 'active'     → chỉ NV đang làm thực sự (active + probation) + TTS đang thực tập
+  //   - 'all'        → tất cả NV + tất cả TTS kể cả đã nghỉ/đã hết hạn
+  //   - 'hasRemain'  → tất cả NV + TTS, sau sẽ filter chỉ giữ ai còn AL/CL ≠ 0
   const _empsForDept = (deptId) => {
     let pool = DB.employees||[];
-    if(statusFilter === 'active') pool = pool.filter(e=>['active','probation','leave'].includes(getEffectiveStatus(e)));
-    return pool.filter(e=>e.deptId===deptId).sort((a,b)=>(a.name||'').localeCompare(b.name||'','vi'));
+    if(statusFilter === 'active') pool = pool.filter(e=>['active','probation'].includes(getEffectiveStatus(e)));
+    pool = pool.filter(e=>e.deptId===deptId);
+
+    // Gộp thêm trainees (chuyển thành virtual emp với id='tr_'+t.id để khớp với getLeaveSheet)
+    const nowStr = new Date().toISOString().slice(0,10);
+    let trPool = (DB.trainees||[]).filter(tr=>tr.deptId===deptId);
+    if(statusFilter === 'active'){
+      // TTS đang thực tập: status='active' HOẶC (chưa có endDate / endDate >= today)
+      trPool = trPool.filter(tr=>{
+        if(tr.status === 'exit' || tr.status === 'early_exit') return false;
+        if(tr.status === 'active') return true;
+        if(tr.endDate && tr.endDate < nowStr) return false;
+        return true;
+      });
+    }
+    // 'all' và 'hasRemain' đều lấy hết TTS
+    const trAsEmps = trPool.map(tr=>({
+      id: 'tr_'+tr.id,
+      code: tr.code||'',
+      name: tr.name||'',
+      role: tr.role || 'Thực tập sinh',
+      deptId: tr.deptId||'',
+      joined: tr.startDate||'',
+      _isTrainee: true,
+    }));
+
+    return [...pool, ...trAsEmps].sort((a,b)=>(a.name||'').localeCompare(b.name||'','vi'));
   };
 
   for(const deptId of selectedDeptIds){
@@ -31517,10 +31601,18 @@ async function exportLeaveByDeptZip(){
         hasActivity,
       };
     });
-    // Chỉ loại NV có CẢ AL và CL còn lại = 0
-    const empRows = empRowsRaw.filter(r=>r.hasActivity).map((r,i)=>({...r, i: i+1}));
+    // Filter NV theo statusFilter:
+    //   - 'active' và 'all' → giữ tất cả NV trong pool (đã lọc status ở _empsForDept)
+    //   - 'hasRemain'       → CHỈ giữ NV có AL ≠ 0 hoặc CL ≠ 0 (kể cả số âm); loại người có CẢ AL=0 và CL=0
+    const empRows = (statusFilter === 'hasRemain'
+        ? empRowsRaw.filter(r=>r.hasActivity)
+        : empRowsRaw
+      ).map((r,i)=>({...r, i: i+1}));
     if(empRows.length === 0){
-      console.log(`[leave export] Skip ${dept.name} — tất cả NV đều có AL=0 và CL=0`);
+      const reason = statusFilter === 'hasRemain'
+        ? 'tất cả NV đều có AL=0 và CL=0'
+        : 'không có NV nào sau khi lọc';
+      console.log(`[leave export] Skip ${dept.name} — ${reason}`);
       _skippedDepts.push(dept.name);
       continue;
     }
@@ -31592,12 +31684,20 @@ async function exportLeaveByDeptZip(){
     `Mỗi file là báo cáo riêng cho 1 phòng ban.\n` +
     `Forward email + đính kèm file tương ứng cho từng trưởng bộ phận.\n\n` +
     (fmt!=='xlsx' ? `* File .html: mở trong trình duyệt → Ctrl+P → Save as PDF\n\n` : '\n') +
+    `Trạng thái NV: ${
+      statusFilter==='active' ? 'Chỉ NV đang làm (chính thức + thử việc)' :
+      statusFilter==='hasRemain' ? 'Chỉ NV còn ngày AL/CL (có số ≠ 0)' :
+      'Tất cả NV (cả nghỉ dài hạn + đã nghỉ việc)'
+    }\n` +
     `Đã xuất: ${_exportedDepts} phòng ban\n` +
-    (_skippedDepts.length > 0 ? `Bỏ qua (không có NV nào còn AL/CL): ${_skippedDepts.join(', ')}\n` : '')
+    (_skippedDepts.length > 0 ? `Bỏ qua (không có NV nào ${statusFilter==='hasRemain'?'còn AL/CL':'thỏa điều kiện'}): ${_skippedDepts.join(', ')}\n` : '')
   );
 
   if(_exportedDepts === 0){
-    toast('❌ Không có phòng ban nào có NV còn AL/CL để xuất','error');
+    const errMsg = statusFilter==='hasRemain'
+      ? '❌ Không có phòng ban nào có NV còn AL/CL để xuất'
+      : '❌ Không có phòng ban nào có NV để xuất';
+    toast(errMsg,'error');
     return;
   }
 
