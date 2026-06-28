@@ -23706,6 +23706,7 @@ const MODULE_LIST = [
   {key:'tasks',       label:'Thông báo / Hồ sơ chưa đủ'},
   {key:'settings',    label:'Cấu hình'},
   {key:'salary',      label:'Phân tích Lương'},
+  {key:'salaryStructure', label:(_lang==="en"?"Salary Structure":"Thang bảng lương")},
   {key:'dormitory',   label:'Staff House'},
   {key:'manning',     label:'Manning & Budget'},
   {key:'plreview',    label:'HR P&L Review'},
@@ -25186,7 +25187,7 @@ function confirmAddCasualYear(){
    SALARY STRUCTURE — Thang bảng lương + Thời gian thử việc
    ========================================================= */
 function renderSalaryStructure(main){
-  if(!window.canDo('settings','view') && !window.canDo('employees','view')){
+  if(!window.canDo('salaryStructure','view')){
     main.innerHTML='<div class="topbar"><div class="topbar-left"><h1 class="page-title">🔒 Không có quyền</h1><div class="page-sub">Bạn không được cấp quyền truy cập Thang bảng lương</div></div></div>';
     return;
   }
@@ -25201,7 +25202,7 @@ function renderSalaryStructure(main){
   const tab = window._ssTab;
   const levels = DB.salaryStructure.levels;
   const probations = DB.salaryStructure.probations;
-  const canEdit = window.canDo('settings','edit') || window.canDo('employees','edit');
+  const canEdit = window.canDo('salaryStructure','edit');
 
   // KPI
   const totalLevels = levels.length;
@@ -25217,7 +25218,9 @@ function renderSalaryStructure(main){
         <div class="page-sub">${totalLevels} ${_lang==='en'?'levels':'bậc lương'} · ${totalPositions} ${_lang==='en'?'positions':'chức danh'} · ${totalProbations} ${_lang==='en'?'probation configs':'cấu hình thử việc'}</div>
       </div>
       <div class="topbar-actions">
-        ${canEdit ? `<button class="btn" onclick="ssExportXLSX()">${ICONS.download} Xuất Excel</button>` : ''}
+        <button class="btn" onclick="ssExportXLSX()">${ICONS.download} Xuất Excel</button>
+        <button class="btn" onclick="ssExportPDF()">📄 Xuất PDF</button>
+        ${canEdit ? `<button class="btn" onclick="ssImportXLSX()">📥 Nhập Excel</button>` : ''}
         ${canEdit ? `<button class="btn btn-primary" onclick="${tab==='levels'?'ssEditLevel(null)':'ssEditProbation(null)'}">${ICONS.plus} ${tab==='levels'?'Thêm bậc lương':'Thêm thử việc'}</button>` : ''}
       </div>
     </div>
@@ -25867,6 +25870,309 @@ function ssExportXLSX(){
   const today = new Date().toISOString().slice(0,10).replace(/-/g,'');
   XLSX.writeFile(wb, `Thang_bang_luong_${today}.xlsx`);
   toast('✅ Đã tải file Excel','success');
+}
+
+// ── EXPORT PDF (HTML print) ──
+function ssExportPDF(){
+  const levels = (DB.salaryStructure?.levels||[]).slice().sort((a,b)=>{
+    const an = parseFloat(a.level), bn = parseFloat(b.level);
+    if(!isNaN(an) && !isNaN(bn)) return an - bn;
+    return String(a.level||'').localeCompare(String(b.level||''));
+  });
+  const probations = (DB.salaryStructure?.probations||[]).slice();
+  const positionToLevel = {};
+  levels.forEach(l=>{ (l.positions||[]).forEach(pos=>{ positionToLevel[pos.toLowerCase()] = l.level; }); });
+  const levelToSalary = {};
+  levels.forEach(l=>{ levelToSalary[String(l.level).toLowerCase()] = parseInt(l.basicSalary)||0; });
+
+  // Sheet 1: Levels with positions
+  const levelsHTML = levels.length === 0
+    ? '<div style="padding:30px;text-align:center;color:#888;font-style:italic">Chưa có bậc lương nào</div>'
+    : `<table>
+        <thead>
+          <tr><th>Level / Bậc</th><th>Chức danh</th><th style="text-align:right">Lương cơ bản (VNĐ/tháng)</th></tr>
+        </thead>
+        <tbody>
+          ${levels.map(l=>{
+            const positions = (l.positions||[]).filter(Boolean);
+            const sal = parseInt(l.basicSalary)||0;
+            if(positions.length === 0){
+              return `<tr>
+                <td><b>Level ${escapeHtml(l.level||'')}</b></td>
+                <td style="color:#999;font-style:italic">(Chưa có chức danh)</td>
+                <td style="text-align:right;font-family:monospace;font-weight:700;color:#2e7d32">${sal>0?sal.toLocaleString('vi-VN')+' đ':'—'}</td>
+              </tr>`;
+            }
+            return positions.map((p,idx)=>`<tr>
+              ${idx===0?`<td rowspan="${positions.length}" style="vertical-align:middle"><b>Level ${escapeHtml(l.level||'')}</b>${l.note?'<br><span style="font-size:9pt;color:#666">'+escapeHtml(l.note)+'</span>':''}</td>`:''}
+              <td>${escapeHtml(p)}</td>
+              ${idx===0?`<td rowspan="${positions.length}" style="vertical-align:middle;text-align:right;font-family:monospace;font-weight:700;color:#2e7d32">${sal>0?sal.toLocaleString('vi-VN')+' đ':'—'}</td>`:''}
+            </tr>`).join('');
+          }).join('')}
+        </tbody>
+      </table>`;
+
+  // Sheet 2: Probations grouped by Level
+  const probWithLevel = probations.map(p=>{
+    const lvl = p.level || positionToLevel[String(p.position||'').toLowerCase()] || '';
+    return {...p, _resolvedLevel: lvl};
+  });
+  const probGroups = {};
+  const probNoLevel = [];
+  probWithLevel.forEach(p=>{
+    if(p._resolvedLevel){
+      const k = String(p._resolvedLevel);
+      if(!probGroups[k]) probGroups[k]=[];
+      probGroups[k].push(p);
+    } else { probNoLevel.push(p); }
+  });
+  const sortedKeys = Object.keys(probGroups).sort((a,b)=>{
+    const an=parseFloat(a), bn=parseFloat(b);
+    if(!isNaN(an)&&!isNaN(bn)) return an-bn;
+    return a.localeCompare(b);
+  });
+
+  const probHTML = probations.length === 0
+    ? '<div style="padding:30px;text-align:center;color:#888;font-style:italic">Chưa có cấu hình thử việc</div>'
+    : `<table>
+        <thead>
+          <tr><th>Level</th><th>Lương cơ bản</th><th>Chức danh</th><th style="text-align:center">Thời gian thử việc</th><th>Ghi chú</th></tr>
+        </thead>
+        <tbody>
+          ${sortedKeys.map(lvlKey=>{
+            const items = probGroups[lvlKey].sort((a,b)=>String(a.position||'').localeCompare(String(b.position||''),'vi'));
+            const salary = levelToSalary[lvlKey.toLowerCase()]||0;
+            return items.map((p,idx)=>{
+              const days = parseInt(p.durationDays)||0;
+              const months = days>0 ? (days/30).toFixed(1).replace('.0','') : 0;
+              return `<tr>
+                ${idx===0?`<td rowspan="${items.length}" style="vertical-align:middle"><b>Level ${escapeHtml(lvlKey)}</b></td>`:''}
+                ${idx===0?`<td rowspan="${items.length}" style="vertical-align:middle;text-align:right;font-family:monospace;color:#2e7d32;font-weight:700">${salary>0?salary.toLocaleString('vi-VN')+' đ':'—'}</td>`:''}
+                <td>${escapeHtml(p.position||'')}</td>
+                <td style="text-align:center;font-family:monospace;color:#e65100;font-weight:700">${days>0?days+' ngày':'—'}${days>0?`<br><span style="font-size:9pt;color:#999">~${months} tháng</span>`:''}</td>
+                <td style="font-size:9.5pt;color:#666">${escapeHtml(p.note||'—')}</td>
+              </tr>`;
+            }).join('');
+          }).join('')}
+          ${probNoLevel.length>0 ? probNoLevel.sort((a,b)=>String(a.position||'').localeCompare(String(b.position||''),'vi')).map((p,idx)=>{
+            const days = parseInt(p.durationDays)||0;
+            const months = days>0 ? (days/30).toFixed(1).replace('.0','') : 0;
+            return `<tr>
+              ${idx===0?`<td rowspan="${probNoLevel.length}" style="vertical-align:middle;color:#999;font-style:italic">(Chưa gán)</td>`:''}
+              ${idx===0?`<td rowspan="${probNoLevel.length}" style="vertical-align:middle">—</td>`:''}
+              <td>${escapeHtml(p.position||'')}</td>
+              <td style="text-align:center;font-family:monospace;color:#e65100;font-weight:700">${days>0?days+' ngày':'—'}${days>0?`<br><span style="font-size:9pt;color:#999">~${months} tháng</span>`:''}</td>
+              <td style="font-size:9.5pt;color:#666">${escapeHtml(p.note||'—')}</td>
+            </tr>`;
+          }).join('') : ''}
+        </tbody>
+      </table>`;
+
+  const today2 = new Date().toLocaleDateString('vi-VN');
+  const company = DB.company?.name || 'Legacy Yên Tử MGallery';
+  const totalLevels = levels.length;
+  const totalPositions = levels.reduce((s,l)=>s+((l.positions||[]).length),0);
+  const totalProbations = probations.length;
+
+  const html = `<!DOCTYPE html><html lang="vi"><head>
+<meta charset="utf-8">
+<title>Thang bảng lương - ${company}</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Segoe UI',Arial,sans-serif;font-size:10.5pt;color:#1a1a2e;background:#fff;padding:18px 24px}
+h1{font-size:20pt;color:#1a1a2e;margin-bottom:3px}
+h1 em{font-style:italic;color:#c89564}
+h2{font-size:14pt;color:#c89564;margin:18px 0 10px;padding-bottom:6px;border-bottom:2px solid #c89564}
+.sub{font-size:10pt;color:#666;margin-bottom:14px;padding-bottom:10px;border-bottom:1px solid #ddd}
+.stats{display:flex;gap:20px;margin-bottom:18px;padding:12px 16px;background:linear-gradient(90deg,rgba(212,165,116,.08),transparent);border-radius:8px;border-left:4px solid #c89564}
+.stat{flex:1}
+.stat-label{font-size:9pt;color:#888;text-transform:uppercase;letter-spacing:.05em;margin-bottom:3px}
+.stat-value{font-size:18pt;font-weight:700;color:#1a1a2e;font-family:Georgia,serif}
+table{width:100%;border-collapse:collapse;font-size:10pt;margin-bottom:14px}
+th{background:#1a1a2e;color:#fff;padding:9px 8px;text-align:left;font-size:9.5pt;border:1px solid #2c2c4e}
+td{padding:8px;border:1px solid #e0e0e0}
+tr:nth-child(even) td{background:#fafafa}
+.footer{margin-top:18px;padding-top:10px;border-top:1px solid #eee;font-size:9pt;color:#999;display:flex;justify-content:space-between}
+@media print{body{padding:0}@page{margin:10mm;size:A4}}
+</style>
+</head><body>
+<h1>Thang bảng <em>lương</em> · Salary Structure</h1>
+<div class="sub"><b>${escapeHtml(company)}</b> · Xuất ngày ${today2}</div>
+
+<div class="stats">
+  <div class="stat"><div class="stat-label">Tổng bậc lương</div><div class="stat-value">${totalLevels}</div></div>
+  <div class="stat"><div class="stat-label">Tổng chức danh</div><div class="stat-value">${totalPositions}</div></div>
+  <div class="stat"><div class="stat-label">Cấu hình thử việc</div><div class="stat-value">${totalProbations}</div></div>
+</div>
+
+<h2>📊 Bậc lương & Chức danh</h2>
+${levelsHTML}
+
+<h2>⏱️ Thời gian thử việc</h2>
+${probHTML}
+
+<div class="footer">
+  <span>Xuất bởi Legacy Yên Tử HR System</span>
+  <span>${today2}</span>
+</div>
+</body></html>`;
+
+  const w = window.open('','_blank','width=1100,height=800');
+  if(!w){ toast('Trình duyệt chặn popup. Cho phép popup để xuất PDF.','error'); return; }
+  w.document.write(html);
+  w.document.close();
+  setTimeout(()=>{ try{ w.print(); }catch(e){} }, 600);
+  toast('📄 Đã mở cửa sổ in. Chọn "Save as PDF" để xuất file.','success');
+}
+
+// ── IMPORT XLSX ──
+function ssImportXLSX(){
+  if(typeof XLSX === 'undefined'){ toast('Thư viện XLSX chưa tải','error'); return; }
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = '.xlsx,.xls';
+  input.onchange = async (e)=>{
+    const file = e.target.files[0];
+    if(!file) return;
+    try{
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, {type:'array'});
+
+      // Validate sheets exist
+      const sheetNames = wb.SheetNames;
+      const hasBacLuong = sheetNames.some(n=>/bậc lương|bac luong|level|salary/i.test(n));
+      const hasThuViec = sheetNames.some(n=>/thử việc|thu viec|probation/i.test(n));
+      if(!hasBacLuong && !hasThuViec){
+        toast('File không có sheet "Bậc lương" hoặc "Thử việc" — không đúng template','error');
+        return;
+      }
+
+      let importedLevels = 0, importedProbs = 0, mode = '';
+      // Hỏi user mode
+      const replaceAll = confirm(
+        '📥 Nhập dữ liệu từ Excel\n\n' +
+        '✓ OK = THAY THẾ toàn bộ data hiện tại (overwrite)\n' +
+        '✗ Cancel = THÊM vào data hiện tại (merge — bỏ qua trùng level/chức danh)\n\n' +
+        'Lưu ý: hành động THAY THẾ không thể hoàn tác!'
+      );
+      mode = replaceAll ? 'replace' : 'merge';
+
+      // Parse Sheet "Bậc lương"
+      const newLevels = [];
+      if(hasBacLuong){
+        const sheetName = sheetNames.find(n=>/bậc lương|bac luong|level|salary/i.test(n));
+        const ws = wb.Sheets[sheetName];
+        const rows = XLSX.utils.sheet_to_json(ws, {header:1, defval:''});
+        // Find header row
+        let headerRow = -1;
+        for(let i=0; i<Math.min(rows.length,5); i++){
+          if(rows[i].some(c=>String(c).toLowerCase().includes('level')||String(c).toLowerCase().includes('bậc'))){
+            headerRow = i; break;
+          }
+        }
+        if(headerRow < 0){ toast('Sheet "Bậc lương": không tìm thấy header','error'); return; }
+        // Parse rows: detect columns by header
+        const headers = rows[headerRow].map(c=>String(c).toLowerCase().trim());
+        const colLevel = headers.findIndex(h=>h.includes('level')||h.includes('bậc'));
+        const colPosition = headers.findIndex(h=>h.includes('chức danh')||h.includes('position'));
+        const colSalary = headers.findIndex(h=>h.includes('lương')||h.includes('salary'));
+        const colNote = headers.findIndex(h=>h.includes('ghi chú')||h.includes('note'));
+
+        const levelMap = {}; // group rows by level (sheet may repeat level only on first row)
+        let currentLevel = '', currentSalary = 0, currentNote = '';
+        for(let i = headerRow+1; i<rows.length; i++){
+          const row = rows[i];
+          const levelVal = String(row[colLevel]||'').trim();
+          const posVal = String(row[colPosition]||'').trim();
+          const salVal = parseInt(String(row[colSalary]||'').replace(/[^\d]/g,''))||0;
+          const noteVal = String(row[colNote]||'').trim();
+          if(levelVal){
+            currentLevel = levelVal;
+            currentSalary = salVal>0 ? salVal : currentSalary;
+            currentNote = noteVal || '';
+          }
+          if(!currentLevel) continue;
+          if(!levelMap[currentLevel]){
+            levelMap[currentLevel] = {level:currentLevel, basicSalary:currentSalary, positions:[], note:currentNote};
+          }
+          if(salVal>0 && levelMap[currentLevel].basicSalary === 0) levelMap[currentLevel].basicSalary = salVal;
+          if(posVal && posVal !== '(Chưa có chức danh)') levelMap[currentLevel].positions.push(posVal);
+        }
+        Object.values(levelMap).forEach(l=>{
+          l.id = uid();
+          l.positions = [...new Set(l.positions)];
+          newLevels.push(l);
+        });
+      }
+
+      // Parse Sheet "Thử việc"
+      const newProbs = [];
+      if(hasThuViec){
+        const sheetName = sheetNames.find(n=>/thử việc|thu viec|probation/i.test(n));
+        const ws = wb.Sheets[sheetName];
+        const rows = XLSX.utils.sheet_to_json(ws, {header:1, defval:''});
+        let headerRow = -1;
+        for(let i=0; i<Math.min(rows.length,5); i++){
+          if(rows[i].some(c=>String(c).toLowerCase().includes('chức danh')||String(c).toLowerCase().includes('position'))){
+            headerRow = i; break;
+          }
+        }
+        if(headerRow < 0){ toast('Sheet "Thử việc": không tìm thấy header','error'); return; }
+        const headers = rows[headerRow].map(c=>String(c).toLowerCase().trim());
+        const colPos = headers.findIndex(h=>h.includes('chức danh')||h.includes('position'));
+        const colLvl = headers.findIndex(h=>h.includes('level')||(h.includes('bậc')&&!h.includes('lương')));
+        const colDays = headers.findIndex(h=>h.includes('ngày')||h.includes('days')||(h.includes('thời gian')&&!h.includes('tháng')));
+        const colNote = headers.findIndex(h=>h.includes('ghi chú')||h.includes('note'));
+
+        let currentLvl = '';
+        for(let i=headerRow+1; i<rows.length; i++){
+          const row = rows[i];
+          const lvlVal = colLvl>=0 ? String(row[colLvl]||'').trim() : '';
+          const posVal = String(row[colPos]||'').trim();
+          const daysVal = parseInt(String(row[colDays]||'').replace(/[^\d]/g,''))||0;
+          const noteVal = colNote>=0 ? String(row[colNote]||'').trim() : '';
+          if(lvlVal && lvlVal !== '(Chưa gán)') currentLvl = lvlVal;
+          if(!posVal) continue;
+          if(daysVal <= 0) continue;
+          newProbs.push({id:uid(), position:posVal, level:currentLvl, durationDays:daysVal, note:noteVal});
+        }
+      }
+
+      // Apply changes
+      if(mode === 'replace'){
+        DB.salaryStructure = {levels: newLevels, probations: newProbs};
+        importedLevels = newLevels.length;
+        importedProbs = newProbs.length;
+      } else {
+        // Merge: skip duplicates
+        const existLevels = new Set((DB.salaryStructure.levels||[]).map(l=>l.level.toLowerCase()));
+        const existProbs = new Set((DB.salaryStructure.probations||[]).map(p=>p.position.toLowerCase()));
+        const mergedLevels = [...(DB.salaryStructure.levels||[])];
+        const mergedProbs = [...(DB.salaryStructure.probations||[])];
+        newLevels.forEach(l=>{
+          if(!existLevels.has(l.level.toLowerCase())){
+            mergedLevels.push(l);
+            importedLevels++;
+          }
+        });
+        newProbs.forEach(p=>{
+          if(!existProbs.has(p.position.toLowerCase())){
+            mergedProbs.push(p);
+            importedProbs++;
+          }
+        });
+        DB.salaryStructure = {levels: mergedLevels, probations: mergedProbs};
+      }
+
+      saveData(['salaryStructure']);
+      toast(`✅ Đã nhập: ${importedLevels} bậc lương + ${importedProbs} cấu hình thử việc (mode: ${mode==='replace'?'thay thế':'merge'})`,'success',5000);
+      render();
+    } catch(err){
+      console.error('[ssImport]', err);
+      toast('❌ Lỗi đọc file: '+err.message,'error');
+    }
+  };
+  input.click();
 }
 
 function renderCasual(main){
