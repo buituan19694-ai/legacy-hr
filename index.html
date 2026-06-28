@@ -160,7 +160,7 @@
       </div>
       <div class="nav-item" data-page="salaryStructure">
         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M4 6h16M4 12h16M4 18h16M9 6v12M15 6v12"/></svg>
-        <span>Thang bảng lương</span>
+        <span data-i18n="nav_salaryStructure">Thang bảng lương</span>
       </div>
       <div class="nav-item" data-page="casual">
         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
@@ -310,6 +310,7 @@ const I18N = {
     nav_birthdays: 'Sinh nhật',
     nav_leave: 'Nghỉ phép',
     nav_salary: 'Salary',
+    nav_salaryStructure: 'Thang bảng lương',
     nav_casual: 'Casual',
     nav_trainee: 'Thực tập sinh',
     nav_workforce: 'Biến động NS',
@@ -411,6 +412,7 @@ const I18N = {
     nav_birthdays: 'Birthdays',
     nav_leave: 'Leave',
     nav_salary: 'Salary',
+    nav_salaryStructure: 'Salary Structure',
     nav_casual: 'Casual',
     nav_trainee: 'Trainees',
     nav_workforce: 'HR Movement',
@@ -19041,7 +19043,7 @@ function _buildKpiContent(p, periodCourses){
             ${deptCourses.length === 0 ? `<div style="color:var(--ink-dim);text-align:center;padding:30px;font-size:12.5px;font-style:italic">Phòng ban này chưa có khóa đào tạo nào trong ${periodLabel2}</div>` : `
             <table class="tbl" style="width:100%;font-size:12.5px">
               <thead>
-                <tr><th>Tên khóa học</th><th>Trainer</th><th>Ngày</th><th class="num">Giờ/khóa</th><th class="num">NV ${escapeHtml(dept.name)} tham gia</th><th>Cách gán</th></tr>
+                <tr><th>Tên khóa học</th><th>Trainer</th><th>Ngày</th><th class="num">Giờ/khóa</th><th class="num" title="Số NV phòng ${escapeHtml(dept.name)} tham gia / tổng số NV toàn khóa">NV ${escapeHtml(dept.name)} <span style="font-weight:400;color:var(--ink-muted)">/ tổng</span></th><th>Cách gán</th></tr>
               </thead>
               <tbody>
                 ${deptCourses.map(c => {
@@ -19058,7 +19060,7 @@ function _buildKpiContent(p, periodCourses){
                     <td>${escapeHtml(c.trainer||'—')}</td>
                     <td style="font-family:'JetBrains Mono',monospace;font-size:11px">${dateLabel}</td>
                     <td class="num"><b>${c.hours||0}h</b></td>
-                    <td class="num"><b>${inDept}</b>${c.attendeeIds?'/'+c.attendeeIds.length:''}</td>
+                    <td class="num" title="${inDept} NV phòng ${escapeHtml(dept.name)} / ${c.attendeeIds?c.attendeeIds.length+' tổng số NV toàn khóa':'chưa gán NV cụ thể'}"><b style="color:var(--accent)">${inDept}</b>${c.attendeeIds?`<span style="color:var(--ink-muted);font-size:11px"> / ${c.attendeeIds.length} tổng</span>`:''}</td>
                     <td>${assignmentLabel}</td>
                   </tr>`;
                 }).join('')}
@@ -25210,9 +25212,9 @@ function renderSalaryStructure(main){
   main.innerHTML = `
     <div class="topbar">
       <div class="topbar-left">
-        <div class="crumb">Nhân sự · <span>Thang bảng lương</span></div>
-        <h1 class="page-title">Thang bảng <em>lương</em> · Salary Structure</h1>
-        <div class="page-sub">${totalLevels} bậc lương · ${totalPositions} chức danh · ${totalProbations} cấu hình thử việc</div>
+        <div class="crumb">${_lang==='en'?'HR':'Nhân sự'} · <span>${_lang==='en'?'Salary Structure':'Thang bảng lương'}</span></div>
+        <h1 class="page-title">${_lang==='en'?'Salary <em>Structure</em>':'Thang bảng <em>lương</em>'}</h1>
+        <div class="page-sub">${totalLevels} ${_lang==='en'?'levels':'bậc lương'} · ${totalPositions} ${_lang==='en'?'positions':'chức danh'} · ${totalProbations} ${_lang==='en'?'probation configs':'cấu hình thử việc'}</div>
       </div>
       <div class="topbar-actions">
         ${canEdit ? `<button class="btn" onclick="ssExportXLSX()">${ICONS.download} Xuất Excel</button>` : ''}
@@ -25345,8 +25347,18 @@ function _ssRenderLevelsTab(el, canEdit){
 }
 
 function _ssRenderProbationTab(el, canEdit){
-  const probations = (DB.salaryStructure?.probations||[]).slice()
-    .sort((a,b)=>String(a.position||'').localeCompare(String(b.position||''),'vi'));
+  const probations = (DB.salaryStructure?.probations||[]).slice();
+  const levels = (DB.salaryStructure?.levels||[]).slice().sort((a,b)=>{
+    const an = parseFloat(a.level), bn = parseFloat(b.level);
+    if(!isNaN(an) && !isNaN(bn)) return an - bn;
+    return String(a.level||'').localeCompare(String(b.level||''));
+  });
+
+  // Lookups
+  const positionToLevel = {};
+  levels.forEach(l=>{ (l.positions||[]).forEach(pos=>{ positionToLevel[pos.toLowerCase()] = l.level; }); });
+  const levelToSalary = {};
+  levels.forEach(l=>{ levelToSalary[String(l.level).toLowerCase()] = parseInt(l.basicSalary)||0; });
 
   if(probations.length === 0){
     el.innerHTML = `
@@ -25360,25 +25372,118 @@ function _ssRenderProbationTab(el, canEdit){
     return;
   }
 
-  el.innerHTML = `
-    <div class="card" style="padding:0;overflow:hidden">
+  // Resolve level for each probation
+  const probWithLevel = probations.map(p=>{
+    const lvl = p.level || positionToLevel[String(p.position||'').toLowerCase()] || '';
+    return {...p, _resolvedLevel: lvl};
+  });
+
+  // Group by level
+  const groups = {};
+  const noLevelGroup = [];
+  probWithLevel.forEach(p=>{
+    if(p._resolvedLevel){
+      const key = String(p._resolvedLevel);
+      if(!groups[key]) groups[key] = [];
+      groups[key].push(p);
+    } else {
+      noLevelGroup.push(p);
+    }
+  });
+
+  // Sort groups by level order (same as levels sort)
+  const sortedLevelKeys = Object.keys(groups).sort((a,b)=>{
+    const an = parseFloat(a), bn = parseFloat(b);
+    if(!isNaN(an) && !isNaN(bn)) return an - bn;
+    return a.localeCompare(b);
+  });
+
+  // Build HTML — each level is a group with header + positions
+  const groupBlocks = sortedLevelKeys.map(lvlKey=>{
+    const items = groups[lvlKey].sort((a,b)=>String(a.position||'').localeCompare(String(b.position||''),'vi'));
+    const salary = levelToSalary[lvlKey.toLowerCase()] || 0;
+    // Range thời gian thử việc trong nhóm — có thể giống hoặc khác nhau
+    const days = items.map(p=>parseInt(p.durationDays)||0).filter(d=>d>0);
+    const minD = days.length ? Math.min(...days) : 0;
+    const maxD = days.length ? Math.max(...days) : 0;
+    const durLabel = days.length === 0 ? ''
+      : minD === maxD ? `${minD} ngày`
+      : `${minD}–${maxD} ngày (khác nhau theo chức danh)`;
+    return `
+      <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:12px;margin-bottom:14px;overflow:hidden">
+        <div style="display:flex;align-items:center;gap:14px;padding:14px 18px;background:linear-gradient(90deg,rgba(212,165,116,.12),transparent);border-bottom:1px solid var(--border)">
+          <div style="width:44px;height:44px;border-radius:10px;background:linear-gradient(135deg,var(--accent),var(--accent-dim));display:grid;place-items:center;color:#000;font-weight:700;font-family:'Fraunces',serif;font-size:18px;flex-shrink:0">${escapeHtml(lvlKey.substring(0,3))}</div>
+          <div style="flex:1">
+            <div style="font-family:'Fraunces',serif;font-size:18px;font-weight:500;letter-spacing:-.01em">Level ${escapeHtml(lvlKey)}</div>
+            <div style="font-size:12px;color:var(--ink-muted);margin-top:2px">${items.length} chức danh${salary>0?` · Lương cơ bản: <b style="color:var(--success)">${salary.toLocaleString('vi-VN')} đ</b>`:''}${durLabel?` · Thử việc: <b style="color:var(--warning)">${durLabel}</b>`:''}</div>
+          </div>
+        </div>
+        <table class="tbl" style="width:100%">
+          <thead>
+            <tr>
+              <th style="padding-left:18px">Chức danh / Position</th>
+              <th style="width:200px;text-align:center">Thời gian thử việc</th>
+              <th style="text-align:center">Ghi chú</th>
+              ${canEdit?'<th style="width:120px;text-align:right;padding-right:18px">Thao tác</th>':''}
+            </tr>
+          </thead>
+          <tbody>
+            ${items.map(p=>{
+              const days = parseInt(p.durationDays)||0;
+              const months = days>0 ? (days/30).toFixed(1).replace('.0','') : 0;
+              return `<tr>
+                <td style="padding-left:18px">
+                  <div style="display:flex;align-items:center;gap:10px">
+                    <div style="width:32px;height:32px;border-radius:8px;background:rgba(232,185,116,.15);color:var(--warning);display:grid;place-items:center;flex-shrink:0;font-size:14px">⏱️</div>
+                    <div style="font-weight:600;font-size:14px">${escapeHtml(p.position||'')}</div>
+                  </div>
+                </td>
+                <td style="text-align:center">
+                  <div style="font-family:'JetBrains Mono',monospace;font-size:15px;font-weight:700;color:var(--warning)">${days>0?days+' ngày':'—'}</div>
+                  ${days>0?`<div style="font-size:11px;color:var(--ink-muted)">~${months} tháng</div>`:''}
+                </td>
+                <td style="text-align:center;color:var(--ink-dim);font-size:12.5px">${escapeHtml(p.note||'—')}</td>
+                ${canEdit?`<td style="text-align:right;padding-right:18px">
+                  <div class="row-actions">
+                    <button class="btn btn-icon" onclick="ssEditProbation('${p.id}')" title="Sửa">${ICONS.edit}</button>
+                    <button class="btn btn-icon btn-danger" onclick="ssDeleteProbation('${p.id}')" title="Xoá">${ICONS.trash}</button>
+                  </div>
+                </td>`:''}
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+    `;
+  }).join('');
+
+  // "Chưa gán bậc" group at the end
+  const noLevelBlock = noLevelGroup.length === 0 ? '' : `
+    <div style="background:var(--bg-card);border:1px dashed var(--border-strong);border-radius:12px;margin-bottom:14px;overflow:hidden;opacity:.85">
+      <div style="display:flex;align-items:center;gap:14px;padding:14px 18px;background:rgba(110,118,129,.08);border-bottom:1px solid var(--border)">
+        <div style="width:44px;height:44px;border-radius:10px;background:var(--bg-elev);border:1px dashed var(--border-strong);display:grid;place-items:center;color:var(--ink-muted);font-size:20px;flex-shrink:0">?</div>
+        <div style="flex:1">
+          <div style="font-family:'Fraunces',serif;font-size:18px;font-weight:500;letter-spacing:-.01em;color:var(--ink-dim)">Chưa gán Level</div>
+          <div style="font-size:12px;color:var(--ink-muted);margin-top:2px">${noLevelGroup.length} chức danh — cần gán bậc lương để biết mức lương cơ bản</div>
+        </div>
+      </div>
       <table class="tbl" style="width:100%">
         <thead>
           <tr>
-            <th>Chức danh / Position</th>
-            <th style="width:180px;text-align:center">Thời gian thử việc</th>
+            <th style="padding-left:18px">Chức danh / Position</th>
+            <th style="width:200px;text-align:center">Thời gian thử việc</th>
             <th style="text-align:center">Ghi chú</th>
-            ${canEdit?'<th style="width:120px;text-align:right">Thao tác</th>':''}
+            ${canEdit?'<th style="width:120px;text-align:right;padding-right:18px">Thao tác</th>':''}
           </tr>
         </thead>
         <tbody>
-          ${probations.map(p=>{
+          ${noLevelGroup.sort((a,b)=>String(a.position||'').localeCompare(String(b.position||''),'vi')).map(p=>{
             const days = parseInt(p.durationDays)||0;
             const months = days>0 ? (days/30).toFixed(1).replace('.0','') : 0;
             return `<tr>
-              <td>
+              <td style="padding-left:18px">
                 <div style="display:flex;align-items:center;gap:10px">
-                  <div style="width:36px;height:36px;border-radius:8px;background:rgba(232,185,116,.15);color:var(--warning);display:grid;place-items:center;flex-shrink:0">⏱️</div>
+                  <div style="width:32px;height:32px;border-radius:8px;background:rgba(232,185,116,.15);color:var(--warning);display:grid;place-items:center;flex-shrink:0;font-size:14px">⏱️</div>
                   <div style="font-weight:600;font-size:14px">${escapeHtml(p.position||'')}</div>
                 </div>
               </td>
@@ -25387,7 +25492,7 @@ function _ssRenderProbationTab(el, canEdit){
                 ${days>0?`<div style="font-size:11px;color:var(--ink-muted)">~${months} tháng</div>`:''}
               </td>
               <td style="text-align:center;color:var(--ink-dim);font-size:12.5px">${escapeHtml(p.note||'—')}</td>
-              ${canEdit?`<td style="text-align:right">
+              ${canEdit?`<td style="text-align:right;padding-right:18px">
                 <div class="row-actions">
                   <button class="btn btn-icon" onclick="ssEditProbation('${p.id}')" title="Sửa">${ICONS.edit}</button>
                   <button class="btn btn-icon btn-danger" onclick="ssDeleteProbation('${p.id}')" title="Xoá">${ICONS.trash}</button>
@@ -25399,6 +25504,8 @@ function _ssRenderProbationTab(el, canEdit){
       </table>
     </div>
   `;
+
+  el.innerHTML = groupBlocks + noLevelBlock;
 }
 
 // ── CRUD: LEVELS ──
@@ -25479,6 +25586,8 @@ function ssSaveLevel(id, isNew){
     const i = DB.salaryStructure.levels.findIndex(x=>x.id===id);
     if(i>=0) DB.salaryStructure.levels[i] = {id, level, basicSalary:salary, positions:uniquePositions, note};
   }
+  // Trigger Proxy to mark dirty key (push/filter ko trigger setter)
+  DB.salaryStructure = {levels:[...DB.salaryStructure.levels], probations:[...(DB.salaryStructure.probations||[])]};
   saveData(['salaryStructure']);
   closeModal();
   toast(`✅ ${isNew?'Đã thêm':'Đã cập nhật'} bậc Level ${level}`,'success');
@@ -25491,7 +25600,9 @@ function ssDeleteLevel(id){
   confirmDialog(`Xoá bậc Level ${l.level}?`,
     `${(l.positions||[]).length} chức danh trong bậc này cũng sẽ bị xoá. Hành động này không thể hoàn tác.`,
     ()=>{
-      DB.salaryStructure.levels = DB.salaryStructure.levels.filter(x=>x.id!==id);
+      const filtered = DB.salaryStructure.levels.filter(x=>x.id!==id);
+      // Reassign để trigger Proxy
+      DB.salaryStructure = {levels: filtered, probations:[...(DB.salaryStructure.probations||[])]};
       saveData(['salaryStructure']);
       toast(`Đã xoá Level ${l.level}`,'success');
       render();
@@ -25501,7 +25612,7 @@ function ssDeleteLevel(id){
 // ── CRUD: PROBATION ──
 function ssEditProbation(id){
   const isNew = !id;
-  const p = isNew ? {id: uid(), position:'', durationDays:60, note:''}
+  const p = isNew ? {id: uid(), position:'', level:'', durationDays:60, note:''}
                   : {...(DB.salaryStructure.probations.find(x=>x.id===id) || {})};
   if(!p) return;
   // Suggested positions: from levels + employees
@@ -25509,6 +25620,25 @@ function ssEditProbation(id){
   const fromEmps = (DB.employees||[]).map(e=>e.role).filter(Boolean);
   const allPositions = [...new Set([...fromLevels, ...fromEmps])].sort();
   const existingPositions = new Set((DB.salaryStructure.probations||[]).filter(x=>x.id!==id).map(x=>x.position));
+  // Build positions → level lookup for auto-suggest
+  const positionToLevel = {};
+  (DB.salaryStructure.levels||[]).forEach(l=>{
+    (l.positions||[]).forEach(pos=>{ positionToLevel[pos.toLowerCase()] = l.level; });
+  });
+  // Levels list for dropdown + lookup
+  const levels = (DB.salaryStructure.levels||[]).slice().sort((a,b)=>{
+    const an = parseFloat(a.level), bn = parseFloat(b.level);
+    if(!isNaN(an) && !isNaN(bn)) return an - bn;
+    return String(a.level||'').localeCompare(String(b.level||''));
+  });
+  // Initial level: from p.level if set, else lookup from position
+  const initLevel = p.level || (p.position ? (positionToLevel[p.position.toLowerCase()]||'') : '');
+  // Initial basic salary based on level
+  const _findSalary = (lvl) => {
+    const found = levels.find(l=>String(l.level).toLowerCase() === String(lvl).toLowerCase());
+    return found ? (parseInt(found.basicSalary)||0) : 0;
+  };
+  const initSalary = initLevel ? _findSalary(initLevel) : 0;
 
   openModal(`
     <div class="modal-head">
@@ -25518,11 +25648,24 @@ function ssEditProbation(id){
     <div class="form-grid">
       <div class="field full">
         <label>Chức danh / Position *</label>
-        <input id="ss_position" value="${escapeHtml(p.position||'')}" placeholder="VD: Room Attendant" list="ss_positionList">
+        <input id="ss_position" value="${escapeHtml(p.position||'')}" placeholder="VD: Room Attendant" list="ss_positionList" oninput="_ssProbAutoFillLevel()">
         <datalist id="ss_positionList">
           ${allPositions.filter(pos=>!existingPositions.has(pos)).map(pos=>`<option value="${escapeHtml(pos)}">`).join('')}
         </datalist>
-        <div style="font-size:11px;color:var(--ink-muted);margin-top:4px">💡 Có gợi ý tự động từ Bậc lương + DB nhân viên</div>
+        <div style="font-size:11px;color:var(--ink-muted);margin-top:4px">💡 Có gợi ý tự động từ Bậc lương + DB nhân viên · Chọn chức danh đã có trong Bậc lương sẽ tự fill Level</div>
+      </div>
+      <div class="field">
+        <label>Level / Bậc lương</label>
+        <select id="ss_level" onchange="_ssProbUpdateSalary()">
+          <option value="">— Không chọn —</option>
+          ${levels.map(l=>`<option value="${escapeHtml(l.level)}" ${String(l.level)===String(initLevel)?'selected':''}>Level ${escapeHtml(l.level)} — ${(parseInt(l.basicSalary)||0).toLocaleString('vi-VN')} đ</option>`).join('')}
+        </select>
+        <div style="font-size:11px;color:var(--ink-muted);margin-top:4px">Tự fill khi chọn chức danh trong bậc</div>
+      </div>
+      <div class="field">
+        <label>Lương cơ bản (auto theo Level)</label>
+        <input id="ss_basicSalaryDisplay" readonly value="${initSalary>0?initSalary.toLocaleString('vi-VN')+' đ':'—'}" style="background:var(--bg-elev);cursor:not-allowed;color:${initSalary>0?'var(--success)':'var(--ink-muted)'};font-weight:600">
+        <div style="font-size:11px;color:var(--ink-muted);margin-top:4px">📌 Auto đọc từ tab "Bậc lương" — không sửa trực tiếp ở đây</div>
       </div>
       <div class="field">
         <label>Thời gian thử việc (ngày) *</label>
@@ -25534,7 +25677,7 @@ function ssEditProbation(id){
           <span onclick="document.getElementById('ss_days').value=180" style="cursor:pointer;color:var(--accent);text-decoration:underline">180d</span>
         </div>
       </div>
-      <div class="field">
+      <div class="field full">
         <label>Ghi chú</label>
         <input id="ss_pNote" value="${escapeHtml(p.note||'')}" placeholder="VD: Theo BLĐ Vietnam">
       </div>
@@ -25544,6 +25687,44 @@ function ssEditProbation(id){
       <button class="btn btn-primary" onclick="ssSaveProbation('${p.id}',${isNew})">${isNew?'Thêm':'Lưu'}</button>
     </div>
   `, true);
+  // Stash level lookup for auto-fill helpers
+  window._ssPositionToLevel = positionToLevel;
+  window._ssLevelToSalary = {};
+  levels.forEach(l=>{ window._ssLevelToSalary[String(l.level).toLowerCase()] = parseInt(l.basicSalary)||0; });
+}
+
+// Helper: auto-fill Level when user types position matching a known level
+function _ssProbAutoFillLevel(){
+  const posVal = (document.getElementById('ss_position')?.value||'').trim().toLowerCase();
+  if(!posVal) return;
+  const lvl = (window._ssPositionToLevel||{})[posVal];
+  if(lvl !== undefined){
+    const sel = document.getElementById('ss_level');
+    if(sel && sel.value !== String(lvl)){
+      sel.value = lvl;
+      _ssProbUpdateSalary();
+    }
+  }
+}
+
+// Helper: update basic salary display when Level changes
+function _ssProbUpdateSalary(){
+  const lvlVal = (document.getElementById('ss_level')?.value||'').toLowerCase();
+  const disp = document.getElementById('ss_basicSalaryDisplay');
+  if(!disp) return;
+  if(!lvlVal){
+    disp.value = '—';
+    disp.style.color = 'var(--ink-muted)';
+    return;
+  }
+  const salary = (window._ssLevelToSalary||{})[lvlVal] || 0;
+  if(salary > 0){
+    disp.value = salary.toLocaleString('vi-VN')+' đ';
+    disp.style.color = 'var(--success)';
+  } else {
+    disp.value = '— (Level chưa có lương)';
+    disp.style.color = 'var(--warning)';
+  }
 }
 
 function ssSaveProbation(id, isNew){
@@ -25552,6 +25733,7 @@ function ssSaveProbation(id, isNew){
   if(!position){ toast('Vui lòng nhập chức danh','error'); return; }
   if(days <= 0){ toast('Thời gian thử việc phải > 0','error'); return; }
   const note = ($('#ss_pNote').value||'').trim();
+  const level = ($('#ss_level')?.value||'').trim();
 
   const dup = (DB.salaryStructure.probations||[]).find(p=>p.position.toLowerCase()===position.toLowerCase() && p.id !== id);
   if(dup){ toast(`Chức danh "${position}" đã có cấu hình thử việc`,'error'); return; }
@@ -25560,11 +25742,13 @@ function ssSaveProbation(id, isNew){
   if(!Array.isArray(DB.salaryStructure.probations)) DB.salaryStructure.probations = [];
 
   if(isNew){
-    DB.salaryStructure.probations.push({id, position, durationDays:days, note});
+    DB.salaryStructure.probations.push({id, position, level, durationDays:days, note});
   } else {
     const i = DB.salaryStructure.probations.findIndex(x=>x.id===id);
-    if(i>=0) DB.salaryStructure.probations[i] = {id, position, durationDays:days, note};
+    if(i>=0) DB.salaryStructure.probations[i] = {id, position, level, durationDays:days, note};
   }
+  // Reassign để trigger Proxy + đảm bảo dirty tracking
+  DB.salaryStructure = {levels:[...(DB.salaryStructure.levels||[])], probations:[...DB.salaryStructure.probations]};
   saveData(['salaryStructure']);
   closeModal();
   toast(`✅ ${isNew?'Đã thêm':'Đã cập nhật'} thử việc ${position}`,'success');
@@ -25577,7 +25761,8 @@ function ssDeleteProbation(id){
   confirmDialog(`Xoá thời gian thử việc cho "${p.position}"?`,
     'Cấu hình này sẽ bị xoá.',
     ()=>{
-      DB.salaryStructure.probations = DB.salaryStructure.probations.filter(x=>x.id!==id);
+      const filtered = DB.salaryStructure.probations.filter(x=>x.id!==id);
+      DB.salaryStructure = {levels:[...(DB.salaryStructure.levels||[])], probations: filtered};
       saveData(['salaryStructure']);
       toast(`Đã xoá ${p.position}`,'success');
       render();
@@ -25615,16 +25800,68 @@ function ssExportXLSX(){
   ws1['!cols'] = [{wch:14},{wch:36},{wch:24},{wch:32}];
   XLSX.utils.book_append_sheet(wb, ws1, 'Bậc lương');
 
-  // Sheet 2: Thời gian thử việc
-  const probations = (DB.salaryStructure?.probations||[]).slice()
-    .sort((a,b)=>String(a.position||'').localeCompare(String(b.position||''),'vi'));
-  const sheet2Rows = [['Chức danh', 'Thời gian thử việc (ngày)', 'Tương đương (tháng)', 'Ghi chú']];
-  probations.forEach(p=>{
-    const days = parseInt(p.durationDays)||0;
-    sheet2Rows.push([p.position||'', days, days>0 ? +(days/30).toFixed(1) : 0, p.note||'']);
+  // Sheet 2: Thời gian thử việc — grouped by Level
+  const probations = (DB.salaryStructure?.probations||[]).slice();
+  const positionToLevel = {};
+  levels.forEach(l=>{ (l.positions||[]).forEach(pos=>{ positionToLevel[pos.toLowerCase()] = l.level; }); });
+  const levelToSalary = {};
+  levels.forEach(l=>{ levelToSalary[String(l.level).toLowerCase()] = parseInt(l.basicSalary)||0; });
+
+  // Resolve level for each probation and group
+  const probWithLevel = probations.map(p=>{
+    const lvl = p.level || positionToLevel[String(p.position||'').toLowerCase()] || '';
+    return {...p, _resolvedLevel: lvl};
   });
+  const probGroups = {};
+  const probNoLevel = [];
+  probWithLevel.forEach(p=>{
+    if(p._resolvedLevel){
+      const key = String(p._resolvedLevel);
+      if(!probGroups[key]) probGroups[key] = [];
+      probGroups[key].push(p);
+    } else {
+      probNoLevel.push(p);
+    }
+  });
+  const sortedProbLevelKeys = Object.keys(probGroups).sort((a,b)=>{
+    const an = parseFloat(a), bn = parseFloat(b);
+    if(!isNaN(an) && !isNaN(bn)) return an - bn;
+    return a.localeCompare(b);
+  });
+
+  const sheet2Rows = [['Level', 'Lương cơ bản (VNĐ)', 'Chức danh', 'Thời gian thử việc (ngày)', 'Tương đương (tháng)', 'Ghi chú']];
+  sortedProbLevelKeys.forEach(lvlKey=>{
+    const items = probGroups[lvlKey].sort((a,b)=>String(a.position||'').localeCompare(String(b.position||''),'vi'));
+    const salary = levelToSalary[lvlKey.toLowerCase()] || 0;
+    items.forEach((p,idx)=>{
+      const days = parseInt(p.durationDays)||0;
+      sheet2Rows.push([
+        idx === 0 ? lvlKey : '',
+        idx === 0 ? (salary>0?salary:'') : '',
+        p.position||'',
+        days,
+        days>0 ? +(days/30).toFixed(1) : 0,
+        p.note||'',
+      ]);
+    });
+  });
+  // No-level group at the end
+  if(probNoLevel.length > 0){
+    probNoLevel.sort((a,b)=>String(a.position||'').localeCompare(String(b.position||''),'vi'))
+      .forEach((p,idx)=>{
+        const days = parseInt(p.durationDays)||0;
+        sheet2Rows.push([
+          idx === 0 ? '(Chưa gán)' : '',
+          '',
+          p.position||'',
+          days,
+          days>0 ? +(days/30).toFixed(1) : 0,
+          p.note||'',
+        ]);
+      });
+  }
   const ws2 = XLSX.utils.aoa_to_sheet(sheet2Rows);
-  ws2['!cols'] = [{wch:36},{wch:22},{wch:18},{wch:32}];
+  ws2['!cols'] = [{wch:14},{wch:18},{wch:36},{wch:22},{wch:18},{wch:32}];
   XLSX.utils.book_append_sheet(wb, ws2, 'Thử việc');
 
   const today = new Date().toISOString().slice(0,10).replace(/-/g,'');
@@ -28132,22 +28369,50 @@ fbAuth.onAuthStateChanged(async user => {
           window._tabActive = !document.hidden;
           window._fsNetworkDisabled = false;
           window._fsPauseTimer = null;
+          window._lastUserActivity = Date.now();
+
+          // Track user activity (mouse, keyboard, scroll) → reset idle timer
+          const _activityEvents = ['mousedown','keydown','touchstart','scroll'];
+          window._userActivityHandler = () => {
+            window._lastUserActivity = Date.now();
+            if(window._fsNetworkDisabled && window.fbDb){
+              window.fbDb.enableNetwork().then(()=>{
+                window._fsNetworkDisabled = false;
+                console.log('[Optimize] User active → Firestore network resumed');
+              }).catch(()=>{});
+            }
+          };
+          _activityEvents.forEach(ev => document.addEventListener(ev, window._userActivityHandler, {passive:true}));
+
+          // Check idle every minute: pause network nếu không có activity 10 phút
+          window._idleCheckInterval = setInterval(()=>{
+            if(!window.fbDb || window._fsNetworkDisabled) return;
+            const idleMin = (Date.now() - window._lastUserActivity) / 60000;
+            if(idleMin >= 10){
+              window.fbDb.disableNetwork().then(()=>{
+                window._fsNetworkDisabled = true;
+                console.log(`[Optimize] User idle ${idleMin.toFixed(0)}min → Firestore network paused`);
+              }).catch(()=>{});
+            }
+          }, 60000);
+
           window._visibilityHandler = () => {
             window._tabActive = !document.hidden;
             if(document.hidden){
-              // Tab bị ẩn → đợi 5 phút rồi pause network
+              // Tab bị ẩn → đợi 2 phút rồi pause network (giảm từ 5 → 2)
               if(window._fsPauseTimer) clearTimeout(window._fsPauseTimer);
               window._fsPauseTimer = setTimeout(async () => {
                 if(document.hidden && window.fbDb && !window._fsNetworkDisabled){
                   try{
                     await window.fbDb.disableNetwork();
                     window._fsNetworkDisabled = true;
-                    console.log('[Optimize] Tab idle 5min → Firestore network paused (tiết kiệm reads)');
+                    console.log('[Optimize] Tab idle 2min → Firestore network paused (tiết kiệm reads)');
                   }catch(e){ console.warn('[Optimize] disableNetwork failed:', e.message); }
                 }
-              }, 5*60*1000); // 5 phút
+              }, 2*60*1000); // 2 phút (giảm từ 5)
             } else {
               // Tab visible trở lại → cancel pause + re-enable network
+              window._lastUserActivity = Date.now();
               if(window._fsPauseTimer){
                 clearTimeout(window._fsPauseTimer);
                 window._fsPauseTimer = null;
@@ -28229,6 +28494,18 @@ fbAuth.onAuthStateChanged(async user => {
                     console.warn('[Listener] BLOCKED empty cloud overriding local data:', key, '(local has', DB[key].length, 'items)');
                     return;
                   }
+                  // Bảo vệ tương tự cho OBJECT chứa nested arrays (vd: salaryStructure)
+                  if(key === 'salaryStructure'
+                     && cloudData[key] && typeof cloudData[key] === 'object' && !Array.isArray(cloudData[key])
+                     && DB[key] && typeof DB[key] === 'object'){
+                    const cloudHasData = (cloudData[key].levels||[]).length > 0 || (cloudData[key].probations||[]).length > 0;
+                    const localHasData = (DB[key].levels||[]).length > 0 || (DB[key].probations||[]).length > 0;
+                    if(!cloudHasData && localHasData){
+                      console.warn('[Listener] BLOCKED empty cloud salaryStructure overriding local data (local has',
+                        (DB[key].levels||[]).length, 'levels,', (DB[key].probations||[]).length, 'probations)');
+                      return;
+                    }
+                  }
                   if(key === 'customFields'){
                     const localFields = DB.customFields || [];
                     const cloudFields = cloudData[key] || [];
@@ -28250,7 +28527,7 @@ fbAuth.onAuthStateChanged(async user => {
                   DEFAULT_DATA.customFields.filter(cf=>!_curMap2.has(cf.key)).forEach(cf=>_curMap2.set(cf.key,cf));
                   const _userExtra2=DB.customFields.filter(cf=>!_defOrder2.includes(cf.key));
                   DB.customFields=[..._defOrder2.filter(k=>_curMap2.has(k)).map(k=>_curMap2.get(k)),..._userExtra2];
-                  if(DB.customFields.length!==_b2) setTimeout(()=>saveData(),500);
+                  if(DB.customFields.length!==_b2) setTimeout(()=>saveData(['customFields']),500);
                 }
                 if(DB.employees) DB.employees.forEach(e=>{
                   if(!e.photo && localPhotos[e.id]) e.photo = localPhotos[e.id];
@@ -30913,17 +31190,18 @@ async function exportLeaveByDeptZip(){
       const alEntitleSum = alCarry + alEntMonths.reduce((s,x)=>s+(x||0), 0);
       const alTakenMonths = (shAL.taken||[]).slice(0, upToMonth);
       const alTakenSum = alTakenMonths.reduce((s,x)=>s+(x||0), 0);
-      const alRemain = Math.max(0, alEntitleSum - alTakenSum);
+      // Cho phép âm để hiển thị NV đã vượt quá phép
+      const alRemain = alEntitleSum - alTakenSum;
 
       const clCarry = shCL.carry||0;
       const clEntMonths = (shCL.entitle||[]).slice(0, upToMonth);
       const clEntitleSum = clCarry + clEntMonths.reduce((s,x)=>s+(x||0), 0);
       const clTakenMonths = (shCL.taken||[]).slice(0, upToMonth);
       const clTakenSum = clTakenMonths.reduce((s,x)=>s+(x||0), 0);
-      const clRemain = Math.max(0, clEntitleSum - clTakenSum);
+      const clRemain = clEntitleSum - clTakenSum;
 
-      // Chỉ giữ NV có Còn lại AL hoặc CL > 0
-      const hasActivity = (alRemain + clRemain) > 0;
+      // Chỉ loại NV có CẢ AL và CL còn lại = 0; NV âm vẫn giữ
+      const hasActivity = (alRemain !== 0) || (clRemain !== 0);
 
       return {
         code: e.code||'', name: e.name||'', role: e.role||'',
@@ -30933,10 +31211,10 @@ async function exportLeaveByDeptZip(){
         hasActivity,
       };
     });
-    // Chỉ giữ NV có Còn lại AL hoặc CL > 0
+    // Chỉ loại NV có CẢ AL và CL còn lại = 0
     const empRows = empRowsRaw.filter(r=>r.hasActivity).map((r,i)=>({...r, i: i+1}));
     if(empRows.length === 0){
-      console.log(`[leave export] Skip ${dept.name} — không có NV nào còn AL/CL`);
+      console.log(`[leave export] Skip ${dept.name} — tất cả NV đều có AL=0 và CL=0`);
       _skippedDepts.push(dept.name);
       continue;
     }
@@ -30955,7 +31233,7 @@ async function exportLeaveByDeptZip(){
         r.clCarry, r.clEntitleSum - r.clCarry, r.clTakenSum, r.clRemain,
       ]);
       // Totals
-      const totRow = ['', '', '∑ TỔNG ('+emps.length+' NV)', '', '',
+      const totRow = ['', '', '∑ TỔNG ('+empRows.length+' NV)', '', '',
         empRows.reduce((s,r)=>s+r.alCarry,0),
         empRows.reduce((s,r)=>s+(r.alEntitleSum-r.alCarry),0),
         empRows.reduce((s,r)=>s+r.alTakenSum,0),
@@ -31056,8 +31334,10 @@ function _buildLeaveDeptPDFHTML(dept, empRows, yr, upToMonth, company, today){
     <th style="background:#7b1fa2;color:#fff">Còn lại</th>`;
 
   const rows = empRows.map(r=>{
-    const alColor = r.alRemain<=0 ? '#c62828' : r.alRemain<=3 ? '#e65100' : '#2e7d32';
-    const clColor = r.clRemain<=0 ? '#c62828' : r.clRemain<=3 ? '#e65100' : '#2e7d32';
+    const alColor = r.alRemain < 0 ? '#d32f2f' : r.alRemain === 0 ? '#c62828' : r.alRemain<=3 ? '#e65100' : '#2e7d32';
+    const clColor = r.clRemain < 0 ? '#d32f2f' : r.clRemain === 0 ? '#c62828' : r.clRemain<=3 ? '#e65100' : '#2e7d32';
+    const alWarn = r.alRemain < 0 ? ' ⚠️' : '';
+    const clWarn = r.clRemain < 0 ? ' ⚠️' : '';
     return `<tr>
       <td>${r.i}</td>
       <td style="font-family:monospace;font-size:9pt">${r.code}</td>
@@ -31066,11 +31346,11 @@ function _buildLeaveDeptPDFHTML(dept, empRows, yr, upToMonth, company, today){
       <td style="text-align:center">${formatNum(r.alCarry)}</td>
       <td style="text-align:center;color:#1565c0">${formatNum(r.alEntitleSum-r.alCarry)}</td>
       <td style="text-align:center;color:#c62828">${formatNum(r.alTakenSum)}</td>
-      <td style="text-align:center;font-weight:700;color:${alColor}">${formatNum(r.alRemain)}</td>
+      <td style="text-align:center;font-weight:700;color:${alColor}">${formatNum(r.alRemain)}${alWarn}</td>
       <td style="text-align:center">${formatNum(r.clCarry)}</td>
       <td style="text-align:center;color:#6a1b9a">${formatNum(r.clEntitleSum-r.clCarry)}</td>
       <td style="text-align:center;color:#c62828">${formatNum(r.clTakenSum)}</td>
-      <td style="text-align:center;font-weight:700;color:${clColor}">${formatNum(r.clRemain)}</td>
+      <td style="text-align:center;font-weight:700;color:${clColor}">${formatNum(r.clRemain)}${clWarn}</td>
     </tr>`;
   }).join('');
 
@@ -31084,16 +31364,16 @@ function _buildLeaveDeptPDFHTML(dept, empRows, yr, upToMonth, company, today){
   const totCL_taken = empRows.reduce((s,r)=>s+r.clTakenSum,0);
   const totCL_remain = empRows.reduce((s,r)=>s+r.clRemain,0);
 
-  const totalsRow = `<tr style="background:#1a1a2e;color:#fff;font-weight:700">
-    <td colspan="4" style="padding:8px;color:#fff">∑ TỔNG (${empRows.length} NV)</td>
-    <td style="text-align:center;color:#90caf9">${formatNum(totAL_carry)}</td>
-    <td style="text-align:center;color:#90caf9">${formatNum(totAL_ent)}</td>
-    <td style="text-align:center;color:#ef9a9a">${formatNum(totAL_taken)}</td>
-    <td style="text-align:center;color:#a5d6a7">${formatNum(totAL_remain)}</td>
-    <td style="text-align:center;color:#ce93d8">${formatNum(totCL_carry)}</td>
-    <td style="text-align:center;color:#ce93d8">${formatNum(totCL_ent)}</td>
-    <td style="text-align:center;color:#ef9a9a">${formatNum(totCL_taken)}</td>
-    <td style="text-align:center;color:#a5d6a7">${formatNum(totCL_remain)}</td>
+  const totalsRow = `<tr style="background:#fff3e0;color:#1a1a2e;font-weight:700;border-top:3px solid #c89564">
+    <td colspan="4" style="padding:10px 8px;color:#1a1a2e;font-size:11pt;font-weight:800">∑ TỔNG CỘNG (${empRows.length} NV)</td>
+    <td style="text-align:center;color:#1565c0">${formatNum(totAL_carry)}</td>
+    <td style="text-align:center;color:#1565c0">${formatNum(totAL_ent)}</td>
+    <td style="text-align:center;color:#c62828">${formatNum(totAL_taken)}</td>
+    <td style="text-align:center;color:${totAL_remain<0?'#d32f2f':'#2e7d32'};font-weight:800">${formatNum(totAL_remain)}</td>
+    <td style="text-align:center;color:#6a1b9a">${formatNum(totCL_carry)}</td>
+    <td style="text-align:center;color:#6a1b9a">${formatNum(totCL_ent)}</td>
+    <td style="text-align:center;color:#c62828">${formatNum(totCL_taken)}</td>
+    <td style="text-align:center;color:${totCL_remain<0?'#d32f2f':'#2e7d32'};font-weight:800">${formatNum(totCL_remain)}</td>
   </tr>`;
 
   return `<!DOCTYPE html><html lang="vi"><head>
@@ -31144,7 +31424,8 @@ tr:nth-child(even) td{background:#fafafa}
 <div class="legend">
   <div class="legend-item"><span class="legend-dot" style="background:#2e7d32"></span>Còn nhiều (>3 ngày)</div>
   <div class="legend-item"><span class="legend-dot" style="background:#e65100"></span>Sắp hết (1-3 ngày)</div>
-  <div class="legend-item"><span class="legend-dot" style="background:#c62828"></span>Đã hết / Vượt quá</div>
+  <div class="legend-item"><span class="legend-dot" style="background:#c62828"></span>Đã hết (= 0)</div>
+  <div class="legend-item"><span class="legend-dot" style="background:#d32f2f"></span>⚠️ Vượt quá (< 0)</div>
 </div>
 
 <div class="footer">
