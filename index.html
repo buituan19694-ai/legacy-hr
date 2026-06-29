@@ -12818,15 +12818,22 @@ function exportLeaveXLSX(){
   var calcSeniority = function(joinedStr){
     if(!joinedStr) return '';
     var join = new Date(joinedStr);
-    if(isNaN(join.getTime())) return '';
+    // Fallback: parse legacy format dd/mm/yyyy (hoặc dd-mm-yyyy)
+    if(isNaN(join.getTime())){
+      var m = String(joinedStr).match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+      if(m){
+        join = new Date(parseInt(m[3]), parseInt(m[2])-1, parseInt(m[1]));
+      }
+      if(isNaN(join.getTime())) return '';
+    }
     var now = new Date();
     var y = now.getFullYear() - join.getFullYear();
-    var m = now.getMonth() - join.getMonth();
-    if(now.getDate() < join.getDate()) m--;
-    if(m < 0){ y--; m += 12; }
-    if(y > 0 && m > 0) return y + ' nam ' + m + ' thang';
+    var m2 = now.getMonth() - join.getMonth();
+    if(now.getDate() < join.getDate()) m2--;
+    if(m2 < 0){ y--; m2 += 12; }
+    if(y > 0 && m2 > 0) return y + ' nam ' + m2 + ' thang';
     if(y > 0) return y + ' nam';
-    if(m > 0) return m + ' thang';
+    if(m2 > 0) return m2 + ' thang';
     return '< 1 thang';
   };
   // Helper: map status → label tiếng Việt (không dấu cho Excel)
@@ -12841,7 +12848,16 @@ function exportLeaveXLSX(){
   var fmtDate2 = function(d){
     if(!d) return '';
     var dt = new Date(d);
-    if(isNaN(dt.getTime())) return String(d);
+    if(isNaN(dt.getTime())){
+      // Thử parse legacy dd/mm/yyyy hoặc dd-mm-yyyy
+      var m = String(d).match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+      if(m){
+        var dd2 = String(parseInt(m[1])).padStart(2,'0');
+        var mm2 = String(parseInt(m[2])).padStart(2,'0');
+        return dd2 + '/' + mm2 + '/' + m[3];
+      }
+      return String(d);
+    }
     var dd = String(dt.getDate()).padStart(2,'0');
     var mm = String(dt.getMonth()+1).padStart(2,'0');
     return dd + '/' + mm + '/' + dt.getFullYear();
