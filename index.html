@@ -25564,6 +25564,97 @@ function _ssRenderLevelsTab(el, canEdit){
         </tbody>
       </table>
     </div>
+
+    ${(()=>{
+      // Bảng so sánh % chênh lệch giữa các bậc liền kề
+      // Sort theo lương GIẢM DẦN (bậc cao → bậc thấp) để dễ đọc theo cấp bậc tự nhiên
+      const sortedByLevel = levels.slice().sort((a,b)=>{
+        const an = parseFloat(a.level), bn = parseFloat(b.level);
+        if(!isNaN(an) && !isNaN(bn)) return an - bn;
+        return String(a.level||'').localeCompare(String(b.level||''));
+      });
+      if(sortedByLevel.length < 2) return '';
+
+      const pairs = [];
+      for(let i = 0; i < sortedByLevel.length - 1; i++){
+        const upper = sortedByLevel[i];
+        const lower = sortedByLevel[i+1];
+        const upperSal = parseInt(upper.basicSalary)||0;
+        const lowerSal = parseInt(lower.basicSalary)||0;
+        if(lowerSal <= 0 || upperSal <= 0) continue;
+        const diff = upperSal - lowerSal;
+        const pctUp = (diff / lowerSal) * 100;  // bậc trên cao hơn bậc dưới bao nhiêu %
+        const pctDown = (diff / upperSal) * 100; // bậc dưới thấp hơn bậc trên bao nhiêu %
+        pairs.push({upper, lower, upperSal, lowerSal, diff, pctUp, pctDown});
+      }
+      if(pairs.length === 0) return '';
+
+      // KPI tổng
+      const allPcts = pairs.map(p=>p.pctUp);
+      const avgPct = allPcts.reduce((s,v)=>s+v, 0) / allPcts.length;
+      const maxPct = Math.max(...allPcts);
+      const minPct = Math.min(...allPcts);
+      const maxPair = pairs.find(p=>p.pctUp === maxPct);
+      const minPair = pairs.find(p=>p.pctUp === minPct);
+
+      return `
+        <div class="card" style="padding:0;overflow:hidden;margin-top:20px">
+          <div style="padding:16px 20px;background:linear-gradient(90deg,rgba(126,198,153,.08),transparent);border-bottom:1px solid var(--border)">
+            <div style="display:flex;align-items:center;gap:12px;margin-bottom:6px">
+              <div style="width:36px;height:36px;border-radius:8px;background:rgba(126,198,153,.15);display:grid;place-items:center;color:var(--success);font-size:18px">📊</div>
+              <div>
+                <div style="font-family:'Fraunces',serif;font-size:17px;font-weight:500">So sánh <em>chênh lệch giữa các bậc</em></div>
+                <div style="font-size:11.5px;color:var(--ink-muted);margin-top:2px">% chênh lệch lương cơ bản giữa bậc liền kề · Hữu ích khi review chính sách thang lương</div>
+              </div>
+            </div>
+            <div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:10px;font-size:11.5px">
+              <div style="padding:5px 12px;background:var(--bg-elev);border-radius:6px"><b>Trung bình:</b> <span style="color:var(--success);font-weight:700">+${avgPct.toFixed(1)}%</span></div>
+              <div style="padding:5px 12px;background:var(--bg-elev);border-radius:6px"><b>Cao nhất:</b> <span style="color:var(--success);font-weight:700">+${maxPct.toFixed(1)}%</span> (Level ${escapeHtml(String(maxPair?.upper.level||''))} ↔ Level ${escapeHtml(String(maxPair?.lower.level||''))})</div>
+              <div style="padding:5px 12px;background:var(--bg-elev);border-radius:6px"><b>Thấp nhất:</b> <span style="color:var(--warning);font-weight:700">+${minPct.toFixed(1)}%</span> (Level ${escapeHtml(String(minPair?.upper.level||''))} ↔ Level ${escapeHtml(String(minPair?.lower.level||''))})</div>
+            </div>
+          </div>
+          <table class="tbl" style="width:100%">
+            <thead>
+              <tr>
+                <th style="width:140px">Bậc trên</th>
+                <th style="text-align:right;width:160px">Lương trên</th>
+                <th style="width:140px">Bậc dưới</th>
+                <th style="text-align:right;width:160px">Lương dưới</th>
+                <th style="text-align:right;width:140px">Chênh lệch</th>
+                <th style="text-align:right;width:140px">% Bậc trên ↑</th>
+                <th style="text-align:right;width:140px">% Bậc dưới ↓</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${pairs.map(p=>{
+                return `<tr>
+                  <td>
+                    <div style="display:flex;align-items:center;gap:8px">
+                      <div style="width:28px;height:28px;border-radius:6px;background:linear-gradient(135deg,var(--accent),var(--accent-dim));display:grid;place-items:center;color:#000;font-weight:700;font-family:'Fraunces',serif;font-size:12px;flex-shrink:0">${escapeHtml(String(p.upper.level||'?').substring(0,3))}</div>
+                      <div style="font-weight:600">Level ${escapeHtml(String(p.upper.level||''))}</div>
+                    </div>
+                  </td>
+                  <td style="text-align:right;font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--success)">${p.upperSal.toLocaleString('vi-VN')} đ</td>
+                  <td>
+                    <div style="display:flex;align-items:center;gap:8px">
+                      <div style="width:28px;height:28px;border-radius:6px;background:linear-gradient(135deg,var(--accent),var(--accent-dim));display:grid;place-items:center;color:#000;font-weight:700;font-family:'Fraunces',serif;font-size:12px;flex-shrink:0;opacity:.65">${escapeHtml(String(p.lower.level||'?').substring(0,3))}</div>
+                      <div style="font-weight:600;color:var(--ink-dim)">Level ${escapeHtml(String(p.lower.level||''))}</div>
+                    </div>
+                  </td>
+                  <td style="text-align:right;font-family:'JetBrains Mono',monospace;color:var(--ink-dim)">${p.lowerSal.toLocaleString('vi-VN')} đ</td>
+                  <td style="text-align:right;font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--success)">+${p.diff.toLocaleString('vi-VN')} đ</td>
+                  <td style="text-align:right;font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--success);font-size:14px">+${p.pctUp.toFixed(1)}%</td>
+                  <td style="text-align:right;font-family:'JetBrains Mono',monospace;font-weight:600;color:var(--danger);font-size:13px">−${p.pctDown.toFixed(1)}%</td>
+                </tr>`;
+              }).join('')}
+            </tbody>
+          </table>
+          <div style="padding:10px 18px;background:var(--bg-elev);border-top:1px solid var(--border);font-size:11px;color:var(--ink-muted);line-height:1.5">
+            💡 <b>Cách đọc:</b> "<b style="color:var(--success)">+X% Bậc trên ↑</b>" = bậc trên cao hơn bậc dưới X% · "<b style="color:var(--danger)">−Y% Bậc dưới ↓</b>" = bậc dưới thấp hơn bậc trên Y%
+          </div>
+        </div>
+      `;
+    })()}
   `;
 }
 
@@ -25601,6 +25692,20 @@ function _ssRenderProbationTab(el, canEdit){
   const levelToSalary = {};
   levels.forEach(l=>{ levelToSalary[String(l.level).toLowerCase()] = parseInt(l.basicSalary)||0; });
 
+  // Khởi tạo state expand (persist trong session)
+  if(!window._ssExpandedProbLevels){
+    try {
+      const saved = sessionStorage.getItem('_ssExpandedProbLevels');
+      window._ssExpandedProbLevels = new Set(saved ? JSON.parse(saved) : []);
+    } catch(_) { window._ssExpandedProbLevels = new Set(); }
+  }
+  // Search keyword (persist trong session)
+  if(typeof window._ssProbSearch === 'undefined'){
+    try { window._ssProbSearch = sessionStorage.getItem('_ssProbSearch') || ''; }
+    catch(_) { window._ssProbSearch = ''; }
+  }
+  const searchKw = (window._ssProbSearch||'').trim().toLowerCase();
+
   if(probations.length === 0){
     el.innerHTML = `
       <div class="empty-state" style="padding:60px 20px;text-align:center">
@@ -25619,10 +25724,19 @@ function _ssRenderProbationTab(el, canEdit){
     return {...p, _resolvedLevel: lvl};
   });
 
+  // Filter theo search keyword (match position name, note, level)
+  const filterFn = (p)=>{
+    if(!searchKw) return true;
+    const hay = ((p.position||'') + ' ' + (p.note||'') + ' ' + (p._resolvedLevel||'')).toLowerCase();
+    return hay.includes(searchKw);
+  };
+  const filteredProbs = probWithLevel.filter(filterFn);
+  const totalMatched = filteredProbs.length;
+
   // Group by level
   const groups = {};
   const noLevelGroup = [];
-  probWithLevel.forEach(p=>{
+  filteredProbs.forEach(p=>{
     if(p._resolvedLevel){
       const key = String(p._resolvedLevel);
       if(!groups[key]) groups[key] = [];
@@ -25632,33 +25746,49 @@ function _ssRenderProbationTab(el, canEdit){
     }
   });
 
-  // Sort groups by level order (same as levels sort)
+  // Khi search có keyword, AUTO expand tất cả group có match
+  const autoExpandAll = !!searchKw;
+
+  // Sort groups by level order
   const sortedLevelKeys = Object.keys(groups).sort((a,b)=>{
     const an = parseFloat(a), bn = parseFloat(b);
     if(!isNaN(an) && !isNaN(bn)) return an - bn;
     return a.localeCompare(b);
   });
 
-  // Build HTML — each level is a group with header + positions
+  // Build HTML — each level group is collapsible
   const groupBlocks = sortedLevelKeys.map(lvlKey=>{
     const items = groups[lvlKey].sort((a,b)=>String(a.position||'').localeCompare(String(b.position||''),'vi'));
     const salary = levelToSalary[lvlKey.toLowerCase()] || 0;
-    // Range thời gian thử việc trong nhóm — có thể giống hoặc khác nhau
     const days = items.map(p=>parseInt(p.durationDays)||0).filter(d=>d>0);
     const minD = days.length ? Math.min(...days) : 0;
     const maxD = days.length ? Math.max(...days) : 0;
     const durLabel = days.length === 0 ? ''
       : minD === maxD ? `${minD} ngày`
       : `${minD}–${maxD} ngày (khác nhau theo chức danh)`;
+    const isExpanded = autoExpandAll || window._ssExpandedProbLevels.has(lvlKey);
+
+    // Highlight position name nếu match search
+    const highlightFn = (text) => {
+      if(!searchKw) return escapeHtml(text);
+      const safeText = escapeHtml(text||'');
+      const safeKw = escapeHtml(searchKw);
+      const re = new RegExp('(' + safeKw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')', 'gi');
+      return safeText.replace(re, '<mark style="background:rgba(232,185,116,.4);color:inherit;padding:0 2px;border-radius:2px">$1</mark>');
+    };
+
     return `
       <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:12px;margin-bottom:14px;overflow:hidden">
-        <div style="display:flex;align-items:center;gap:14px;padding:14px 18px;background:linear-gradient(90deg,rgba(212,165,116,.12),transparent);border-bottom:1px solid var(--border)">
+        <div onclick="_ssToggleProbLevelExpand('${escapeHtml(lvlKey)}')" style="display:flex;align-items:center;gap:14px;padding:14px 18px;background:linear-gradient(90deg,rgba(212,165,116,.12),transparent);${isExpanded?'border-bottom:1px solid var(--border)':''};cursor:pointer;user-select:none;transition:background .12s" onmouseover="this.style.background='linear-gradient(90deg,rgba(212,165,116,.18),transparent)'" onmouseout="this.style.background='linear-gradient(90deg,rgba(212,165,116,.12),transparent)'">
+          <div style="width:18px;color:var(--accent);font-size:11px;transition:transform .15s;transform:rotate(${isExpanded?'90':'0'}deg);user-select:none">▶</div>
           <div style="width:44px;height:44px;border-radius:10px;background:linear-gradient(135deg,var(--accent),var(--accent-dim));display:grid;place-items:center;color:#000;font-weight:700;font-family:'Fraunces',serif;font-size:18px;flex-shrink:0">${escapeHtml(lvlKey.substring(0,3))}</div>
           <div style="flex:1">
             <div style="font-family:'Fraunces',serif;font-size:18px;font-weight:500;letter-spacing:-.01em">Level ${escapeHtml(lvlKey)}</div>
             <div style="font-size:12px;color:var(--ink-muted);margin-top:2px">${items.length} chức danh${salary>0?` · Lương cơ bản: <b style="color:var(--success)">${salary.toLocaleString('vi-VN')} đ</b>`:''}${durLabel?` · Thử việc: <b style="color:var(--warning)">${durLabel}</b>`:''}</div>
           </div>
+          <div style="font-size:10.5px;color:var(--ink-muted);letter-spacing:.08em;font-weight:600">${isExpanded?'CLICK ĐỂ ẨN':'CLICK ĐỂ MỞ'}</div>
         </div>
+        ${isExpanded ? `
         <table class="tbl" style="width:100%">
           <thead>
             <tr>
@@ -25676,14 +25806,14 @@ function _ssRenderProbationTab(el, canEdit){
                 <td style="padding-left:18px">
                   <div style="display:flex;align-items:center;gap:10px">
                     <div style="width:32px;height:32px;border-radius:8px;background:rgba(232,185,116,.15);color:var(--warning);display:grid;place-items:center;flex-shrink:0;font-size:14px">⏱️</div>
-                    <div style="font-weight:600;font-size:14px">${escapeHtml(p.position||'')}</div>
+                    <div style="font-weight:600;font-size:14px">${highlightFn(p.position||'')}</div>
                   </div>
                 </td>
                 <td style="text-align:center">
                   <div style="font-family:'JetBrains Mono',monospace;font-size:15px;font-weight:700;color:var(--warning)">${days>0?days+' ngày':'—'}</div>
                   ${days>0?`<div style="font-size:11px;color:var(--ink-muted)">~${months} tháng</div>`:''}
                 </td>
-                <td style="text-align:center;color:var(--ink-dim);font-size:12.5px">${escapeHtml(p.note||'—')}</td>
+                <td style="text-align:center;color:var(--ink-dim);font-size:12.5px">${p.note?highlightFn(p.note):'—'}</td>
                 ${canEdit?`<td style="text-align:right;padding-right:18px">
                   <div class="row-actions">
                     <button class="btn btn-icon" onclick="ssEditProbation('${p.id}')" title="Sửa">${ICONS.edit}</button>
@@ -25693,21 +25823,32 @@ function _ssRenderProbationTab(el, canEdit){
               </tr>`;
             }).join('')}
           </tbody>
-        </table>
+        </table>` : ''}
       </div>
     `;
   }).join('');
 
-  // "Chưa gán bậc" group at the end
+  // "Chưa gán bậc" group at the end (cũng collapsible)
+  const isNoLevelExpanded = autoExpandAll || window._ssExpandedProbLevels.has('__nolevel__');
+  const highlightNL = (text) => {
+    if(!searchKw) return escapeHtml(text);
+    const safeText = escapeHtml(text||'');
+    const safeKw = escapeHtml(searchKw);
+    const re = new RegExp('(' + safeKw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')', 'gi');
+    return safeText.replace(re, '<mark style="background:rgba(232,185,116,.4);color:inherit;padding:0 2px;border-radius:2px">$1</mark>');
+  };
   const noLevelBlock = noLevelGroup.length === 0 ? '' : `
     <div style="background:var(--bg-card);border:1px dashed var(--border-strong);border-radius:12px;margin-bottom:14px;overflow:hidden;opacity:.85">
-      <div style="display:flex;align-items:center;gap:14px;padding:14px 18px;background:rgba(110,118,129,.08);border-bottom:1px solid var(--border)">
+      <div onclick="_ssToggleProbLevelExpand('__nolevel__')" style="display:flex;align-items:center;gap:14px;padding:14px 18px;background:rgba(110,118,129,.08);${isNoLevelExpanded?'border-bottom:1px solid var(--border)':''};cursor:pointer;user-select:none">
+        <div style="width:18px;color:var(--ink-muted);font-size:11px;transition:transform .15s;transform:rotate(${isNoLevelExpanded?'90':'0'}deg)">▶</div>
         <div style="width:44px;height:44px;border-radius:10px;background:var(--bg-elev);border:1px dashed var(--border-strong);display:grid;place-items:center;color:var(--ink-muted);font-size:20px;flex-shrink:0">?</div>
         <div style="flex:1">
           <div style="font-family:'Fraunces',serif;font-size:18px;font-weight:500;letter-spacing:-.01em;color:var(--ink-dim)">Chưa gán Level</div>
           <div style="font-size:12px;color:var(--ink-muted);margin-top:2px">${noLevelGroup.length} chức danh — cần gán bậc lương để biết mức lương cơ bản</div>
         </div>
+        <div style="font-size:10.5px;color:var(--ink-muted);letter-spacing:.08em;font-weight:600">${isNoLevelExpanded?'CLICK ĐỂ ẨN':'CLICK ĐỂ MỞ'}</div>
       </div>
+      ${isNoLevelExpanded ? `
       <table class="tbl" style="width:100%">
         <thead>
           <tr>
@@ -25725,14 +25866,14 @@ function _ssRenderProbationTab(el, canEdit){
               <td style="padding-left:18px">
                 <div style="display:flex;align-items:center;gap:10px">
                   <div style="width:32px;height:32px;border-radius:8px;background:rgba(232,185,116,.15);color:var(--warning);display:grid;place-items:center;flex-shrink:0;font-size:14px">⏱️</div>
-                  <div style="font-weight:600;font-size:14px">${escapeHtml(p.position||'')}</div>
+                  <div style="font-weight:600;font-size:14px">${highlightNL(p.position||'')}</div>
                 </div>
               </td>
               <td style="text-align:center">
                 <div style="font-family:'JetBrains Mono',monospace;font-size:15px;font-weight:700;color:var(--warning)">${days>0?days+' ngày':'—'}</div>
                 ${days>0?`<div style="font-size:11px;color:var(--ink-muted)">~${months} tháng</div>`:''}
               </td>
-              <td style="text-align:center;color:var(--ink-dim);font-size:12.5px">${escapeHtml(p.note||'—')}</td>
+              <td style="text-align:center;color:var(--ink-dim);font-size:12.5px">${p.note?highlightNL(p.note):'—'}</td>
               ${canEdit?`<td style="text-align:right;padding-right:18px">
                 <div class="row-actions">
                   <button class="btn btn-icon" onclick="ssEditProbation('${p.id}')" title="Sửa">${ICONS.edit}</button>
@@ -25742,12 +25883,115 @@ function _ssRenderProbationTab(el, canEdit){
             </tr>`;
           }).join('')}
         </tbody>
-      </table>
+      </table>` : ''}
     </div>
   `;
 
-  el.innerHTML = groupBlocks + noLevelBlock;
+  // Search bar + Toolbar
+  const totalGroups = sortedLevelKeys.length + (noLevelGroup.length > 0 ? 1 : 0);
+  const totalExpanded = sortedLevelKeys.filter(k=>window._ssExpandedProbLevels.has(k)).length
+                       + (noLevelGroup.length > 0 && window._ssExpandedProbLevels.has('__nolevel__') ? 1 : 0);
+  const allExpanded = totalExpanded >= totalGroups && totalGroups > 0;
+
+  const toolbar = `
+    <div style="display:flex;gap:10px;align-items:center;margin-bottom:14px;flex-wrap:wrap">
+      <div style="position:relative;flex:1;min-width:240px">
+        <input type="text" id="ss_prob_search" value="${escapeHtml(window._ssProbSearch||'')}"
+          placeholder="🔍 Tìm theo tên chức danh, ghi chú, level..."
+          oninput="_ssSetProbSearch(this.value)"
+          style="width:100%;padding:9px 14px 9px 14px;background:var(--bg-card);border:1px solid var(--border);border-radius:8px;color:var(--ink);font-family:inherit;font-size:13px">
+        ${searchKw ? `<button onclick="_ssSetProbSearch('')" style="position:absolute;right:8px;top:50%;transform:translateY(-50%);background:none;border:none;color:var(--ink-muted);cursor:pointer;font-size:18px;padding:0 6px" title="Xoá tìm kiếm">×</button>` : ''}
+      </div>
+      <button class="btn" onclick="_ssToggleAllProbLevels(${allExpanded?'false':'true'})" style="white-space:nowrap">
+        ${allExpanded ? '🔼 Thu gọn tất cả' : '🔽 Mở rộng tất cả'}
+      </button>
+      ${searchKw ? `<div style="font-size:12px;color:var(--ink-muted);padding:6px 12px;background:var(--bg-elev);border-radius:6px;white-space:nowrap">
+        <b style="color:var(--accent)">${totalMatched}</b> kết quả khớp "<b>${escapeHtml(searchKw)}</b>"
+      </div>` : ''}
+    </div>
+  `;
+
+  // Empty state khi search không có kết quả
+  const emptySearch = (searchKw && totalMatched === 0)
+    ? `<div style="text-align:center;padding:40px 20px;color:var(--ink-muted)">
+        <div style="font-size:48px;margin-bottom:10px;opacity:.5">🔍</div>
+        <div style="font-size:14px">Không tìm thấy chức danh nào khớp "<b>${escapeHtml(searchKw)}</b>"</div>
+        <button class="btn" onclick="_ssSetProbSearch('')" style="margin-top:14px">Xoá tìm kiếm</button>
+      </div>`
+    : '';
+
+  el.innerHTML = toolbar + emptySearch + groupBlocks + noLevelBlock;
 }
+
+// Toggle expand/collapse 1 level group trong tab Thử việc
+function _ssToggleProbLevelExpand(lvlKey){
+  if(!window._ssExpandedProbLevels) window._ssExpandedProbLevels = new Set();
+  if(window._ssExpandedProbLevels.has(lvlKey)){
+    window._ssExpandedProbLevels.delete(lvlKey);
+  } else {
+    window._ssExpandedProbLevels.add(lvlKey);
+  }
+  try {
+    sessionStorage.setItem('_ssExpandedProbLevels', JSON.stringify([...window._ssExpandedProbLevels]));
+  } catch(_) {}
+  const el = document.getElementById('ssContent');
+  if(el){
+    _ssRenderProbationTab(el, window.canDo('salaryStructure','edit'));
+  } else {
+    render();
+  }
+}
+
+// Mở rộng / thu gọn TẤT CẢ levels trong tab Thử việc
+function _ssToggleAllProbLevels(expandAll){
+  if(!window._ssExpandedProbLevels) window._ssExpandedProbLevels = new Set();
+  if(expandAll){
+    const levels = (DB.salaryStructure?.levels||[]);
+    const positionToLevel = {};
+    levels.forEach(l=>{ (l.positions||[]).forEach(pos=>{ positionToLevel[pos.toLowerCase()] = l.level; }); });
+    const probations = (DB.salaryStructure?.probations||[]);
+    const keysSet = new Set();
+    probations.forEach(p=>{
+      const lvl = p.level || positionToLevel[String(p.position||'').toLowerCase()] || '';
+      if(lvl) keysSet.add(String(lvl));
+      else keysSet.add('__nolevel__');
+    });
+    window._ssExpandedProbLevels = keysSet;
+  } else {
+    window._ssExpandedProbLevels = new Set();
+  }
+  try {
+    sessionStorage.setItem('_ssExpandedProbLevels', JSON.stringify([...window._ssExpandedProbLevels]));
+  } catch(_) {}
+  const el = document.getElementById('ssContent');
+  if(el){
+    _ssRenderProbationTab(el, window.canDo('salaryStructure','edit'));
+  } else {
+    render();
+  }
+}
+
+// Set search keyword cho tab Thử việc
+function _ssSetProbSearch(kw){
+  window._ssProbSearch = kw||'';
+  try { sessionStorage.setItem('_ssProbSearch', window._ssProbSearch); } catch(_) {}
+  const el = document.getElementById('ssContent');
+  if(el){
+    _ssRenderProbationTab(el, window.canDo('salaryStructure','edit'));
+    // Restore focus + caret position vì innerHTML đè input
+    setTimeout(()=>{
+      const inp = document.getElementById('ss_prob_search');
+      if(inp){
+        inp.focus();
+        const len = inp.value.length;
+        inp.setSelectionRange(len, len);
+      }
+    }, 0);
+  } else {
+    render();
+  }
+}
+
 
 // ── CRUD: LEVELS ──
 function ssEditLevel(id){
