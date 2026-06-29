@@ -12769,11 +12769,23 @@ function exportLeaveXLSX(){
       if(statusF === 'active') return isActive;
       return true;
     })
-    .map(function(tr){return {
-      id:tr.id, code:tr.code||'', name:tr.name||'',
-      role:'Thực tập sinh', deptId:tr.deptId||'',
-      joined:tr.startDate||'', status:'active', _isTrainee:true
-    };});
+    .map(function(tr){
+      // ⚠️ FIX: gán status đúng theo trainee.endDate, không hardcode 'active'
+      // Trước: status='active' cứng → trainee đã ended vẫn hiện "Dang lam"
+      var trIsActive = !tr.endDate || tr.endDate >= nowStr2;
+      // Trainee status có thể là 'exit', 'early_exit', 'active' hoặc undefined
+      var trStatus = 'active';
+      if(tr.status === 'exit' || tr.status === 'early_exit') trStatus = 'exit';
+      else if(!trIsActive) trStatus = 'exit';  // endDate đã qua
+      return {
+        id:tr.id, code:tr.code||'', name:tr.name||'',
+        role:'Thực tập sinh', deptId:tr.deptId||'',
+        joined:tr.startDate||'',
+        status: trStatus,
+        _isTrainee:true,
+        _trEndDate: tr.endDate||''  // lưu lại để debug
+      };
+    });
   emps = emps.concat(filteredTrainees);
   emps = emps.sort(function(a,b){return (a.deptId||'').localeCompare(b.deptId||'')||a.name.localeCompare(b.name,'vi');});
 
@@ -12841,9 +12853,17 @@ function exportLeaveXLSX(){
     var cd=DB.customData[e.id]||{};
     var seniority = calcSeniority(e.joined);
     var sLabel = statusLabel(e);
-    var ctType = cd.currentContractType || cd.contractType || '';
-    var ctStart = fmtDate2(cd.contractStart || cd.currentContractStart);
-    var ctEnd = fmtDate2(cd.contractEnd || cd.currentContractEnd);
+    var ctType, ctStart, ctEnd;
+    if(e._isTrainee){
+      // TTS: dùng thông tin thực tập làm "HĐ" (vì TTS thường ko có HĐ chính thức)
+      ctType = 'Thực tập';
+      ctStart = fmtDate2(e.joined);
+      ctEnd = fmtDate2(e._trEndDate);
+    } else {
+      ctType = cd.currentContractType || cd.contractType || '';
+      ctStart = fmtDate2(cd.contractStart || cd.currentContractStart);
+      ctEnd = fmtDate2(cd.contractEnd || cd.currentContractEnd);
+    }
     ['al','cl'].forEach(function(lt){
       var sh=getSheet(e.id, lt);
       var carry=sh.carry||0;
