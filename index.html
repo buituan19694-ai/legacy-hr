@@ -12790,7 +12790,10 @@ function exportLeaveXLSX(){
     };
   };
 
-  var h=['STT','Ma NV','Ho va Ten','Phong ban','Loai (AL/CL)',
+  var h=['STT','Ma NV','Ho va Ten','Phong ban',
+         'Trang thai','Ngay vao','Tham nien',
+         'Loai HD','HD bat dau','HD ket thuc',
+         'Loai (AL/CL)',
          'Ton nam truoc',
          'Huong T1','Huong T2','Huong T3','Huong T4','Huong T5','Huong T6',
          'Huong T7','Huong T8','Huong T9','Huong T10','Huong T11','Huong T12',
@@ -12799,10 +12802,48 @@ function exportLeaveXLSX(){
          'Nghi T7','Nghi T8','Nghi T9','Nghi T10','Nghi T11','Nghi T12',
          'Tong da nghi','Ton cuoi nam '+year,'Con lai thang luong'];
 
+  // Helper: tính thâm niên dạng "X năm Y tháng" hoặc "X tháng"
+  var calcSeniority = function(joinedStr){
+    if(!joinedStr) return '';
+    var join = new Date(joinedStr);
+    if(isNaN(join.getTime())) return '';
+    var now = new Date();
+    var y = now.getFullYear() - join.getFullYear();
+    var m = now.getMonth() - join.getMonth();
+    if(now.getDate() < join.getDate()) m--;
+    if(m < 0){ y--; m += 12; }
+    if(y > 0 && m > 0) return y + ' nam ' + m + ' thang';
+    if(y > 0) return y + ' nam';
+    if(m > 0) return m + ' thang';
+    return '< 1 thang';
+  };
+  // Helper: map status → label tiếng Việt (không dấu cho Excel)
+  var statusLabel = function(e){
+    var s = (typeof getEffectiveStatus === 'function') ? getEffectiveStatus(e) : (e.status||'active');
+    if(s === 'exit') return 'Da nghi';
+    if(s === 'leave') return 'Nghi dai han';
+    if(s === 'probation') return 'Thu viec';
+    return 'Dang lam';
+  };
+  // Helper: format date dd/mm/yyyy
+  var fmtDate2 = function(d){
+    if(!d) return '';
+    var dt = new Date(d);
+    if(isNaN(dt.getTime())) return String(d);
+    var dd = String(dt.getDate()).padStart(2,'0');
+    var mm = String(dt.getMonth()+1).padStart(2,'0');
+    return dd + '/' + mm + '/' + dt.getFullYear();
+  };
+
   var rows=[h];
 
   emps.forEach(function(e, idx){
     var cd=DB.customData[e.id]||{};
+    var seniority = calcSeniority(e.joined);
+    var sLabel = statusLabel(e);
+    var ctType = cd.currentContractType || '';
+    var ctStart = fmtDate2(cd.currentContractStart);
+    var ctEnd = fmtDate2(cd.currentContractEnd);
     ['al','cl'].forEach(function(lt){
       var sh=getSheet(e.id, lt);
       var carry=sh.carry||0;
@@ -12814,8 +12855,18 @@ function exportLeaveXLSX(){
       var remainYear=Math.round((totalEnt-totalTaken)*100)/100;
 
       var row=[
-        lt==='al'?idx+1:'', e.code||'', lt==='al'?e.name||'':'',
+        lt==='al'?idx+1:'',
+        e.code||'',
+        lt==='al'?e.name||'':'',
         lt==='al'?deptName(e.deptId)||'':'',
+        // 6 cột mới: chỉ điền ở row AL, row CL để trống cho dễ đọc
+        lt==='al'?sLabel:'',
+        lt==='al'?fmtDate2(e.joined):'',
+        lt==='al'?seniority:'',
+        lt==='al'?ctType:'',
+        lt==='al'?ctStart:'',
+        lt==='al'?ctEnd:'',
+        // Loai AL/CL
         lt==='al'?'AL - Phep nam':'CL - Nghi bu',
         carry
       ];
@@ -12828,20 +12879,24 @@ function exportLeaveXLSX(){
     });
   });
 
-  var totRow=['TONG / TOTAL','','','','','','',''];
+  var totRow=['TONG / TOTAL','','','','','','','','','','','',''];
   for(var i=0;i<30;i++) totRow.push('');
   rows.push(totRow);
 
   var ws=XLSX.utils.aoa_to_sheet(rows);
 
-  var wch=[5,12,26,22,20,14,9,12];
-  for(var i=0;i<12;i++) wch.push(9);  // duoc huong
-  wch.push(12);                         // pending
-  for(var i=0;i<13;i++) wch.push(9);  // da nghi
-  wch.push(13,13,13,13);               // summary
+  // Column widths: STT(5), Ma NV(12), Ho va Ten(26), Phong ban(22),
+  // 6 cột mới: Trang thai(14), Ngay vao(12), Tham nien(16), Loai HD(28), HD bat dau(12), HD ket thuc(12),
+  // Loai AL/CL(20), Ton nam truoc(14), Huong T1(9)...
+  var wch=[5,12,26,22, 14,12,16,28,12,12, 20,14,9];
+  for(var i=0;i<11;i++) wch.push(9);   // các tháng còn lại của entitle (T2-T12)
+  wch.push(12);                          // pending (Ton hien tai)
+  for(var i=0;i<13;i++) wch.push(9);   // da nghi (T1, T2, Clear AL, T3...T12)
+  wch.push(13,13,13,13);                // summary
   ws['!cols']=wch.map(function(w){return {wch:w};});
 
-  ws['!freeze']={xSplit:8, ySplit:2};
+  // Freeze: 10 cột info NV cố định trái + 2 hàng header trên
+  ws['!freeze']={xSplit:11, ySplit:2};
 
   var wb=XLSX.utils.book_new();
 
