@@ -12841,9 +12841,9 @@ function exportLeaveXLSX(){
     var cd=DB.customData[e.id]||{};
     var seniority = calcSeniority(e.joined);
     var sLabel = statusLabel(e);
-    var ctType = cd.currentContractType || '';
-    var ctStart = fmtDate2(cd.currentContractStart);
-    var ctEnd = fmtDate2(cd.currentContractEnd);
+    var ctType = cd.currentContractType || cd.contractType || '';
+    var ctStart = fmtDate2(cd.contractStart || cd.currentContractStart);
+    var ctEnd = fmtDate2(cd.contractEnd || cd.currentContractEnd);
     ['al','cl'].forEach(function(lt){
       var sh=getSheet(e.id, lt);
       var carry=sh.carry||0;
