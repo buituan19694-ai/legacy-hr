@@ -22899,27 +22899,54 @@ window._blEmpRenderList = function(list){
     el.innerHTML='<div style="padding:12px 14px;color:var(--ink-muted);font-size:13px">Không tìm thấy</div>';
     el.style.display='block'; return;
   }
+  // Dùng data-* attributes thay vì inline onclick để tránh broken escape với tên có quote/special chars
   el.innerHTML = list.slice(0,50).map(e=>{
     const name = escapeHtml(e.name||'');
     const code = escapeHtml(e.code||'');
     const dept = escapeHtml(e.dept||'');
-    const id   = e.id;
-    return '<div onclick="_blEmpSelect(\'' + id + '\',\'' + name.replace(/'/g,"\\'") + '\',\'' + code + '\',\'' + dept.replace(/'/g,"\\'") + '\')"'
-      + ' style="padding:9px 12px;cursor:pointer;display:flex;align-items:center;gap:10px;border-bottom:1px solid var(--border)"'
+    const id   = escapeHtml(String(e.id||''));
+    const exitBadge = e.exit
+      ? ' <span style="background:rgba(229,115,115,.15);color:var(--danger);font-size:9px;font-weight:700;padding:1px 6px;border-radius:8px;margin-left:6px;vertical-align:middle" title="Đã nghỉ việc — vẫn có thể thêm vào blacklist để lưu lịch sử">⛔ ĐÃ NGHỈ</span>'
+      : '';
+    return '<div class="bl-emp-row" data-emp-id="'+id+'" data-emp-name="'+name+'" data-emp-code="'+code+'" data-emp-dept="'+dept+'"'
+      + ' style="padding:9px 12px;cursor:pointer;display:flex;align-items:center;gap:10px;border-bottom:1px solid var(--border);transition:background .12s"'
+      + ' onmousedown="event.preventDefault()"'  // tránh blur input trước khi click handler chạy
       + ' onmouseover="this.style.background=\'var(--bg-card-hover)\'" onmouseout="this.style.background=\'\'">'
       + '<div style="flex:1;min-width:0">'
-      + '<div style="font-size:13px;font-weight:600">' + name + (e.exit?' <span style="color:var(--danger);font-size:10px">⛔</span>':'') + '</div>'
+      + '<div style="font-size:13px;font-weight:600">' + name + exitBadge + '</div>'
       + '<div style="font-size:11px;color:var(--ink-muted)">' + code + ' · ' + dept + '</div>'
       + '</div></div>';
   }).join('');
+  // Event delegation: attach 1 click handler cho container thay vì inline onclick
+  el.onclick = function(ev){
+    const row = ev.target.closest('.bl-emp-row');
+    if(!row) return;
+    const id   = row.dataset.empId;
+    const name = row.dataset.empName;
+    const code = row.dataset.empCode;
+    const dept = row.dataset.empDept;
+    if(typeof window._blEmpSelect === 'function') window._blEmpSelect(id, name, code, dept);
+  };
   el.style.display='block';
 };
 window._blEmpSelect = function(id, name, code, dept){
+  console.log('[Blacklist] Selected emp:', {id, name, code, dept});
   const hidEl = document.getElementById('mbl_emp');
   const srEl  = document.getElementById('mbl_emp_search');
   const lstEl = document.getElementById('mbl_emp_list');
-  if(hidEl) hidEl.value = id;
-  if(srEl)  srEl.value  = code + ' — ' + name + ' (' + dept + ')';
+  if(!hidEl){ console.warn('[Blacklist] mbl_emp hidden input not found'); return; }
+  hidEl.value = id;
+  if(srEl){
+    srEl.value = code + ' — ' + name + ' (' + dept + ')';
+    // Visual feedback: highlight input briefly để user biết đã chọn
+    const origBg = srEl.style.background;
+    srEl.style.background = 'rgba(126,198,153,.15)';
+    srEl.style.borderColor = 'var(--success)';
+    setTimeout(()=>{
+      srEl.style.background = origBg;
+      srEl.style.borderColor = '';
+    }, 600);
+  }
   if(lstEl) lstEl.style.display = 'none';
   if(typeof updateBlacklistEmpInfo === 'function') updateBlacklistEmpInfo();
 };
@@ -25772,7 +25799,7 @@ function ssEditLevel(id){
       </div>
     </div>
     <div class="modal-actions">
-      <button class="btn" onclick="closeModal()">Huỷ</button>
+      <button class="btn" onclick="window._ssIncrementsBuffer=[];closeModal()">Huỷ</button>
       <button class="btn btn-primary" onclick="ssSaveLevel('${l.id}',${isNew})">${isNew?'Thêm':'Lưu'}</button>
     </div>
   `, true);
@@ -29218,6 +29245,27 @@ fbAuth.onAuthStateChanged(async user => {
                         (DB[key].levels||[]).length, 'levels,', (DB[key].probations||[]).length, 'probations)');
                       return;
                     }
+                    // Bảo vệ NESTED: nếu cloud có levels/probations nhưng MẤT increments (version cũ ghi đè)
+                    // → merge increments từ local vào cloud levels (match theo level.id)
+                    const cloudIncCount = (cloudData[key].levels||[]).reduce((s,l)=>s+((l.increments||[]).length), 0);
+                    const localIncCount = (DB[key].levels||[]).reduce((s,l)=>s+((l.increments||[]).length), 0);
+                    if(localIncCount > 0 && cloudIncCount < localIncCount){
+                      // Merge: với mỗi level trong cloud, nếu cloud level KHÔNG có increments NHƯNG local level cùng id có → giữ local
+                      const localLevelMap = new Map((DB[key].levels||[]).map(l => [l.id, l]));
+                      const mergedLevels = (cloudData[key].levels||[]).map(cloudL => {
+                        const cloudIncs = Array.isArray(cloudL.increments) ? cloudL.increments : [];
+                        const localL = localLevelMap.get(cloudL.id);
+                        const localIncs = (localL && Array.isArray(localL.increments)) ? localL.increments : [];
+                        // Nếu cloud không có inc nhưng local có → dùng local (tránh mất data từ version cũ)
+                        if(cloudIncs.length === 0 && localIncs.length > 0){
+                          console.warn('[Listener] Preserved', localIncs.length, 'increments of Level', cloudL.level, '(cloud version cũ ghi đè)');
+                          return {...cloudL, increments: localIncs};
+                        }
+                        return {...cloudL, increments: cloudIncs};
+                      });
+                      DB[key] = {...cloudData[key], levels: mergedLevels};
+                      return; // đã merge thủ công, skip default merge
+                    }
                   }
                   if(key === 'customFields'){
                     const localFields = DB.customFields || [];
@@ -32048,7 +32096,7 @@ async function exportLeaveByDeptZip(){
   // Add a README in the ZIP
   zip.file('README.txt',
     `Báo cáo nghỉ phép theo phòng ban\n` +
-    `Năm ${yr} — Tính đến hết ${MN[upToMonth-1]}\n` +
+    `Năm ${yr} — Tính đến ngày ${today}\n` +
     `Xuất ngày: ${today}\n\n` +
     `Mỗi file là báo cáo riêng cho 1 phòng ban.\n` +
     `Forward email + đính kèm file tương ứng cho từng trưởng bộ phận.\n\n` +
@@ -32176,11 +32224,11 @@ tr:nth-child(even) td{background:#fafafa}
 </style>
 </head><body>
 <h1>Báo cáo Nghỉ phép — <em>Phòng ${escapeHtml(dept.name)}</em></h1>
-<div class="sub"><b>${escapeHtml(company)}</b> · Năm ${yr} · Tính đến hết tháng ${upToMonth} · Xuất ngày ${today}</div>
+<div class="sub"><b>${escapeHtml(company)}</b> · Năm ${yr} · Tính đến ngày ${today} · Xuất ngày ${today}</div>
 
 <div class="dept-banner">
   <h2>📂 ${escapeHtml(dept.name)}</h2>
-  <div class="meta">${empRows.length} nhân viên · Báo cáo cập nhật đến hết tháng ${upToMonth}/${yr}</div>
+  <div class="meta">${empRows.length} nhân viên · Báo cáo cập nhật đến ngày ${today}</div>
 </div>
 
 <div class="notice">
