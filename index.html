@@ -1242,17 +1242,24 @@ function _pushDynamicKey(key, meta){
     };
     const byJob = {};
     arr.forEach(r=>{ const j=r.jobId||'_nojob'; (byJob[j]=byJob[j]||[]).push(sanitize(r)); });
-    // Bổ sung empty array CHỈ cho jobs đã được đăng ký cần clear (qua window._candEmptyShards)
-    // Tránh ghi empty cho jobs không liên quan → overwrite data của user khác
+    // Lấy danh sách shards cần DELETE (jobs hết candidate)
+    // ⚠️ FIX: thay "ghi empty array" → DELETE shard hoàn toàn để tránh stale cache
     const emptyShards = window._candEmptyShards || new Set();
-    emptyShards.forEach(jid=>{ if(!byJob[jid]) byJob[jid] = []; });
     window._candEmptyShards = new Set(); // clear sau khi dùng
+    // Write các shard có candidates
     const writes = Object.entries(byJob).map(([jid,records])=>
       window.fbDb.collection('hrdata').doc(`cand_${jid}`)
         .set({...meta, candidates:records, _shard:jid}, {merge:false})
         .catch(err=>{ console.error(`[saveData] ❌ cand_${jid}`, err.message); toast('❌ Lỗi lưu ứng viên: '+err.message,'error'); })
     );
-    Promise.all(writes).then(()=>console.log('[saveData] ✅ candidates saved', arr.length, 'records, ', Object.keys(byJob).length, 'shards'));
+    // DELETE các shard hết candidate (sạch sẽ hơn ghi empty array)
+    const deletes = [...emptyShards].filter(jid=>!byJob[jid]).map(jid=>
+      window.fbDb.collection('hrdata').doc(`cand_${jid}`)
+        .delete()
+        .then(()=>console.log(`[saveData] 🗑️ Deleted empty shard cand_${jid}`))
+        .catch(err=>console.warn(`[saveData] cand_${jid} delete:`, err.message))
+    );
+    Promise.all([...writes, ...deletes]).then(()=>console.log('[saveData] ✅ candidates saved', arr.length, 'records, ', Object.keys(byJob).length, 'shards,', deletes.length, 'deleted'));
     return;
   }
 
@@ -16981,6 +16988,72 @@ function resignAction(rid, action){
   }
 }
 
+// Auto-confirm các đơn nghỉ việc đã QUA ngày làm việc cuối
+// Trigger: mỗi lần app load (sau khi DB sync xong)
+// Logic: r.status='pending' && r.endDate < today → chuyển NV sang status='exit', đơn sang 'confirmed'
+// Vẫn giữ button ✓ manual cho case NV nghỉ TRƯỚC ngày (early exit)
+function _autoConfirmExpiredResignations(){
+  if(!Array.isArray(DB.resignations) || DB.resignations.length === 0) return;
+  const todayStr = new Date().toISOString().slice(0,10);
+  const autoConfirmed = [];
+
+  DB.resignations.forEach(r => {
+    if(r.status !== 'pending') return;
+    if(!r.endDate) return;
+    if(r.endDate >= todayStr) return; // chưa qua endDate → giữ pending
+
+    // Đã qua ngày làm việc cuối → auto-confirm
+    const emp = DB.employees.find(e => e.id === r.empId);
+    if(!emp) return; // NV không tồn tại → skip
+    if(emp.status === 'exit') {
+      // NV đã exit rồi (manual hoặc auto trước đó) → chỉ update status đơn
+      r.status = 'confirmed';
+      r.confirmedAt = r.confirmedAt || new Date().toISOString();
+      r._autoConfirmed = true;
+      return;
+    }
+
+    // Chuyển NV sang exit
+    emp.status = 'exit';
+    emp._dirty = true; // đánh dấu để saveEmpProfile
+    if(typeof _autoRemoveFromDorm === 'function') {
+      try { _autoRemoveFromDorm(r.empId); } catch(_) {}
+    }
+    if(!DB.customData) DB.customData = {};
+    if(!DB.customData[r.empId]) DB.customData[r.empId] = {};
+    DB.customData[r.empId].exitDate = r.endDate;
+    DB.customData[r.empId].exitReason = r.reason || 'Theo đơn nghỉ việc (tự động xác nhận do qua ngày làm việc cuối)';
+
+    r.status = 'confirmed';
+    r.confirmedAt = new Date().toISOString();
+    r._autoConfirmed = true;
+
+    autoConfirmed.push({name: emp.name, code: emp.code, endDate: r.endDate});
+  });
+
+  if(autoConfirmed.length > 0){
+    // Trigger Proxy setter
+    DB.resignations = [...DB.resignations];
+    DB.employees = [...DB.employees];
+    DB.customData = {...DB.customData};
+
+    const names = autoConfirmed.map(x => `${x.name} (${x.endDate})`).join(', ');
+    console.log(`[autoExit] ✅ Auto-confirmed ${autoConfirmed.length} resignations:`, names);
+
+    // Save: resignations + employees (per-emp) + customData
+    saveData(['resignations', 'employees', 'customData']);
+
+    // Notify user — delay 1.5s để toast hiển thị sau khi UI ổn định
+    setTimeout(() => {
+      const msg = autoConfirmed.length === 1
+        ? `🔔 Tự động xác nhận nghỉ việc: ${autoConfirmed[0].name} (qua ngày ${autoConfirmed[0].endDate})`
+        : `🔔 Tự động xác nhận ${autoConfirmed.length} NV nghỉ việc do qua ngày làm việc cuối`;
+      toast(msg, 'success', 6000);
+    }, 1500);
+  }
+}
+window._autoConfirmExpiredResignations = _autoConfirmExpiredResignations;
+
 function _wfUpcomingTab(PAL, yr, mon){
   const today = new Date();
   today.setHours(0,0,0,0);
@@ -25255,13 +25328,14 @@ function renderSalaryStructure(main){
   const totalPositions = levels.reduce((s,l)=>s+((l.positions||[]).length), 0);
   const avgSalary = levels.length > 0 ? Math.round(levels.reduce((s,l)=>s+(parseInt(l.basicSalary)||0),0)/levels.length) : 0;
   const totalProbations = probations.length;
+  const totalIncrements = levels.reduce((s,l)=>s+((Array.isArray(l.increments)?l.increments:[]).length), 0);
 
   main.innerHTML = `
     <div class="topbar">
       <div class="topbar-left">
         <div class="crumb">${_lang==='en'?'HR':'Nhân sự'} · <span>${_lang==='en'?'Salary Structure':'Thang bảng lương'}</span></div>
         <h1 class="page-title">${_lang==='en'?'Salary <em>Structure</em>':'Thang bảng <em>lương</em>'}</h1>
-        <div class="page-sub">${totalLevels} ${_lang==='en'?'levels':'bậc lương'} · ${totalPositions} ${_lang==='en'?'positions':'chức danh'} · ${totalProbations} ${_lang==='en'?'probation configs':'cấu hình thử việc'}</div>
+        <div class="page-sub">${totalLevels} ${_lang==='en'?'levels':'bậc lương'} · ${totalPositions} ${_lang==='en'?'positions':'chức danh'} · ${totalProbations} ${_lang==='en'?'probation configs':'cấu hình thử việc'}${totalIncrements>0?' · '+totalIncrements+(_lang==='en'?' increments':' mức thăng'):''}</div>
       </div>
       <div class="topbar-actions">
         <button class="btn" onclick="ssExportXLSX()">${ICONS.download} Xuất Excel</button>
@@ -25333,6 +25407,14 @@ function _ssRenderLevelsTab(el, canEdit){
     return String(a.level||'').localeCompare(String(b.level||''));
   });
 
+  // Khởi tạo set lưu các Level đang expand (persist trong session)
+  if(!window._ssExpandedLevels){
+    try {
+      const saved = sessionStorage.getItem('_ssExpandedLevels');
+      window._ssExpandedLevels = new Set(saved ? JSON.parse(saved) : []);
+    } catch(_) { window._ssExpandedLevels = new Set(); }
+  }
+
   if(levels.length === 0){
     el.innerHTML = `
       <div class="empty-state" style="padding:60px 20px;text-align:center">
@@ -25350,7 +25432,7 @@ function _ssRenderLevelsTab(el, canEdit){
       <table class="tbl" style="width:100%">
         <thead>
           <tr>
-            <th style="width:120px">Bậc / Level</th>
+            <th style="width:140px">Bậc / Level</th>
             <th>Chức danh / Positions</th>
             <th style="width:200px;text-align:right">Lương cơ bản</th>
             ${canEdit?'<th style="width:120px;text-align:right">Thao tác</th>':''}
@@ -25360,13 +25442,21 @@ function _ssRenderLevelsTab(el, canEdit){
           ${levels.map(l=>{
             const positions = (l.positions||[]).filter(Boolean);
             const sal = parseInt(l.basicSalary)||0;
-            return `<tr>
+            const incs = (Array.isArray(l.increments)?l.increments:[]).slice().sort((a,b)=>a.years-b.years);
+            const hasIncs = incs.length > 0;
+            const isExpanded = window._ssExpandedLevels.has(l.id);
+            const colspanTotal = canEdit ? 4 : 3;
+
+            // Main row
+            const mainRow = `<tr style="${hasIncs?'cursor:pointer':''}" ${hasIncs?`onclick="_ssToggleLevelExpand('${l.id}')"`:''} title="${hasIncs?'Click để xem '+incs.length+' mức thăng':''}">
               <td>
                 <div style="display:flex;align-items:center;gap:10px">
+                  ${hasIncs ? `<div style="width:18px;color:var(--accent);font-size:11px;transition:transform .15s;transform:rotate(${isExpanded?'90':'0'}deg);user-select:none">▶</div>` : '<div style="width:18px"></div>'}
                   <div style="width:38px;height:38px;border-radius:8px;background:linear-gradient(135deg,var(--accent),var(--accent-dim));display:grid;place-items:center;color:#000;font-weight:700;font-family:'Fraunces',serif;font-size:16px;flex-shrink:0">${escapeHtml(String(l.level||'?').substring(0,3))}</div>
-                  <div>
+                  <div style="min-width:0">
                     <div style="font-weight:600;font-size:14px">Level ${escapeHtml(l.level||'')}</div>
                     ${l.note?`<div style="font-size:11px;color:var(--ink-muted)">${escapeHtml(l.note)}</div>`:''}
+                    ${hasIncs?`<div style="font-size:10px;color:var(--accent);margin-top:3px;letter-spacing:.05em;font-weight:700">📈 ${incs.length} MỨC THĂNG</div>`:''}
                   </div>
                 </div>
               </td>
@@ -25379,20 +25469,95 @@ function _ssRenderLevelsTab(el, canEdit){
               </td>
               <td style="text-align:right">
                 <div style="font-family:'JetBrains Mono',monospace;font-size:15px;font-weight:700;color:var(--success)">${sal>0?sal.toLocaleString('vi-VN')+' đ':'—'}</div>
-                <div style="font-size:11px;color:var(--ink-muted)">VNĐ/tháng</div>
+                <div style="font-size:11px;color:var(--ink-muted)">VNĐ/tháng${hasIncs?' (khởi điểm)':''}</div>
               </td>
-              ${canEdit?`<td style="text-align:right">
+              ${canEdit?`<td style="text-align:right" onclick="event.stopPropagation()">
                 <div class="row-actions">
                   <button class="btn btn-icon" onclick="ssEditLevel('${l.id}')" title="Sửa">${ICONS.edit}</button>
                   <button class="btn btn-icon btn-danger" onclick="ssDeleteLevel('${l.id}')" title="Xoá">${ICONS.trash}</button>
                 </div>
               </td>`:''}
             </tr>`;
+
+            // Detail row (chỉ render khi expanded VÀ có increments)
+            if(!hasIncs || !isExpanded) return mainRow;
+
+            // Calc % tăng so với khởi điểm
+            const detailRow = `<tr style="background:rgba(212,165,116,.04)">
+              <td colspan="${colspanTotal}" style="padding:16px 24px 18px 24px;border-top:1px dashed rgba(212,165,116,.3)">
+                <div style="font-size:11px;color:var(--accent);letter-spacing:.12em;text-transform:uppercase;font-weight:700;margin-bottom:12px">
+                  📈 Chi tiết mức thăng — Level ${escapeHtml(l.level||'')}
+                </div>
+                <table style="width:100%;border-collapse:collapse;font-size:13px">
+                  <thead>
+                    <tr style="border-bottom:1px solid var(--border)">
+                      <th style="text-align:center;padding:8px 6px;font-size:10.5px;color:var(--ink-muted);letter-spacing:.1em;text-transform:uppercase;font-weight:600;width:70px">Bậc</th>
+                      <th style="text-align:center;padding:8px 6px;font-size:10.5px;color:var(--ink-muted);letter-spacing:.1em;text-transform:uppercase;font-weight:600;width:110px">Sau (năm)</th>
+                      <th style="text-align:right;padding:8px 6px;font-size:10.5px;color:var(--ink-muted);letter-spacing:.1em;text-transform:uppercase;font-weight:600;width:180px">Lương (VNĐ)</th>
+                      <th style="text-align:right;padding:8px 6px;font-size:10.5px;color:var(--ink-muted);letter-spacing:.1em;text-transform:uppercase;font-weight:600;width:90px">+/− so KĐ</th>
+                      <th style="text-align:left;padding:8px 6px;font-size:10.5px;color:var(--ink-muted);letter-spacing:.1em;text-transform:uppercase;font-weight:600">Ghi chú</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <!-- Row Bậc 1 (lương khởi điểm) -->
+                    <tr style="border-bottom:1px solid var(--border);background:rgba(126,198,153,.04)">
+                      <td style="text-align:center;padding:9px 6px;font-weight:700;color:var(--success);font-family:'JetBrains Mono',monospace">1</td>
+                      <td style="text-align:center;padding:9px 6px;color:var(--ink-muted);font-family:'JetBrains Mono',monospace">0</td>
+                      <td style="text-align:right;padding:9px 6px;font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--success)">${sal.toLocaleString('vi-VN')}</td>
+                      <td style="text-align:right;padding:9px 6px;color:var(--ink-muted);font-family:'JetBrains Mono',monospace">—</td>
+                      <td style="padding:9px 6px;color:var(--ink-muted);font-style:italic">Lương khởi điểm</td>
+                    </tr>
+                    ${incs.map((inc,idx)=>{
+                      const incSal = parseInt(inc.salary)||0;
+                      const diff = incSal - sal;
+                      const pct = sal>0 ? ((diff/sal)*100).toFixed(1) : '0';
+                      const diffColor = diff > 0 ? 'var(--success)' : diff < 0 ? 'var(--danger)' : 'var(--ink-muted)';
+                      const sign = diff > 0 ? '+' : '';
+                      return `<tr style="border-bottom:1px solid var(--border)">
+                        <td style="text-align:center;padding:9px 6px;font-weight:700;color:var(--accent);font-family:'JetBrains Mono',monospace">${idx+2}</td>
+                        <td style="text-align:center;padding:9px 6px;font-family:'JetBrains Mono',monospace">${inc.years||0}</td>
+                        <td style="text-align:right;padding:9px 6px;font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--success)">${incSal.toLocaleString('vi-VN')}</td>
+                        <td style="text-align:right;padding:9px 6px;font-family:'JetBrains Mono',monospace;color:${diffColor};font-weight:600">${sign}${pct}%</td>
+                        <td style="padding:9px 6px;color:var(--ink-dim)">${escapeHtml(inc.note||'')}</td>
+                      </tr>`;
+                    }).join('')}
+                  </tbody>
+                </table>
+                <div style="margin-top:10px;padding:8px 12px;background:var(--bg-elev);border-radius:6px;font-size:11.5px;color:var(--ink-muted);display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+                  <span>💡 <b>Tổng số bậc:</b> ${incs.length+1}</span>
+                  <span><b>Lương khởi điểm:</b> ${sal.toLocaleString('vi-VN')} đ</span>
+                  <span><b>Lương cao nhất (sau ${incs[incs.length-1].years}y):</b> <span style="color:var(--success);font-weight:700">${(parseInt(incs[incs.length-1].salary)||0).toLocaleString('vi-VN')} đ</span></span>
+                  ${sal>0?`<span><b>Tổng tăng:</b> <span style="color:var(--success);font-weight:700">+${(((parseInt(incs[incs.length-1].salary)||0)-sal)/sal*100).toFixed(1)}%</span></span>`:''}
+                </div>
+              </td>
+            </tr>`;
+
+            return mainRow + detailRow;
           }).join('')}
         </tbody>
       </table>
     </div>
   `;
+}
+
+// Toggle expand/collapse chi tiết mức thăng cho 1 level
+function _ssToggleLevelExpand(levelId){
+  if(!window._ssExpandedLevels) window._ssExpandedLevels = new Set();
+  if(window._ssExpandedLevels.has(levelId)){
+    window._ssExpandedLevels.delete(levelId);
+  } else {
+    window._ssExpandedLevels.add(levelId);
+  }
+  try {
+    sessionStorage.setItem('_ssExpandedLevels', JSON.stringify([...window._ssExpandedLevels]));
+  } catch(_) {}
+  // Chỉ re-render tab Bậc lương, không re-render toàn page
+  const el = document.getElementById('ssContent');
+  if(el){
+    _ssRenderLevelsTab(el, window.canDo('salaryStructure','edit'));
+  } else {
+    render();
+  }
 }
 
 function _ssRenderProbationTab(el, canEdit){
@@ -25560,12 +25725,17 @@ function _ssRenderProbationTab(el, canEdit){
 // ── CRUD: LEVELS ──
 function ssEditLevel(id){
   const isNew = !id;
-  const l = isNew ? {id: uid(), level:'', basicSalary:0, positions:[], note:''}
+  const l = isNew ? {id: uid(), level:'', basicSalary:0, positions:[], note:'', increments:[]}
                   : {...(DB.salaryStructure.levels.find(x=>x.id===id) || {})};
   if(!l) return;
+  // Backward compat: nếu level cũ chưa có increments
+  if(!Array.isArray(l.increments)) l.increments = [];
   // Suggested positions: all unique roles from employees
   const allRoles = [...new Set((DB.employees||[]).map(e=>e.role).filter(Boolean))].sort();
   const positionsCSV = (l.positions||[]).join(', ');
+
+  // Lưu tạm increments vào window để các handler thao tác
+  window._ssIncrementsBuffer = JSON.parse(JSON.stringify(l.increments));
 
   openModal(`
     <div class="modal-head">
@@ -25578,7 +25748,7 @@ function ssEditLevel(id){
         <input id="ss_level" value="${escapeHtml(l.level||'')}" placeholder="VD: 1, 2, A, A1, Junior...">
       </div>
       <div class="field">
-        <label>Lương cơ bản (VNĐ/tháng) *</label>
+        <label>Lương cơ bản khởi điểm (VNĐ/tháng) *</label>
         <input id="ss_salary" type="number" min="0" step="100000" value="${l.basicSalary||0}" placeholder="VD: 5000000">
       </div>
       <div class="field full">
@@ -25590,12 +25760,83 @@ function ssEditLevel(id){
         <label>Ghi chú</label>
         <input id="ss_note" value="${escapeHtml(l.note||'')}" placeholder="VD: Vị trí entry-level, không yêu cầu kinh nghiệm">
       </div>
+      <div class="field full" style="margin-top:8px;padding:14px;background:rgba(212,165,116,.05);border:1px solid rgba(212,165,116,.2);border-radius:10px">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+          <div>
+            <label style="margin-bottom:0;color:var(--accent);font-weight:600">📈 Mức thăng theo thâm niên</label>
+            <div style="font-size:11.5px;color:var(--ink-muted);margin-top:3px">Vd: 5 năm tăng 1 lần, tối đa 10 mức · Áp dụng cho việc nâng mức đóng BHXH theo thâm niên</div>
+          </div>
+          <button type="button" class="btn btn-primary" id="ss_inc_add_btn" onclick="_ssAddIncrement()" style="padding:6px 12px;font-size:12px">+ Thêm mức</button>
+        </div>
+        <div id="ss_increments_list"></div>
+      </div>
     </div>
     <div class="modal-actions">
       <button class="btn" onclick="closeModal()">Huỷ</button>
       <button class="btn btn-primary" onclick="ssSaveLevel('${l.id}',${isNew})">${isNew?'Thêm':'Lưu'}</button>
     </div>
   `, true);
+  _ssRenderIncrementsList();
+}
+
+// Render danh sách mức thăng trong modal edit level
+function _ssRenderIncrementsList(){
+  const el = document.getElementById('ss_increments_list');
+  if(!el) return;
+  const incs = window._ssIncrementsBuffer || [];
+  const addBtn = document.getElementById('ss_inc_add_btn');
+  if(addBtn) addBtn.disabled = incs.length >= 10;
+  if(addBtn) addBtn.style.opacity = incs.length >= 10 ? '0.4' : '1';
+
+  if(incs.length === 0){
+    el.innerHTML = `<div style="text-align:center;padding:16px;color:var(--ink-muted);font-size:12.5px;font-style:italic">Chưa có mức thăng nào. Click "+ Thêm mức" để bắt đầu.</div>`;
+    return;
+  }
+  el.innerHTML = `
+    <div style="display:grid;grid-template-columns:60px 130px 1fr 140px 36px;gap:8px;padding:6px 0;font-size:10.5px;color:var(--ink-muted);text-transform:uppercase;letter-spacing:.1em;font-weight:600;border-bottom:1px solid var(--border);margin-bottom:6px">
+      <div>Bậc</div><div>Sau (năm)</div><div>Ghi chú</div><div style="text-align:right">Lương (VNĐ)</div><div></div>
+    </div>
+    ${incs.map((inc,i)=>`
+      <div style="display:grid;grid-template-columns:60px 130px 1fr 140px 36px;gap:8px;align-items:center;padding:6px 0">
+        <div style="text-align:center;font-weight:600;color:var(--accent);font-family:'JetBrains Mono',monospace">${i+2}</div>
+        <input type="number" min="0" step="1" value="${inc.years||0}" data-inc-field="years" data-inc-idx="${i}" onchange="_ssUpdateIncrement(${i},'years',this.value)" placeholder="5" style="text-align:center;font-family:'JetBrains Mono',monospace">
+        <input type="text" value="${escapeHtml(inc.note||'')}" data-inc-field="note" data-inc-idx="${i}" onchange="_ssUpdateIncrement(${i},'note',this.value)" placeholder="VD: Bậc 2, Tăng BHXH...">
+        <input type="number" min="0" step="100000" value="${inc.salary||0}" data-inc-field="salary" data-inc-idx="${i}" onchange="_ssUpdateIncrement(${i},'salary',this.value)" placeholder="33000000" style="text-align:right;font-family:'JetBrains Mono',monospace">
+        <button type="button" class="btn btn-icon btn-danger" onclick="_ssRemoveIncrement(${i})" title="Xoá mức này" style="padding:5px">${ICONS.trash}</button>
+      </div>
+    `).join('')}
+  `;
+}
+
+function _ssAddIncrement(){
+  if(!Array.isArray(window._ssIncrementsBuffer)) window._ssIncrementsBuffer = [];
+  if(window._ssIncrementsBuffer.length >= 10) return;
+  // Mặc định: nếu có mức trước, +5 năm; salary +10%
+  const prev = window._ssIncrementsBuffer[window._ssIncrementsBuffer.length-1];
+  const baseSalary = prev ? prev.salary : (parseInt(document.getElementById('ss_salary')?.value)||0);
+  const baseYears = prev ? (parseInt(prev.years)||0) : 0;
+  window._ssIncrementsBuffer.push({
+    years: baseYears + 5,
+    salary: Math.round(baseSalary * 1.1 / 100000) * 100000, // +10%, làm tròn 100K
+    note: ''
+  });
+  _ssRenderIncrementsList();
+}
+
+function _ssRemoveIncrement(idx){
+  if(!Array.isArray(window._ssIncrementsBuffer)) return;
+  window._ssIncrementsBuffer.splice(idx, 1);
+  _ssRenderIncrementsList();
+}
+
+function _ssUpdateIncrement(idx, field, val){
+  if(!Array.isArray(window._ssIncrementsBuffer)) return;
+  if(!window._ssIncrementsBuffer[idx]) return;
+  if(field === 'years' || field === 'salary'){
+    window._ssIncrementsBuffer[idx][field] = parseInt(val)||0;
+  } else {
+    window._ssIncrementsBuffer[idx][field] = String(val||'');
+  }
 }
 
 function ssSaveLevel(id, isNew){
@@ -25629,17 +25870,30 @@ function ssSaveLevel(id, isNew){
   if(!DB.salaryStructure) DB.salaryStructure = {levels:[], probations:[]};
   if(!Array.isArray(DB.salaryStructure.levels)) DB.salaryStructure.levels = [];
 
+  // Lấy increments từ buffer, validate
+  let increments = (window._ssIncrementsBuffer || [])
+    .filter(inc => (parseInt(inc.years)||0) > 0 && (parseInt(inc.salary)||0) > 0)
+    .map(inc => ({
+      years: parseInt(inc.years)||0,
+      salary: parseInt(inc.salary)||0,
+      note: String(inc.note||'').trim()
+    }))
+    .sort((a,b) => a.years - b.years); // sort theo năm tăng dần
+
   if(isNew){
-    DB.salaryStructure.levels.push({id, level, basicSalary:salary, positions:uniquePositions, note});
+    DB.salaryStructure.levels.push({id, level, basicSalary:salary, positions:uniquePositions, note, increments});
   } else {
     const i = DB.salaryStructure.levels.findIndex(x=>x.id===id);
-    if(i>=0) DB.salaryStructure.levels[i] = {id, level, basicSalary:salary, positions:uniquePositions, note};
+    if(i>=0) DB.salaryStructure.levels[i] = {id, level, basicSalary:salary, positions:uniquePositions, note, increments};
   }
+  // Clear buffer sau khi lưu
+  window._ssIncrementsBuffer = [];
   // Trigger Proxy to mark dirty key (push/filter ko trigger setter)
   DB.salaryStructure = {levels:[...DB.salaryStructure.levels], probations:[...(DB.salaryStructure.probations||[])]};
   saveData(['salaryStructure']);
   closeModal();
-  toast(`✅ ${isNew?'Đã thêm':'Đã cập nhật'} bậc Level ${level}`,'success');
+  const incMsg = increments.length > 0 ? ` (+ ${increments.length} mức thăng)` : '';
+  toast(`✅ ${isNew?'Đã thêm':'Đã cập nhật'} bậc Level ${level}${incMsg}`,'success');
   render();
 }
 
@@ -25913,6 +26167,30 @@ function ssExportXLSX(){
   ws2['!cols'] = [{wch:14},{wch:18},{wch:36},{wch:22},{wch:18},{wch:32}];
   XLSX.utils.book_append_sheet(wb, ws2, 'Thử việc');
 
+  // Sheet 3: Mức thăng theo Level
+  const sheet3Rows = [['Level', 'Lương khởi điểm', 'Bậc', 'Sau (năm)', 'Mức lương mới (VNĐ)', 'Ghi chú']];
+  let hasAnyIncrement = false;
+  levels.forEach(l=>{
+    const incs = (l.increments||[]).slice().sort((a,b)=>a.years-b.years);
+    if(incs.length === 0) return;
+    hasAnyIncrement = true;
+    incs.forEach((inc,idx)=>{
+      sheet3Rows.push([
+        idx === 0 ? (l.level||'') : '',
+        idx === 0 ? (l.basicSalary||0) : '',
+        idx + 2,            // Bậc 2, 3, 4...
+        inc.years||0,
+        inc.salary||0,
+        inc.note||''
+      ]);
+    });
+  });
+  if(hasAnyIncrement){
+    const ws3 = XLSX.utils.aoa_to_sheet(sheet3Rows);
+    ws3['!cols'] = [{wch:14},{wch:20},{wch:8},{wch:14},{wch:22},{wch:32}];
+    XLSX.utils.book_append_sheet(wb, ws3, 'Mức thăng');
+  }
+
   const today = new Date().toISOString().slice(0,10).replace(/-/g,'');
   XLSX.writeFile(wb, `Thang_bang_luong_${today}.xlsx`);
   toast('✅ Đã tải file Excel','success');
@@ -26057,6 +26335,39 @@ ${levelsHTML}
 <h2>⏱️ Thời gian thử việc</h2>
 ${probHTML}
 
+${(()=>{
+  // Section 3: Mức thăng theo thâm niên
+  const levelsWithInc = levels.filter(l => Array.isArray(l.increments) && l.increments.length > 0);
+  if(levelsWithInc.length === 0) return '';
+  return `<h2>📈 Mức thăng theo thâm niên</h2>
+    <table>
+      <thead>
+        <tr><th>Level</th><th>Bậc</th><th>Sau (năm)</th><th style="text-align:right">Lương mới (VNĐ)</th><th>Ghi chú</th></tr>
+      </thead>
+      <tbody>
+        ${levelsWithInc.map(l=>{
+          const incs = l.increments.slice().sort((a,b)=>a.years-b.years);
+          const baseSal = parseInt(l.basicSalary)||0;
+          // Row "Bậc 1" hiển thị lương khởi điểm
+          const baseRow = `<tr style="background:#fafafa">
+            <td rowspan="${incs.length+1}" style="vertical-align:middle"><b>Level ${escapeHtml(l.level||'')}</b></td>
+            <td style="text-align:center"><b>1</b></td>
+            <td style="text-align:center">0</td>
+            <td style="text-align:right;font-family:monospace;font-weight:700;color:#2e7d32">${baseSal>0?baseSal.toLocaleString('vi-VN')+' đ':'—'}</td>
+            <td style="color:#666;font-style:italic">Lương khởi điểm</td>
+          </tr>`;
+          const incRows = incs.map((inc,idx)=>`<tr>
+            <td style="text-align:center"><b>${idx+2}</b></td>
+            <td style="text-align:center;font-family:monospace">${inc.years||0}</td>
+            <td style="text-align:right;font-family:monospace;font-weight:700;color:#2e7d32">${(inc.salary||0).toLocaleString('vi-VN')} đ</td>
+            <td>${escapeHtml(inc.note||'')}</td>
+          </tr>`).join('');
+          return baseRow + incRows;
+        }).join('')}
+      </tbody>
+    </table>`;
+})()}
+
 <div class="footer">
   <span>Xuất bởi Legacy Yên Tử HR System</span>
   <span>${today2}</span>
@@ -26184,6 +26495,50 @@ function ssImportXLSX(){
         }
       }
 
+      // Parse Sheet "Mức thăng" (optional)
+      const incrementsMap = {}; // {levelKey: [{years,salary,note}]}
+      const hasIncrements = sheetNames.some(n=>/mức thăng|muc thang|increment/i.test(n));
+      if(hasIncrements){
+        const sheetName = sheetNames.find(n=>/mức thăng|muc thang|increment/i.test(n));
+        const ws = wb.Sheets[sheetName];
+        const rows = XLSX.utils.sheet_to_json(ws, {header:1, defval:''});
+        let headerRow = -1;
+        for(let i=0; i<Math.min(rows.length,5); i++){
+          if(rows[i].some(c=>String(c).toLowerCase().includes('level'))
+             && rows[i].some(c=>String(c).toLowerCase().includes('năm')||String(c).toLowerCase().includes('year'))){
+            headerRow = i; break;
+          }
+        }
+        if(headerRow >= 0){
+          const headers = rows[headerRow].map(c=>String(c).toLowerCase().trim());
+          const colLvl = headers.findIndex(h=>h.includes('level'));
+          const colYears = headers.findIndex(h=>h.includes('năm')||h.includes('year'));
+          const colSal = headers.findIndex(h=>h.includes('lương')||h.includes('salary'));
+          const colNoteI = headers.findIndex(h=>h.includes('ghi chú')||h.includes('note'));
+
+          let currentLvlInc = '';
+          for(let i=headerRow+1; i<rows.length; i++){
+            const row = rows[i];
+            const lvlVal = String(row[colLvl]||'').trim();
+            const yearsVal = parseInt(String(row[colYears]||'').replace(/[^\d]/g,''))||0;
+            const salVal = parseInt(String(row[colSal]||'').replace(/[^\d]/g,''))||0;
+            const noteVal = colNoteI>=0 ? String(row[colNoteI]||'').trim() : '';
+            if(lvlVal) currentLvlInc = lvlVal;
+            if(!currentLvlInc) continue;
+            if(yearsVal <= 0 || salVal <= 0) continue; // skip Bậc 1 (lương khởi điểm) hoặc row trống
+            if(!incrementsMap[currentLvlInc]) incrementsMap[currentLvlInc] = [];
+            if(incrementsMap[currentLvlInc].length >= 10) continue; // limit 10
+            incrementsMap[currentLvlInc].push({years:yearsVal, salary:salVal, note:noteVal});
+          }
+        }
+      }
+
+      // Gắn increments vào newLevels (match theo level name)
+      newLevels.forEach(l=>{
+        const incs = incrementsMap[l.level] || [];
+        l.increments = incs.slice(0,10).sort((a,b)=>a.years-b.years);
+      });
+
       // Apply changes
       if(mode === 'replace'){
         DB.salaryStructure = {levels: newLevels, probations: newProbs};
@@ -26211,7 +26566,9 @@ function ssImportXLSX(){
       }
 
       saveData(['salaryStructure']);
-      toast(`✅ Đã nhập: ${importedLevels} bậc lương + ${importedProbs} cấu hình thử việc (mode: ${mode==='replace'?'thay thế':'merge'})`,'success',5000);
+      const totalIncs = Object.values(incrementsMap).reduce((s,arr)=>s+arr.length, 0);
+      const incMsg = totalIncs > 0 ? ` + ${totalIncs} mức thăng` : '';
+      toast(`✅ Đã nhập: ${importedLevels} bậc lương + ${importedProbs} cấu hình thử việc${incMsg} (mode: ${mode==='replace'?'thay thế':'merge'})`,'success',5000);
       render();
     } catch(err){
       console.error('[ssImport]', err);
@@ -28364,10 +28721,12 @@ fbAuth.onAuthStateChanged(async user => {
             else if(id.startsWith('cand_')   && d.candidates){
               // Bỏ qua shard sai format (cand_2026 theo năm — từ bug cũ)
               // Chỉ chấp nhận shard theo jobId (cand_j1, cand_abc...)
-              const shardVal = d._shard;
-              const isYearShard = typeof shardVal==='number' || /^\d{4}$/.test(String(shardVal||''));
+              // ⚠️ FIX: detect year shard bằng DOC ID thay vì field _shard
+              // Legacy shards không có field _shard → bị accumulate sai → candidate đã xóa quay lại
+              const shardIdPart = id.slice(5); // bỏ "cand_"
+              const isYearShard = /^\d{4}$/.test(shardIdPart);
               if(isYearShard){
-                // Xóa shard sai này khỏi Firestore
+                // Xóa shard sai này khỏi Firestore — KHÔNG accumulate
                 doc.ref.delete().then(()=>console.log('[cleanup] ✅ Deleted invalid cand year shard:', id)).catch(()=>{});
               } else {
                 dynamicAccum.candidates.push(...d.candidates);
@@ -28624,6 +28983,8 @@ fbAuth.onAuthStateChanged(async user => {
             }
           } // end if(hasCloud)
         }catch(cloudErr){ console.warn('Cloud load warn:',cloudErr.message); }
+        // Auto-confirm resignations đã qua ngày làm việc cuối (sau khi DB sync xong)
+        try { if(typeof _autoConfirmExpiredResignations === 'function') _autoConfirmExpiredResignations(); } catch(e){ console.warn('autoExit warn:', e.message); }
         document.getElementById('authScreen').style.display = 'none';
         document.getElementById('app').style.display = '';
         const nameEl = document.getElementById('sidebarUserName');
@@ -29002,7 +29363,15 @@ fbAuth.onAuthStateChanged(async user => {
               if(d[key] && Array.isArray(d[key])){
                 const shardId = d._shard;
                 const isMonthShard = typeof shardId==='string' && /^\d{4}_\d{2}$/.test(String(shardId));
-                const isYearShard  = typeof shardId==='number' || /^\d{4}$/.test(String(shardId));
+                // ⚠️ FIX: candidates dùng DOC ID thay vì _shard field để detect year shard
+                // Legacy shards không có _shard → bị accumulate sai
+                let isYearShard;
+                if(key==='candidates'){
+                  const idPart = docId.replace(/^[a-z]+_/i, '');
+                  isYearShard = /^\d{4}$/.test(idPart);
+                } else {
+                  isYearShard = typeof shardId==='number' || /^\d{4}$/.test(String(shardId));
+                }
 
                 // Candidates chỉ shard theo jobId — bỏ qua nếu shard là năm (format cũ bị bug)
                 if(key==='candidates' && isYearShard){
