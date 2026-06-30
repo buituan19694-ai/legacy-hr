@@ -12794,7 +12794,8 @@ function exportLeaveXLSX(){
       if(tr.status === 'exit' || tr.status === 'early_exit') trStatus = 'exit';
       else if(!trIsActive) trStatus = 'exit';  // endDate đã qua
       return {
-        id:tr.id, code:tr.code||'', name:tr.name||'',
+        id: 'tr_' + tr.id,  // ⚠️ FIX: prefix 'tr_' giống web (line 13269) — để Excel lookup đúng DB.leaveSheet
+        code:tr.code||'', name:tr.name||'',
         role:'Thực tập sinh', deptId:tr.deptId||'',
         joined:tr.startDate||'',
         status: trStatus,
@@ -12825,10 +12826,10 @@ function exportLeaveXLSX(){
          'Ton nam truoc',
          'Huong T1','Huong T2','Huong T3','Huong T4','Huong T5','Huong T6',
          'Huong T7','Huong T8','Huong T9','Huong T10','Huong T11','Huong T12',
-         'Con lai nam cu',
+         'Tong phat sinh',
          'Nghi T1','Nghi T2','Clear AL','Nghi T3','Nghi T4','Nghi T5','Nghi T6',
          'Nghi T7','Nghi T8','Nghi T9','Nghi T10','Nghi T11','Nghi T12',
-         'Tong da nghi','Ton cuoi nam '+year,'Con lai thang luong'];
+         'Tong da nghi','Con lai nam cu','Ton cuoi nam '+year];
 
   // Helper: tính thâm niên dạng "X năm Y tháng" hoặc "X tháng"
   var calcSeniority = function(joinedStr){
@@ -12927,10 +12928,10 @@ function exportLeaveXLSX(){
         carry
       ];
       for(var m=0;m<12;m++) row.push(T.entitle[m]||0);
-      row.push(conLaiNamCu);   // "Con lai nam cu" — CHỈ AL có giá trị, CL để trống (giống web)
+      row.push(T.totalEntitle);   // "Tong phat sinh" = carry + entitle cả năm (match web)
       row.push(T.taken[0]||0, T.taken[1]||0, T.clearAL||0);
       for(var m=2;m<12;m++) row.push(T.taken[m]||0);
-      row.push(Math.round(totalTaken*100)/100, remainYear, conLaiThangLuong);
+      row.push(Math.round(totalTaken*100)/100, conLaiThangLuong, remainYear);
       rows.push(row);
     });
   });
@@ -12996,6 +12997,11 @@ function importLeaveXLSX(){
 
         var codeMap={};
         DB.employees.forEach(function(e){ codeMap[e.code]=e.id; });
+        // ⚠️ FIX: thêm trainees vào codeMap với prefix 'tr_' (match key web dùng line 13269)
+        // Bug cũ: import file Excel có TTS → codeMap không có code TTS → SKIP hết → data TTS mất
+        (DB.trainees||[]).forEach(function(tr){
+          if(tr.code) codeMap[tr.code] = 'tr_' + tr.id;
+        });
 
         if(!DB.leaveSheet) DB.leaveSheet={};
 
