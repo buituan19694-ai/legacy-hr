@@ -32640,34 +32640,46 @@ async function exportLeaveByDeptZip(){
       const company = DB.company?.name || 'Legacy Yên Tử MGallery';
       const pdfHTML = _buildLeaveDeptPDFHTML(dept, empRows, yr, upToMonth, company, today);
 
-      // Tạo container ẩn để html2pdf render — phải extract <style> và <body> content
-      // vì innerHTML strip <html>/<head>/<body> wrapper tags
-      const parser = new DOMParser();
-      const parsedDoc = parser.parseFromString(pdfHTML, 'text/html');
-      const styleHTML = Array.from(parsedDoc.querySelectorAll('style')).map(s=>s.outerHTML).join('');
-      const bodyHTML = parsedDoc.body ? parsedDoc.body.innerHTML : pdfHTML;
-      const container = document.createElement('div');
-      container.innerHTML = styleHTML + bodyHTML;
-      container.style.cssText = 'position:absolute;left:-99999px;top:0;width:1100px;background:#fff;font-family:Arial,sans-serif';
-      document.body.appendChild(container);
+      // ⚠️ Dùng IFRAME để render — CSS body{} chỉ apply trong document riêng (không dùng div container vì body selector không match)
+      const iframe = document.createElement('iframe');
+      iframe.style.cssText = 'position:fixed;left:0;top:0;width:1180px;height:900px;border:0;opacity:0;pointer-events:none;z-index:-1';
+      document.body.appendChild(iframe);
 
       try {
+        // Write full HTML doc vào iframe
+        iframe.contentDocument.open();
+        iframe.contentDocument.write(pdfHTML);
+        iframe.contentDocument.close();
+
+        // Đợi layout + font render
+        await new Promise(r => setTimeout(r, 250));
+
         const opt = {
           margin: [8, 6, 8, 6],
           filename: `${fileBase}.pdf`,
           image: { type: 'jpeg', quality: 0.96 },
-          html2canvas: { scale: 2, useCORS: true, backgroundColor: '#ffffff', logging: false },
+          html2canvas: {
+            scale: 2,
+            useCORS: true,
+            backgroundColor: '#ffffff',
+            logging: false,
+            windowWidth: 1180,
+            // Render iframe document
+            scrollX: 0, scrollY: 0,
+          },
           jsPDF: { unit: 'mm', format: 'a4', orientation: 'landscape', compress: true },
           pagebreak: { mode: ['avoid-all', 'css', 'legacy'] }
         };
-        const pdfBlob = await html2pdf().set(opt).from(container).output('blob');
+
+        // Render từ iframe body (đã có full styling từ <style> trong head)
+        const pdfBlob = await html2pdf().set(opt).from(iframe.contentDocument.body).output('blob');
         zip.file(`${fileBase}.pdf`, pdfBlob);
       } catch(err){
         console.error('PDF generation failed for', fileBase, err);
         // Fallback to HTML
         zip.file(`${fileBase}.html`, pdfHTML);
       } finally {
-        document.body.removeChild(container);
+        if(iframe.parentNode) document.body.removeChild(iframe);
       }
     }
   }
