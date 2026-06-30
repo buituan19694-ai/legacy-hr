@@ -12825,7 +12825,7 @@ function exportLeaveXLSX(){
          'Ton nam truoc',
          'Huong T1','Huong T2','Huong T3','Huong T4','Huong T5','Huong T6',
          'Huong T7','Huong T8','Huong T9','Huong T10','Huong T11','Huong T12',
-         'Ton hien tai (TT)',
+         'Con lai nam cu',
          'Nghi T1','Nghi T2','Clear AL','Nghi T3','Nghi T4','Nghi T5','Nghi T6',
          'Nghi T7','Nghi T8','Nghi T9','Nghi T10','Nghi T11','Nghi T12',
          'Tong da nghi','Ton cuoi nam '+year,'Con lai thang luong'];
@@ -12901,10 +12901,12 @@ function exportLeaveXLSX(){
       var carry=sh.carry||0;
       var totalEnt=carry+(sh.entitle||[]).reduce(function(a,b){return a+b;},0);
       var totalTaken=(sh.taken||[]).reduce(function(a,b){return a+b;},0);
-      var pendingUsed=(sh.taken||[]).slice(0,curM).reduce(function(a,b){return a+b;},0);
-      var pendingEnt=carry+(sh.entitle||[]).slice(0,curM).reduce(function(a,b){return a+b;},0);
-      var pending=Math.round((pendingEnt-pendingUsed)*100)/100;
+      // Tồn cuối năm = Tồn năm trước + Tổng hưởng cả năm − Tổng đã nghỉ
       var remainYear=Math.round((totalEnt-totalTaken)*100)/100;
+      // ⚠️ FIX: đồng bộ formula với web — "Còn lại năm cũ" theo footer ghi chú
+      // Web: IF(Tồn cuối năm > Tháng hiện tại, Tồn cuối năm − Tháng hiện tại, 0)
+      // Excel cũ dùng formula khác (pendingEnt - pendingUsed) → ra số khác Web
+      var pending = remainYear > curM ? Math.round((remainYear - curM)*100)/100 : 0;
 
       var row=[
         lt==='al'?idx+1:'',
