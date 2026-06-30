@@ -10,6 +10,7 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 
 <!-- Firebase SDK via CDN -->
 <script src="https://cdn.jsdelivr.net/npm/firebase@10.12.0/firebase-app-compat.min.js"></script>
@@ -32269,6 +32270,37 @@ function exportLeavePDF(){
   else if(statusFilter === 'exit') emps = emps.filter(e=>getEffectiveStatus(e)==='exit');
   // 'all' → không filter status
   if(selDept) emps = emps.filter(e=>e.deptId===selDept);
+
+  // ⚠️ FIX: gộp thêm trainees (giống web bảng Theo dõi line 13297-13311)
+  // Bug cũ: PDF chỉ có DB.employees → thiếu 56 TTS so với web 256 NV
+  const nowStr = new Date().toISOString().slice(0,10);
+  let trPool = (DB.trainees||[]);
+  if(statusFilter === 'active'){
+    trPool = trPool.filter(tr=>{
+      if(tr.status === 'exit' || tr.status === 'early_exit') return false;
+      if(tr.status === 'active') return true;
+      if(tr.endDate && tr.endDate < nowStr) return false;
+      return true;
+    });
+  } else if(statusFilter === 'exit'){
+    trPool = trPool.filter(tr=>{
+      if(tr.status === 'exit' || tr.status === 'early_exit') return true;
+      if(tr.endDate && tr.endDate < nowStr) return true;
+      return false;
+    });
+  }
+  if(selDept) trPool = trPool.filter(tr=>tr.deptId===selDept);
+  const trAsEmps = trPool.map(tr=>({
+    id: 'tr_'+tr.id,  // PHẢI có prefix 'tr_' để khớp DB.leaveSheet key
+    code: tr.code||'',
+    name: tr.name||'',
+    role: tr.role || 'Thực tập sinh',
+    deptId: tr.deptId||'',
+    joined: tr.startDate||'',
+    _isTrainee: true,
+  }));
+  emps = [...emps, ...trAsEmps];
+
   emps = emps.sort((a,b)=>{
     const da = depts.find(d=>d.id===a.deptId)?.name||'';
     const db2 = depts.find(d=>d.id===b.deptId)?.name||'';
@@ -32599,11 +32631,44 @@ async function exportLeaveByDeptZip(){
       zip.file(`${fileBase}.xlsx`, xlsxBuf);
     }
 
-    // ========== PDF (as HTML file — recipients open in browser, save as PDF) ==========
+    // ========== PDF thật (binary .pdf) — recipients open trực tiếp, không phụ thuộc browser ==========
     if(fmt === 'pdf' || fmt === 'both'){
+      if(typeof html2pdf === 'undefined'){
+        toast('Thư viện PDF chưa tải xong, thử lại sau 5s','error');
+        return;
+      }
       const company = DB.company?.name || 'Legacy Yên Tử MGallery';
       const pdfHTML = _buildLeaveDeptPDFHTML(dept, empRows, yr, upToMonth, company, today);
-      zip.file(`${fileBase}.html`, pdfHTML);
+
+      // Tạo container ẩn để html2pdf render — phải extract <style> và <body> content
+      // vì innerHTML strip <html>/<head>/<body> wrapper tags
+      const parser = new DOMParser();
+      const parsedDoc = parser.parseFromString(pdfHTML, 'text/html');
+      const styleHTML = Array.from(parsedDoc.querySelectorAll('style')).map(s=>s.outerHTML).join('');
+      const bodyHTML = parsedDoc.body ? parsedDoc.body.innerHTML : pdfHTML;
+      const container = document.createElement('div');
+      container.innerHTML = styleHTML + bodyHTML;
+      container.style.cssText = 'position:absolute;left:-99999px;top:0;width:1100px;background:#fff;font-family:Arial,sans-serif';
+      document.body.appendChild(container);
+
+      try {
+        const opt = {
+          margin: [8, 6, 8, 6],
+          filename: `${fileBase}.pdf`,
+          image: { type: 'jpeg', quality: 0.96 },
+          html2canvas: { scale: 2, useCORS: true, backgroundColor: '#ffffff', logging: false },
+          jsPDF: { unit: 'mm', format: 'a4', orientation: 'landscape', compress: true },
+          pagebreak: { mode: ['avoid-all', 'css', 'legacy'] }
+        };
+        const pdfBlob = await html2pdf().set(opt).from(container).output('blob');
+        zip.file(`${fileBase}.pdf`, pdfBlob);
+      } catch(err){
+        console.error('PDF generation failed for', fileBase, err);
+        // Fallback to HTML
+        zip.file(`${fileBase}.html`, pdfHTML);
+      } finally {
+        document.body.removeChild(container);
+      }
     }
   }
 
@@ -32614,7 +32679,7 @@ async function exportLeaveByDeptZip(){
     `Xuất ngày: ${today}\n\n` +
     `Mỗi file là báo cáo riêng cho 1 phòng ban.\n` +
     `Forward email + đính kèm file tương ứng cho từng trưởng bộ phận.\n\n` +
-    (fmt!=='xlsx' ? `* File .html: mở trong trình duyệt → Ctrl+P → Save as PDF\n\n` : '\n') +
+    (fmt!=='xlsx' ? `* File .pdf: mở trực tiếp bằng Adobe Reader / trình xem PDF mặc định\n\n` : '\n') +
     `Trạng thái NV: ${
       statusFilter==='active' ? 'Chỉ NV đang làm (chính thức + thử việc)' :
       statusFilter==='hasRemain' ? 'Chỉ NV còn ngày AL/CL (có số ≠ 0)' :
