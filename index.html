@@ -12897,19 +12897,17 @@ function exportLeaveXLSX(){
       ctEnd = fmtDate2(cd.contractEnd || cd.currentContractEnd);
     }
     ['al','cl'].forEach(function(lt){
-      var sh=getSheet(e.id, lt);
-      var carry=sh.carry||0;
-      var totalEnt=carry+(sh.entitle||[]).reduce(function(a,b){return a+b;},0);
-      var totalTaken=(sh.taken||[]).reduce(function(a,b){return a+b;},0);
-      // Tồn cuối năm = Tồn năm trước + Tổng hưởng cả năm − Tổng đã nghỉ (cả AL và CL đều có)
-      var remainYear=Math.round((totalEnt-totalTaken)*100)/100;
-      // ⚠️ "Còn lại năm cũ" CHỈ áp dụng cho AL (web cũng chỉ render cho AL, CL để trống)
-      // Formula web (line 13313): IF(Tồn cuối năm > Tháng hiện tại, Tồn cuối năm − Tháng hiện tại, 0)
+      // ⚠️ Dùng helper calcLeaveTotals — CÙNG function với web → đảm bảo số match 100%
+      var T = calcLeaveTotals(e.id, lt, year, curM);
+      var carry = T.carry;
+      var totalTaken = T.totalUsed;
+      var remainYear = T.tonCuoiNam;
+      // "Còn lại năm cũ" CHỈ AL có (web cũng vậy, line 13319)
       var conLaiNamCu = '';
       var conLaiThangLuong = '';
       if(lt === 'al'){
-        conLaiNamCu = remainYear > curM ? Math.round((remainYear - curM)*100)/100 : 0;
-        conLaiThangLuong = conLaiNamCu;
+        conLaiNamCu = T.conLaiNamCu;
+        conLaiThangLuong = T.conLaiNamCu;
       }
 
       var row=[
@@ -12928,10 +12926,10 @@ function exportLeaveXLSX(){
         lt==='al'?'AL - Phep nam':'CL - Nghi bu',
         carry
       ];
-      for(var m=0;m<12;m++) row.push(sh.entitle[m]||0);
+      for(var m=0;m<12;m++) row.push(T.entitle[m]||0);
       row.push(conLaiNamCu);   // "Con lai nam cu" — CHỈ AL có giá trị, CL để trống (giống web)
-      row.push(sh.taken[0]||0, sh.taken[1]||0, sh.clearAL||0);
-      for(var m=2;m<12;m++) row.push(sh.taken[m]||0);
+      row.push(T.taken[0]||0, T.taken[1]||0, T.clearAL||0);
+      for(var m=2;m<12;m++) row.push(T.taken[m]||0);
       row.push(Math.round(totalTaken*100)/100, remainYear, conLaiThangLuong);
       rows.push(row);
     });
@@ -13212,6 +13210,23 @@ function calcLeaveTonCuoiNam(empId, type, year){
   const te = sh.carry + sh.entitle.reduce((s,x)=>s+x,0);
   const tu = sh.taken.reduce((s,x)=>s+x,0);
   return Math.round((te-tu)*100)/100;
+}
+
+// ⚠️ Helper duy nhất — Web (calcRow) và Excel (exportLeaveXLSX) đều dùng để đảm bảo NO drift
+// Trả về object chứa TẤT CẢ giá trị cần để render web + xuất Excel
+function calcLeaveTotals(empId, type, year, curMonth){
+  const sh = getLeaveSheet(empId, type, year);
+  const carry = sh.carry || 0;
+  const entitle = sh.entitle || Array(12).fill(0);
+  const taken = sh.taken || Array(12).fill(0);
+  const clearAL = sh.clearAL || 0;
+  const totalEntitle = carry + entitle.reduce((s,x)=>s+x,0);   // = Tổng phát sinh (cả năm)
+  const totalUsed = taken.reduce((s,x)=>s+x,0);                // = Tổng đã nghỉ
+  const tonCuoiNam = Math.round((totalEntitle - totalUsed)*100)/100;  // = Tồn cuối năm
+  // Còn lại năm cũ: IF(Tồn cuối năm > Tháng hiện tại, Tồn cuối năm − Tháng hiện tại, 0)
+  // CHỈ áp dụng cho AL (web line 13319). Caller tự kiểm tra type === 'al' nếu cần.
+  const conLaiNamCu = curMonth < tonCuoiNam ? Math.round((tonCuoiNam - curMonth)*100)/100 : 0;
+  return { carry, entitle, taken, clearAL, totalEntitle, totalUsed, tonCuoiNam, conLaiNamCu };
 }
 
 function renderLeaveReports(main){
