@@ -32644,35 +32644,47 @@ async function exportLeaveByDeptZip(){
       //    phải render trong main document. Transform CSS `body{}` → `.pdf-doc-body{}` để scope đúng.
       const parser = new DOMParser();
       const parsedDoc = parser.parseFromString(pdfHTML, 'text/html');
-      // Convert body selector trong <style>: "body{...}" → ".pdf-doc-body{...}", "body h1{...}" → ".pdf-doc-body h1{...}"
+      // Convert body selector trong <style>: "body{...}" → ".pdf-doc-body{...}"
+      // Loại bỏ padding trên .pdf-doc-body để jsPDF margin tự handle khoảng cách viền
       const styleHTML = Array.from(parsedDoc.querySelectorAll('style'))
-        .map(s => s.outerHTML.replace(/(^|[\s,{])body\b/g, '$1.pdf-doc-body'))
-        .join('');
+        .map(s => s.outerHTML
+          .replace(/(^|[\s,{])body\b/g, '$1.pdf-doc-body')
+          .replace(/\.pdf-doc-body\s*\{([^}]*?)padding:[^;}]+;?/g, '.pdf-doc-body{$1')
+        )
+        .join('')
+        // Thêm rule: cho phép table/tr break tự nhiên (tránh whitespace lớn giữa header và body)
+        + `<style>
+            .pdf-doc-body table, .pdf-doc-body tr, .pdf-doc-body tbody, .pdf-doc-body thead {
+              page-break-inside: auto !important;
+              break-inside: auto !important;
+            }
+            .pdf-doc-body thead { display: table-header-group; }
+          </style>`;
       const bodyHTML = parsedDoc.body ? parsedDoc.body.innerHTML : pdfHTML;
 
+      const PDF_W = 1024;
       const container = document.createElement('div');
-      container.innerHTML = styleHTML + `<div class="pdf-doc-body" style="background:#fff;width:1180px">${bodyHTML}</div>`;
-      // visibility:hidden giữ layout active (cho html2canvas snapshot), ẩn cho user
-      container.style.cssText = 'position:fixed;top:0;left:0;background:#fff;visibility:hidden;z-index:-1;pointer-events:none';
+      container.innerHTML = styleHTML + `<div class="pdf-doc-body" style="background:#fff;width:${PDF_W}px;padding:0;margin:0;box-sizing:border-box">${bodyHTML}</div>`;
+      container.style.cssText = `position:fixed;top:0;left:0;width:${PDF_W}px;background:#fff;visibility:hidden;z-index:-1;pointer-events:none`;
       document.body.appendChild(container);
 
       try {
-        // Đợi browser layout + font load
-        await new Promise(r => setTimeout(r, 200));
+        await new Promise(r => setTimeout(r, 250));
 
         const opt = {
-          margin: [8, 6, 8, 6],
+          margin: 10,
           filename: `${fileBase}.pdf`,
-          image: { type: 'jpeg', quality: 0.96 },
+          image: { type: 'jpeg', quality: 0.95 },
           html2canvas: {
             scale: 2,
             useCORS: true,
             backgroundColor: '#ffffff',
             logging: false,
-            windowWidth: 1180,
+            windowWidth: PDF_W,
+            scrollX: 0, scrollY: 0,
           },
           jsPDF: { unit: 'mm', format: 'a4', orientation: 'landscape', compress: true },
-          pagebreak: { mode: ['avoid-all', 'css', 'legacy'] }
+          // Bỏ pagebreak rules: để jsPDF tự chia trang đều, KHÔNG cố giữ row nguyên (tránh whitespace)
         };
 
         const pdfBodyEl = container.querySelector('.pdf-doc-body') || container;
@@ -32680,7 +32692,6 @@ async function exportLeaveByDeptZip(){
         zip.file(`${fileBase}.pdf`, pdfBlob);
       } catch(err){
         console.error('PDF generation failed for', fileBase, err);
-        // Fallback to HTML nếu PDF gen fail
         zip.file(`${fileBase}.html`, pdfHTML);
       } finally {
         if(container.parentNode) document.body.removeChild(container);
