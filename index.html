@@ -32640,19 +32640,25 @@ async function exportLeaveByDeptZip(){
       const company = DB.company?.name || 'Legacy Yên Tử MGallery';
       const pdfHTML = _buildLeaveDeptPDFHTML(dept, empRows, yr, upToMonth, company, today);
 
-      // ⚠️ Dùng IFRAME để render — CSS body{} chỉ apply trong document riêng (không dùng div container vì body selector không match)
-      const iframe = document.createElement('iframe');
-      iframe.style.cssText = 'position:fixed;left:0;top:0;width:1180px;height:900px;border:0;opacity:0;pointer-events:none;z-index:-1';
-      document.body.appendChild(iframe);
+      // ⚠️ Container approach: html2canvas KHÔNG render được iframe content properly →
+      //    phải render trong main document. Transform CSS `body{}` → `.pdf-doc-body{}` để scope đúng.
+      const parser = new DOMParser();
+      const parsedDoc = parser.parseFromString(pdfHTML, 'text/html');
+      // Convert body selector trong <style>: "body{...}" → ".pdf-doc-body{...}", "body h1{...}" → ".pdf-doc-body h1{...}"
+      const styleHTML = Array.from(parsedDoc.querySelectorAll('style'))
+        .map(s => s.outerHTML.replace(/(^|[\s,{])body\b/g, '$1.pdf-doc-body'))
+        .join('');
+      const bodyHTML = parsedDoc.body ? parsedDoc.body.innerHTML : pdfHTML;
+
+      const container = document.createElement('div');
+      container.innerHTML = styleHTML + `<div class="pdf-doc-body" style="background:#fff;width:1180px">${bodyHTML}</div>`;
+      // visibility:hidden giữ layout active (cho html2canvas snapshot), ẩn cho user
+      container.style.cssText = 'position:fixed;top:0;left:0;background:#fff;visibility:hidden;z-index:-1;pointer-events:none';
+      document.body.appendChild(container);
 
       try {
-        // Write full HTML doc vào iframe
-        iframe.contentDocument.open();
-        iframe.contentDocument.write(pdfHTML);
-        iframe.contentDocument.close();
-
-        // Đợi layout + font render
-        await new Promise(r => setTimeout(r, 250));
+        // Đợi browser layout + font load
+        await new Promise(r => setTimeout(r, 200));
 
         const opt = {
           margin: [8, 6, 8, 6],
@@ -32664,22 +32670,20 @@ async function exportLeaveByDeptZip(){
             backgroundColor: '#ffffff',
             logging: false,
             windowWidth: 1180,
-            // Render iframe document
-            scrollX: 0, scrollY: 0,
           },
           jsPDF: { unit: 'mm', format: 'a4', orientation: 'landscape', compress: true },
           pagebreak: { mode: ['avoid-all', 'css', 'legacy'] }
         };
 
-        // Render từ iframe body (đã có full styling từ <style> trong head)
-        const pdfBlob = await html2pdf().set(opt).from(iframe.contentDocument.body).output('blob');
+        const pdfBodyEl = container.querySelector('.pdf-doc-body') || container;
+        const pdfBlob = await html2pdf().set(opt).from(pdfBodyEl).output('blob');
         zip.file(`${fileBase}.pdf`, pdfBlob);
       } catch(err){
         console.error('PDF generation failed for', fileBase, err);
-        // Fallback to HTML
+        // Fallback to HTML nếu PDF gen fail
         zip.file(`${fileBase}.html`, pdfHTML);
       } finally {
-        if(iframe.parentNode) document.body.removeChild(iframe);
+        if(container.parentNode) document.body.removeChild(container);
       }
     }
   }
