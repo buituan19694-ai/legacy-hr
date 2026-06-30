@@ -12901,12 +12901,16 @@ function exportLeaveXLSX(){
       var carry=sh.carry||0;
       var totalEnt=carry+(sh.entitle||[]).reduce(function(a,b){return a+b;},0);
       var totalTaken=(sh.taken||[]).reduce(function(a,b){return a+b;},0);
-      // Tồn cuối năm = Tồn năm trước + Tổng hưởng cả năm − Tổng đã nghỉ
+      // Tồn cuối năm = Tồn năm trước + Tổng hưởng cả năm − Tổng đã nghỉ (cả AL và CL đều có)
       var remainYear=Math.round((totalEnt-totalTaken)*100)/100;
-      // ⚠️ FIX: đồng bộ formula với web — "Còn lại năm cũ" theo footer ghi chú
-      // Web: IF(Tồn cuối năm > Tháng hiện tại, Tồn cuối năm − Tháng hiện tại, 0)
-      // Excel cũ dùng formula khác (pendingEnt - pendingUsed) → ra số khác Web
-      var pending = remainYear > curM ? Math.round((remainYear - curM)*100)/100 : 0;
+      // ⚠️ "Còn lại năm cũ" CHỈ áp dụng cho AL (web cũng chỉ render cho AL, CL để trống)
+      // Formula web (line 13313): IF(Tồn cuối năm > Tháng hiện tại, Tồn cuối năm − Tháng hiện tại, 0)
+      var conLaiNamCu = '';
+      var conLaiThangLuong = '';
+      if(lt === 'al'){
+        conLaiNamCu = remainYear > curM ? Math.round((remainYear - curM)*100)/100 : 0;
+        conLaiThangLuong = conLaiNamCu;
+      }
 
       var row=[
         lt==='al'?idx+1:'',
@@ -12925,10 +12929,10 @@ function exportLeaveXLSX(){
         carry
       ];
       for(var m=0;m<12;m++) row.push(sh.entitle[m]||0);
-      row.push(pending);
+      row.push(conLaiNamCu);   // "Con lai nam cu" — CHỈ AL có giá trị, CL để trống (giống web)
       row.push(sh.taken[0]||0, sh.taken[1]||0, sh.clearAL||0);
       for(var m=2;m<12;m++) row.push(sh.taken[m]||0);
-      row.push(Math.round(totalTaken*100)/100, remainYear, pending);
+      row.push(Math.round(totalTaken*100)/100, remainYear, conLaiThangLuong);
       rows.push(row);
     });
   });
