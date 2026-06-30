@@ -13005,10 +13005,40 @@ function importLeaveXLSX(){
 
         if(!DB.leaveSheet) DB.leaveSheet={};
 
+        // ⚠️ Robust parser: dùng HEADER LOOKUP thay vì hardcoded index
+        // → File cũ (định dạng trước khi thêm 6 cột info) hoặc file mới đều import được
+        var headerRow = data[0] || [];
+        var findCol = function(patterns){
+          for(var c=0; c<headerRow.length; c++){
+            var h = String(headerRow[c]||'').toLowerCase().replace(/\s+/g,'');
+            for(var p of patterns){
+              if(h.includes(p.toLowerCase().replace(/\s+/g,''))) return c;
+            }
+          }
+          return -1;
+        };
+        // Map cột theo tên header (case-insensitive, ignore space)
+        var COL = {
+          maNV:       findCol(['Ma NV','MaNV']),
+          loaiAlCl:   findCol(['Loai (AL/CL)','LoaiAL','Loai AL/CL']),
+          tonNamTr:   findCol(['Ton nam truoc','TonNamTruoc']),
+          huongT:     [],  // sẽ build T1-T12
+          nghiT:      [],  // sẽ build T1-T12
+          clearAL:    findCol(['Clear AL','ClearAL']),
+        };
+        for(var m=1;m<=12;m++){
+          COL.huongT.push(findCol(['Huong T'+m, 'HuongT'+m]));
+          COL.nghiT.push(findCol(['Nghi T'+m, 'NghiT'+m]));
+        }
+        if(COL.maNV < 0 || COL.loaiAlCl < 0 || COL.tonNamTr < 0){
+          toast('File Excel không đúng định dạng — thiếu cột Ma NV / Loai AL_CL / Ton nam truoc','error');
+          return;
+        }
+
         for(var i=1;i<data.length;i++){
           var row=data[i];
-          var code=String(row[1]||'').trim();
-          var lt=String(row[4]||'').toLowerCase().includes('cl')?'cl':'al';
+          var code=String(row[COL.maNV]||'').trim();
+          var lt=String(row[COL.loaiAlCl]||'').toLowerCase().includes('cl')?'cl':'al';
           if(!code||code==='Ma NV') continue;
 
           var empId=codeMap[code];
@@ -13017,17 +13047,16 @@ function importLeaveXLSX(){
           if(!DB.leaveSheet[empId]) DB.leaveSheet[empId]={};
           if(!DB.leaveSheet[empId][year]) DB.leaveSheet[empId][year]={};
 
-          if(!row || row.length < 20) { skipped++; continue; }
           var sh={
-            carry:   parseFloat(row[5])||0,
+            carry:   parseFloat(row[COL.tonNamTr])||0,
             entitle: [],
             taken:   [],
-            clearAL: parseFloat(row[21])||0,
+            clearAL: COL.clearAL >= 0 ? (parseFloat(row[COL.clearAL])||0) : 0,
           };
-          for(var m=0;m<12;m++) sh.entitle.push(parseFloat(row[6+m])||0);
-          sh.taken.push(parseFloat(row[19])||0); // T1
-          sh.taken.push(parseFloat(row[20])||0); // T2
-          for(var m=2;m<12;m++) sh.taken.push(parseFloat(row[22+(m-2)])||0); // T3-T12
+          for(var m=0;m<12;m++){
+            sh.entitle.push(COL.huongT[m]>=0 ? (parseFloat(row[COL.huongT[m]])||0) : 0);
+            sh.taken.push(COL.nghiT[m]>=0 ? (parseFloat(row[COL.nghiT[m]])||0) : 0);
+          }
 
           DB.leaveSheet[empId][year][lt]=sh;
           updated++;
