@@ -6973,7 +6973,7 @@ function exportAllExcel(){
       const lvHead = ['Mã NV','Họ tên','Phòng ban','Loại','Tồn năm trước',
         'T1','T2','T3','T4','T5','T6','T7','T8','T9','T10','T11','T12','Tổng được hưởng',
         'Nghỉ T1','Nghỉ T2','Clear AL','Nghỉ T3','Nghỉ T4','Nghỉ T5','Nghỉ T6',
-        'Nghỉ T7','Nghỉ T8','Nghỉ T9','Nghỉ T10','Nghỉ T11','Nghỉ T12','Tổng đã nghỉ','Tồn cuối năm'];
+        'Nghỉ T7','Nghỉ T8','Nghỉ T9','Nghỉ T10','Nghỉ T11','Nghỉ T12','Tổng đã nghỉ','Tồn còn lại'];
       const lvRows = [];
       const activeEmps = (DB.employees||[]).filter(e=>getEffectiveStatus(e)!=='exit')
         .sort((a,b)=>(a.deptId||'').localeCompare(b.deptId||'')||a.name.localeCompare(b.name,'vi'));
@@ -12829,7 +12829,7 @@ function exportLeaveXLSX(){
          'Tong phat sinh',
          'Nghi T1','Nghi T2','Clear AL','Nghi T3','Nghi T4','Nghi T5','Nghi T6',
          'Nghi T7','Nghi T8','Nghi T9','Nghi T10','Nghi T11','Nghi T12',
-         'Tong da nghi','Con lai nam cu','Ton cuoi nam '+year];
+         'Tong da nghi','Con lai nam cu','Ton con lai'];
 
   // Helper: tính thâm niên dạng "X năm Y tháng" hoặc "X tháng"
   var calcSeniority = function(joinedStr){
@@ -12966,7 +12966,7 @@ function exportLeaveXLSX(){
     ['1. Ngay phep/nam theo tham nien (BLLD VN): Co ban '+( DB.company&&DB.company.annualLeaveDays||12)+' ngay + 1 ngay moi 5 nam cong tac'],
     ['2. Clear AL nam truoc: ngay ton nam truoc duoc phep su dung - nhap tay'],
     ['3. Ton hien tai = Ton nam truoc + Duoc huong den thang tinh luong - Da nghi'],
-    ['4. Ton cuoi nam = Ton nam truoc + Tong phep nam - Tong da nghi ca nam'],
+    ['4. Ton con lai = Ton nam truoc + Tong phep nam - Tong da nghi ca nam'],
   ];
   var wsNote=XLSX.utils.aoa_to_sheet(noteRows);
   wsNote['!cols']=[{wch:80}];
@@ -13257,8 +13257,8 @@ function calcLeaveTotals(empId, type, year, curMonth){
   const clearAL = sh.clearAL || 0;
   const totalEntitle = carry + entitle.reduce((s,x)=>s+x,0);   // = Tổng phát sinh (cả năm)
   const totalUsed = taken.reduce((s,x)=>s+x,0);                // = Tổng đã nghỉ
-  const tonCuoiNam = Math.round((totalEntitle - totalUsed)*100)/100;  // = Tồn cuối năm
-  // Còn lại năm cũ: IF(Tồn cuối năm > Tháng hiện tại, Tồn cuối năm − Tháng hiện tại, 0)
+  const tonCuoiNam = Math.round((totalEntitle - totalUsed)*100)/100;  // = Tồn còn lại
+  // Còn lại năm cũ: IF(Tồn còn lại > Tháng hiện tại, Tồn còn lại − Tháng hiện tại, 0)
   // CHỈ áp dụng cho AL (web line 13319). Caller tự kiểm tra type === 'al' nếu cần.
   const conLaiNamCu = curMonth < tonCuoiNam ? Math.round((tonCuoiNam - curMonth)*100)/100 : 0;
   return { carry, entitle, taken, clearAL, totalEntitle, totalUsed, tonCuoiNam, conLaiNamCu };
@@ -13381,7 +13381,7 @@ function renderLeaveReports(main){
     const pendingUsed=months.slice(0,curMonth).reduce((s,x)=>s+x.used,0);
     // Tổng phát sinh = carry + tổng hưởng T1→T12 (toàn bộ năm)
     const pendingEntitle=sh.carry+sh.entitle.reduce((s,x)=>s+x,0);
-    // Tồn cuối năm = carry + tổng hưởng - tổng đã nghỉ
+    // Tồn còn lại = carry + tổng hưởng - tổng đã nghỉ
     const tonCuoiNam = Math.round((totalEntitle - totalUsed)*100)/100;
     // Còn lại năm cũ = IF(curMonth < tonCuoiNam, tonCuoiNam - curMonth, 0)
     const pending = curMonth < tonCuoiNam ? Math.round((tonCuoiNam - curMonth)*100)/100 : 0;
@@ -13399,7 +13399,7 @@ function renderLeaveReports(main){
   const showCL = _ltf !== 'al';
   const showBoth = showAL && showCL;
 
-  // Expose để renderLeavePlan dùng cùng số Tồn cuối năm — không tính lại riêng
+  // Expose để renderLeavePlan dùng cùng số Tồn còn lại — không tính lại riêng
   window._leaveTrackingData = {
     year: bal.year,
     byEmp: Object.fromEntries(empMonthData.map(x=>[x.e.id, {al: x.al.tonCuoiNam, cl: x.cl.tonCuoiNam}]))
@@ -13531,7 +13531,7 @@ window.toggleLeaveGroup = function(did){
               <th ${thStyle} colspan="13" style="background:rgba(212,165,116,.12);color:var(--accent);border:1px solid rgba(212,165,116,.3)">📤 Số ngày ĐÃ NGHỈ thực tế từng tháng / Taken AL ${bal.year}</th>
               <th ${thStyle} rowspan="3" style="background:rgba(183,148,212,.15);color:var(--purple);border:1px solid rgba(183,148,212,.3);min-width:52px">Tổng<br>đã nghỉ<br><span style="font-size:9px;opacity:.7">tự động</span></th>
               <th ${thStyle} rowspan="3" style="background:rgba(183,148,212,.15);color:var(--purple);border:1px solid rgba(183,148,212,.3);min-width:52px">Còn lại<br>năm cũ<br><span style="font-size:9px;opacity:.7">tự động</span></th>
-              <th ${thStyle} rowspan="3" style="background:rgba(183,148,212,.2);color:var(--purple);font-weight:700;border:2px solid rgba(183,148,212,.5);min-width:52px">Tồn cuối<br>năm<br><span style="font-size:9px;opacity:.7">tự động</span></th>
+              <th ${thStyle} rowspan="3" style="background:rgba(183,148,212,.2);color:var(--purple);font-weight:700;border:2px solid rgba(183,148,212,.5);min-width:52px">Tồn còn<br>lại<br><span style="font-size:9px;opacity:.7">tự động</span></th>
             </tr>
             <tr style="background:#151b23">
               ${mnShort.map(m=>`<th ${thStyle} style="background:rgba(126,198,153,.07);color:var(--success);min-width:42px">${m}</th>`).join('')}
@@ -13622,7 +13622,7 @@ window.toggleLeaveGroup = function(did){
                   ${showAL?`<div style="color:var(--purple);font-weight:700;font-family:'JetBrains Mono',monospace">${fd(dAL.pending)}</div>`:''}
                   ${showCL?`<div style="color:var(--ink-muted);font-size:10px">—</div>`:''}
                 </td>
-                <!-- Tồn cuối năm -->
+                <!-- Tồn còn lại -->
                 <td style="padding:3px 5px;text-align:center;font-size:10px;background:#1a2535;border-left:2px solid rgba(183,148,212,.4)">
                   ${showAL?`<div style="color:var(--success);font-weight:700;font-family:'JetBrains Mono',monospace">${fd((dAL.pendingEntitle||dAL.totalEntitle)-dAL.totalUsed)}</div>`:''}
                   ${showCL?`<div style="color:var(--success);font-family:'JetBrains Mono',monospace">${fd((dCL.pendingEntitle||dCL.totalEntitle)-dCL.totalUsed)}</div>`:''}
@@ -13648,11 +13648,11 @@ window.toggleLeaveGroup = function(did){
                 <td style="padding:2px 5px;text-align:center;font-size:10px;background:#0f1a28"><span style="color:#FFCC00;font-weight:700;font-family:'JetBrains Mono',monospace">${fd(dAL.totalUsed+dCL.totalUsed)}</span></td>
                 <!-- Còn lại năm cũ -->
                 <td style="padding:2px 5px;text-align:center;font-size:10px;background:#0f1a28"><span style="color:#FFCC00;font-weight:700;font-family:'JetBrains Mono',monospace">${fd(dAL.pending)}</span></td>
-                <!-- Tồn cuối năm -->
+                <!-- Tồn còn lại -->
                 <td style="padding:2px 5px;text-align:center;font-size:10px;background:#0f1a28;border-left:2px solid rgba(183,148,212,.4)"><span style="color:#FFCC00;font-weight:700;font-family:'JetBrains Mono',monospace">${fd(Math.round(((dAL.pendingEntitle||dAL.totalEntitle)-dAL.totalUsed+(dCL.pendingEntitle||dCL.totalEntitle)-dCL.totalUsed)*10)/10)}</span></td>
 
               </tr>`;
-              // Lưu thẳng số Tồn cuối năm theo dept+year để bảng Kế hoạch dùng
+              // Lưu thẳng số Tồn còn lại theo dept+year để bảng Kế hoạch dùng
               if(!window._trackingTon) window._trackingTon = {};
               if(!window._trackingTon[bal.year]) window._trackingTon[bal.year] = {};
               window._trackingTon[bal.year][did] = {
@@ -13696,7 +13696,7 @@ window.toggleLeaveGroup = function(did){
                     ${compCell(pfx+'totalUsed',d.totalUsed,'var(--purple)','rgba(183,148,212,.06)')}
                     ${lt==='al' ? compCell(pfx+'cur',d.pending,d.pending<0?'var(--danger)':'var(--success)','rgba(183,148,212,.08)') : '<td style="text-align:center;font-size:11px;color:var(--ink-muted);padding:4px;background:rgba(183,148,212,.04)">—</td>'}
                     <td style="text-align:center;font-weight:700;font-size:11px;padding:4px;color:${(d.pendingEntitle-d.totalUsed)<0?'var(--danger)':'var(--success)'};background:rgba(183,148,212,.15);border-left:2px solid rgba(183,148,212,.4)"
-                      title="Tồn cuối năm = Tổng phát sinh − Tổng đã nghỉ = ${fnum(d.pendingEntitle)} − ${fnum(d.totalUsed)}">
+                      title="Tồn còn lại = Tổng phát sinh − Tổng đã nghỉ = ${fnum(d.pendingEntitle)} − ${fnum(d.totalUsed)}">
                       <span id="${pfx}remain">${fnum(d.pendingEntitle-d.totalUsed)}</span>
                     </td>
 
@@ -13766,8 +13766,8 @@ window.toggleLeaveGroup = function(did){
       <b style="color:var(--ink-dim)">Ghi chú:</b>
       Ô trắng = nhập tay. Ô tối = tự động tính.
       <b>Tổng phát sinh</b> = Tồn năm trước + Tổng hưởng T1→T12 (toàn năm).
-      <b>Tồn cuối năm</b> = Tồn năm trước + Tổng hưởng cả năm − Tổng đã nghỉ.
-      <b>Còn lại năm cũ</b> = IF(Tồn cuối năm &gt; Tháng hiện tại, Tồn cuối năm − Tháng hiện tại, 0). <b>Tồn cuối năm</b> = Tổng phát sinh − Tổng đã nghỉ.
+      <b>Tồn còn lại</b> = Tồn năm trước + Tổng hưởng cả năm − Tổng đã nghỉ.
+      <b>Còn lại năm cũ</b> = IF(Tồn còn lại &gt; Tháng hiện tại, Tồn còn lại − Tháng hiện tại, 0). <b>Tồn còn lại</b> = Tổng phát sinh − Tổng đã nghỉ.
     </div>
   `;
 }
@@ -13943,12 +13943,12 @@ function renderLeavePlan(main){
     if(fDatEl) fDatEl.innerHTML='<span style="opacity:.4">—</span>';
   };
 
-  // Tính "Tồn cuối năm" cho 1 NV — ưu tiên dùng số đã tính từ bảng Theo dõi (cùng công thức, cùng getSheet)
+  // Tính "Tồn còn lại" cho 1 NV — ưu tiên dùng số đã tính từ bảng Theo dõi (cùng công thức, cùng getSheet)
   // Dùng thẳng global function — cùng logic, cùng auto-carry với bảng Theo dõi
   const getEmpRemain = (empId, mi, type) => calcLeaveTonCuoiNam(empId, type, curYear);
 
   const getBalByDept = (deptId, mi, type)=>{
-    // Tồn cuối năm theo bộ phận = Tổng phát sinh - Tổng đã nghỉ
+    // Tồn còn lại theo bộ phận = Tổng phát sinh - Tổng đã nghỉ
     const emps = activeEmps.filter(e=>e.deptId===deptId);
     const bal = emps.reduce((s,e)=>s+getEmpRemain(e.id, mi, type), 0);
     return Math.round(bal*10)/10;
@@ -13960,7 +13960,7 @@ function renderLeavePlan(main){
     if(locked && locked[type] !== undefined && locked[type] !== null){
       return locked[type];
     }
-    // PRIORITY 2: Đọc thẳng số Tồn cuối năm từ bảng Theo dõi (đã lưu khi render)
+    // PRIORITY 2: Đọc thẳng số Tồn còn lại từ bảng Theo dõi (đã lưu khi render)
     if(window._trackingTon && window._trackingTon[curYear] && window._trackingTon[curYear][deptId]){
       return window._trackingTon[curYear][deptId][type]||0;
     }
@@ -14422,7 +14422,7 @@ function renderLeaves(main){
     balMonths.push({m, alAccr, alUsed, clAccr, clUsed});
   }
 
-  // Tổng cộng cả năm — KHỚP với cách tính Tồn cuối năm của Theo dõi
+  // Tổng cộng cả năm — KHỚP với cách tính Tồn còn lại của Theo dõi
   let alOpenTot=0, clOpenTot=0;
   scopeEmps.forEach(e => {
     const shAL = _balGetSheet(e.id, 'al');
@@ -14638,7 +14638,7 @@ function renderLeaves(main){
             <th ${thStyle} rowspan="3" style="background:rgba(126,182,232,.12);color:var(--info);border:1px solid rgba(126,182,232,.3)">Tổng<br>phát sinh</th>
             <th ${thStyle} colspan="13" style="background:rgba(212,165,116,.12);color:var(--accent);border:1px solid rgba(212,165,116,.3)">Số ngày ĐÃ NGHỈ thực tế từng tháng / Taken AL per month ${bal.year}</th>
             <th ${thStyle} rowspan="3" style="background:rgba(183,148,212,.12);color:var(--purple);border:1px solid rgba(183,148,212,.3)">Tổng<br>đã nghỉ</th>
-            <th ${thStyle} rowspan="3" style="background:rgba(183,148,212,.12);color:var(--purple);border:1px solid rgba(183,148,212,.3)">Tồn cuối<br>năm ${bal.year}<br><span style="font-size:9px;opacity:.7">(=Tồn trước<br>+Hưởng−Dùng)</span></th>
+            <th ${thStyle} rowspan="3" style="background:rgba(183,148,212,.12);color:var(--purple);border:1px solid rgba(183,148,212,.3)">Tồn còn<br>lại ${bal.year}<br><span style="font-size:9px;opacity:.7">(=Tồn trước<br>+Hưởng−Dùng)</span></th>
             <th ${thStyle} rowspan="3" style="background:rgba(183,148,212,.12);color:var(--purple);font-weight:700;border:2px solid rgba(183,148,212,.4)">Còn lại<br>tháng<br>lương</th>
           </tr>
           <!-- Row 2: month labels for entitlement / taken -->
@@ -14701,9 +14701,9 @@ function renderLeaves(main){
               <td style="${compStyle('var(--purple)',true)};background:rgba(183,148,212,.06)">
                 <span id="${pfx}totalUsed">${totalUsed===0?'—':fnum(totalUsed)}</span>
               </td>
-              <!-- Tồn cuối năm — TỰ ĐỘNG = Tồn năm trước + Tổng hưởng - Tổng đã nghỉ -->
+              <!-- Tồn còn lại — TỰ ĐỘNG = Tồn năm trước + Tổng hưởng - Tổng đã nghỉ -->
               <td style="${compStyle(totalEntitle-totalUsed<0?'var(--danger)':'var(--success)',true)};background:rgba(183,148,212,.06)"
-                  title="Tồn cuối năm = Tồn năm trước (${carry}) + Tổng được hưởng (${fnum(totalEntitle-carry)}) − Tổng đã nghỉ (${fnum(totalUsed)})">
+                  title="Tồn còn lại = Tồn năm trước (${carry}) + Tổng được hưởng (${fnum(totalEntitle-carry)}) − Tổng đã nghỉ (${fnum(totalUsed)})">
                 <span id="${pfx}remain">${fnum(totalEntitle-totalUsed)}</span>
               </td>
               <!-- Còn lại tháng lương — TỰ ĐỘNG -->
@@ -14745,7 +14745,7 @@ function renderLeaves(main){
               <td style="text-align:center;font-size:11px;padding:4px;font-weight:700;color:var(--purple);background:rgba(183,148,212,.06)">
                 <span id="${pfx}total">${totalUsed===0?'—':fnum(totalUsed)}</span>
               </td>
-              <!-- Tồn cuối năm & Còn lại: N/A for trainee -->
+              <!-- Tồn còn lại & Còn lại: N/A for trainee -->
               <td colspan="2" style="background:rgba(0,0,0,.10);text-align:center;color:var(--ink-muted);font-size:10px">—</td>
             </tr>`;
           }).join('')}` : ''}
@@ -14958,7 +14958,7 @@ function renderLeaves(main){
             ${kpiCard((_lang==="en"?"Total accrued":"Tổng phát sinh"), fmt(totAL.entitle), reportMonth?(_lang==="en"?"Accrued":"Phát sinh T")+reportMonth+'/'+yr:'Được hưởng năm '+yr, 'var(--success)')}
             ${kpiCard('Tổng có', fmt(totAL.total), 'Carry + Phát sinh', 'var(--ink)')}
             ${kpiCard((_lang==="en"?"Used":"Đã dùng"), fmt(totAL.taken), (_lang==="en"?"Actual days taken":"Ngày đã nghỉ thực tế"), 'var(--accent)')}
-            ${kpiCard((_lang==="en"?"Remaining":"Còn lại"), fmt(totAL.remain), totAL.remain<0?(_lang==="en"?"⚠ Over limit!":"⚠ Vượt quá!"):(_lang==="en"?"Year-end balance ":"Tồn cuối năm ")+yr, totAL.remain<0?'var(--danger)':'var(--success)')}
+            ${kpiCard((_lang==="en"?"Remaining":"Còn lại"), fmt(totAL.remain), totAL.remain<0?(_lang==="en"?"⚠ Over limit!":"⚠ Vượt quá!"):(_lang==="en"?"Remaining balance ":"Tồn còn lại ")+yr, totAL.remain<0?'var(--danger)':'var(--success)')}
           </div>
         </div>
 
@@ -14970,7 +14970,7 @@ function renderLeaves(main){
             ${kpiCard((_lang==="en"?"Total accrued":"Tổng phát sinh"), fmt(totCL.entitle), reportMonth?(_lang==="en"?"Accrued":"Phát sinh T")+reportMonth+'/'+yr:'Được hưởng năm '+yr, 'var(--info)')}
             ${kpiCard('Tổng có', fmt(totCL.total), 'Carry + Phát sinh', 'var(--ink)')}
             ${kpiCard((_lang==="en"?"Used":"Đã dùng"), fmt(totCL.taken), (_lang==="en"?"Actual days taken":"Ngày đã nghỉ thực tế"), 'var(--info)')}
-            ${kpiCard((_lang==="en"?"Remaining":"Còn lại"), fmt(totCL.remain), totCL.remain<0?(_lang==="en"?"⚠ Over limit!":"⚠ Vượt quá!"):(_lang==="en"?"Year-end balance ":"Tồn cuối năm ")+yr, totCL.remain<0?'var(--danger)':'var(--info)')}
+            ${kpiCard((_lang==="en"?"Remaining":"Còn lại"), fmt(totCL.remain), totCL.remain<0?(_lang==="en"?"⚠ Over limit!":"⚠ Vượt quá!"):(_lang==="en"?"Remaining balance ":"Tồn còn lại ")+yr, totCL.remain<0?'var(--danger)':'var(--info)')}
           </div>
         </div>
 
@@ -15056,7 +15056,7 @@ function renderLeaves(main){
     const empCost = activePool.map(e=>{
       const cd = DB.customData[e.id]||{};
       const sh = DB.leaveSheet[e.id]||{};
-      // Dùng cùng công thức với bảng Theo dõi: pendingEntitle - totalUsed = Tồn cuối năm
+      // Dùng cùng công thức với bảng Theo dõi: pendingEntitle - totalUsed = Tồn còn lại
       const _calcTon = (type) => {
         const s = (sh[yr]||{})[type]||{};
         const te = (s.carry||0) + (s.entitle||[]).reduce((a,b)=>a+(parseFloat(b)||0),0);
@@ -15107,15 +15107,15 @@ function renderLeaves(main){
       <div class="card-head">
         <div>
           <div class="card-title">💰 Phân tích <em>chi phí nghỉ phép tồn đọng</em> — ${yr}</div>
-          <div class="card-sub">Đơn giá = Tổng lương ÷ Ngày công TC · Tổng lương = Lương CB + Bổ sung KQCV · <b>Tồn cuối năm = Tổng phát sinh − Tổng đã nghỉ</b> · Ngày công từ hồ sơ NV (field stdWorkDays)</div>
+          <div class="card-sub">Đơn giá = Tổng lương ÷ Ngày công TC · Tổng lương = Lương CB + Bổ sung KQCV · <b>Tồn còn lại = Tổng phát sinh − Tổng đã nghỉ</b> · Ngày công từ hồ sơ NV (field stdWorkDays)</div>
         </div>
       </div>
 
       <!-- KPI tổng công ty -->
       <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:20px">
-        ${kpiCard('Tồn cuối năm AL (ngày)', Math.round(totALTon*10)/10+' ngày', empCost.length+' NV có lương','','success')}
+        ${kpiCard('Tồn còn lại AL (ngày)', Math.round(totALTon*10)/10+' ngày', empCost.length+' NV có lương','','success')}
         ${kpiCard('Chi phí AL tồn', fmtM(totALCost)+' đ', 'Toàn công ty','','danger')}
-        ${kpiCard('Tồn cuối năm CL (ngày)', Math.round(totCLTon*10)/10+' ngày', 'Nghỉ bù tồn đọng','','info')}
+        ${kpiCard('Tồn còn lại CL (ngày)', Math.round(totCLTon*10)/10+' ngày', 'Nghỉ bù tồn đọng','','info')}
         ${kpiCard('Chi phí CL tồn', fmtM(totCLCost)+' đ', 'Toàn công ty','','warning')}
       </div>
 
@@ -15126,9 +15126,9 @@ function renderLeaves(main){
           <thead><tr>
             <th>Bộ phận</th>
             <th style="text-align:center">NV</th>
-            <th style="text-align:center;color:var(--success)">Tồn cuối năm AL (ngày)</th>
+            <th style="text-align:center;color:var(--success)">Tồn còn lại AL (ngày)</th>
             <th style="text-align:center;color:var(--success)">Chi phí AL (đ)</th>
-            <th style="text-align:center;color:var(--info)">Tồn cuối năm CL (ngày)</th>
+            <th style="text-align:center;color:var(--info)">Tồn còn lại CL (ngày)</th>
             <th style="text-align:center;color:var(--info)">Chi phí CL (đ)</th>
             <th style="text-align:center;color:var(--accent)">Tổng chi phí (đ)</th>
           </tr></thead>
@@ -32505,14 +32505,14 @@ async function exportLeaveByDeptZip(){
     const empRowsRaw = emps.map((e)=>{
       const shAL = getLeaveSheet(e.id,'al',yr);
       const shCL = getLeaveSheet(e.id,'cl',yr);
-      // ⚠️ Formula FULL YEAR — match Web "Tổng phát sinh" / "Tồn cuối năm" và Excel
+      // ⚠️ Formula FULL YEAR — match Web "Tổng phát sinh" / "Tồn còn lại" và Excel
       // Trước đây dùng partial (slice tới upToMonth) → số PDF khác web. User yêu cầu align.
       const alCarry = shAL.carry||0;
       const alEntMonths = (shAL.entitle||[]).slice(0, upToMonth);  // dùng cho Sheet 2 chi tiết
       const alEntitleSum = alCarry + (shAL.entitle||[]).reduce((s,x)=>s+(x||0), 0);  // = Tổng phát sinh (FULL YEAR)
       const alTakenMonths = (shAL.taken||[]).slice(0, upToMonth);
       const alTakenSum = (shAL.taken||[]).reduce((s,x)=>s+(x||0), 0);  // = Tổng đã nghỉ (FULL YEAR)
-      const alRemain = Math.round((alEntitleSum - alTakenSum)*100)/100;  // = Tồn cuối năm
+      const alRemain = Math.round((alEntitleSum - alTakenSum)*100)/100;  // = Tồn còn lại
 
       const clCarry = shCL.carry||0;
       const clEntMonths = (shCL.entitle||[]).slice(0, upToMonth);
@@ -32554,8 +32554,8 @@ async function exportLeaveByDeptZip(){
       const wb = XLSX.utils.book_new();
       // Sheet 1: Tóm tắt (đơn giản, dễ đọc cho trưởng bộ phận)
       const sumHead = ['STT', 'Mã NV', 'Họ tên', 'Vị trí', 'Ngày vào',
-        'AL Tồn năm cũ', 'AL Tổng phát sinh', 'AL Đã nghỉ', 'AL Tồn cuối năm',
-        'CL Tồn năm cũ', 'CL Tổng phát sinh', 'CL Đã nghỉ', 'CL Tồn cuối năm'];
+        'AL Tồn năm cũ', 'AL Tổng phát sinh', 'AL Đã nghỉ', 'AL Tồn còn lại',
+        'CL Tồn năm cũ', 'CL Tổng phát sinh', 'CL Đã nghỉ', 'CL Tồn còn lại'];
       const sumRows = empRows.map(r=>[
         r.i, r.code, r.name, r.role, r.joined,
         r.alCarry, r.alEntitleSum - r.alCarry, r.alTakenSum, r.alRemain,
@@ -32664,11 +32664,11 @@ function _buildLeaveDeptPDFHTML(dept, empRows, yr, upToMonth, company, today){
   const subCells = `<th style="background:#1976d2;color:#fff">Tồn năm cũ</th>
     <th style="background:#1976d2;color:#fff">Tổng phát sinh</th>
     <th style="background:#1976d2;color:#fff">Đã nghỉ</th>
-    <th style="background:#1976d2;color:#fff">Tồn cuối năm</th>
+    <th style="background:#1976d2;color:#fff">Tồn còn lại</th>
     <th style="background:#7b1fa2;color:#fff">Tồn năm cũ</th>
     <th style="background:#7b1fa2;color:#fff">Tổng phát sinh</th>
     <th style="background:#7b1fa2;color:#fff">Đã nghỉ</th>
-    <th style="background:#7b1fa2;color:#fff">Tồn cuối năm</th>`;
+    <th style="background:#7b1fa2;color:#fff">Tồn còn lại</th>`;
 
   const rows = empRows.map(r=>{
     const alColor = r.alRemain < 0 ? '#d32f2f' : r.alRemain === 0 ? '#c62828' : r.alRemain<=3 ? '#e65100' : '#2e7d32';
@@ -32747,7 +32747,7 @@ tr:nth-child(even) td{background:#fafafa}
 
 <div class="notice">
   📋 <b>Hướng dẫn đọc báo cáo:</b> Bảng tổng hợp số ngày phép năm (AL) và phép bù (CL) của từng nhân viên trong phòng.
-  <b>Tổng phát sinh</b> = Tồn năm cũ + Hưởng cả năm (T1→T12). <b>Tồn cuối năm</b> = Tổng phát sinh − Đã nghỉ. Cần lên kế hoạch nghỉ cho NV có "Tồn cuối năm" nhiều hoặc gần hết năm.
+  <b>Tổng phát sinh</b> = Tồn năm cũ + Hưởng cả năm (T1→T12). <b>Tồn còn lại</b> = Tổng phát sinh − Đã nghỉ. Cần lên kế hoạch nghỉ cho NV có "Tồn còn lại" nhiều hoặc gần hết năm.
 </div>
 
 <table>
