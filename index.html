@@ -13920,17 +13920,7 @@ function renderLeavePlan(main){
     });
     fTon=Math.round(fTon*10)/10; fKh=Math.round(fKh*10)/10; fReal=Math.round(fReal*10)/10; fConLai=Math.round(fConLai*10)/10;
     const fDuKienFoot = (fTon>0||fKh>0) ? Math.round((fTon-fKh)*10)/10 : null;
-    const fVsKHFoot   = (fKh>0&&fReal>0) ? Math.round((fReal-fKh)*10)/10 : null;
-    // Logic ĐẠT mới: Đạt = clear nhiều (real >= kh), Không đạt = thiếu
-    let fDatFoot, fDatCFoot;
-    if(fVsKHFoot === null){ fDatFoot = '—'; fDatCFoot = 'var(--ink-muted)'; }
-    else if(fVsKHFoot >= 0){
-      fDatFoot = fVsKHFoot > 0 ? `✅ Đạt <span style="opacity:.85;font-weight:400;font-size:10.5px">(vượt KH ${fVsKHFoot})</span>` : '✅ Đạt';
-      fDatCFoot = 'var(--success)';
-    } else {
-      fDatFoot = `❌ Không đạt <span style="opacity:.85;font-weight:400;font-size:10.5px">(thiếu ${Math.abs(fVsKHFoot)})</span>`;
-      fDatCFoot = 'var(--danger)';
-    }
+    // ⚠️ Footer per-type KHÔNG còn đánh giá Đạt/Không đạt (chỉ Σ TỔNG AL+CL có) → bỏ update fDatEl
     const colFoot = type==='al'?'var(--success)':'var(--info)';
     const fTonEl=document.getElementById('foot_'+mi+'_'+type+'_ton');
     if(fTonEl) fTonEl.textContent=fTon||'0';
@@ -13942,8 +13932,9 @@ function renderLeavePlan(main){
     if(fDkEl){ fDkEl.textContent=fDuKienFoot!==null?fDuKienFoot:'—'; fDkEl.style.color=fDuKienFoot!==null?(fDuKienFoot>=0?'var(--success)':'var(--danger)'):'var(--ink-muted)'; }
     const fRealEl=document.getElementById('foot_'+mi+'_'+type+'_real');
     if(fRealEl){ fRealEl.textContent=fReal||'—'; fRealEl.style.color=colFoot; }
+    // ĐẠT KH? cell ở per-type footer → giữ "—" trống (sẽ refresh full khi user blur input nhờ debounce render)
     const fDatEl=document.getElementById('foot_'+mi+'_'+type+'_dat');
-    if(fDatEl){ fDatEl.innerHTML=fDatFoot; fDatEl.style.color=fDatCFoot; }
+    if(fDatEl) fDatEl.innerHTML='<span style="opacity:.4">—</span>';
   };
 
   // Tính "Tồn cuối năm" cho 1 NV — ưu tiên dùng số đã tính từ bảng Theo dõi (cùng công thức, cùng getSheet)
@@ -14113,24 +14104,13 @@ function renderLeavePlan(main){
       return typeRows + totalRow;
     }).join('');
 
-    // ⚠️ Footer: khi xem CẢ AL+CL → chỉ hiện 1 dòng Σ TỔNG AL+CL (gộp).
-    //            khi chỉ xem 1 loại → hiện dòng TỔNG cho loại đó.
-    const showBothLeave = showAL && showCL;
-    const footRow = (showBothLeave ? '' : ['al','cl'].filter(t=>t==='al'?showAL:showCL).map((type,ti)=>{
+    // ⚠️ Footer: hiện cả TỔNG AL + TỔNG CL (như per-dept), nhưng KHÔNG đánh giá ĐẠT KH? ở 2 dòng này
+    //            Chỉ dòng Σ TỔNG AL+CL bên dưới mới hiển thị Đạt/Không đạt.
+    const footRow = ['al','cl'].filter(t=>t==='al'?showAL:showCL).map((type,ti)=>{
       const isAL=type==='al'; const f=isAL?footAL:footCL;
       const fTon=Math.round(f.ton*10)/10; const fKh=Math.round(f.kh*10)/10; const fReal=Math.round(f.real*10)/10;
       const fDuKien=(fTon>0||fKh>0)?Math.round((fTon-fKh)*10)/10:null;
-      const fVsKH=fKh>0&&fReal>0?Math.round((fReal-fKh)*10)/10:null;
-      // ⚠️ Logic đồng bộ với dept Σ AL+CL: clear nhiều = Đạt, thiếu = Không đạt
-      let fDat, fDatC;
-      if(fVsKH === null){ fDat = '—'; fDatC = 'var(--ink-muted)'; }
-      else if(fVsKH >= 0){
-        fDat = fVsKH > 0 ? `✅ Đạt <span style="opacity:.85;font-weight:400;font-size:10.5px">(vượt KH ${fVsKH})</span>` : '✅ Đạt';
-        fDatC = 'var(--success)';
-      } else {
-        fDat = `❌ Không đạt <span style="opacity:.85;font-weight:400;font-size:10.5px">(thiếu ${Math.abs(fVsKH)})</span>`;
-        fDatC = 'var(--danger)';
-      }
+      // ⚠️ Footer per-type: KHÔNG đánh giá Đạt/Không đạt (chỉ Σ TỔNG AL+CL mới đánh giá)
       const col=isAL?'var(--success)':'var(--info)';
       const fRowspan = (showAL&&showCL)?2:1;
       return `<tr style="background:var(--bg-elev);font-weight:700">
@@ -14141,9 +14121,9 @@ function renderLeavePlan(main){
         <td id="foot_${mi}_${type}_kh" style="padding:6px 8px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:12px;color:#ff9f43">${fKh||'—'}</td>
         <td id="foot_${mi}_${type}_dk" style="padding:6px 8px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:12px;color:${fDuKien!==null?(fDuKien>=0?'var(--success)':'var(--danger)'):'var(--ink-muted)'}">${fDuKien!==null?fDuKien:'—'}</td>
         <td id="foot_${mi}_${type}_real" style="padding:6px 8px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:12px;color:${col}">${fReal||'—'}</td>
-        <td id="foot_${mi}_${type}_dat" style="padding:6px 8px;text-align:center;font-size:12px;font-weight:700;color:${fDatC}">${fDat}</td>
+        <td id="foot_${mi}_${type}_dat" style="padding:6px 8px;text-align:center;color:var(--ink-muted);font-size:11px"><span style="opacity:.4">—</span></td>
       </tr>`;
-    }).join('')) + ((showAL&&showCL) ? (()=>{
+    }).join('') + ((showAL&&showCL) ? (()=>{
       const totTon  = Math.round((footAL.ton+footCL.ton)*10)/10;
       const totKh   = Math.round((footAL.kh+footCL.kh)*10)/10;
       const totReal = Math.round((footAL.real+footCL.real)*10)/10;
