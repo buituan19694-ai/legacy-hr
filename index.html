@@ -13724,6 +13724,33 @@ window.toggleLeaveGroup = function(did){
               <td style="text-align:center;font-size:10px">${showAL?`<div style="color:var(--purple);font-weight:700">${fnum(empMonthData.reduce((s,x)=>s+x.al.pending,0))}</div>`:''}${showCL?`<div style="color:var(--ink-muted);font-size:11px">—</div>`:''}</td>
               <td style="text-align:center;font-size:10px;border-left:2px solid rgba(183,148,212,.4)">${showAL?`<div style="color:var(--success);font-weight:700">${fnum(empMonthData.reduce((s,x)=>s+((x.al.pendingEntitle||x.al.totalEntitle)-x.al.totalUsed),0))}</div>`:''}${showCL?`<div style="color:var(--success);opacity:.7">${fnum(empMonthData.reduce((s,x)=>s+((x.cl.pendingEntitle||x.cl.totalEntitle)-x.cl.totalUsed),0))}</div>`:''}</td>
             </tr>
+            ${showBoth ? (()=>{
+              // Dòng "∑ Tổng AL+CL" — gộp AL+CL của toàn bộ NV thành 1 con số/cột
+              const sumCarry = empMonthData.reduce((s,x)=>s+(x.al.carry||0)+(x.cl.carry||0),0);
+              const sumEntitle = Array.from({length:12},(_,i)=>empMonthData.reduce((s,x)=>s+x.al.months[i].entitle+x.cl.months[i].entitle,0));
+              const sumTongPhat = empMonthData.reduce((s,x)=>s+(x.al.pendingEntitle||x.al.totalEntitle)+(x.cl.pendingEntitle||x.cl.totalEntitle),0);
+              const sumTakenT1 = empMonthData.reduce((s,x)=>s+x.al.months[0].used+x.cl.months[0].used,0);
+              const sumTakenT2 = empMonthData.reduce((s,x)=>s+x.al.months[1].used+x.cl.months[1].used,0);
+              const sumClearAL = empMonthData.reduce((s,x)=>s+(x.al.clearAL||0),0);
+              const sumTakenRest = Array.from({length:10},(_,i)=>empMonthData.reduce((s,x)=>s+x.al.months[i+2].used+x.cl.months[i+2].used,0));
+              const sumTotalUsed = empMonthData.reduce((s,x)=>s+x.al.totalUsed+x.cl.totalUsed,0);
+              const sumConLai = empMonthData.reduce((s,x)=>s+x.al.pending,0); // CL không có Còn lại năm cũ
+              const sumTonCuoi = empMonthData.reduce((s,x)=>s+((x.al.pendingEntitle||x.al.totalEntitle)-x.al.totalUsed)+((x.cl.pendingEntitle||x.cl.totalEntitle)-x.cl.totalUsed),0);
+              return `
+            <tr style="background:#1a2535;border-top:1px solid var(--border-strong);font-weight:700">
+              <td style="padding:6px 10px;position:sticky;left:0;background:#1a2535;z-index:1;border-right:2px solid var(--border-strong);color:#FFCC00">∑ Tổng <em style="font-weight:400;opacity:.9">AL+CL</em></td>
+              <td style="text-align:center;font-size:10.5px;color:#FFCC00;font-weight:700">${fnum(sumCarry)}</td>
+              ${sumEntitle.map(v=>`<td style="text-align:center;font-size:10.5px;color:#FFCC00;font-weight:700">${fnum(v)}</td>`).join('')}
+              <td style="text-align:center;font-size:10.5px;color:#FFCC00;font-weight:700;border-left:2px solid rgba(255,200,0,.2)">${fnum(sumTongPhat)}</td>
+              <td style="text-align:center;font-size:10.5px;color:#FFCC00;font-weight:700">${fnum(sumTakenT1)}</td>
+              <td style="text-align:center;font-size:10.5px;color:#FFCC00;font-weight:700">${fnum(sumTakenT2)}</td>
+              <td style="text-align:center;font-size:10.5px;color:#FFCC00;font-weight:700">${fnum(sumClearAL)}</td>
+              ${sumTakenRest.map(v=>`<td style="text-align:center;font-size:10.5px;color:#FFCC00;font-weight:700">${fnum(v)}</td>`).join('')}
+              <td style="text-align:center;font-size:10.5px;color:#FFCC00;font-weight:700">${fnum(sumTotalUsed)}</td>
+              <td style="text-align:center;font-size:10.5px;color:#FFCC00;font-weight:700">${fnum(sumConLai)}</td>
+              <td style="text-align:center;font-size:10.5px;color:#FFCC00;font-weight:700;border-left:2px solid rgba(183,148,212,.4)">${fnum(sumTonCuoi)}</td>
+            </tr>`;
+            })() : ''}
           </tfoot>
         </table>
       </div>
@@ -13845,6 +13872,9 @@ function renderLeavePlan(main){
     if(!DB.leavePlan[curYear][deptId][mi]) DB.leavePlan[curYear][deptId][mi]={al:0,cl:0};
     DB.leavePlan[curYear][deptId][mi][type] = parseFloat(val)||0;
     saveData(['leavePlan']);
+    // Debounce full re-render để dòng Σ AL+CL "Đạt KH?" cập nhật chính xác
+    clearTimeout(window._planRenderTimer);
+    window._planRenderTimer = setTimeout(()=>render(), 600);
     // Update Tồn sau KH và Đạt KH? realtime
     const kh = DB.leavePlan[curYear][deptId][mi][type]||0;
     const ton = Math.round(getTonDauThang(deptId, mi, type)*10)/10;
@@ -13860,9 +13890,10 @@ function renderLeavePlan(main){
     if(dkEl) dkEl.innerHTML = duKien!==null
       ? '<span style="font-weight:700;font-size:12px;color:'+duKienC+';font-family:JetBrains Mono,monospace">'+duKien+'</span>'
       : '<span style="color:var(--ink-muted);font-size:11px">—</span>';
+    // ⚠️ Cell "plan_dat_..." cho từng type (AL/CL) giờ là "—" trống — KHÔNG update realtime
+    // Cell ĐẠT KH? chính ở dòng Σ AL+CL (gộp 2 loại) — sẽ refresh full khi user blur (debounce render)
     const datEl = document.getElementById('plan_dat_'+deptId+'_'+mi+'_'+type);
-    if(datEl) datEl.innerHTML = '<span style="font-size:12px;font-weight:700;color:'+datColor+'">'+datText+'</span>'
-      + (vsKH!==null?'<div style="font-size:10px;color:'+vsKHC+';font-family:JetBrains Mono,monospace">'+vsKHT+'</div>':'');
+    if(datEl) datEl.innerHTML = '<span style="opacity:.4">—</span>';
     // Update footer totals row
     const allDepts = DB.departments||[];
     const _now2 = today.toISOString().slice(0,10);
@@ -13957,15 +13988,27 @@ function renderLeavePlan(main){
 
     let footAL={ton:0,kh:0,real:0,conLai:0}, footCL={ton:0,kh:0,real:0,conLai:0};
 
-    // Tính ranking top 3 dept theo tổng thực tế AL+CL trong tháng
+    // Tính ranking 2 loại trophy cho từng tháng
     const deptRealTotals = depts.map(dept=>{
       const realAL = getRealByDept(dept.id, mi, 'al');
       const realCL = getRealByDept(dept.id, mi, 'cl');
-      return {id: dept.id, total: Math.round((realAL+realCL)*10)/10};
-    }).filter(d=>d.total>0).sort((a,b)=>b.total-a.total);
+      const headcount = activeEmps.filter(e=>e.deptId===dept.id).length;
+      const total = Math.round((realAL+realCL)*10)/10;
+      const avg = headcount > 0 ? Math.round((total/headcount)*100)/100 : 0;
+      return {id: dept.id, total, headcount, avg};
+    }).filter(d=>d.total>0);
+
+    // 🏆 Cúp TO: dept có TỔNG thực tế nghỉ NHIỀU NHẤT
+    const sortedByTotal = [...deptRealTotals].sort((a,b)=>b.total-a.total);
+    const champByTotal = sortedByTotal[0];
+    // 🏅 Cúp Bình quân: dept có BÌNH QUÂN (real/NV) cao nhất
+    const sortedByAvg = [...deptRealTotals].sort((a,b)=>b.avg-a.avg);
+    const champByAvg = sortedByAvg[0];
+
     const trophyMap = {};
-    const trophies = ['🏆','🥈','🥉'];
-    deptRealTotals.slice(0,3).forEach((d,i)=>{ trophyMap[d.id]=trophies[i]; });
+    if(champByTotal) trophyMap[champByTotal.id] = (trophyMap[champByTotal.id]||'') + '🏆';
+    if(champByAvg && champByAvg.id !== champByTotal?.id) trophyMap[champByAvg.id] = (trophyMap[champByAvg.id]||'') + '🏅';
+    else if(champByAvg && champByAvg.id === champByTotal?.id) trophyMap[champByAvg.id] = '🏆🏅';
 
     const rows = depts.map((dept,idx)=>{
       const plan = DB.leavePlan[curYear][dept.id]||{};
@@ -14021,9 +14064,8 @@ function renderLeavePlan(main){
             ${duKien!==null?`<span style="font-weight:700;font-size:12px;color:${duKienC};font-family:'JetBrains Mono',monospace">${duKien}</span>`:`<span style="color:var(--ink-muted);font-size:11px">—</span>`}
           </td>
           <td style="padding:6px 8px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:12px;color:${col};font-weight:600">${real||'—'}</td>
-          <td id="plan_dat_${dept.id}_${mi}_${type}" style="padding:6px 8px;text-align:center">
-            <span style="font-size:12px;font-weight:700;color:${datColor}">${datText}</span>
-            ${vsKH!==null?`<div style="font-size:10px;color:${vsKHC};font-family:'JetBrains Mono',monospace">${vsKHT}</div>`:''}
+          <td id="plan_dat_${dept.id}_${mi}_${type}" style="padding:6px 8px;text-align:center;color:var(--ink-muted);font-size:11px">
+            <span style="opacity:.4">—</span>
           </td>
         </tr>`;
       }).join('');
@@ -14035,10 +14077,21 @@ function renderLeavePlan(main){
         const totReal = Math.round((dReal.al+dReal.cl)*10)/10;
         const totDk   = (dDk.al!==null||dDk.cl!==null) ? Math.round(((dDk.al||0)+(dDk.cl||0))*10)/10 : null;
         const totVsKH = (totKh>0&&totReal>0) ? Math.round((totReal-totKh)*10)/10 : null;
-        const totDat  = totVsKH!==null?(totVsKH<=0?'✅ Đạt':'❌ Vượt'):'—';
-        const totDatC = totVsKH!==null?(totVsKH<=0?'var(--success)':'var(--danger)'):'var(--ink-muted)';
+        // ⚠️ Logic ĐẠT/KHÔNG ĐẠT theo user: muốn NV clear nhiều phép = Đạt
+        // - Real >= KH (totVsKH >= 0): Đạt (vượt KH X ngày) — clear nhiều, tốt
+        // - Real < KH (totVsKH < 0): Không đạt (thiếu |X| ngày) — chưa clear đủ
+        let totDat, totDatC;
+        if(totVsKH === null){
+          totDat = '—'; totDatC = 'var(--ink-muted)';
+        } else if(totVsKH >= 0){
+          totDat = totVsKH > 0 ? `✅ Đạt <span style="opacity:.85;font-weight:400;font-size:10.5px">(vượt KH ${totVsKH})</span>` : '✅ Đạt';
+          totDatC = 'var(--success)';
+        } else {
+          totDat = `❌ Không đạt <span style="opacity:.85;font-weight:400;font-size:10.5px">(thiếu ${Math.abs(totVsKH)})</span>`;
+          totDatC = 'var(--danger)';
+        }
         return `<tr style="background:#0f1a28;border-bottom:2px solid var(--border-strong)">
-          <td style="padding:4px 12px;position:sticky;left:0;background:#0f1a28;z-index:1;font-size:10px;font-weight:700;color:#FFCC00;font-family:'JetBrains Mono',monospace">∑ AL+CL${trophyMap[dept.id]?` ${trophyMap[dept.id]}`:''}</td>
+          <td style="padding:4px 12px;position:sticky;left:0;background:#0f1a28;z-index:1;font-size:10px;font-weight:700;color:#FFCC00;font-family:'JetBrains Mono',monospace">∑ AL+CL${trophyMap[dept.id]?` <span style="font-size:14px">${trophyMap[dept.id]}</span>`:''}</td>
           <td style="padding:4px 8px;font-size:10px;color:#FFCC00;border-right:1px solid var(--border)">Tổng</td>
           <td style="padding:4px 8px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:#FFCC00">${totTon||'0'}</td>
           <td style="padding:4px 8px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:12px;color:#FFCC00">—</td>
@@ -14128,6 +14181,12 @@ function renderLeavePlan(main){
           <tfoot style="border-top:2px solid var(--border-strong)">${footRow}</tfoot>
         </table>
       </div>
+      ${(champByTotal || champByAvg) ? `
+      <div style="margin-top:10px;padding:10px 14px;background:var(--bg-elev);border-radius:8px;border:1px solid var(--border);font-size:11.5px;display:flex;flex-wrap:wrap;gap:18px;align-items:center">
+        <span style="color:var(--ink-muted);font-weight:600">Tháng ${mi+1}:</span>
+        ${champByTotal ? `<span><span style="font-size:16px">🏆</span> <b>Clear nhiều nhất:</b> <span style="color:var(--accent);font-weight:700">${escapeHtml((depts.find(d=>d.id===champByTotal.id)||{}).name||'')}</span> — <b>${champByTotal.total}</b> ngày</span>` : ''}
+        ${champByAvg ? `<span><span style="font-size:16px">🏅</span> <b>Bình quân cao nhất:</b> <span style="color:var(--accent);font-weight:700">${escapeHtml((depts.find(d=>d.id===champByAvg.id)||{}).name||'')}</span> — <b>${champByAvg.avg}</b> ngày/NV <span style="color:var(--ink-muted)">(${champByAvg.total}/${champByAvg.headcount} NV)</span></span>` : ''}
+      </div>` : ''}
     </div>`;
   });
 
@@ -32337,9 +32396,10 @@ function openLeaveByDeptExportModal(){
       <div class="field full">
         <label>Trạng thái NV</label>
         <select id="ldExpStatus">
-          <option value="active" selected>Đang làm (chính thức + thử việc)</option>
-          <option value="all">Tất cả (cả nghỉ dài hạn + đã nghỉ việc)</option>
-          <option value="hasRemain">Chỉ NV còn ngày AL/CL (có số ≠ 0, kể cả âm)</option>
+          <option value="active" ${((window._leaveBal||{}).statusFilter||'active')==='active'?'selected':''}>🟢 Đang làm (chính thức + thử việc + nghỉ dài hạn)</option>
+          <option value="all" ${((window._leaveBal||{}).statusFilter||'active')==='all'?'selected':''}>Tất cả (kể cả đã nghỉ việc)</option>
+          <option value="exit" ${((window._leaveBal||{}).statusFilter||'active')==='exit'?'selected':''}>🔴 Chỉ NV đã nghỉ việc</option>
+          <option value="hasRemain">Chỉ NV còn ngày AL/CL (≠ 0, kể cả âm)</option>
         </select>
       </div>
     </div>
@@ -32369,13 +32429,16 @@ async function exportLeaveByDeptZip(){
   const _skippedDepts = [];
 
   // Helper: get filtered employees + trainees for a dept
-  // statusFilter có 3 modes:
-  //   - 'active'     → chỉ NV đang làm thực sự (active + probation) + TTS đang thực tập
-  //   - 'all'        → tất cả NV + tất cả TTS kể cả đã nghỉ/đã hết hạn
+  // statusFilter có 4 modes (đồng bộ với web bảng Theo dõi):
+  //   - 'active'     → tất cả NV không phải 'exit' (active + probation + leave) — GIỐNG WEB
+  //   - 'exit'       → chỉ NV đã nghỉ việc
+  //   - 'all'        → tất cả NV + tất cả TTS
   //   - 'hasRemain'  → tất cả NV + TTS, sau sẽ filter chỉ giữ ai còn AL/CL ≠ 0
   const _empsForDept = (deptId) => {
     let pool = DB.employees||[];
-    if(statusFilter === 'active') pool = pool.filter(e=>['active','probation'].includes(getEffectiveStatus(e)));
+    // ⚠️ Filter 'active' đồng bộ với web (line 13284): exclude exit, include leave
+    if(statusFilter === 'active') pool = pool.filter(e=>getEffectiveStatus(e)!=='exit');
+    else if(statusFilter === 'exit') pool = pool.filter(e=>getEffectiveStatus(e)==='exit');
     pool = pool.filter(e=>e.deptId===deptId);
 
     // Gộp thêm trainees (chuyển thành virtual emp với id='tr_'+t.id để khớp với getLeaveSheet)
@@ -32388,6 +32451,13 @@ async function exportLeaveByDeptZip(){
         if(tr.status === 'active') return true;
         if(tr.endDate && tr.endDate < nowStr) return false;
         return true;
+      });
+    } else if(statusFilter === 'exit'){
+      // Chỉ TTS đã nghỉ
+      trPool = trPool.filter(tr=>{
+        if(tr.status === 'exit' || tr.status === 'early_exit') return true;
+        if(tr.endDate && tr.endDate < nowStr) return true;
+        return false;
       });
     }
     // 'all' và 'hasRemain' đều lấy hết TTS
