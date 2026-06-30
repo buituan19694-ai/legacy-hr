@@ -1067,7 +1067,21 @@ function _recYear(r){
   if(!d) return new Date().getFullYear();
   const m = String(d).match(/(\d{4})/); return m ? parseInt(m[1]) : new Date().getFullYear();
 }
-function _recMonth(r){ const d=r.date||r.month||''; const m=String(d).match(/(\d{4})[_\-](\d{2})/); return m?`${m[1]}_${m[2]}`:`${new Date().getFullYear()}_${String(new Date().getMonth()+1).padStart(2,'0')}`; }
+function _recMonth(r){
+  const d=r.date||r.month||'';
+  const m=String(d).match(/(\d{4})[_\-](\d{2})/);
+  if(m) return `${m[1]}_${m[2]}`;
+  // ⚠️ FIX: Casuals dùng r.year + r.month riêng biệt (không có r.date string)
+  // Logic cũ fall back today → tất cả records map về shard today bất kể r.month thực
+  // → gây mất data khi realtime listener filter shard theo "today"
+  if(r.year && r.month){
+    const yr=parseInt(r.year), mo=parseInt(r.month);
+    if(!isNaN(yr)&&!isNaN(mo)&&yr>1900&&mo>=1&&mo<=12){
+      return `${yr}_${String(mo).padStart(2,'0')}`;
+    }
+  }
+  return `${new Date().getFullYear()}_${String(new Date().getMonth()+1).padStart(2,'0')}`;
+}
 const EMP_COLLECTION = 'emp_profiles';
 
 function _fsDocFor(key){
@@ -1219,8 +1233,10 @@ function _pushDynamicKey(key, meta){
     const arr = DB.casuals || [];
     const byMonth = {};
     arr.forEach(r=>{ const m=_recMonth(r); (byMonth[m]=byMonth[m]||[]).push(r); });
-    const now=new Date(); const thisMo=`${now.getFullYear()}_${String(now.getMonth()+1).padStart(2,'0')}`;
-    if(!byMonth[thisMo]) byMonth[thisMo]=[];
+    // ⚠️ KHÔNG force write empty shard tháng hiện tại nữa
+    // Bug cũ: nếu DB.casuals chưa load xong (= []) mà saveData() trigger → ghi shard tháng hiện tại = []
+    // → realtime listener filter records ra → MẤT toàn bộ data
+    // Giờ: chỉ ghi shards CÓ data thực sự → không bao giờ ghi đè empty trừ khi user xoá hết
     Object.entries(byMonth).forEach(([mo,records])=>{
       window.fbDb.collection('hrdata').doc(`casuals_${mo}`)
         .set({...meta, casuals:records, _shard:mo}, {merge:false})
@@ -21290,6 +21306,14 @@ function renderPerformanceHistory(main){
 
 // ─── Helper: save sharded key to Firestore with confirmation ───────────────
 function _saveSharded(key, onDone){
+  // ⚠️ FIX casuals: dùng _pushDynamicKey (shard theo tháng) để tránh conflict 2 format
+  // Trước: _saveSharded ghi casuals_2026 (theo năm), _pushDynamicKey ghi casuals_2026_06 (tháng)
+  // → 2 path khác nhau gây mất data khi race condition
+  if(key === 'casuals'){
+    saveData([key]);
+    if(onDone) onDone();
+    return;
+  }
   const prefixMap = {
     kpiReviews:'kpi', rewardRecords:'rewards', disciplineRecords:'discipline',
     leaves:'leaves', promotions:'promos', casuals:'casuals', candidates:'cand'
@@ -28921,14 +28945,26 @@ const fbDb      = firebase.firestore();
 // Cache toàn bộ data vào IndexedDB của browser
 // → Render UI đọc từ cache (0 reads), Firebase chỉ push khi có thay đổi
 // → Vẫn realtime, vẫn free, an toàn cho 6 máy của Meoz
-// Offline persistence — clear corrupt IndexedDB nếu lỗi, retry 1 lần
+// ⚠️ ĐỔI SANG SINGLE-TAB persistence (synchronizeTabs:false)
+// Bug cũ: multi-tab gây "zombie client id" + TypeError null khi IndexedDB transaction conflict
+// → write failed silently → data nhập mất khi reload (vd: casual T6)
 (async function initPersistence(){
   try {
-    await fbDb.enablePersistence({ synchronizeTabs: true });
-    console.log('[Firestore] Offline persistence enabled ✅');
+    await fbDb.enablePersistence(); // single-tab, không có synchronizeTabs
+    console.log('[Firestore] Offline persistence enabled ✅ (single-tab mode)');
   } catch(err) {
     if(err.code === 'failed-precondition'){
-      console.warn('[Firestore] Persistence: nhiều tab cùng mở, chỉ 1 tab cache được');
+      // Tab khác đang giữ persistence lock → tab này fallback online-only
+      console.warn('[Firestore] Tab khác đang mở — tab này chạy online-only mode');
+      // Warning toast (delay 2s đợi UI ready) — chỉ show 1 lần per session
+      if(!window._multiTabWarned){
+        window._multiTabWarned = true;
+        setTimeout(()=>{
+          if(typeof toast === 'function'){
+            toast('⚠️ Bạn đang mở nhiều tab — Để tránh mất data, hãy chỉ dùng 1 tab tại 1 thời điểm', 'warning', 8000);
+          }
+        }, 2000);
+      }
     } else if(err.code === 'unimplemented'){
       console.warn('[Firestore] Browser không hỗ trợ IndexedDB');
     } else {
