@@ -10,7 +10,7 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.4/jspdf.plugin.autotable.min.js"></script>
 
 <!-- Firebase SDK via CDN -->
@@ -5372,7 +5372,8 @@ function renderDashboard(main){
 
   const tenures = filteredPool
     .filter(e => e.joined && getEffectiveStatus(e) !== 'exit')
-    .map(e => (today - new Date(e.joined)) / (365.25 * 86400000));
+    .map(e => (today - new Date(e.joined)) / (365.25 * 86400000))
+    .filter(t => t >= 0); // Loại NV chưa vào làm
   const avgTenure = tenures.length ? (tenures.reduce((a,b)=>a+b,0) / tenures.length).toFixed(1) : 0;
 
   const openJobs = DB.jobs.filter(j => j.status === 'open').length;
@@ -7123,16 +7124,23 @@ function renderEmployeeProfile(main){
 
   let tenureStr = '—';
   if(joined && !isNaN(joined)){
-    let years = tenureEnd.getFullYear() - joined.getFullYear();
-    let months = tenureEnd.getMonth() - joined.getMonth();
-    if(months < 0){ years--; months += 12; }
-    if(years < 0){ years = 0; months = 0; }
-    const days = Math.max(0, Math.floor((tenureEnd - joined) / 864e5));
-    if(years > 0) tenureStr = `${years} năm ${months} tháng`;
-    else if(months > 0) tenureStr = `${months} tháng`;
-    else if(days > 0) tenureStr = `${days} ngày`;
-    else tenureStr = 'Mới vào';
-    if(isExitEmployee) tenureStr += ' (đến ngày nghỉ)';
+    // Nếu ngày vào ở tương lai → NV chưa vào làm
+    const diffMs = tenureEnd - joined;
+    if(diffMs < 0){
+      const daysUntil = Math.ceil(-diffMs / 864e5);
+      tenureStr = `Chưa vào làm (còn ${daysUntil} ngày)`;
+    } else {
+      let years = tenureEnd.getFullYear() - joined.getFullYear();
+      let months = tenureEnd.getMonth() - joined.getMonth();
+      if(months < 0){ years--; months += 12; }
+      if(years < 0){ years = 0; months = 0; }
+      const days = Math.max(0, Math.floor(diffMs / 864e5));
+      if(years > 0) tenureStr = `${years} năm ${months} tháng`;
+      else if(months > 0) tenureStr = `${months} tháng`;
+      else if(days > 0) tenureStr = `${days} ngày`;
+      else tenureStr = 'Vào làm hôm nay';
+      if(isExitEmployee) tenureStr += ' (đến ngày nghỉ)';
+    }
   }
 
   let age = '';
@@ -10438,7 +10446,7 @@ function renderDepartmentDetail(main){
 
   const tenures = DB.employees.filter(e=>e.deptId===d.id && e.joined && getEffectiveStatus(e)!=='exit').map(e=>{
     return (now - new Date(e.joined)) / (365.25 * 86400000);
-  });
+  }).filter(t => t >= 0); // Loại NV chưa vào làm (joined ở tương lai)
   const avgTenure = tenures.length ? (tenures.reduce((s,t)=>s+t,0)/tenures.length).toFixed(1) : '—';
 
   main.innerHTML = `
@@ -12844,6 +12852,11 @@ function exportLeaveXLSX(){
       if(isNaN(join.getTime())) return '';
     }
     var now = new Date();
+    // Nếu ngày vào ở tương lai → chưa vào làm
+    if(join.getTime() > now.getTime()){
+      var daysUntil = Math.ceil((join.getTime() - now.getTime()) / 864e5);
+      return 'Chua vao lam (con ' + daysUntil + ' ngay)';
+    }
     var y = now.getFullYear() - join.getFullYear();
     var m2 = now.getMonth() - join.getMonth();
     if(now.getDate() < join.getDate()) m2--;
@@ -32758,6 +32771,27 @@ async function exportLeaveByDeptZip(){
   const selectedDeptIds = Array.from(document.querySelectorAll('.ldExpDept:checked')).map(c=>c.value);
   if(selectedDeptIds.length === 0){ toast('Vui lòng chọn ít nhất 1 phòng ban','error'); return; }
 
+  // Nếu cần PDF → check jsPDF + autotable ONE-TIME, chờ tối đa 8s cho CDN load
+  if(fmt === 'pdf' || fmt === 'both'){
+    let _waitedMs = 0;
+    while(_waitedMs < 8000){
+      const _hasJspdf = typeof window.jspdf !== 'undefined' && typeof window.jspdf.jsPDF !== 'undefined';
+      const _hasAutoTable = _hasJspdf && typeof window.jspdf.jsPDF.prototype.autoTable === 'function';
+      if(_hasJspdf && _hasAutoTable) break;
+      if(_waitedMs === 0) toast('Đang chờ thư viện PDF tải xong...','info');
+      await new Promise(r => setTimeout(r, 500));
+      _waitedMs += 500;
+    }
+    if(typeof window.jspdf === 'undefined' || typeof window.jspdf.jsPDF === 'undefined'){
+      toast('Thư viện jsPDF chưa tải được. Hãy kiểm tra mạng + hard refresh (Ctrl+Shift+R)','error');
+      return;
+    }
+    if(typeof window.jspdf.jsPDF.prototype.autoTable !== 'function'){
+      toast('Plugin jspdf-autotable chưa tải. Hãy hard refresh (Ctrl+Shift+R)','error');
+      return;
+    }
+  }
+
   toast(`Đang tạo file cho ${selectedDeptIds.length} phòng ban...`, 'success');
 
   const depts = DB.departments||[];
@@ -32923,16 +32957,8 @@ async function exportLeaveByDeptZip(){
 
     // ========== PDF (jsPDF + autotable — pure vector, hỗ trợ tiếng Việt qua Roboto font) ==========
     if(fmt === 'pdf' || fmt === 'both'){
-      if(typeof window.jspdf === 'undefined' || typeof window.jspdf.jsPDF === 'undefined'){
-        toast('Thư viện jsPDF chưa tải xong, thử lại sau 5s','error');
-        return;
-      }
       try {
         const company = DB.company?.name || 'Legacy Yên Tử MGallery';
-        // Check autotable plugin loaded
-        if(typeof window.jspdf.jsPDF.prototype.autoTable !== 'function'){
-          throw new Error('jspdf-autotable plugin chưa tải, hãy hard refresh (Ctrl+Shift+R)');
-        }
         const pdfBlob = _buildDeptLeavePDFBlob(dept, empRows, yr, upToMonth, company, today);
         if(!pdfBlob || pdfBlob.size < 500){
           throw new Error(`PDF blob rỗng (size=${pdfBlob?.size||0})`);
