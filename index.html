@@ -32773,11 +32773,21 @@ async function exportLeaveByDeptZip(){
 
   // Nếu cần PDF → check jsPDF + autotable ONE-TIME, chờ tối đa 8s cho CDN load
   if(fmt === 'pdf' || fmt === 'both'){
+    // Helper: check autotable đã attach chưa (jsPDF plugin dùng .API pattern, không phải .prototype)
+    // → Test bằng cách tạo instance thật và check method
+    const _checkAutoTable = () => {
+      if(typeof window.jspdf === 'undefined' || typeof window.jspdf.jsPDF === 'undefined') return false;
+      try {
+        // Check .API pattern trước (không cần tạo instance)
+        if(window.jspdf.jsPDF.API && typeof window.jspdf.jsPDF.API.autoTable === 'function') return true;
+        // Fallback: instance-level check
+        const _tmp = new window.jspdf.jsPDF();
+        return typeof _tmp.autoTable === 'function';
+      } catch(_) { return false; }
+    };
     let _waitedMs = 0;
     while(_waitedMs < 8000){
-      const _hasJspdf = typeof window.jspdf !== 'undefined' && typeof window.jspdf.jsPDF !== 'undefined';
-      const _hasAutoTable = _hasJspdf && typeof window.jspdf.jsPDF.prototype.autoTable === 'function';
-      if(_hasJspdf && _hasAutoTable) break;
+      if(_checkAutoTable()) break;
       if(_waitedMs === 0) toast('Đang chờ thư viện PDF tải xong...','info');
       await new Promise(r => setTimeout(r, 500));
       _waitedMs += 500;
@@ -32786,7 +32796,7 @@ async function exportLeaveByDeptZip(){
       toast('Thư viện jsPDF chưa tải được. Hãy kiểm tra mạng + hard refresh (Ctrl+Shift+R)','error');
       return;
     }
-    if(typeof window.jspdf.jsPDF.prototype.autoTable !== 'function'){
+    if(!_checkAutoTable()){
       toast('Plugin jspdf-autotable chưa tải. Hãy hard refresh (Ctrl+Shift+R)','error');
       return;
     }
