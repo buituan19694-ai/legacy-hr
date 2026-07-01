@@ -32449,7 +32449,7 @@ function _buildDeptLeavePDFBlob(dept, empRows, yr, upToMonth, company, today){
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ orientation:'landscape', unit:'mm', format:'a4', compress:true });
   const fontOK = _registerVNFonts(doc);
-  const FONT = fontOK ? FONT : 'helvetica';
+  const FONT = fontOK ? 'RobotoVN' : 'helvetica';
   doc.setFont(FONT,'normal');
 
   const pageW = 297, pageH = 210, M = 10;
