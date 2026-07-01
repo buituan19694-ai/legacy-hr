@@ -32453,7 +32453,8 @@ function _buildDeptLeavePDFBlob(dept, empRows, yr, upToMonth, company, today){
   doc.setFont(FONT,'normal');
 
   const pageW = 297, pageH = 210, M = 10;
-  const dateStr = today.toLocaleDateString('vi-VN');
+  // ⚠️ today truyền vào từ caller đã là STRING (đã format 'vi-VN'), không phải Date object
+  const dateStr = (typeof today === 'string') ? today : today.toLocaleDateString('vi-VN');
 
   // Title
   doc.setFont(FONT,'bold').setFontSize(15).setTextColor(26,26,46);
