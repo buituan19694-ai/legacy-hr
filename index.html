@@ -21274,7 +21274,15 @@ function renderPerformance(main){
                 </td>
                 <td style="font-size:11.5px;color:var(--ink-dim);max-width:240px;font-style:italic">${escapeHtml((p.reason||'').slice(0,80))}${(p.reason||'').length>80?'…':''}</td>
                 <td style="font-size:12px">${escapeHtml(p.approvedBy||p.proposedBy||'—')}</td>
-                <td><span class="badge" style="background:${statusColor}22;color:${statusColor}">${statusIcon} ${PROMOTION_STATUS[p.status]||p.status}</span></td>
+                <td><span class="badge" style="background:${statusColor}22;color:${statusColor}">${statusIcon} ${PROMOTION_STATUS[p.status]||p.status}</span>${
+                  p.status==='completed' && !p.isHistorical && !p.appliedAt && p.effectiveDate
+                    ? `<div style="font-size:9.5px;color:var(--warning);margin-top:3px;font-weight:600">🕒 Chờ áp dụng ${fmtDate(p.effectiveDate)}</div>`
+                    : ''
+                }${
+                  p.status==='completed' && p.appliedAt
+                    ? `<div style="font-size:9.5px;color:var(--success);margin-top:3px">✅ Đã áp dụng</div>`
+                    : ''
+                }</td>
                 <td onclick="event.stopPropagation()"><div class="row-actions">
                   ${p.status === 'proposed' ? `<button class="btn btn-icon" onclick="advancePromotion('${p.id}')" title="Chuyển sang Đang xem xét" style="color:var(--info)">→</button>` : ''}
                   ${p.status === 'reviewing' ? `<button class="btn btn-icon" onclick="advancePromotion('${p.id}')" title="Chuyển sang Đã duyệt" style="color:var(--warning)">→</button>` : ''}
@@ -21672,11 +21680,12 @@ function syncEmployeeKPI(empId){
 /* Apply 1 promotion record vào employee — kiểm tra effectiveDate */
 function applyPromotionToEmployee(p){
   const emp = DB.employees.find(e => e.id === p.empId);
-  if(!emp) return;
+  if(!emp) return false;
   const today = new Date(); today.setHours(23,59,59,999);
   const effDate = p.effectiveDate ? new Date(p.effectiveDate) : null;
   if(effDate && effDate > today){
-    toast('⏰ Đề xuất đã duyệt — sẽ tự động áp dụng vào '+fmtDate(p.effectiveDate), 'info');
+    toast('⏰ Đã ghi nhận thăng chức — sẽ TỰ ĐỘNG áp dụng vào '+fmtDate(p.effectiveDate)+' (khi mở app ngày đó)', 'info');
+    // KHÔNG set appliedAt → autoApplyPendingPromotions sẽ pick up sau
     return false;
   }
   if(!DB.customData[emp.id]) DB.customData[emp.id] = {};
@@ -21697,9 +21706,47 @@ function applyPromotionToEmployee(p){
   if(p.newDeptId && p.newDeptId.trim()) emp.deptId = p.newDeptId.trim();
   emp.manualRole = false;
   emp.updatedAt = new Date(p.effectiveDate||p.date||Date.now()).getTime();
+  p.appliedAt = Date.now(); // ✅ Mark đã apply để scheduler không apply lại
   // Persist lên Firestore ngay lập tức
   saveEmpProfile(emp.id);
   return true;
+}
+
+/* ========================================================
+   AUTO-APPLY PENDING PROMOTIONS
+   Chạy khi load app: apply mọi promotion đã completed
+   có effectiveDate đã tới hạn nhưng chưa được apply.
+   ======================================================== */
+function autoApplyPendingPromotions(){
+  const today = new Date(); today.setHours(23,59,59,999);
+  const pending = (DB.promotions||[]).filter(p => {
+    if(p.status !== 'completed') return false;
+    if(p.isHistorical) return false;                 // lịch sử cũ không apply
+    if(p.appliedAt) return false;                    // đã apply rồi
+    if(!p.effectiveDate) return true;                // không có ngày → apply luôn
+    return new Date(p.effectiveDate) <= today;       // đã đến hạn
+  });
+  if(pending.length === 0) return 0;
+  let count = 0;
+  const names = [];
+  pending.forEach(p => {
+    // Bỏ qua toast trong loop — nếu apply success thì set appliedAt bên trong
+    const before = p.appliedAt;
+    applyPromotionToEmployee(p);
+    if(p.appliedAt && p.appliedAt !== before){
+      count++;
+      const emp = empById(p.empId);
+      if(emp) names.push(emp.name);
+    }
+  });
+  if(count > 0){
+    saveData();
+    console.log(`[AUTO-APPLY] ✅ Đã áp dụng ${count} thăng chức đến hạn:`, names.join(', '));
+    setTimeout(()=>{
+      toast(`🎯 Auto-apply: ${count} thăng chức đến hạn đã cập nhật vào hồ sơ NV (${names.slice(0,3).join(', ')}${names.length>3?'...':''})`, 'success');
+    }, 500);
+  }
+  return count;
 }
 
 function syncEmployeeFromPromotions(empId){
@@ -21720,8 +21767,16 @@ function syncEmployeeFromPromotions(empId){
     const empUpdated = emp.updatedAt || 0;
     // Chỉ sync nếu promotion mới hơn lần sửa thủ công cuối
     if(promoTime > empUpdated){
-      if(latest.newLevel)  emp.level  = latest.newLevel;
+      if(latest.newRole && latest.newRole.trim())     emp.role   = latest.newRole.trim();
+      if(latest.newRoleVN && latest.newRoleVN.trim()) emp.roleVN = latest.newRoleVN.trim();
+      if(latest.newLevel)  emp.level  = String(latest.newLevel).trim();
       if(latest.newDeptId) emp.deptId = latest.newDeptId;
+      if(!DB.customData[emp.id]) DB.customData[emp.id] = {};
+      if(latest.newRole && latest.newRole.trim())     DB.customData[emp.id].position    = latest.newRole.trim();
+      if(latest.newRoleVN && latest.newRoleVN.trim()) DB.customData[emp.id].jobLocation = latest.newRoleVN.trim();
+      if(latest.newLevel)   DB.customData[emp.id].levelNum    = String(latest.newLevel).trim();
+      if(latest.newSalary > 0) DB.customData[emp.id].baseSalary  = latest.newSalary;
+      if(latest.newBonus  > 0) DB.customData[emp.id].bonusSalary = latest.newBonus;
     }
   }
 }
@@ -29724,6 +29779,7 @@ fbAuth.onAuthStateChanged(async user => {
             toast('⚠️ Lỗi migration: '+migErr.message,'error');
           }
         }
+        try { autoApplyPendingPromotions(); } catch(e){ console.warn('Auto-apply promo error', e); }
         try { syncAllEmployees(); } catch(e){ console.warn('Sync error', e); }
         render();
 
