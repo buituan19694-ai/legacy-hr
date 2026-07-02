@@ -21024,11 +21024,11 @@ function renderPerformance(main){
   const allPromotions = DB.promotions || [];
   const thisYear = new Date().getFullYear();
   const promotionsThisYear = allPromotions.filter(p => p.date && new Date(p.date).getFullYear() === thisYear);
-  const pendingPromotions = allPromotions.filter(p => p.status === 'proposed' || p.status === 'reviewing').length;
-  const completedPromotions = allPromotions.filter(p => p.status === 'completed' || p.status === 'approved').length;
+  const pendingPromotions = allPromotions.filter(p => p.status !== 'completed' && p.status !== 'rejected').length;
+  const completedPromotions = allPromotions.filter(p => p.status === 'completed').length;
 
   const today = new Date();
-  const pendingPromoEmpIds = new Set(allPromotions.filter(p => p.status === 'proposed' || p.status === 'reviewing').map(p => p.empId));
+  const pendingPromoEmpIds = new Set(allPromotions.filter(p => p.status !== 'completed' && p.status !== 'rejected').map(p => p.empId));
   const candidates = DB.employees
     .filter(e => e.status !== 'exit' && e.kpi >= 85)
     .filter(e => !pendingPromoEmpIds.has(e.id))
@@ -21170,7 +21170,7 @@ function renderPerformance(main){
       <div class="card-head">
         <div>
           <div class="card-title">🚀 Đề xuất <em>thăng chức</em></div>
-          <div class="card-sub">${allPromotions.length} bản ghi · ${pendingPromotions} đang xem xét · ${completedPromotions} đã duyệt</div>
+          <div class="card-sub">${allPromotions.length} bản ghi · ${pendingPromotions} chưa duyệt · ${completedPromotions} đã thăng chức</div>
         </div>
         <button class="btn btn-primary" onclick="editPromotion()">${ICONS.plus} Đề xuất mới</button>
         <button class="btn" onclick="editPromotion(null,null,true)" style="border-color:rgba(212,165,116,.4);color:var(--accent)">📚 Nhập lịch sử</button>
@@ -21209,15 +21209,15 @@ function renderPerformance(main){
       ` : `
         ${(()=>{
           const psf = window._promoStatusFilter||'all';
-          const pending2  = allPromotions.filter(p=>!['completed','approved','rejected'].includes(p.status)).length;
-          const approved2 = allPromotions.filter(p=>['completed','approved'].includes(p.status)).length;
+          const pending2  = allPromotions.filter(p=>!['completed','rejected'].includes(p.status)).length;
+          const approved2 = allPromotions.filter(p=>p.status==='completed').length;
           const rejected2 = allPromotions.filter(p=>p.status==='rejected').length;
           return `<div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap">
             ${[
-              {k:'all',     label:`Tất cả`,       count:allPromotions.length, color:'var(--ink)'},
-              {k:'pending', label:`Chưa duyệt`,   count:pending2,  color:'var(--warning)'},
-              {k:'approved',label:`Đã duyệt`,     count:approved2, color:'var(--success)'},
-              {k:'rejected',label:`Từ chối`,      count:rejected2, color:'var(--danger)'},
+              {k:'all',     label:`Tất cả`,        count:allPromotions.length, color:'var(--ink)'},
+              {k:'pending', label:`Chưa duyệt`,    count:pending2,  color:'var(--warning)'},
+              {k:'approved',label:`Đã thăng chức`, count:approved2, color:'var(--success)'},
+              {k:'rejected',label:`Từ chối`,       count:rejected2, color:'var(--danger)'},
             ].map(f=>`<button onclick="window._promoStatusFilter='${f.k}';render()"
               style="padding:5px 14px;border-radius:20px;font-size:12px;font-weight:600;cursor:pointer;border:1.5px solid ${psf===f.k?f.color:'var(--border)'};background:${psf===f.k?f.color+'18':'transparent'};color:${psf===f.k?f.color:'var(--ink-muted)'};transition:all .15s">
               ${f.label} <span style="font-family:'JetBrains Mono',monospace;font-size:11px">${f.count}</span>
@@ -21235,8 +21235,8 @@ function renderPerformance(main){
               .filter(p=>{
                 const psf2=window._promoStatusFilter||'all';
                 if(psf2==='all') return true;
-                if(psf2==='pending') return !['completed','approved','rejected'].includes(p.status);
-                if(psf2==='approved') return ['completed','approved'].includes(p.status);
+                if(psf2==='pending') return !['completed','rejected'].includes(p.status);
+                if(psf2==='approved') return p.status==='completed';
                 if(psf2==='rejected') return p.status==='rejected';
                 return true;
               })
@@ -21358,8 +21358,8 @@ function renderPerformanceHistory(main){
   const needSupport= DB.employees.filter(e=>e.kpi>0&&e.kpi<70).length;
   const allPromotions = DB.promotions || [];
   const thisYear = new Date().getFullYear();
-  const completedPromotions = allPromotions.filter(p => p.status === 'completed' || p.status === 'approved').length;
-  const pendingPromotions   = allPromotions.filter(p => p.status === 'proposed' || p.status === 'reviewing').length;
+  const completedPromotions = allPromotions.filter(p => p.status === 'completed').length;
+  const pendingPromotions   = allPromotions.filter(p => p.status !== 'completed' && p.status !== 'rejected').length;
 
   // Biểu đồ: điểm TB theo phòng ban
   const byDept = {};
@@ -21405,7 +21405,7 @@ function renderPerformanceHistory(main){
       ${kpiCard('Performance TB công ty', avgKPI, scoredEmps.length+' nhân viên có điểm', '', 'success')}
       ${kpiCard((_lang==="en"?"Exceeds (≥90)":"Vượt chuẩn (≥90)"), excellent, Math.round(excellent/Math.max(1,DB.employees.length)*100)+'%', '')}
       ${kpiCard((_lang==="en"?"Needs support (<70)":"Cần hỗ trợ (<70)"), needSupport, 'Theo dõi sát', '', 'danger')}
-      ${kpiCard('Đề xuất thăng chức', pendingPromotions, completedPromotions+' đã duyệt năm '+thisYear, '', 'accent')}
+      ${kpiCard('Đề xuất thăng chức', pendingPromotions, completedPromotions+' đã thăng chức năm '+thisYear, '', 'accent')}
     </div>
 
     <!-- Filter năm -->
