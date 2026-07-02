@@ -1378,6 +1378,7 @@ function _pushDynamicKey(key, meta){
     });
     allYears.forEach(yr=>{
       const payload={...meta, _shard:yr};
+      let payloadHasData = false;
       leaveMetaKeys.forEach(k=>{
         const obj=DB[k]||{}; let sliced={};
         if(k==='leavePlan' || k==='leavePlanLocked'){
@@ -1394,9 +1395,18 @@ function _pushDynamicKey(key, meta){
           });
         }
         payload[k]=sliced;
+        if(Object.keys(sliced).length > 0) payloadHasData = true;
       });
+      // ⚠️ GUARD: nếu tất cả sliced đều rỗng → local chưa load xong → KHÔNG save (tránh wipe cloud)
+      // Chỉ bypass guard khi đây là year mới (chưa tồn tại trên cloud) — nhưng an toàn hơn là skip
+      if(!payloadHasData){
+        console.warn(`[saveData] ⚠️ SKIP leavemeta_${yr} — tất cả keys rỗng (local chưa load?). Tránh wipe cloud.`);
+        return;
+      }
+      // ⚠️ merge:true để Firestore deep-merge nested maps (leavePlan[yr][deptId][mi])
+      // → tránh race condition khi 2 tab save concurrent overwrite lẫn nhau
       window.fbDb.collection('hrdata').doc(`leavemeta_${yr}`)
-        .set(payload,{merge:false})
+        .set(payload,{merge:true})
         .catch(err=>console.error(`[saveData] ❌ leavemeta_${yr}`, err.message));
     });
     return;
@@ -29385,7 +29395,7 @@ fbAuth.onAuthStateChanged(async user => {
           const dynamicAccum = {
             leaves:[], kpiReviews:[], rewardRecords:[], casuals:[], candidates:[],
             promotions:[], disciplineRecords:[],
-            leaveSheet:{}, leaveOpening:{}, leavePlan:{},
+            leaveSheet:{}, leaveOpening:{}, leavePlan:{}, leavePlanLocked:{},
             manningPlan:{}, manningActual:{}
           };
           // Precompute: valid jobIds (từ DB.jobs đã load) + tombstone Set
@@ -29479,7 +29489,7 @@ fbAuth.onAuthStateChanged(async user => {
               });
             }
             else if(id.startsWith('leavemeta_')){
-              const metaKeys=['leaveOpening','leavePlan','salaryYears','trainingExtraYears','leaveExtraYears'];
+              const metaKeys=['leaveOpening','leavePlan','leavePlanLocked','salaryYears','trainingExtraYears','leaveExtraYears'];
               metaKeys.forEach(k=>{
                 if(d[k]) Object.entries(d[k]).forEach(([eid,v])=>{
                   if(!dynamicAccum[k][eid]) dynamicAccum[k][eid]={};
@@ -29497,7 +29507,7 @@ fbAuth.onAuthStateChanged(async user => {
           } };
           const _mergeObj = (key)=>{ if(Object.keys(dynamicAccum[key]).length){ DB[key]=dynamicAccum[key]; hasCloud=true; } };
           ['leaves','kpiReviews','rewardRecords','casuals','candidates','promotions','disciplineRecords'].forEach(_mergeArr);
-          ['leaveSheet','leaveOpening','leavePlan'].forEach(_mergeObj);
+          ['leaveSheet','leaveOpening','leavePlan','leavePlanLocked'].forEach(_mergeObj);
           // Manning: merge từ sharded docs
           if(Object.keys(dynamicAccum.manningPlan).length){ DB.manningPlan=dynamicAccum.manningPlan; hasCloud=true; }
           if(Object.keys(dynamicAccum.manningActual).length){ DB.manningActual=dynamicAccum.manningActual; hasCloud=true; }
@@ -29946,18 +29956,28 @@ fbAuth.onAuthStateChanged(async user => {
                     if(localIncCount > 0 && cloudIncCount < localIncCount){
                       // Merge: với mỗi level trong cloud, nếu cloud level KHÔNG có increments NHƯNG local level cùng id có → giữ local
                       const localLevelMap = new Map((DB[key].levels||[]).map(l => [l.id, l]));
+                      let preservedCount = 0;
                       const mergedLevels = (cloudData[key].levels||[]).map(cloudL => {
                         const cloudIncs = Array.isArray(cloudL.increments) ? cloudL.increments : [];
                         const localL = localLevelMap.get(cloudL.id);
                         const localIncs = (localL && Array.isArray(localL.increments)) ? localL.increments : [];
                         // Nếu cloud không có inc nhưng local có → dùng local (tránh mất data từ version cũ)
                         if(cloudIncs.length === 0 && localIncs.length > 0){
-                          console.warn('[Listener] Preserved', localIncs.length, 'increments of Level', cloudL.level, '(cloud version cũ ghi đè)');
+                          preservedCount++;
                           return {...cloudL, increments: localIncs};
                         }
                         return {...cloudL, increments: cloudIncs};
                       });
                       DB[key] = {...cloudData[key], levels: mergedLevels};
+                      // 🔧 Fix loop: write merged data back to cloud so next snapshot won't need preservation
+                      // Debounce 3s để tránh conflict với snapshot echo
+                      if(preservedCount > 0){
+                        console.warn('[Listener] Preserved', preservedCount, 'levels\' increments — resaving to cloud to prevent loop');
+                        clearTimeout(window._salStructResaveTimer);
+                        window._salStructResaveTimer = setTimeout(()=>{
+                          try { saveData(['salaryStructure']); } catch(e){ console.warn('Resave salaryStructure error:', e); }
+                        }, 3000);
+                      }
                       return; // đã merge thủ công, skip default merge
                     }
                   }
@@ -30211,16 +30231,43 @@ fbAuth.onAuthStateChanged(async user => {
               } else if(key==='_leaveMeta'){
                 // leavemeta_YYYY: merge leaveOpening, leavePlan, etc.
                 const metaKeys=['leaveOpening','leavePlan','leavePlanLocked','salaryYears','trainingExtraYears','leaveExtraYears'];
+                // Deep-merge keys cần merge sâu để tránh overwrite dept-month data
+                // Structure leavePlan: {year: {deptId: {mi: {al,cl}}}}
+                const deepMergeKeys = new Set(['leavePlan','leavePlanLocked']);
                 metaKeys.forEach(mk=>{
                   if(!d[mk]) return;
                   if(Array.isArray(d[mk])){ DB[mk]=d[mk]; changed=true; return; }
                   if(typeof d[mk]==='object'){
                     if(!DB[mk]||typeof DB[mk]!=='object') DB[mk]={};
-                    Object.entries(d[mk]).forEach(([k2,v2])=>{
-                      if(typeof v2==='object'&&v2!==null) { if(!DB[mk][k2]) DB[mk][k2]={}; Object.assign(DB[mk][k2],v2); }
-                      else DB[mk][k2]=v2;
-                    });
-                    changed=true;
+                    if(deepMergeKeys.has(mk)){
+                      // DEEP MERGE 3 tầng: year → deptId → month/data
+                      Object.entries(d[mk]).forEach(([yr,yrData])=>{
+                        if(typeof yrData==='object' && yrData !== null){
+                          if(!DB[mk][yr] || typeof DB[mk][yr]!=='object') DB[mk][yr]={};
+                          Object.entries(yrData).forEach(([deptId,deptData])=>{
+                            if(typeof deptData==='object' && deptData !== null){
+                              if(!DB[mk][yr][deptId] || typeof DB[mk][yr][deptId]!=='object') DB[mk][yr][deptId]={};
+                              // Merge từng tháng vào — không overwrite các tháng đã có
+                              Object.entries(deptData).forEach(([miKey,miVal])=>{
+                                DB[mk][yr][deptId][miKey] = miVal;
+                              });
+                            } else {
+                              DB[mk][yr][deptId] = deptData;
+                            }
+                          });
+                        } else {
+                          DB[mk][yr] = yrData;
+                        }
+                      });
+                      changed = true;
+                    } else {
+                      // Các key khác giữ shallow merge như cũ
+                      Object.entries(d[mk]).forEach(([k2,v2])=>{
+                        if(typeof v2==='object'&&v2!==null) { if(!DB[mk][k2]) DB[mk][k2]={}; Object.assign(DB[mk][k2],v2); }
+                        else DB[mk][k2]=v2;
+                      });
+                      changed=true;
+                    }
                   }
                 });
               } else if(key==='_plData'){
