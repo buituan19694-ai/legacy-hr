@@ -8302,7 +8302,7 @@ function renderEmployees(main){
       <div class="filters">
         <div class="search-box" style="width:280px">
           ${ICONS.search}
-          <input type="text" id="empSearchInput" placeholder="Tìm theo tên, mã NV, email..." value="${escapeHtml(empFilter.search)}" oninput="debounceEmpSearch(this.value)">
+          <input type="text" id="empSearchInput" placeholder="Tìm theo tên, mã NV, email..." value="${escapeHtml(empFilter.search)}" oninput="debounceEmpSearch(event)">
         </div>
         <select class="filter-select" onchange="setEmpFilter('dept', this.value)">
           <option value="">${t('filter_all_dept')}</option>
@@ -8818,27 +8818,42 @@ function _restoreFocus(saved){
 }
 
 let _empSearchTimer = null;
-// ⚠️ Bỏ IME composition flag — gây bug stuck ở true khi dùng Unikey/EVKey
-// User gõ IME sẽ hơi lag vì filter chạy mid-compose, nhưng UX vẫn OK (tốt hơn KHÔNG filter)
-function debounceEmpSearch(val){
+// ✅ FIX: Dùng event.isComposing (chuẩn Web API) để xử lý IME tiếng Việt đúng cách
+// Khi user gõ Telex/VNI "Tuấn": mỗi keystroke event.isComposing=true → skip filter
+// Khi gõ xong (space/enter/blur), oninput fires với isComposing=false → filter với text cuối cùng
+function debounceEmpSearch(event){
+  // Backward compat: nếu truyền string trực tiếp (từ chỗ khác gọi) → xử lý luôn
+  let val, isComposing = false;
+  if(typeof event === 'string'){
+    val = event;
+  } else if(event && event.target){
+    val = event.target.value;
+    isComposing = !!event.isComposing;
+  } else {
+    val = '';
+  }
   empFilter.search = val;
+  // ⚠️ Đang gõ IME → KHÔNG filter, chờ compositionend
+  if(isComposing) return;
   clearTimeout(_empSearchTimer);
-  window._empSearchActive = true; // flag: đang search, chặn snapshot re-render
+  window._empSearchActive = true;
   _empSearchTimer = setTimeout(()=>{
     empPage=1;
     const saved = _saveFocus();
-    // Save scroll position để tránh "nhảy lên đầu"
     const savedScrollY = window.scrollY;
     _empPartialRender();
     _restoreFocus(saved);
-    // Restore scroll position sau partial render
     window.scrollTo(0, savedScrollY);
-    // Reset flag sau 3s
     clearTimeout(window._empSearchActiveTimer);
     window._empSearchActiveTimer = setTimeout(()=>{ window._empSearchActive = false; }, 3000);
-  }, 200); // Giảm 400→200ms để filter phản hồi nhanh hơn
+  }, 200);
 }
-// ⚠️ Bỏ compositionstart/compositionend listeners — không cần thiết + gây bug
+// Trigger filter khi IME kết thúc (user confirm Vietnamese input)
+window.addEventListener('compositionend', (e)=>{
+  if(e.target && e.target.id === 'empSearchInput'){
+    debounceEmpSearch(e.target.value); // pass string → force filter
+  }
+});
 
 // Partial render: chỉ update tbody — dùng đúng logic gốc từ renderEmployees
 function _empPartialRender(){
