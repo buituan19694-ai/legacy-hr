@@ -19266,6 +19266,7 @@ function saveJob(id, isNew){
   }
   if(isNew) DB.jobs.push(_sanitizeForFirebase(data));
   else{ const i = DB.jobs.findIndex(x=>x.id===id); if(i>=0)DB.jobs[i]=_sanitizeForFirebase(data); else DB.jobs.push(_sanitizeForFirebase(data)); }
+  window._selfSaveAt = Date.now(); // chặn snapshot echo cũ ghi đè
   saveData(['jobs']); closeModal(); toast(isNew?'Đã mở vị trí':(_lang==="en"?"Updated":"Đã cập nhật")); render();
 }
 
@@ -30189,6 +30190,9 @@ fbAuth.onAuthStateChanged(async user => {
                         !(Array.isArray(v) && v.length === 0)
                       ).length;
                     };
+                    // 🚨 v12: nếu vừa save trong 15s qua, ưu tiên LOCAL kể cả khi score bằng
+                    // Snapshot echo cloud có thể là VERSION CŨ TRƯỚC SAVE → local mới chính là truth
+                    const justSaved = window._selfSaveAt && (Date.now() - window._selfSaveAt) < 15000;
                     const localMap = new Map((DB[key]||[]).map(item => [item.id, item]));
                     const cloudMap = new Map(cloudData[key].map(item => [item.id, item]));
                     const merged = [];
@@ -30202,7 +30206,8 @@ fbAuth.onAuthStateChanged(async user => {
                       if(!localItem){ merged.push(cloudItem); return; }
                       const localScore = _fieldScore(localItem);
                       const cloudScore = _fieldScore(cloudItem);
-                      if(localScore > cloudScore){
+                      // v12: prefer local nếu (a) local có nhiều fields hơn, HOẶC (b) vừa save gần đây
+                      if(localScore > cloudScore || (justSaved && localScore >= cloudScore)){
                         merged.push(localItem);
                         protectedCount++;
                       } else {
