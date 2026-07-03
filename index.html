@@ -1421,8 +1421,15 @@ function _pushDynamicKey(key, meta){
   const leaveMetaKeys = ['leaveOpening','leavePlan','leavePlanLocked','salaryYears','trainingExtraYears','leaveExtraYears'];
   if(leaveMetaKeys.includes(key)){
     const allYears = new Set([thisYear]);
-    leaveMetaKeys.forEach(k=>{
-      const obj=DB[k]||{}; Object.values(obj).forEach(v=>{ if(typeof v==='object') Object.keys(v).forEach(y=>allYears.add(parseInt(y))); });
+    // ✅ FIX: chỉ leavePlan và leavePlanLocked có structure {year: {...}} ở level 1
+    // Các keys khác (leaveOpening: {empId:{al,cl}}, salaryYears...) → dùng thisYear
+    // Bug cũ: Object.values(obj) rồi Object.keys(v) sinh ra NaN (từ deptId) / 5,6 (từ month)
+    ['leavePlan', 'leavePlanLocked'].forEach(k=>{
+      const obj=DB[k]||{};
+      Object.keys(obj).forEach(y=>{
+        const yi = parseInt(y);
+        if(!isNaN(yi) && yi >= 2000 && yi <= 2100) allYears.add(yi);
+      });
     });
     allYears.forEach(yr=>{
       const payload={...meta, _shard:yr};
