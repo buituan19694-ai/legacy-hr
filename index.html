@@ -1703,7 +1703,9 @@ if(Array.isArray(DB.employees)){
   });
   if(roleFixed>0) console.log('[Migration] Synced role for', roleFixed, 'employees from cd.position');
 }
-if(Array.isArray(DB.candidates)&&Array.isArray(DB.jobs)){
+if(Array.isArray(DB.candidates)&&Array.isArray(DB.jobs)&&DB.jobs.length>0){
+  // 🚨 v15: CHỈ filter orphan khi DB.jobs THỰC SỰ có data (>0)
+  // Nếu jobs rỗng (localStorage chưa có jobs) → giữ candidates, tránh wipe khi cloud chưa load
   const _jids=new Set((DB.jobs||[]).map(j=>j.id));
   DB.candidates=DB.candidates.filter(c=>c.jobId&&_jids.has(c.jobId));
 }
@@ -15509,12 +15511,14 @@ function deleteLeave(id, fromModal=false){
    RECRUITMENT — CRUD
    ========================================================= */
 function getJobHired(jobId){
-  // Source of truth: đếm candidates có status='hired'
+  // Đếm candidates có status='hired'
   const fromCandidates = (DB.candidates||[]).filter(a => a.jobId === jobId && a.status === 'hired').length;
-  if(fromCandidates > 0) return fromCandidates;
-  // Fallback: nếu candidates chưa sync đúng, dùng j.hired
   const job = (DB.jobs||[]).find(j=>j.id===jobId);
-  return Math.max(fromCandidates, parseInt(job?.hired)||0);
+  const fromJob = parseInt(job?.hired)||0;
+  // v13: LUÔN LUÔN dùng MAX của 2 nguồn — respect user manual override
+  // Trước: if(fromCandidates > 0) return fromCandidates → bỏ qua j.hired dù user đã set
+  // Giờ: nếu Meoz sửa "Đã tuyển được = 2" mà chỉ có 1 candidate hired → vẫn hiện 2 (theo ý user)
+  return Math.max(fromCandidates, fromJob);
 }
 
 // Pipeline % cho từng stage (6 bước tuyển dụng)
@@ -29587,6 +29591,9 @@ fbAuth.onAuthStateChanged(async user => {
           // Precompute: valid jobIds (từ DB.jobs đã load) + tombstone Set
           // Dùng để: (1) filter candidates đã tombstone, (2) detect orphan cand_ shards
           const _validJobIds = new Set((DB.jobs||[]).map(j=>j.id));
+          // 🚨 v15 SAFETY: nếu DB.jobs rỗng bất thường (jobs doc load fail?) → KHÔNG coi mọi shard orphan
+          // Bằng cách này, dù jobs load lỗi, candidates vẫn được giữ (không mất data)
+          const _jobsLoadedOk = _validJobIds.size > 0;
           const _candTomb = _cTombGetSet();
           hrdataSnap.forEach(doc=>{
             const id=doc.id; const d=doc.data();
@@ -29604,8 +29611,9 @@ fbAuth.onAuthStateChanged(async user => {
               if(isYearShard){
                 // Xóa shard sai này khỏi Firestore — KHÔNG accumulate
                 doc.ref.delete().then(()=>console.log('[cleanup] ✅ Deleted invalid cand year shard:', id)).catch(()=>{});
-              } else if(!_validJobIds.has(shardIdPart)){
+              } else if(!_validJobIds.has(shardIdPart) && _jobsLoadedOk){
                 // ORPHAN SHARD: jobId không tồn tại trong DB.jobs
+                // ⚠️ CHỈ xử lý orphan khi jobs đã load OK (_jobsLoadedOk) — nếu jobs load fail, giữ nguyên candidates
                 // ⚠️ CHỈ delete nếu shard "stale" (>60s) để tránh race:
                 //    user khác vừa tạo job mới + candidate → static listener chưa kịp sync jobs
                 // Vẫn KHÔNG accumulate (candidate không có job tương ứng thì không hiển thị)
@@ -29617,6 +29625,11 @@ fbAuth.onAuthStateChanged(async user => {
                 } else {
                   console.log(`[cleanup] Skip delete orphan shard ${id} — shard age ${shardAge}ms (< 60s, có thể là job mới đang sync)`);
                 }
+              } else if(!_jobsLoadedOk){
+                // 🚨 v15: jobs load fail → KHÔNG biết orphan hay không → GIỮ candidates để tránh mất data
+                const filtered = _candTomb.size ? d.candidates.filter(c => !_candTomb.has(c.id)) : d.candidates;
+                console.warn(`[cold-load] ⚠️ DB.jobs rỗng — giữ nguyên ${filtered.length} candidates từ ${id} (không filter orphan)`);
+                dynamicAccum.candidates.push(...filtered);
               } else {
                 // Filter theo tombstone trước khi accumulate
                 const filtered = _candTomb.size
@@ -29716,9 +29729,15 @@ fbAuth.onAuthStateChanged(async user => {
             }catch(e){ console.warn('[migrate] manning migration error:', e.message); }
           }
           // Cleanup orphaned candidates (job đã xóa) sau khi merge từ Firestore
-          if(Array.isArray(DB.candidates)&&Array.isArray(DB.jobs)){
+          // 🚨 v15: CHỈ filter khi DB.jobs có data (>0) — tránh wipe khi jobs load fail
+          if(Array.isArray(DB.candidates)&&Array.isArray(DB.jobs)&&DB.jobs.length>0){
             const _jids2=new Set((DB.jobs||[]).map(j=>j.id));
+            const _b4 = DB.candidates.length;
             DB.candidates=DB.candidates.filter(c=>c.jobId&&_jids2.has(c.jobId));
+            const _dr = _b4 - DB.candidates.length;
+            if(_dr > 0) console.warn(`[cold-load] Cleaned ${_dr} orphan candidates (job đã xóa)`);
+          } else if(Array.isArray(DB.candidates) && (!Array.isArray(DB.jobs) || DB.jobs.length===0)){
+            console.warn(`[cold-load] ⚠️ Giữ ${DB.candidates.length} candidates — DB.jobs rỗng, không filter orphan`);
           }
 
           // Migration: chỉ đọc từ workforce doc cũ nếu doc 'trainees' CHƯA TỒN TẠI
@@ -30190,6 +30209,19 @@ fbAuth.onAuthStateChanged(async user => {
                         !(Array.isArray(v) && v.length === 0)
                       ).length;
                     };
+                    // v13: shallow diff check — nếu identical thì KHÔNG protect (tránh loop rescue)
+                    const _isDiffItem = (a, b) => {
+                      if(a === b) return false;
+                      const keys = new Set([...Object.keys(a||{}), ...Object.keys(b||{})]);
+                      for(const k of keys){
+                        if(k.startsWith('_')) continue; // bỏ qua meta fields
+                        const av = a?.[k], bv = b?.[k];
+                        if(av === bv) continue;
+                        try { if(JSON.stringify(av) === JSON.stringify(bv)) continue; } catch(_){}
+                        return true;
+                      }
+                      return false;
+                    };
                     // 🚨 v12: nếu vừa save trong 15s qua, ưu tiên LOCAL kể cả khi score bằng
                     // Snapshot echo cloud có thể là VERSION CŨ TRƯỚC SAVE → local mới chính là truth
                     const justSaved = window._selfSaveAt && (Date.now() - window._selfSaveAt) < 15000;
@@ -30204,6 +30236,8 @@ fbAuth.onAuthStateChanged(async user => {
                       seenIds.add(id);
                       const localItem = localMap.get(id);
                       if(!localItem){ merged.push(cloudItem); return; }
+                      // v13: nếu local và cloud identical → chọn cloud (không protect, không loop)
+                      if(!_isDiffItem(localItem, cloudItem)){ merged.push(cloudItem); return; }
                       const localScore = _fieldScore(localItem);
                       const cloudScore = _fieldScore(cloudItem);
                       // v12: prefer local nếu (a) local có nhiều fields hơn, HOẶC (b) vừa save gần đây
@@ -30281,11 +30315,20 @@ fbAuth.onAuthStateChanged(async user => {
               const isSelf = cloudSyncBy === window.currentUser.uid;
               const isRecent = (Date.now()-cloudSyncAt) < 15000;
               if(isSelf && isRecent){
-                _lastSyncAt[docId] = cloudSyncAt;
+                _lastSyncAt[docId] = Math.max(_lastSyncAt[docId]||0, cloudSyncAt);
                 return;
               }
 
-              if(cloudSyncAt === _lastSyncAt[docId]) return;
+              // 🚨 v14 CRITICAL FIX: Reject STALE snapshots
+              // Nếu snapshot có _syncAt cũ hơn snapshot đã xử lý → SKIP (không override local)
+              // Trước: chỉ skip khi ===, nhưng snapshot cũ đến sau (network glitch) vẫn xử lý → mất data
+              const lastKnown = _lastSyncAt[docId] || 0;
+              if(cloudSyncAt <= lastKnown){
+                if(cloudSyncAt < lastKnown){
+                  console.warn(`[Listener] 🛡️ Skip STALE snapshot ${docId}: incoming ${new Date(cloudSyncAt).toISOString()} < known ${new Date(lastKnown).toISOString()}`);
+                }
+                return;
+              }
               _lastSyncAt[docId] = cloudSyncAt;
 
               mergeCloudIntoDb();
@@ -30369,6 +30412,18 @@ fbAuth.onAuthStateChanged(async user => {
               // Bắt trường hợp cloud echo muộn (network delay) sau khi isRecent hết hạn theo cloudSyncAt
               if(isSelf && window._selfSaveAt && (Date.now()-window._selfSaveAt) < 30000) return;
               if(change.type === 'removed') return;
+
+              // 🚨 v14: Reject STALE snapshots trong dynamic listener
+              if(!window._dynamicLastSync) window._dynamicLastSync = {};
+              const lastKnownDyn = window._dynamicLastSync[docId] || 0;
+              if(cloudSyncAt <= lastKnownDyn){
+                if(cloudSyncAt < lastKnownDyn){
+                  console.warn(`[Listener] 🛡️ Skip STALE dynamic ${docId}: ${new Date(cloudSyncAt).toISOString()} < known ${new Date(lastKnownDyn).toISOString()}`);
+                }
+                return;
+              }
+              window._dynamicLastSync[docId] = cloudSyncAt;
+
               if(d[key] && Array.isArray(d[key])){
                 const shardId = d._shard;
                 const isMonthShard = typeof shardId==='string' && /^\d{4}_\d{2}$/.test(String(shardId));
@@ -30439,9 +30494,17 @@ fbAuth.onAuthStateChanged(async user => {
                     ..._incoming
                   ];
                   // Cleanup orphaned candidates after realtime merge
-                  if(key==='candidates'&&Array.isArray(DB.jobs)){
+                  // 🚨 v15 CRITICAL: CHỈ filter orphan khi DB.jobs đã load ĐẦY ĐỦ (cold-load done)
+                  // Bug cũ: nếu DB.jobs=[] (chưa load), filter xóa SẠCH candidates
+                  // → Meoz mở app tối, jobs chưa load, listener candidate đến → wipe hết ứng viên
+                  if(key==='candidates' && window._coldLoadDone && Array.isArray(DB.jobs) && DB.jobs.length > 0){
                     const _jids3=new Set((DB.jobs||[]).map(j=>j.id));
+                    const _beforeLen = _merged.length;
                     _merged=_merged.filter(c=>c.jobId&&_jids3.has(c.jobId));
+                    const _dropped = _beforeLen - _merged.length;
+                    if(_dropped > 0){
+                      console.warn(`[Listener] Dropped ${_dropped} orphan candidates (jobId không tồn tại trong DB.jobs)`);
+                    }
                   }
                   DB[key] = _merged;
                 }
