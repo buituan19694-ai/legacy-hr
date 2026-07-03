@@ -29296,10 +29296,12 @@ const fbDb      = firebase.firestore();
 
 // 🚨 FIX QUIC_PROTOCOL_ERROR (Vietnam ISP hay drop QUIC packets → write fail silently)
 // experimentalForceLongPolling: dùng HTTP long polling thay QUIC → stable hơn nhiều
+// ⚠️ Firebase SDK 10.12.0 mặc định bật autoDetect → conflict → PHẢI tắt explicit
 // PHẢI gọi settings() TRƯỚC mọi read/write, TRƯỚC enablePersistence()
 try {
   fbDb.settings({
     experimentalForceLongPolling: true,
+    experimentalAutoDetectLongPolling: false, // ← tắt để tránh conflict với ForceLongPolling
     merge: true
   });
   console.log('[Firestore] ✅ Force long-polling enabled (bypass QUIC)');
