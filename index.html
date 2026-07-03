@@ -18863,6 +18863,12 @@ function _caToggleOnboard(status){
 }
 
 function saveCandidate(id, jobId, isNew){
+  // 🚨 GUARD: chống bug data rollback
+  if(!window._coldLoadDone){
+    toast('⏳ App đang tải dữ liệu, chờ 3 giây rồi thử lại','warning',5000);
+    console.warn('[saveCandidate] SKIP — cold-load chưa xong');
+    return;
+  }
   const name = $('#ca_name').value.trim();
   if(!name){ toast('Vui lòng nhập tên ứng viên','error'); return; }
   const applied = $sd('ca_applied');
