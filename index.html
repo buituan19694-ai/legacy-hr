@@ -1113,12 +1113,27 @@ function saveEmpProfile(empId){
     // Không có ảnh → dùng FieldValue.delete() để xóa photoUrl trên Firestore
     doc.photoUrl = firebase.firestore.FieldValue.delete();
   }
-  window.fbDb.collection(EMP_COLLECTION).doc(empId).set(doc, {merge: true})
-    .then(()=>{ console.log('[EMP] saved:', empId, emp.name); })
-    .catch(err=>{
-      console.error('[EMP] FAILED:', empId, err.message);
-      toast('❌ Lỗi lưu hồ sơ '+emp.name+': '+err.message,'error');
-    });
+  const _saveEmpWithRetry = (attempt=1)=>{
+    window.fbDb.collection(EMP_COLLECTION).doc(empId).set(doc, {merge: true})
+      .then(()=>{
+        console.log('[EMP] saved:', empId, emp.name, attempt>1?`(thử lần ${attempt})`:'');
+      })
+      .catch(err=>{
+        console.error(`[EMP] FAILED attempt ${attempt}:`, empId, err.message);
+        if(attempt < 3){
+          const delay = attempt===1 ? 3000 : 8000;
+          if(typeof toast==='function' && attempt===1){
+            toast(`⚠️ Lưu hồ sơ ${emp.name} lỗi, đang thử lại...`,'warning',4000);
+          }
+          setTimeout(()=>_saveEmpWithRetry(attempt+1), delay);
+        } else {
+          if(typeof toast==='function'){
+            toast(`❌ KHÔNG lưu được ${emp.name} sau 3 lần: ${err.message}. Kiểm tra mạng.`,'error',15000);
+          }
+        }
+      });
+  };
+  _saveEmpWithRetry();
 }
 
 async function loadEmpProfiles(localPhotos){
@@ -1264,12 +1279,31 @@ function _pushDynamicKey(key, meta){
     // ⚠️ FIX: thay "ghi empty array" → DELETE shard hoàn toàn để tránh stale cache
     const emptyShards = window._candEmptyShards || new Set();
     window._candEmptyShards = new Set(); // clear sau khi dùng
-    // Write các shard có candidates
-    const writes = Object.entries(byJob).map(([jid,records])=>
-      window.fbDb.collection('hrdata').doc(`cand_${jid}`)
+    // Write các shard có candidates với retry
+    const _saveCandShardWithRetry = (jid, records, attempt=1) => {
+      return window.fbDb.collection('hrdata').doc(`cand_${jid}`)
         .set({...meta, candidates:records, _shard:jid}, {merge:false})
-        .catch(err=>{ console.error(`[saveData] ❌ cand_${jid}`, err.message); toast('❌ Lỗi lưu ứng viên: '+err.message,'error'); })
-    );
+        .then(()=>{
+          if(attempt>1 && typeof toast==='function'){
+            toast(`✅ Đã lưu lại ứng viên (thử lần ${attempt})`, 'success', 3000);
+          }
+        })
+        .catch(err=>{
+          console.error(`[saveData] ❌ cand_${jid} attempt ${attempt}`, err.message);
+          if(attempt < 3){
+            const delay = attempt===1 ? 3000 : 8000;
+            if(typeof toast==='function' && attempt===1){
+              toast(`⚠️ Lưu ứng viên lỗi (${err.code||'network'}), đang thử lại...`,'warning',4000);
+            }
+            return new Promise(res=>setTimeout(()=>_saveCandShardWithRetry(jid, records, attempt+1).then(res), delay));
+          } else {
+            if(typeof toast==='function'){
+              toast(`❌ KHÔNG lưu được ứng viên sau 3 lần: ${err.message}. Kiểm tra mạng!`,'error',20000);
+            }
+          }
+        });
+    };
+    const writes = Object.entries(byJob).map(([jid,records])=>_saveCandShardWithRetry(jid, records));
     // DELETE các shard hết candidate (sạch sẽ hơn ghi empty array)
     // Dùng _retryDeleteShard để đảm bảo delete thành công (retry backoff)
     const deletes = [...emptyShards].filter(jid=>!byJob[jid]).map(jid =>
@@ -1405,9 +1439,32 @@ function _pushDynamicKey(key, meta){
       }
       // ⚠️ merge:true để Firestore deep-merge nested maps (leavePlan[yr][deptId][mi])
       // → tránh race condition khi 2 tab save concurrent overwrite lẫn nhau
-      window.fbDb.collection('hrdata').doc(`leavemeta_${yr}`)
-        .set(payload,{merge:true})
-        .catch(err=>console.error(`[saveData] ❌ leavemeta_${yr}`, err.message));
+      const _saveWithRetry = (attempt=1)=>{
+        window.fbDb.collection('hrdata').doc(`leavemeta_${yr}`)
+          .set(payload,{merge:true})
+          .then(()=>{
+            if(attempt>1 && typeof toast==='function'){
+              toast(`✅ Đã lưu lại KH năm ${yr} thành công (thử lần ${attempt})`, 'success', 4000);
+            }
+          })
+          .catch(err=>{
+            console.error(`[saveData] ❌ leavemeta_${yr} attempt ${attempt}`, err.message);
+            if(attempt < 3){
+              // Retry với exponential backoff: 3s → 8s → 15s
+              const delay = attempt===1 ? 3000 : 8000;
+              if(typeof toast==='function' && attempt===1){
+                toast(`⚠️ Lưu KH năm ${yr} lỗi (${err.code||'network'}), đang thử lại...`, 'warning', 5000);
+              }
+              setTimeout(()=>_saveWithRetry(attempt+1), delay);
+            } else {
+              // Fail 3 lần → báo lỗi rõ ràng, đừng để user tưởng đã lưu
+              if(typeof toast==='function'){
+                toast(`❌ KHÔNG lưu được KH năm ${yr} sau 3 lần thử: ${err.message}. Vui lòng kiểm tra mạng và nhập lại.`, 'error', 20000);
+              }
+            }
+          });
+      };
+      _saveWithRetry();
     });
     return;
   }
@@ -1472,17 +1529,33 @@ function saveData(changedKeys=null){
           payload[k] = val;
         }
       });
-      window.fbDb.collection('hrdata').doc(docId).set(payload,{merge:true})
-        .then(()=>{
-          if(docId==='resign'){
-            console.log('[saveData] ✅ resign saved:', (payload.resignations||[]).length, 'records');
-            toast('✅ Đơn nghỉ đã lưu cloud ('+(payload.resignations||[]).length+' đơn)','success',2000);
-          }
-        })
-        .catch(err=>{
-          console.error('[saveData] ❌', docId, err.code, err.message);
-          toast('❌ Lỗi lưu: '+err.code+' — '+err.message,'error');
-        });
+      const _saveDynWithRetry = (attempt=1)=>{
+        window.fbDb.collection('hrdata').doc(docId).set(payload,{merge:true})
+          .then(()=>{
+            if(attempt>1 && typeof toast==='function'){
+              toast(`✅ Đã lưu lại ${docId} thành công (thử lần ${attempt})`, 'success', 3000);
+            }
+            if(docId==='resign'){
+              console.log('[saveData] ✅ resign saved:', (payload.resignations||[]).length, 'records');
+              toast('✅ Đơn nghỉ đã lưu cloud ('+(payload.resignations||[]).length+' đơn)','success',2000);
+            }
+          })
+          .catch(err=>{
+            console.error(`[saveData] ❌ ${docId} attempt ${attempt}`, err.code, err.message);
+            if(attempt < 3){
+              const delay = attempt===1 ? 3000 : 8000;
+              if(typeof toast==='function' && attempt===1){
+                toast(`⚠️ Lưu ${docId} lỗi (${err.code||'network'}), đang thử lại...`, 'warning', 4000);
+              }
+              setTimeout(()=>_saveDynWithRetry(attempt+1), delay);
+            } else {
+              if(typeof toast==='function'){
+                toast(`❌ KHÔNG lưu được ${docId} sau 3 lần thử: ${err.message}. Kiểm tra mạng và thao tác lại.`, 'error', 20000);
+              }
+            }
+          });
+      };
+      _saveDynWithRetry();
     });
 
     const dynamicToSave = !keys ? FS_DYNAMIC_KEYS : keys.filter(k=>FS_DYNAMIC_KEYS.includes(k));
@@ -8745,35 +8818,27 @@ function _restoreFocus(saved){
 }
 
 let _empSearchTimer = null;
-let _empIsComposing = false; // true khi đang gõ IME (tiếng Việt có dấu)
+// ⚠️ Bỏ IME composition flag — gây bug stuck ở true khi dùng Unikey/EVKey
+// User gõ IME sẽ hơi lag vì filter chạy mid-compose, nhưng UX vẫn OK (tốt hơn KHÔNG filter)
 function debounceEmpSearch(val){
   empFilter.search = val;
-  // Nếu đang trong giữa IME composition (gõ tiếng Việt có dấu) → KHÔNG re-render
-  // Đợi compositionend mới filter để tránh "Tuấn" → "Tuaasn"
-  if(_empIsComposing) return;
   clearTimeout(_empSearchTimer);
   window._empSearchActive = true; // flag: đang search, chặn snapshot re-render
   _empSearchTimer = setTimeout(()=>{
     empPage=1;
     const saved = _saveFocus();
+    // Save scroll position để tránh "nhảy lên đầu"
+    const savedScrollY = window.scrollY;
     _empPartialRender();
     _restoreFocus(saved);
+    // Restore scroll position sau partial render
+    window.scrollTo(0, savedScrollY);
     // Reset flag sau 3s
     clearTimeout(window._empSearchActiveTimer);
     window._empSearchActiveTimer = setTimeout(()=>{ window._empSearchActive = false; }, 3000);
-  }, 400);
+  }, 200); // Giảm 400→200ms để filter phản hồi nhanh hơn
 }
-// Handlers cho IME composition (gõ tiếng Việt có dấu)
-window.addEventListener('compositionstart', (e)=>{
-  if(e.target && e.target.id === 'empSearchInput') _empIsComposing = true;
-});
-window.addEventListener('compositionend', (e)=>{
-  if(e.target && e.target.id === 'empSearchInput'){
-    _empIsComposing = false;
-    // Sau khi gõ xong dấu, trigger search với value cuối cùng
-    debounceEmpSearch(e.target.value);
-  }
-});
+// ⚠️ Bỏ compositionstart/compositionend listeners — không cần thiết + gây bug
 
 // Partial render: chỉ update tbody — dùng đúng logic gốc từ renderEmployees
 function _empPartialRender(){
@@ -29229,6 +29294,17 @@ firebase.initializeApp(firebaseConfig);
 const fbAuth = firebase.auth();
 const fbDb      = firebase.firestore();
 
+// 🚨 FIX QUIC_PROTOCOL_ERROR (Vietnam ISP hay drop QUIC packets → write fail silently)
+// experimentalForceLongPolling: dùng HTTP long polling thay QUIC → stable hơn nhiều
+// PHẢI gọi settings() TRƯỚC mọi read/write, TRƯỚC enablePersistence()
+try {
+  fbDb.settings({
+    experimentalForceLongPolling: true,
+    merge: true
+  });
+  console.log('[Firestore] ✅ Force long-polling enabled (bypass QUIC)');
+} catch(e){ console.warn('[Firestore] settings() failed:', e.message); }
+
 // ── Phương án C: Bật offline persistence để giảm reads 90%+ ──
 // Cache toàn bộ data vào IndexedDB của browser
 // → Render UI đọc từ cache (0 reads), Firebase chỉ push khi có thay đổi
@@ -29815,7 +29891,10 @@ fbAuth.onAuthStateChanged(async user => {
           window._fsPauseTimer = null;
           window._lastUserActivity = Date.now();
 
-          // Track user activity (mouse, keyboard, scroll) → reset idle timer
+          // 🚨 DISABLED: Auto-pause Firestore network gây MẤT DATA
+          // Kịch bản: user nhập → save queued → tab idle → disableNetwork() chạy → save fail silently
+          // Data integrity > 10% cost saving. Firestore free tier 50K reads/day dư sức dùng.
+          // Chỉ giữ activity tracker để re-enable khi user quay lại (phòng khi ai đó bật lại disable)
           const _activityEvents = ['mousedown','keydown','touchstart','scroll'];
           window._userActivityHandler = () => {
             window._lastUserActivity = Date.now();
@@ -29828,39 +29907,15 @@ fbAuth.onAuthStateChanged(async user => {
           };
           _activityEvents.forEach(ev => document.addEventListener(ev, window._userActivityHandler, {passive:true}));
 
-          // Check idle every minute: pause network nếu không có activity 10 phút
-          window._idleCheckInterval = setInterval(()=>{
-            if(!window.fbDb || window._fsNetworkDisabled) return;
-            const idleMin = (Date.now() - window._lastUserActivity) / 60000;
-            if(idleMin >= 10){
-              window.fbDb.disableNetwork().then(()=>{
-                window._fsNetworkDisabled = true;
-                console.log(`[Optimize] User idle ${idleMin.toFixed(0)}min → Firestore network paused`);
-              }).catch(()=>{});
-            }
-          }, 60000);
+          // ❌ TẮT idle auto-pause (nguyên nhân mất data)
+          // window._idleCheckInterval = setInterval(...) — REMOVED
 
           window._visibilityHandler = () => {
             window._tabActive = !document.hidden;
-            if(document.hidden){
-              // Tab bị ẩn → đợi 2 phút rồi pause network (giảm từ 5 → 2)
-              if(window._fsPauseTimer) clearTimeout(window._fsPauseTimer);
-              window._fsPauseTimer = setTimeout(async () => {
-                if(document.hidden && window.fbDb && !window._fsNetworkDisabled){
-                  try{
-                    await window.fbDb.disableNetwork();
-                    window._fsNetworkDisabled = true;
-                    console.log('[Optimize] Tab idle 2min → Firestore network paused (tiết kiệm reads)');
-                  }catch(e){ console.warn('[Optimize] disableNetwork failed:', e.message); }
-                }
-              }, 2*60*1000); // 2 phút (giảm từ 5)
-            } else {
-              // Tab visible trở lại → cancel pause + re-enable network
+            // ❌ TẮT tab-hidden auto-pause (nguyên nhân mất data)
+            // Khi tab visible trở lại → chỉ đảm bảo network enabled
+            if(!document.hidden){
               window._lastUserActivity = Date.now();
-              if(window._fsPauseTimer){
-                clearTimeout(window._fsPauseTimer);
-                window._fsPauseTimer = null;
-              }
               if(window._fsNetworkDisabled && window.fbDb){
                 window.fbDb.enableNetwork().then(()=>{
                   window._fsNetworkDisabled = false;
