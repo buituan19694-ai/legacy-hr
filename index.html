@@ -7300,11 +7300,12 @@ function renderEmployeeProfile(main){
   const rewards = (DB.rewardRecords||[]).filter(r=>r.empId===e.id).sort((a,b)=> new Date(b.date) - new Date(a.date));
   const promotions = (DB.promotions||[]).filter(p=>p.empId===e.id).sort((a,b)=> new Date(b.date) - new Date(a.date));
   const trainings = (DB.courses||[]).filter(c => {
+    // ✅ FIX: CHỈ match theo attendeeIds (NV được tick cụ thể trong "CBNV THAM GIA")
+    // deptIds chỉ là metadata "khóa này liên quan phòng ban nào" — KHÔNG PHẢI participation list
+    // Bug cũ: nếu khóa có deptIds → tất cả NV dept đó bị coi là "đã học"
+    // → NV mới onboard hôm nay bị hiển thị đã học khóa từ tháng 1 → sai
     if(c.attendeeIds && c.attendeeIds.length > 0){
       return c.attendeeIds.includes(e.id);
-    }
-    if(c.deptIds && c.deptIds.length > 0){
-      return c.deptIds.includes(e.deptId);
     }
     return false;
   }).sort((a,b)=> new Date(b.startDate||0) - new Date(a.startDate||0));
@@ -9010,12 +9011,12 @@ function editEmployee(id, prefill = null){
           <div class="field" style="margin:0">
             <label>💰 ${_lang==="en"?"Base salary":"Lương cơ bản"} (VNĐ)</label>
             <input type="number" id="cf_baseSalary" value="${base}" min="0" step="500000"
-              oninput="(function(){ var b=parseInt(document.getElementById('cf_baseSalary').value.replace(/\./g,'')||'0')||0; var x=parseInt(document.getElementById('cf_bonusSalary').value.replace(/\./g,'')||'0')||0; document.getElementById('cf_totalSalary').value=(b+x).toLocaleString('vi-VN'); })()">
+              oninput="window._updCfSalary&&window._updCfSalary()">
           </div>
           <div class="field" style="margin:0">
             <label>🎯 Khoản bổ sung theo KQCV (VNĐ)</label>
             <input type="number" id="cf_bonusSalary" value="${bonus}" min="0" step="500000"
-              oninput="(function(){ var b=parseInt(document.getElementById('cf_baseSalary').value.replace(/\./g,'')||'0')||0; var x=parseInt(document.getElementById('cf_bonusSalary').value.replace(/\./g,'')||'0')||0; document.getElementById('cf_totalSalary').value=(b+x).toLocaleString('vi-VN'); })()">
+              oninput="window._updCfSalary&&window._updCfSalary()">
           </div>
           <div class="field" style="margin:0">
             <label>📊 ${_lang==="en"?"Total salary":"Tổng lương"} (tự động)</label>
@@ -19138,6 +19139,28 @@ function markJobHired(id){
   render();
 }
 
+// Helper: auto-calculate total salary in job form
+// Fix: type="number" đôi khi có value="" khi browser validating → parseInt = NaN → total = 0
+// Robust: parse trực tiếp valueAsNumber, fallback qua replace non-digit
+window._updJobSalary = function(){
+  const bEl = document.getElementById('f_baseSalary');
+  const xEl = document.getElementById('f_bonusSalary');
+  const tEl = document.getElementById('f_totalSalary');
+  if(!tEl) return;
+  const b = (bEl && !isNaN(bEl.valueAsNumber)) ? bEl.valueAsNumber : (parseInt((bEl?.value||'0').replace(/[^\d]/g,''))||0);
+  const x = (xEl && !isNaN(xEl.valueAsNumber)) ? xEl.valueAsNumber : (parseInt((xEl?.value||'0').replace(/[^\d]/g,''))||0);
+  tEl.value = (b+x).toLocaleString('vi-VN');
+};
+window._updCfSalary = function(){
+  const bEl = document.getElementById('cf_baseSalary');
+  const xEl = document.getElementById('cf_bonusSalary');
+  const tEl = document.getElementById('cf_totalSalary');
+  if(!tEl) return;
+  const b = (bEl && !isNaN(bEl.valueAsNumber)) ? bEl.valueAsNumber : (parseInt((bEl?.value||'0').replace(/[^\d]/g,''))||0);
+  const x = (xEl && !isNaN(xEl.valueAsNumber)) ? xEl.valueAsNumber : (parseInt((xEl?.value||'0').replace(/[^\d]/g,''))||0);
+  tEl.value = (b+x).toLocaleString('vi-VN');
+};
+
 function editJob(id){
   const isNew = !id;
   const j = isNew ? {
@@ -19172,12 +19195,12 @@ function editJob(id){
           <div class="field" style="margin:0">
             <label>💰 ${_lang==="en"?"Base salary":"Lương cơ bản"} (VNĐ)</label>
             <input type="number" id="f_baseSalary" value="${j.baseSalary||j.salary||0}" min="0" step="500000"
-              oninput="(function(){ var b=parseInt(document.getElementById('f_baseSalary').value.replace(/\./g,'')||'0')||0; var x=parseInt(document.getElementById('f_bonusSalary').value.replace(/\./g,'')||'0')||0; document.getElementById('f_totalSalary').value=(b+x).toLocaleString('vi-VN'); })()">
+              oninput="window._updJobSalary&&window._updJobSalary()">
           </div>
           <div class="field" style="margin:0">
             <label>🎯 Khoản bổ sung theo KQCV (VNĐ)</label>
             <input type="number" id="f_bonusSalary" value="${j.bonusSalary||0}" min="0" step="500000"
-              oninput="(function(){ var b=parseInt(document.getElementById('f_baseSalary').value.replace(/\./g,'')||'0')||0; var x=parseInt(document.getElementById('f_bonusSalary').value.replace(/\./g,'')||'0')||0; document.getElementById('f_totalSalary').value=(b+x).toLocaleString('vi-VN'); })()">
+              oninput="window._updJobSalary&&window._updJobSalary()">
           </div>
           <div class="field" style="margin:0">
             <label>📊 ${_lang==="en"?"Total salary":"Tổng lương"} (tự động)</label>
@@ -30151,6 +30174,60 @@ fbAuth.onAuthStateChanged(async user => {
                     const cloudOrder = cloudFields.map(cf=>cf.key);
                     const extra = localFields.filter(cf=>!cloudOrder.includes(cf.key));
                     DB.customFields = [...cloudOrder.filter(k=>localMap.has(k)).map(k=>localMap.get(k)), ...extra];
+                  } else if(Array.isArray(cloudData[key]) && Array.isArray(DB[key])
+                            && cloudData[key].length > 0
+                            && cloudData[key][0] && typeof cloudData[key][0]==='object' && cloudData[key][0].id !== undefined){
+                    // 🚨 CRITICAL FIX v11: Merge arrays by id với heuristic "richer wins"
+                    // Kịch bản mất data: Meoz nhập notes cho jobs → cloud có notes
+                    // Sau đó listener nhận snapshot cũ (không có notes) → replace local
+                    // → Meoz save job khác → save toàn bộ DB.jobs (không có notes) → cloud MẤT notes
+                    // Fix: mỗi id, chọn version có nhiều fields non-empty hơn (bảo vệ khỏi stale snapshot)
+                    const _fieldScore = (item) => {
+                      if(!item || typeof item !== 'object') return 0;
+                      return Object.values(item).filter(v => 
+                        v !== null && v !== undefined && v !== '' && v !== 0 && 
+                        !(Array.isArray(v) && v.length === 0)
+                      ).length;
+                    };
+                    const localMap = new Map((DB[key]||[]).map(item => [item.id, item]));
+                    const cloudMap = new Map(cloudData[key].map(item => [item.id, item]));
+                    const merged = [];
+                    let protectedCount = 0;
+                    const seenIds = new Set();
+                    // Duyệt theo thứ tự cloud (để giữ order)
+                    cloudData[key].forEach(cloudItem => {
+                      const id = cloudItem.id;
+                      seenIds.add(id);
+                      const localItem = localMap.get(id);
+                      if(!localItem){ merged.push(cloudItem); return; }
+                      const localScore = _fieldScore(localItem);
+                      const cloudScore = _fieldScore(cloudItem);
+                      if(localScore > cloudScore){
+                        merged.push(localItem);
+                        protectedCount++;
+                      } else {
+                        merged.push(cloudItem);
+                      }
+                    });
+                    // Thêm items chỉ có trong local (không có trên cloud) — có thể chưa save kịp
+                    (DB[key]||[]).forEach(localItem => {
+                      if(!seenIds.has(localItem.id)){
+                        merged.push(localItem);
+                        protectedCount++;
+                      }
+                    });
+                    if(protectedCount > 0){
+                      console.warn(`[Listener] 🛡️ Protected ${protectedCount} items in ${key} from stale cloud override`);
+                      // Rescue push để đồng bộ cloud với local đã merge (tránh save sau ghi đè)
+                      clearTimeout(window['_'+key+'RescueTimer']);
+                      window['_'+key+'RescueTimer'] = setTimeout(()=>{
+                        try {
+                          console.warn(`[Listener] 🚨 Rescue: pushing merged ${key} back to cloud`);
+                          saveData([key]);
+                        } catch(e){ console.warn('Rescue push failed:', e); }
+                      }, 3000);
+                    }
+                    DB[key] = merged;
                   } else {
                     DB[key] = cloudData[key];
                   }
