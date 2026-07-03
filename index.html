@@ -8519,7 +8519,21 @@ function applyEmpFilter(){
   let r = DB.employees;
   if(empFilter.search){
     const q = empFilter.search.toLowerCase();
-    r = r.filter(e => e.name.toLowerCase().includes(q) || e.code.toLowerCase().includes(q) || (e.email||'').toLowerCase().includes(q) || (e.role||'').toLowerCase().includes(q));
+    // Search chuẩn hóa: name và code dùng includes (tolerant), email/role chỉ match nếu là từ độc lập
+    // Tránh bug: search "mai" match tất cả email gmail.com vì "gmail" chứa "mai"
+    r = r.filter(e => {
+      const q_ = q;
+      const name = (e.name||'').toLowerCase();
+      const code = (e.code||'').toLowerCase();
+      if(name.includes(q_) || code.includes(q_)) return true;
+      // Email: chỉ match phần local (trước @), không match domain
+      const email = (e.email||'').toLowerCase();
+      const emailLocal = email.split('@')[0] || '';
+      if(emailLocal.includes(q_)) return true;
+      // Role: cho phép nhưng phải match rõ (từ dài hơn 3 chars)
+      if(q_.length >= 3 && (e.role||'').toLowerCase().includes(q_)) return true;
+      return false;
+    });
   }
   if(empFilter.dept) r = r.filter(e=>e.deptId===empFilter.dept);
   if(empFilter.status){
@@ -10541,12 +10555,15 @@ function renderDepartmentDetail(main){
 
   if(deptDetailFilter.search){
     const q = deptDetailFilter.search.toLowerCase();
-    members = members.filter(e =>
-      e.name.toLowerCase().includes(q) ||
-      e.code.toLowerCase().includes(q) ||
-      (e.email||'').toLowerCase().includes(q) ||
-      (e.role||'').toLowerCase().includes(q)
-    );
+    members = members.filter(e => {
+      const name = (e.name||'').toLowerCase();
+      const code = (e.code||'').toLowerCase();
+      if(name.includes(q) || code.includes(q)) return true;
+      const emailLocal = ((e.email||'').toLowerCase().split('@')[0]) || '';
+      if(emailLocal.includes(q)) return true;
+      if(q.length >= 3 && (e.role||'').toLowerCase().includes(q)) return true;
+      return false;
+    });
   }
   if(deptDetailFilter.status) members = members.filter(e=>getEffectiveStatus(e)===deptDetailFilter.status);
   if(deptDetailFilter.level) members = members.filter(e=>e.level===deptDetailFilter.level);
