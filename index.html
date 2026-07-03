@@ -1096,6 +1096,11 @@ function _fsDocFor(key){
 
 function saveEmpProfile(empId){
   if(!window.fbDb || !window.currentUser) return;
+  // 🚨 GUARD: skip nếu cold-load chưa xong (chống rollback bug)
+  if(!window._coldLoadDone){
+    console.warn(`[EMP] ⚠️ SKIP save ${empId} — cold-load chưa xong`);
+    return;
+  }
   const emp = (DB.employees||[]).find(e=>e.id===empId);
   if(!emp) return;
   const cd = DB.customData[empId] || {};
@@ -1235,10 +1240,19 @@ function _pushDynamicKey(key, meta){
   if(yearArrayMap[key]){
     const prefix = yearArrayMap[key];
     const arr = DB[key] || [];
+    // 🚨 GUARD: nếu arr rỗng, KHÔNG save (tránh wipe cloud khi DB chưa cold-load)
+    // Trade-off: nếu user chủ động xóa hết records, cloud không sync — nhưng an toàn hơn nhiều
+    // User có thể trigger save lại sau khi delete để force sync (rất hiếm case)
+    if(arr.length === 0){
+      console.warn(`[saveData] ⚠️ SKIP ${prefix} — arr rỗng (tránh wipe cloud). Nếu bạn vừa xóa hết records, F5 và thử lại.`);
+      return;
+    }
     const byYear = {};
     arr.forEach(r=>{ const y=_recYear(r); (byYear[y]=byYear[y]||[]).push(r); });
-    if(!byYear[thisYear]) byYear[thisYear]=[];
+    // ⚠️ BỎ force byYear[thisYear]=[] — nguyên nhân data loss "1-2 ngày"
+    // Chỉ ghi shards THỰC SỰ có data, không tạo empty shard
     Object.entries(byYear).forEach(([yr,records])=>{
+      if(records.length === 0) return; // extra safety: skip empty year
       window.fbDb.collection('hrdata').doc(`${prefix}_${yr}`)
         .set({...meta, [key]:records.map(r=>_sanitizeForFirebase(r)), _shard:parseInt(yr)}, {merge:false})
         .catch(err=>console.error(`[saveData] ❌ ${prefix}_${yr}`, err.message));
@@ -1471,6 +1485,14 @@ function _pushDynamicKey(key, meta){
 }
 
 function saveData(changedKeys=null){
+  // 🚨 CRITICAL GUARD: chống bug "1-2 ngày data rollback"
+  // Nếu cold-load CHƯA HOÀN THÀNH, DB local có thể chưa đầy đủ
+  // Save trong lúc này sẽ WIPE cloud (do merge:false overwrite)
+  // → SKIP save cho tới khi cold-load done
+  if(!window._coldLoadDone){
+    console.warn('[saveData] ⚠️ SKIP — cold-load chưa xong, tránh wipe cloud với DB chưa đủ. Keys:', changedKeys);
+    return;
+  }
   DB._lastSaved = Date.now();
   _invalidateCaches(); // clear badge + filter count caches
 
@@ -8818,11 +8840,11 @@ function _restoreFocus(saved){
 }
 
 let _empSearchTimer = null;
-// ✅ FIX: Dùng event.isComposing (chuẩn Web API) để xử lý IME tiếng Việt đúng cách
-// Khi user gõ Telex/VNI "Tuấn": mỗi keystroke event.isComposing=true → skip filter
-// Khi gõ xong (space/enter/blur), oninput fires với isComposing=false → filter với text cuối cùng
+let _empLastKeystrokeAt = 0;
+// ✅ FIX IME: Debounce đủ lâu (800ms) + check isComposing để không disrupt IME session
+// User gõ "Tuấn" với Telex/VNI cần ~1s. Nếu debounce 200ms, filter chạy giữa lúc gõ
+// → DOM update → IME confuse → ký tự bị nhảy vị trí ("uấnT" thay vì "Tuấn")
 function debounceEmpSearch(event){
-  // Backward compat: nếu truyền string trực tiếp (từ chỗ khác gọi) → xử lý luôn
   let val, isComposing = false;
   if(typeof event === 'string'){
     val = event;
@@ -8833,25 +8855,30 @@ function debounceEmpSearch(event){
     val = '';
   }
   empFilter.search = val;
-  // ⚠️ Đang gõ IME → KHÔNG filter, chờ compositionend
+  _empLastKeystrokeAt = Date.now();
+  // Đang IME compose → tuyệt đối không filter
   if(isComposing) return;
   clearTimeout(_empSearchTimer);
   window._empSearchActive = true;
-  _empSearchTimer = setTimeout(()=>{
-    empPage=1;
-    const saved = _saveFocus();
-    const savedScrollY = window.scrollY;
-    _empPartialRender();
-    _restoreFocus(saved);
-    window.scrollTo(0, savedScrollY);
-    clearTimeout(window._empSearchActiveTimer);
-    window._empSearchActiveTimer = setTimeout(()=>{ window._empSearchActive = false; }, 3000);
-  }, 200);
+  _empSearchTimer = setTimeout(_empDoFilter, 800);
 }
-// Trigger filter khi IME kết thúc (user confirm Vietnamese input)
+// Helper riêng để check keystroke + render (không dùng arguments.callee vì bug với arrow)
+function _empDoFilter(){
+  if(Date.now() - _empLastKeystrokeAt < 500){
+    clearTimeout(_empSearchTimer);
+    _empSearchTimer = setTimeout(_empDoFilter, 500);
+    return;
+  }
+  empPage=1;
+  _empPartialRender();
+  clearTimeout(window._empSearchActiveTimer);
+  window._empSearchActiveTimer = setTimeout(()=>{ window._empSearchActive = false; }, 3000);
+}
+// Trigger filter ngay khi IME kết thúc (user confirm Vietnamese input)
 window.addEventListener('compositionend', (e)=>{
   if(e.target && e.target.id === 'empSearchInput'){
-    debounceEmpSearch(e.target.value); // pass string → force filter
+    // Delay nhỏ để browser commit IME xong
+    setTimeout(()=>debounceEmpSearch(e.target.value), 100);
   }
 });
 
@@ -21086,19 +21113,19 @@ function renderPerformance(main){
   }
   // Dọn duplicate records (do bug shard sai năm trước đây)
   if(dedupeKpiReviews()){
-    // Ghi lại TẤT CẢ shards (kể cả rỗng) để xóa orphan records trên Firestore
-    if(window.fbDb && window.currentUser){
+    // 🚨 GUARD: chỉ ghi lại nếu vẫn còn data — tránh wipe cloud khi DB rỗng
+    if(window.fbDb && window.currentUser && (DB.kpiReviews||[]).length > 0){
       const meta={_syncBy:window.currentUser.uid,_syncAt:Date.now()};
       const byY={};
       (DB.kpiReviews||[]).forEach(r=>{ const y=_recYear(r); (byY[y]=byY[y]||[]).push(r); });
-      const curY=new Date().getFullYear();
-      for(let y=2020;y<=curY+1;y++){ if(!byY[y]) byY[y]=[]; }
-      Object.entries(byY).forEach(([yr,recs])=>
+      // ⚠️ BỎ force empty năm — chỉ ghi shards có data
+      Object.entries(byY).forEach(([yr,recs])=>{
+        if(recs.length === 0) return;
         window.fbDb.collection('hrdata').doc(`kpi_${yr}`)
           .set({...meta,kpiReviews:recs.map(r=>_sanitizeForFirebase(r)),_shard:parseInt(yr)},{merge:false})
-          .catch(e=>console.warn('[dedup] kpi_'+yr,e.message))
-      );
-    } else {
+          .catch(e=>console.warn('[dedup] kpi_'+yr,e.message));
+      });
+    } else if(!window.fbDb || !window.currentUser){
       _saveSharded('kpiReviews');
     }
   }
@@ -21627,6 +21654,12 @@ function renderPerformanceHistory(main){
 
 // ─── Helper: save sharded key to Firestore with confirmation ───────────────
 function _saveSharded(key, onDone){
+  // 🚨 GUARD: skip nếu cold-load chưa xong (chống rollback bug)
+  if(!window._coldLoadDone){
+    console.warn(`[_saveSharded] ⚠️ SKIP ${key} — cold-load chưa xong`);
+    if(onDone) onDone();
+    return;
+  }
   // ⚠️ FIX casuals: dùng _pushDynamicKey (shard theo tháng) để tránh conflict 2 format
   // Trước: _saveSharded ghi casuals_2026 (theo năm), _pushDynamicKey ghi casuals_2026_06 (tháng)
   // → 2 path khác nhau gây mất data khi race condition
@@ -21643,18 +21676,24 @@ function _saveSharded(key, onDone){
   if(!prefix || !window.fbDb){ saveData([key]); if(onDone) onDone(); return; }
 
   const arr = DB[key] || [];
+  // 🚨 GUARD: nếu arr rỗng, KHÔNG save (tránh wipe cloud khi DB chưa cold-load)
+  if(arr.length === 0){
+    console.warn(`[_saveSharded] ⚠️ SKIP ${prefix} — arr rỗng (tránh wipe cloud)`);
+    if(onDone) onDone();
+    return;
+  }
   const byYear = {};
   arr.forEach(r=>{ const y=_recYear(r); (byYear[y]=byYear[y]||[]).push(r); });
-  const curYr = new Date().getFullYear();
-  if(!byYear[curYr]) byYear[curYr]=[];
+  // ⚠️ BỎ force byYear[curYr]=[] — nguyên nhân data loss
 
   const meta = {_syncBy:window.currentUser?.uid||'',_syncAt:Date.now()};
   // Fire-and-forget writes — instant UX
-  Object.entries(byYear).forEach(([yr,records])=>
+  Object.entries(byYear).forEach(([yr,records])=>{
+    if(records.length === 0) return;
     window.fbDb.collection('hrdata').doc(`${prefix}_${yr}`)
       .set({...meta, [key]:records.map(r=>_sanitizeForFirebase(r)), _shard:parseInt(yr)}, {merge:false})
-      .catch(err=>console.error(`[${key}] ❌ ${prefix}_${yr}:`, err.message))
-  );
+      .catch(err=>console.error(`[${key}] ❌ ${prefix}_${yr}:`, err.message));
+  });
   if(onDone) onDone();
 }
 
@@ -29884,6 +29923,10 @@ fbAuth.onAuthStateChanged(async user => {
         }
         try { autoApplyPendingPromotions(); } catch(e){ console.warn('Auto-apply promo error', e); }
         try { syncAllEmployees(); } catch(e){ console.warn('Sync error', e); }
+        // 🚨 CRITICAL: mark cold-load done → cho phép save (chống bug rollback "1-2 ngày")
+        // Trước lúc này, mọi saveData sẽ bị SKIP để không wipe cloud bằng DB local chưa đầy đủ
+        window._coldLoadDone = true;
+        console.log('[Firestore] ✅ Cold-load complete — save operations enabled');
         render();
 
         // 🐱 Daily Greeting — auto show once per day after login
@@ -30025,7 +30068,24 @@ fbAuth.onAuthStateChanged(async user => {
                     // → merge increments từ local vào cloud levels (match theo level.id)
                     const cloudIncCount = (cloudData[key].levels||[]).reduce((s,l)=>s+((l.increments||[]).length), 0);
                     const localIncCount = (DB[key].levels||[]).reduce((s,l)=>s+((l.increments||[]).length), 0);
-                    if(localIncCount > 0 && cloudIncCount < localIncCount){
+                    const cloudLevelsCount = (cloudData[key].levels||[]).length;
+                    const localLevelsCount = (DB[key].levels||[]).length;
+
+                    // 🚨 CRITICAL SAFETY: nếu cloud RỖNG bất thường nhưng local CÓ data → KHÔNG merge
+                    // Cloud có thể đã bị wipe do save fail silent → giữ local + tự động push back
+                    if(cloudLevelsCount === 0 && localLevelsCount > 0){
+                      console.warn(`[Listener] ⚠️ Cloud ${key} EMPTY nhưng local có ${localLevelsCount} levels — SKIP merge, PROTECT local + rescue push`);
+                      clearTimeout(window._salStructRescueTimer);
+                      window._salStructRescueTimer = setTimeout(()=>{
+                        try {
+                          console.warn(`[Listener] 🚨 Rescue: pushing local ${key} back to cloud`);
+                          saveData([key]);
+                        } catch(e){ console.warn('Rescue push failed:', e); }
+                      }, 3000);
+                      return; // skip default merge, giữ local nguyên
+                    }
+
+                    if(localIncCount > 0 && cloudIncCount < localIncCount && cloudLevelsCount >= localLevelsCount){
                       // Merge: với mỗi level trong cloud, nếu cloud level KHÔNG có increments NHƯNG local level cùng id có → giữ local
                       const localLevelMap = new Map((DB[key].levels||[]).map(l => [l.id, l]));
                       let preservedCount = 0;
