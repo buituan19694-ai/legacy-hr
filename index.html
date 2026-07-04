@@ -1107,6 +1107,10 @@ function saveEmpProfile(empId){
   const {photo, ...empNoPhoto} = emp;
   const _syncAt = Date.now();
   window._lastSaveAt = _syncAt;
+  window._selfSaveAt = _syncAt; // 🚨 v29: chặn snapshot echo/stale ghi đè NV vừa sửa
+  // Ghi nhớ _syncAt của chính mình để stale-guard trong listener biết bản này là mới nhất
+  if(!window._empLastSyncAt) window._empLastSyncAt = {};
+  window._empLastSyncAt[empId] = _syncAt;
   let doc = {...empNoPhoto, ...cd, _empId: empId,
                _syncBy: window.currentUser.uid, _syncAt};
   // Sanitize trước khi push Firebase
@@ -1162,9 +1166,12 @@ async function loadEmpProfiles(localPhotos){
       'deptId','role','roleVN','level','joined','status','kpi','manualRole','updatedAt',
       '_empId','_syncBy','_syncAt']);
     const photoUpdates = {}; // track changes để update localStorage 1 lần
+    if(!window._empLastSyncAt) window._empLastSyncAt = {};
     snap.forEach(doc=>{
       const d = doc.data();
       const empId = d._empId || doc.id;
+      // 🚨 v29: ghi nhận _syncAt lúc load để stale-guard có baseline ngay từ đầu
+      if(d._syncAt){ window._empLastSyncAt[empId] = Math.max(window._empLastSyncAt[empId]||0, d._syncAt); }
       const empObj = {id: empId};
       const cdObj = {};
       Object.entries(d).forEach(([k,v])=>{
@@ -1341,6 +1348,7 @@ function _pushDynamicKey(key, meta){
   }
 
   if(key === 'manningPlan' || key === 'manningActual'){
+    window._selfSaveAt = Date.now(); // 🚨 v38: chặn echo/stale revert cho MỌI thao tác manning
     // Shard theo năm: manning_plan_2026, manning_actual_2026
     const isActual = key === 'manningActual';
     const obj = DB[key]||{};
@@ -1348,10 +1356,35 @@ function _pushDynamicKey(key, meta){
     Object.keys(obj).forEach(y=>{ const yi=parseInt(y); if(!isNaN(yi)) allYears.add(yi); });
     allYears.forEach(yr=>{
       const docId = isActual ? `manning_actual_${yr}` : `manning_plan_${yr}`;
-      const payload = {...meta, [key]: {[yr]: obj[yr]||{}}, _shard: yr};
-      window.fbDb.collection('hrdata').doc(docId)
-        .set(payload, {merge:false})
-        .catch(err=>console.error(`[saveData] ❌ ${docId}`, err.message));
+      const ref = window.fbDb.collection('hrdata').doc(docId);
+      // 🚨 v38: đọc cloud TRƯỚC rồi merge — chống mất data khi 2 account sửa
+      // dept/tháng KHÁC nhau trong cùng năm (merge:false cũ ghi đè cả năm)
+      ref.get().then(snap=>{
+        const cloud = snap.exists ? (snap.data()||{}) : {};
+        const cloudYear = ((cloud[key]||{})[yr]) || {};
+        const localYear = obj[yr] || {};
+        let mergedYear;
+        if(isActual){
+          // manningActual: {month: {empId: {workDays}}} — merge theo month→empId
+          mergedYear = {};
+          const allMo = new Set([...Object.keys(cloudYear), ...Object.keys(localYear)]);
+          allMo.forEach(mo=>{
+            if(mo.startsWith('_')) return;
+            mergedYear[mo] = {...(cloudYear[mo]||{}), ...(localYear[mo]||{})};
+          });
+        } else {
+          // manningPlan: {depts: {deptId: {positions}}} — merge theo deptId
+          const cloudDepts = cloudYear.depts || {};
+          const localDepts = localYear.depts || {};
+          mergedYear = {...cloudYear, depts: {...cloudDepts, ...localDepts}};
+        }
+        const payload = {...meta, [key]: {[yr]: mergedYear}, _shard: yr};
+        return ref.set(payload, {merge:false});
+      }).catch(err=>{
+        console.error(`[saveData] ❌ ${docId} (merge fail, fallback)`, err.message);
+        const payload = {...meta, [key]: {[yr]: obj[yr]||{}}, _shard: yr};
+        ref.set(payload, {merge:false}).catch(e2=>console.error(`[saveData] ❌ ${docId} fallback`, e2.message));
+      });
     });
     return;
   }
@@ -1412,21 +1445,51 @@ function _pushDynamicKey(key, meta){
   // P&L Review data: shard theo năm, gom 1 doc/năm
   const plDataKeys = ['plRevenue','plActionPlan'];
   if(plDataKeys.includes(key)){
+    window._selfSaveAt = Date.now(); // 🚨 v24: chặn snapshot echo ghi đè tháng vừa nhập
     const allYears = new Set([thisYear]);
     plDataKeys.forEach(k=>{
       const obj=DB[k]||{};
       Object.keys(obj).forEach(y=>{ const yi=parseInt(y); if(!isNaN(yi)) allYears.add(yi); });
     });
     allYears.forEach(yr=>{
-      const payload={...meta, _shard:yr};
-      plDataKeys.forEach(k=>{
-        const obj=DB[k]||{};
-        if(obj[yr]!==undefined) payload[k] = {[yr]: obj[yr]};
-        else payload[k] = {};
+      const ref = window.fbDb.collection('hrdata').doc(`pldata_${yr}`);
+      // 🚨 v24: đọc cloud TRƯỚC rồi deep-merge — chống mất data khi:
+      //  (1) 2 account sửa 2 tháng khác nhau trong cùng năm (merge:false cũ ghi đè lẫn nhau)
+      //  (2) local chưa load xong toàn bộ năm (guard cold-load đã chặn, đây là lớp bảo hiểm thêm)
+      ref.get().then(snap=>{
+        const cloud = snap.exists ? (snap.data()||{}) : {};
+        const payload={...meta, _shard:yr};
+        plDataKeys.forEach(k=>{
+          const localYear = (DB[k]||{})[yr] || {};      // {month: {...}} của local
+          const cloudYear = (cloud[k]||{})[yr] || {};    // {month: {...}} của cloud
+          const mergedYear = {...cloudYear};
+          Object.entries(localYear).forEach(([mo, moData])=>{
+            const cloudMo = cloudYear[mo];
+            if(k === 'plRevenue' && cloudMo && typeof cloudMo==='object' && typeof moData==='object'){
+              // Revenue: 1 object/tháng → so _ts, mới thắng
+              const lTs = moData._ts || 0, cTs = cloudMo._ts || 0;
+              mergedYear[mo] = (cTs > lTs) ? cloudMo : moData;
+            } else if(k === 'plActionPlan' && Array.isArray(moData)){
+              // 🚨 v28: Action Plan là ARRAY → merge-by-id (KHÔNG ghi đè cả tháng)
+              // Chống mất data khi 2 account thêm action khác nhau cùng tháng
+              mergedYear[mo] = _mergeActionArr(Array.isArray(cloudMo)?cloudMo:[], moData);
+            } else {
+              mergedYear[mo] = moData;
+            }
+          });
+          payload[k] = {[yr]: mergedYear};
+        });
+        return ref.set(payload, {merge:false});
+      }).catch(err=>{
+        console.error(`[saveData] ❌ pldata_${yr} (merge fail, fallback direct set)`, err.message);
+        // Fallback: nếu đọc cloud lỗi, vẫn ghi local (không để save thất bại hoàn toàn)
+        const payload={...meta, _shard:yr};
+        plDataKeys.forEach(k=>{
+          const obj=DB[k]||{};
+          payload[k] = obj[yr]!==undefined ? {[yr]: obj[yr]} : {};
+        });
+        ref.set(payload, {merge:false}).catch(e2=>console.error(`[saveData] ❌ pldata_${yr} fallback`, e2.message));
       });
-      window.fbDb.collection('hrdata').doc(`pldata_${yr}`)
-        .set(payload, {merge:false})
-        .catch(err=>console.error(`[saveData] ❌ pldata_${yr}`, err.message));
     });
     return;
   }
@@ -1512,6 +1575,16 @@ function saveData(changedKeys=null){
   if(!window._coldLoadDone){
     console.warn('[saveData] ⚠️ SKIP — cold-load chưa xong, tránh wipe cloud với DB chưa đủ. Keys:', changedKeys);
     return;
+  }
+  // 🛡️ SENTINEL GUARD: nếu key đang bị nghi mất data (sentinel khoá) → KHÔNG ghi đè cloud
+  // Tránh: sentinel cảnh báo Revenue mất → nhưng auto-save vẫn chạy → ghi đè rỗng lên cloud lần nữa
+  if(window._sentinelBlockedKeys && window._sentinelBlockedKeys.size && changedKeys){
+    const ck = Array.isArray(changedKeys)?changedKeys:[changedKeys];
+    const blocked = ck.filter(k=>window._sentinelBlockedKeys.has(k));
+    if(blocked.length){
+      console.warn('[saveData] 🔒 SKIP — sentinel đang khoá (nghi mất data):', blocked, '. Bấm "mở khoá" trong popup để tiếp tục.');
+      return;
+    }
   }
   DB._lastSaved = Date.now();
   _invalidateCaches(); // clear badge + filter count caches
@@ -1647,6 +1720,33 @@ function _stampItem(arr, id){
   if(!Array.isArray(arr)) return;
   const it = arr.find(x=>x && x.id===id);
   if(it) it._savedAt = Date.now();
+}
+
+// 🚨 v28: merge 2 array Action Plan (cùng 1 tháng) by id — chống mất/revert action item
+// Quy tắc: gộp item của cả 2 bên; item trùng id → _savedAt mới thắng; item đã tombstone → loại.
+// Item không có id (data cũ) → giữ theo title để không mất (fallback).
+function _mergeActionArr(cloudArr, localArr){
+  const tomb = (typeof _gTombGetSetFor==='function') ? _gTombGetSetFor('plActionPlan') : new Set();
+  const byId = new Map();
+  const noId = [];
+  const _add = (item)=>{
+    if(!item || typeof item!=='object') return;
+    if(!item.id){ noId.push(item); return; }
+    if(tomb.has(item.id)) return; // đã xóa → không hồi sinh
+    const prev = byId.get(item.id);
+    if(!prev){ byId.set(item.id, item); return; }
+    // Trùng id → giữ bản _savedAt mới hơn
+    const pTs = prev._savedAt || 0, nTs = item._savedAt || 0;
+    if(nTs >= pTs) byId.set(item.id, item);
+  };
+  // Cloud trước, local sau (local vừa thao tác nên nếu bằng ts thì local thắng)
+  cloudArr.forEach(_add);
+  localArr.forEach(_add);
+  // Gộp noId: dedup theo title (tránh nhân đôi)
+  const seenTitle = new Set();
+  const noIdDedup = [];
+  noId.forEach(it=>{ const t=(it.title||'').trim(); if(t && seenTitle.has(t)) return; seenTitle.add(t); noIdDedup.push(it); });
+  return [...byId.values(), ...noIdDedup];
 }
 
 function _sanitizeForFirebase(obj){
@@ -2111,33 +2211,33 @@ function navigate(page){
   currentEmpId = null;
   currentDeptId = null;
   currentJobId = null;
+  window._resetScrollOnRender = true; // chuyển trang → về đầu, không giữ scroll cũ
   document.querySelectorAll('.nav-item').forEach(i=>i.classList.toggle('active', i.dataset.page===page));
   render();
-  window.scrollTo({top:0, behavior:'smooth'});
 }
 
 function viewEmployee(id){
   currentEmpId = id;
   currentPage = 'employee-profile';
+  window._resetScrollOnRender = true;
   document.querySelectorAll('.nav-item').forEach(i=>i.classList.toggle('active', i.dataset.page==='employees'));
   render();
-  window.scrollTo({top:0, behavior:'smooth'});
 }
 
 function viewDepartment(id){
   currentDeptId = id;
   currentPage = 'department-detail';
+  window._resetScrollOnRender = true;
   document.querySelectorAll('.nav-item').forEach(i=>i.classList.toggle('active', i.dataset.page==='departments'));
   render();
-  window.scrollTo({top:0, behavior:'smooth'});
 }
 
 function viewJob(id){
   currentJobId = id;
   currentPage = 'job-detail';
+  window._resetScrollOnRender = true;
   document.querySelectorAll('.nav-item').forEach(i=>i.classList.toggle('active', i.dataset.page==='recruitment'));
   render();
-  window.scrollTo({top:0, behavior:'smooth'});
 }
 document.querySelectorAll('.nav-item').forEach(item=>{
   item.addEventListener('click', ()=> navigate(item.dataset.page));
@@ -2313,6 +2413,11 @@ document.addEventListener('click',e=>{
 
 function _doRender(){
   window._renderDebounceTimer = null;
+  // 🚫 FIX "nhảy": lưu vị trí scroll trước khi vẽ lại, khôi phục sau — tránh trang nhảy về đầu
+  // Ngoại lệ: nếu vừa chuyển trang (navigate/viewX) → về đầu trang
+  const _resetScroll = !!window._resetScrollOnRender;
+  window._resetScrollOnRender = false;
+  const _scrollY = _resetScroll ? 0 : (window.scrollY || window.pageYOffset || 0);
   requestAnimationFrame(()=>{
     updateBadges();
     const main = $('#mainContent');
@@ -2346,6 +2451,11 @@ function _doRender(){
     };
     (renderers[currentPage] || renderDashboard)(main);
     setTimeout(function(){ initDateInputs(main); }, 20);
+    // Khôi phục / reset vị trí scroll
+    requestAnimationFrame(()=>{
+      if(_resetScroll) window.scrollTo({top:0, behavior:'smooth'});
+      else if(_scrollY > 0) window.scrollTo(0, _scrollY);
+    });
     // Cập nhật title trên mobile topbar
     setTimeout(()=>{
       const h1 = main.querySelector('.page-title');
@@ -2732,6 +2842,153 @@ function getExitDate(e){
 }
 var MN = ['T1','T2','T3','T4','T5','T6','T7','T8','T9','T10','T11','T12'];
 function _parseDob(s){ return _parseAnyDate(s); }
+// 🛡️ DATA-LOSS SENTINEL — đo số record mỗi key, so với đỉnh từng thấy, cảnh báo khi tụt bất thường
+// Không phụ thuộc vào việc nhớ thêm nhánh load cho từng key → bắt được MỌI bug data loss.
+function _countRecords(v){
+  if(v==null) return 0;
+  if(Array.isArray(v)) return v.length;
+  if(typeof v==='object'){
+    // Đếm sâu 2 tầng cho structure {year:{month:...}} hoặc {empId:{...}}
+    let n=0;
+    for(const k in v){
+      const inner=v[k];
+      if(inner && typeof inner==='object' && !Array.isArray(inner)){
+        n += Object.keys(inner).filter(kk=>!kk.startsWith('_')).length;
+      } else n++;
+    }
+    return n;
+  }
+  return 0;
+}
+function _runDataLossSentinel(){
+  const HWM_KEY = STORE_KEY + '_hwm'; // high-water mark store
+  // Các key quan trọng cần giám sát (dynamic + flat có data người dùng nhập)
+  const watchKeys = [
+    'employees','candidates','leaves','contracts','trainees','courses',
+    'promotions','disciplineRecords','rewardRecords','casuals','kpiReviews',
+    'plRevenue','plActionPlan','svcData','bonusData','jobs',
+    'leavePlan','leaveOpening','manningPlan','manningActual','resignations'
+  ];
+  const now = {};
+  watchKeys.forEach(k=>{ now[k] = _countRecords(DB[k]); });
+
+  let hwm = {};
+  try { hwm = JSON.parse(localStorage.getItem(HWM_KEY) || '{}'); } catch(_){}
+
+  // So sánh: key nào TỪNG có nhiều (hwm cao) mà giờ tụt ≥50% hoặc về 0 → nghi mất
+  const alerts = [];
+  watchKeys.forEach(k=>{
+    const past = hwm[k]?.max || 0;
+    const cur = now[k];
+    if(past >= 3 && (cur === 0 || cur < past * 0.5)){
+      alerts.push({ key:k, was:past, now:cur, when: hwm[k]?.at || 0 });
+    }
+  });
+
+  // Cập nhật high-water mark (chỉ tăng, ghi kèm thời điểm)
+  const newHwm = {...hwm};
+  watchKeys.forEach(k=>{
+    const past = hwm[k]?.max || 0;
+    if(now[k] > past){ newHwm[k] = { max: now[k], at: Date.now() }; }
+    else if(!newHwm[k]){ newHwm[k] = { max: now[k], at: Date.now() }; }
+  });
+  try { localStorage.setItem(HWM_KEY, JSON.stringify(newHwm)); } catch(_){}
+
+  if(alerts.length === 0){
+    console.log('[Sentinel] ✅ Không phát hiện data mất bất thường');
+    return;
+  }
+
+  // ⚠️ CÓ NGHI NGỜ MẤT DATA → chặn save + popup cảnh báo
+  console.warn('[Sentinel] ⚠️ NGHI NGỜ MẤT DATA:', alerts);
+  const KEY_LABEL = {
+    plRevenue:'Revenue (P&L Review)', plActionPlan:'Action Plan (P&L)',
+    employees:'Nhân viên', candidates:'Ứng viên', leaves:'Đơn nghỉ phép',
+    contracts:'Hợp đồng', trainees:'Thực tập sinh', courses:'Khoá đào tạo',
+    promotions:'Điều chuyển', disciplineRecords:'Kỷ luật', rewardRecords:'Khen thưởng',
+    casuals:'Casual', kpiReviews:'Đánh giá KPI', svcData:'Service Charge',
+    bonusData:'Khoản thưởng', jobs:'Vị trí tuyển', leavePlan:'KH nghỉ phép',
+    leaveOpening:'Số dư phép', manningPlan:'Manning Plan', manningActual:'Manning Actual',
+    resignations:'Nghỉ việc'
+  };
+  const rows = alerts.map(a=>{
+    const lbl = KEY_LABEL[a.key] || a.key;
+    const whenStr = a.when ? new Date(a.when).toLocaleString('vi-VN') : '—';
+    return `<tr>
+      <td style="padding:8px 12px;border-bottom:1px solid var(--border);font-weight:600">${lbl}</td>
+      <td style="padding:8px 12px;border-bottom:1px solid var(--border);text-align:center;color:var(--success);font-family:monospace">${a.was}</td>
+      <td style="padding:8px 12px;border-bottom:1px solid var(--border);text-align:center;color:var(--danger);font-weight:700;font-family:monospace">${a.now}</td>
+      <td style="padding:8px 12px;border-bottom:1px solid var(--border);font-size:11px;color:var(--ink-muted)">${whenStr}</td>
+    </tr>`;
+  }).join('');
+
+  // 🔒 CHẶN SAVE cho các key nghi mất — tránh save đè cloud bằng data thiếu
+  window._sentinelBlockedKeys = new Set(alerts.map(a=>a.key));
+
+  const overlay = document.createElement('div');
+  overlay.id = 'sentinelAlert';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:99999;display:flex;align-items:center;justify-content:center;padding:20px;backdrop-filter:blur(4px)';
+  overlay.innerHTML = `
+    <div style="background:var(--bg-card,#1a2028);border:2px solid var(--danger,#e57373);border-radius:14px;max-width:600px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,.5);overflow:hidden">
+      <div style="background:rgba(229,115,115,.12);padding:18px 24px;border-bottom:1px solid var(--border)">
+        <div style="font-size:19px;font-weight:700;color:var(--danger)">🚨 CẢNH BÁO: Nghi ngờ mất dữ liệu</div>
+        <div style="font-size:12.5px;color:var(--ink-dim);margin-top:4px">Hệ thống phát hiện một số mục có số lượng tụt bất thường so với lần trước. Kiểm tra trước khi làm gì thêm.</div>
+      </div>
+      <div style="padding:20px 24px">
+        <table style="width:100%;border-collapse:collapse;font-size:13px">
+          <thead><tr style="text-align:left">
+            <th style="padding:8px 12px;border-bottom:2px solid var(--border);font-size:11px;text-transform:uppercase;color:var(--ink-muted)">Mục</th>
+            <th style="padding:8px 12px;border-bottom:2px solid var(--border);font-size:11px;text-transform:uppercase;color:var(--ink-muted);text-align:center">Trước</th>
+            <th style="padding:8px 12px;border-bottom:2px solid var(--border);font-size:11px;text-transform:uppercase;color:var(--ink-muted);text-align:center">Bây giờ</th>
+            <th style="padding:8px 12px;border-bottom:2px solid var(--border);font-size:11px;text-transform:uppercase;color:var(--ink-muted)">Đỉnh lúc</th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+        <div style="margin-top:16px;padding:12px 14px;background:rgba(232,185,116,.1);border:1px solid rgba(232,185,116,.3);border-radius:8px;font-size:12.5px;color:var(--ink-dim);line-height:1.6">
+          <b style="color:var(--warning)">Đã tạm KHOÁ ghi đè</b> các mục trên để tránh xoá tiếp trên cloud.<br>
+          • Nếu data <b>thực sự mất</b>: dùng PITR tua database về thời điểm trước đó, hoặc nhập lại.<br>
+          • Nếu đây là <b>báo nhầm</b> (VD Meoz chủ động xoá): bấm "Tôi biết rồi" để mở khoá và tiếp tục.
+        </div>
+      </div>
+      <div style="padding:14px 24px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:10px">
+        <button onclick="_sentinelDismiss(false)" style="padding:9px 18px;background:transparent;border:1px solid var(--border-strong,#3a4554);color:var(--ink);border-radius:7px;font-size:13px;cursor:pointer;font-weight:500">Giữ khoá, để tôi kiểm tra</button>
+        <button onclick="_sentinelDismiss(true)" style="padding:9px 18px;background:var(--danger,#e57373);border:none;color:#fff;border-radius:7px;font-size:13px;cursor:pointer;font-weight:600">Tôi biết rồi, mở khoá</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+}
+// Đóng popup sentinel; unlock=true thì mở khoá ghi đè, cập nhật lại HWM về mức hiện tại
+function _sentinelDismiss(unlock){
+  const el = document.getElementById('sentinelAlert');
+  if(el) el.remove();
+  if(unlock){
+    window._sentinelBlockedKeys = new Set();
+    // Cập nhật HWM về mức hiện tại (chấp nhận trạng thái mới là "đúng")
+    try{
+      const HWM_KEY = STORE_KEY + '_hwm';
+      const watchKeys = ['employees','candidates','leaves','contracts','trainees','courses',
+        'promotions','disciplineRecords','rewardRecords','casuals','kpiReviews','plRevenue',
+        'plActionPlan','svcData','bonusData','jobs','leavePlan','leaveOpening','manningPlan',
+        'manningActual','resignations'];
+      const hwm={};
+      watchKeys.forEach(k=>{ hwm[k]={max:_countRecords(DB[k]), at:Date.now()}; });
+      localStorage.setItem(HWM_KEY, JSON.stringify(hwm));
+    }catch(_){}
+    if(typeof toast==='function') toast('✅ Đã mở khoá ghi. Nếu cần nhập lại data, cứ tiếp tục.','success');
+  } else {
+    if(typeof toast==='function') toast('🔒 Vẫn đang khoá ghi đè cho các mục nghi mất. Reload sau khi đã xử lý.','warning');
+  }
+}
+
+// 🔤 Chuẩn hoá tiếng Việt cho tìm kiếm: bỏ dấu + đ→d + lowercase
+// "Nguyễn Thị Mai Hương" → "nguyen thi mai huong" → gõ "huong" cũng ra
+function _normVN(s){
+  return (s||'').toString()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g,'')
+    .replace(/đ/g,'d').replace(/Đ/g,'d')
+    .toLowerCase().trim();
+}
+
 function _parseAnyDate(s){
   if(!s) return null;
   s = s.trim();
@@ -2838,7 +3095,9 @@ window._plAddActionFromStory = function(title, target){
     status: 'Planned',
     createdAt: new Date().toISOString(),
     createdFromStory: true,
+    _savedAt: Date.now(),
   });
+  window._selfSaveAt = Date.now();
   if(typeof saveData === 'function') saveData(['plActionPlan']);
   if(typeof toast === 'function') toast('✓ Đã thêm vào HR Action Plan tháng '+(m+1)+'/'+y, 'success');
   window._plTab = 'action';
@@ -3641,6 +3900,53 @@ function _plRenderIntelligence(el, year, month){
     });
   }
 
+  // 11b. 🎖️ NV CẬN NGÀY THĂNG CHỨC — đề xuất đã duyệt/đang xét, ngày hiệu lực sắp tới hoặc đã tới mà chưa áp dụng
+  const promoDueSoon = [];      // effectiveDate trong 0..30 ngày tới, chưa completed
+  const promoOverdue = [];      // effectiveDate đã qua nhưng chưa áp dụng
+  const promoToApply = [];      // đã completed nhưng chưa appliedAt, tới ngày hiệu lực
+  (DB.promotions||[]).forEach(p => {
+    if(p.status === 'rejected' || p.appliedAt) return;
+    if(!p.effectiveDate) return;
+    const effD = _parseExitDate(p.effectiveDate);
+    if(!effD) return;
+    const dTo = Math.round((effD - _today) / 86400000);
+    const emp = empById(p.empId);
+    if(!emp) return;
+    const info = { id:p.empId, name:emp.name, role:p.newRole||p.oldRole||'', effectiveDate:p.effectiveDate, days:dTo, status:p.status };
+    if(p.status === 'completed' && dTo <= 0){ promoToApply.push(info); }
+    else if(dTo < 0){ promoOverdue.push(info); }
+    else if(dTo <= 30){ promoDueSoon.push(info); }
+  });
+
+  if(promoOverdue.length > 0){
+    stories.push({
+      severity: 'critical',
+      icon: '🎖️',
+      title: `${promoOverdue.length} thăng chức QUÁ ngày hiệu lực nhưng chưa xử lý`,
+      detail: `Ngày hiệu lực đã qua mà đề xuất vẫn chưa duyệt/áp dụng — NV có thể đang chờ. Ví dụ: ${promoOverdue.slice(0,3).map(c => `${c.name} (quá ${Math.abs(c.days)}d, ${PROMOTION_STATUS[c.status]||c.status})`).join(', ')}${promoOverdue.length>3?'...':''}`,
+      action: 'Review module HR Movement / Performance Review',
+    });
+  }
+  if(promoToApply.length > 0){
+    stories.push({
+      severity: 'warning',
+      icon: '🎯',
+      title: `${promoToApply.length} thăng chức đã duyệt, tới ngày áp dụng`,
+      detail: `Đã xác nhận và tới/qua ngày hiệu lực — bấm "áp dụng" để cập nhật chức danh & lương NV. Ví dụ: ${promoToApply.slice(0,3).map(c => `${c.name} → ${c.role}`).join(', ')}${promoToApply.length>3?'...':''}`,
+      action: 'HR Movement → xác nhận áp dụng',
+    });
+  }
+  if(promoDueSoon.length > 0){
+    const urgent = promoDueSoon.filter(c => c.days <= 7);
+    stories.push({
+      severity: urgent.length > 0 ? 'warning' : 'info',
+      icon: '🎖️',
+      title: `${promoDueSoon.length} NV cận ngày thăng chức (≤30 ngày)`,
+      detail: `${urgent.length > 0 ? `<b>${urgent.length} trong 7 ngày tới.</b> ` : ''}Chuẩn bị duyệt & thông báo trước ngày hiệu lực. Ví dụ: ${promoDueSoon.slice(0,3).map(c => `${c.name} → ${c.role} (còn ${c.days}d)`).join(', ')}${promoDueSoon.length>3?'...':''}`,
+      action: 'Review module HR Movement',
+    });
+  }
+
   // 12. BIRTHDAYS — NV sinh nhật tháng này (nhắc budget quà)
   const birthdayThisMonth = activeEmps.filter(e => {
     const dob = (cd[e.id]||{}).dob || e.dob;
@@ -4146,7 +4452,7 @@ function _plRenderProductivity(el, year, month){
           <label style="font-size:11px;color:var(--ink-muted);font-weight:600;text-transform:uppercase;letter-spacing:.04em">Revenue Budget</label>
           <input type="text" inputmode="numeric" value="${(parseFloat(rev.budget)||0).toLocaleString('vi-VN')}" placeholder="0"
             oninput="window._plOnInputNum(this)"
-            onchange="const n=window._plParseInput(this.value);if(!DB.plRevenue[${year}])DB.plRevenue[${year}]={};if(!DB.plRevenue[${year}][${month}])DB.plRevenue[${year}][${month}]={};DB.plRevenue[${year}][${month}].budget=n;saveData(['plRevenue']);render()"
+            onchange="const n=window._plParseInput(this.value);if(!DB.plRevenue[${year}])DB.plRevenue[${year}]={};if(!DB.plRevenue[${year}][${month}])DB.plRevenue[${year}][${month}]={};DB.plRevenue[${year}][${month}].budget=n;DB.plRevenue[${year}][${month}]._ts=Date.now();saveData(['plRevenue']);render()"
             style="width:100%;background:var(--bg-card);border:1px solid var(--border);color:var(--ink);padding:8px 12px;border-radius:6px;font-family:'JetBrains Mono',monospace;font-size:14px;margin-top:4px;text-align:right">
           <div style="font-size:11px;color:var(--ink-dim);margin-top:4px">= ${_plFmtMoney(parseFloat(rev.budget)||0)}đ</div>
         </div>
@@ -4154,7 +4460,7 @@ function _plRenderProductivity(el, year, month){
           <label style="font-size:11px;color:var(--ink-muted);font-weight:600;text-transform:uppercase;letter-spacing:.04em">Revenue Actual</label>
           <input type="text" inputmode="numeric" value="${(parseFloat(rev.actual)||0).toLocaleString('vi-VN')}" placeholder="0"
             oninput="window._plOnInputNum(this)"
-            onchange="const n=window._plParseInput(this.value);if(!DB.plRevenue[${year}])DB.plRevenue[${year}]={};if(!DB.plRevenue[${year}][${month}])DB.plRevenue[${year}][${month}]={};DB.plRevenue[${year}][${month}].actual=n;saveData(['plRevenue']);render()"
+            onchange="const n=window._plParseInput(this.value);if(!DB.plRevenue[${year}])DB.plRevenue[${year}]={};if(!DB.plRevenue[${year}][${month}])DB.plRevenue[${year}][${month}]={};DB.plRevenue[${year}][${month}].actual=n;DB.plRevenue[${year}][${month}]._ts=Date.now();saveData(['plRevenue']);render()"
             style="width:100%;background:var(--bg-card);border:1px solid var(--border);color:var(--ink);padding:8px 12px;border-radius:6px;font-family:'JetBrains Mono',monospace;font-size:14px;margin-top:4px;text-align:right">
           <div style="font-size:11px;color:var(--ink-dim);margin-top:4px">= ${_plFmtMoney(parseFloat(rev.actual)||0)}đ</div>
         </div>
@@ -5361,9 +5667,9 @@ function _plRenderActionPlan(el, year, month){
                 <div style="flex:1">
                   <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;flex-wrap:wrap">
                     <input type="text" value="${escapeHtml(it.title||'')}" placeholder="Tiêu đề action..."
-                      onchange="DB.plActionPlan[${year}][${month}][${idx}].title=this.value;saveData(['plActionPlan'])"
+                      onchange="DB.plActionPlan[${year}][${month}][${idx}].title=this.value;DB.plActionPlan[${year}][${month}][${idx}]._savedAt=Date.now();saveData(['plActionPlan'])"
                       style="flex:1;min-width:200px;background:transparent;border:0;color:var(--ink);font-weight:600;font-size:13px;padding:2px 0">
-                    <select onchange="DB.plActionPlan[${year}][${month}][${idx}].status=this.value;saveData(['plActionPlan']);render()"
+                    <select onchange="DB.plActionPlan[${year}][${month}][${idx}].status=this.value;DB.plActionPlan[${year}][${month}][${idx}]._savedAt=Date.now();saveData(['plActionPlan']);render()"
                       style="background:var(--bg-card);border:1px solid var(--border);color:${statusColors[st]};padding:3px 8px;border-radius:5px;font-size:11px;font-weight:600">
                       <option value="planned" ${st==='planned'?'selected':''}>📅 Planned</option>
                       <option value="in_progress" ${st==='in_progress'?'selected':''}>⚙️ In Progress</option>
@@ -5373,16 +5679,16 @@ function _plRenderActionPlan(el, year, month){
                   </div>
                   <div style="display:grid;grid-template-columns:1fr 1fr 1fr 24px;gap:8px;align-items:center;margin-top:6px">
                     <input type="text" value="${escapeHtml(it.target||'')}" placeholder="Target (vd: -40 ngày AL)..."
-                      onchange="DB.plActionPlan[${year}][${month}][${idx}].target=this.value;saveData(['plActionPlan'])"
+                      onchange="DB.plActionPlan[${year}][${month}][${idx}].target=this.value;DB.plActionPlan[${year}][${month}][${idx}]._savedAt=Date.now();saveData(['plActionPlan'])"
                       style="background:var(--bg-card);border:1px solid var(--border);color:var(--ink-dim);padding:5px 8px;border-radius:5px;font-size:11.5px">
                     <input type="text" inputmode="numeric" value="${it.expectedSaving?Number(it.expectedSaving).toLocaleString('vi-VN'):''}" placeholder="Expected saving (đ)"
                       oninput="this.value=this.value.replace(/[^\\d]/g,'').replace(/\\B(?=(\\d{3})+(?!\\d))/g,'.')"
-                      onchange="DB.plActionPlan[${year}][${month}][${idx}].expectedSaving=parseFloat(this.value.replace(/\\./g,''))||0;saveData(['plActionPlan']);render()"
+                      onchange="DB.plActionPlan[${year}][${month}][${idx}].expectedSaving=parseFloat(this.value.replace(/\\./g,''))||0;DB.plActionPlan[${year}][${month}][${idx}]._savedAt=Date.now();saveData(['plActionPlan']);render()"
                       style="background:var(--bg-card);border:1px solid var(--border);color:var(--success);padding:5px 8px;border-radius:5px;font-size:11.5px;font-family:'JetBrains Mono',monospace;text-align:right">
                     <input type="text" value="${escapeHtml(it.owner||'')}" placeholder="Owner..."
-                      onchange="DB.plActionPlan[${year}][${month}][${idx}].owner=this.value;saveData(['plActionPlan'])"
+                      onchange="DB.plActionPlan[${year}][${month}][${idx}].owner=this.value;DB.plActionPlan[${year}][${month}][${idx}]._savedAt=Date.now();saveData(['plActionPlan'])"
                       style="background:var(--bg-card);border:1px solid var(--border);color:var(--ink-dim);padding:5px 8px;border-radius:5px;font-size:11.5px">
-                    <button onclick="if(confirm('Xóa action này?')){DB.plActionPlan[${year}][${month}].splice(${idx},1);saveData(['plActionPlan']);render()}" title="Xóa"
+                    <button onclick="if(confirm('Xóa action này?')){const _it=DB.plActionPlan[${year}][${month}][${idx}];if(_it&&_it.id)_gTombAdd('plActionPlan',_it.id);DB.plActionPlan[${year}][${month}].splice(${idx},1);window._selfSaveAt=Date.now();saveData(['plActionPlan']);render()}" title="Xóa"
                       style="background:transparent;border:0;color:var(--ink-muted);cursor:pointer;font-size:14px;padding:2px">×</button>
                   </div>
                 </div>
@@ -5392,7 +5698,7 @@ function _plRenderActionPlan(el, year, month){
         </div>
       `}
 
-      <button onclick="if(!DB.plActionPlan)DB.plActionPlan={};if(!DB.plActionPlan[${year}])DB.plActionPlan[${year}]={};if(!DB.plActionPlan[${year}][${month}])DB.plActionPlan[${year}][${month}]=[];DB.plActionPlan[${year}][${month}].push({title:'',target:'',expectedSaving:0,owner:'',status:'planned',createdAt:Date.now()});saveData(['plActionPlan']);render()"
+      <button onclick="if(!DB.plActionPlan)DB.plActionPlan={};if(!DB.plActionPlan[${year}])DB.plActionPlan[${year}]={};if(!DB.plActionPlan[${year}][${month}])DB.plActionPlan[${year}][${month}]=[];DB.plActionPlan[${year}][${month}].push({id:(Date.now()+Math.random()).toString(36),title:'',target:'',expectedSaving:0,owner:'',status:'planned',createdAt:Date.now(),_savedAt:Date.now()});saveData(['plActionPlan']);render()"
         style="background:var(--accent);color:#000;border:0;padding:9px 18px;border-radius:7px;font-weight:600;font-size:12.5px;cursor:pointer">+ Thêm Action</button>
     </div>
 
@@ -8041,16 +8347,20 @@ function saveReward(id, isNew){
     period: $s('r_period'),
   };
   if(!DB.rewardRecords) DB.rewardRecords = [];
+  data._savedAt = Date.now(); // 🚨 v44: stamp để merge không revert khen thưởng
   const cleanRw = _sanitizeForFirebase(data);
   if(isNew) DB.rewardRecords.push(cleanRw);
   else{ const i=(DB.rewardRecords||[]).findIndex(x=>x.id===id); if(i>=0)DB.rewardRecords[i]=cleanRw; else DB.rewardRecords.push(cleanRw); }
+  window._selfSaveAt = Date.now();
   _saveSharded('rewardRecords', ()=>{ closeModal(); render(); toast(isNew?'✅ Đã lưu khen thưởng':'✅ Đã cập nhật'); });
 }
 
 function deleteReward(id, fromModal=false){
   if(fromModal) closeModal();
   confirmDialog('Xoá ghi nhận khen thưởng?', (_lang==="en"?"This action cannot be undone.":"Hành động này không thể hoàn tác."), ()=>{
+    _gTombAdd('rewardRecords', id); // 🚨 v44: tombstone chống khen thưởng xóa hồi sinh
     DB.rewardRecords = (DB.rewardRecords||[]).filter(x=>x.id!==id);
+    window._selfSaveAt = Date.now();
     _saveShardedToast('rewardRecords', _lang==="en"?'✅ Deleted':'✅ Đã xoá'); render();
   });
 }
@@ -8227,16 +8537,20 @@ function saveDiscipline(id, isNew){
     penalty:$('#d_penalty').value.trim(),
   };
   if(!DB.disciplineRecords) DB.disciplineRecords = [];
+  data._savedAt = Date.now(); // 🚨 v45: stamp để merge không revert bản ghi kỷ luật
   const cleanD = _sanitizeForFirebase(data);
   if(isNew) DB.disciplineRecords.push(cleanD);
   else{ const i=(DB.disciplineRecords||[]).findIndex(x=>x.id===id); if(i>=0)DB.disciplineRecords[i]=cleanD; else DB.disciplineRecords.push(cleanD); }
+  window._selfSaveAt = Date.now();
   _saveSharded('disciplineRecords', ()=>{ closeModal(); render(); toast(isNew?'✅ Đã lưu kỷ luật':'✅ Đã cập nhật'); });
 }
 
 function deleteDiscipline(id, fromModal=false){
   if(fromModal) closeModal();
   confirmDialog((_lang==="en"?"Delete discipline record?":"Xoá bản ghi kỷ luật?"), 'Đây là tài liệu có giá trị pháp lý. Bạn có chắc muốn xoá?', ()=>{
+    _gTombAdd('disciplineRecords', id); // 🚨 v45: tombstone chống bản ghi kỷ luật hồi sinh
     DB.disciplineRecords = (DB.disciplineRecords||[]).filter(x=>x.id!==id);
+    window._selfSaveAt = Date.now();
     _saveShardedToast('disciplineRecords', _lang==="en"?'✅ Deleted':'✅ Đã xoá'); render();
   });
 }
@@ -8532,8 +8846,8 @@ function renderEmployees(main){
               </select>
             </span>
           </div>
-          ${empPerPage === 'all' || totalPages <= 1 ? '' : `
-            <div style="display:flex;gap:6px">
+          ${empPerPage === 'all' || totalPages <= 1 ? '<div id="empPagerWrap" style="display:flex;gap:6px"></div>' : `
+            <div id="empPagerWrap" style="display:flex;gap:6px">
               <button class="chip" onclick="setEmpPage(${empPage-1})" ${empPage<=1?'disabled':''}>‹</button>
               ${pageButtons}
               <button class="chip" onclick="setEmpPage(${empPage+1})" ${empPage>=totalPages?'disabled':''}>›</button>
@@ -8558,22 +8872,28 @@ function getEffectiveStatus(e){
 function applyEmpFilter(){
   let r = DB.employees;
   if(empFilter.search){
-    const q = empFilter.search.toLowerCase();
-    // Search chuẩn hóa: name và code dùng includes (tolerant), email/role chỉ match nếu là từ độc lập
-    // Tránh bug: search "mai" match tất cả email gmail.com vì "gmail" chứa "mai"
-    r = r.filter(e => {
-      const q_ = q;
-      const name = (e.name||'').toLowerCase();
-      const code = (e.code||'').toLowerCase();
-      if(name.includes(q_) || code.includes(q_)) return true;
-      // Email: chỉ match phần local (trước @), không match domain
-      const email = (e.email||'').toLowerCase();
-      const emailLocal = email.split('@')[0] || '';
-      if(emailLocal.includes(q_)) return true;
-      // Role: cho phép nhưng phải match rõ (từ dài hơn 3 chars)
-      if(q_.length >= 3 && (e.role||'').toLowerCase().includes(q_)) return true;
-      return false;
-    });
+    // 🔍 Search chuẩn hoá tiếng Việt + đa từ (AND): gõ không dấu, gõ bất kỳ từ nào trong họ tên cũng ra
+    // "huong" khớp "Phạm Thị Mai Hương"; "mai huong" cần cả 2 từ xuất hiện (thứ tự bất kỳ)
+    // Tránh bug cũ: "mai" match mọi email gmail.com vì "gmail" chứa "mai"
+    const tokens = _normVN(empFilter.search).split(/\s+/).filter(Boolean);
+    if(tokens.length){
+      r = r.filter(e => {
+        const name  = _normVN(e.name);
+        const code  = _normVN(e.code);
+        const role  = _normVN(e.role);
+        const emailLocal = _normVN((e.email||'').split('@')[0]); // chỉ phần trước @
+        const phone = (e.phone||'').replace(/\D/g,'');
+        // Mỗi token phải khớp ít nhất 1 trường (AND giữa các token)
+        return tokens.every(tok => {
+          if(name.includes(tok)) return true;
+          if(code.includes(tok)) return true;
+          if(emailLocal.includes(tok)) return true;
+          if(/\d/.test(tok) && phone.includes(tok.replace(/\D/g,''))) return true;
+          if(tok.length >= 3 && role.includes(tok)) return true;
+          return false;
+        });
+      });
+    }
   }
   if(empFilter.dept) r = r.filter(e=>e.deptId===empFilter.dept);
   if(empFilter.status){
@@ -8902,9 +9222,10 @@ function _restoreFocus(saved){
 
 let _empSearchTimer = null;
 let _empLastKeystrokeAt = 0;
-// ✅ FIX IME: Debounce đủ lâu (800ms) + check isComposing để không disrupt IME session
-// User gõ "Tuấn" với Telex/VNI cần ~1s. Nếu debounce 200ms, filter chạy giữa lúc gõ
-// → DOM update → IME confuse → ký tự bị nhảy vị trí ("uấnT" thay vì "Tuấn")
+// ✅ FIX FOCUS + IME: partial render CHỈ cập nhật tbody, KHÔNG BAO GIỜ gọi render() (render vẽ lại
+//    cả trang → input bị thay thế → mất focus / văng ra). Debounce 400ms + check isComposing để
+//    không cắt ngang session gõ tiếng Việt (Telex/VNI). compositionend trigger filter ngay khi
+//    user confirm ký tự có dấu.
 function debounceEmpSearch(event){
   let val, isComposing = false;
   if(typeof event === 'string'){
@@ -8917,21 +9238,22 @@ function debounceEmpSearch(event){
   }
   empFilter.search = val;
   _empLastKeystrokeAt = Date.now();
-  // Đang IME compose → tuyệt đối không filter
+  // Đang IME compose → tuyệt đối không filter (tránh nhảy chữ)
   if(isComposing) return;
   clearTimeout(_empSearchTimer);
   window._empSearchActive = true;
-  _empSearchTimer = setTimeout(_empDoFilter, 800);
+  _empSearchTimer = setTimeout(_empDoFilter, 400);
 }
-// Helper riêng để check keystroke + render (không dùng arguments.callee vì bug với arrow)
+// Helper riêng để check keystroke + partial render
 function _empDoFilter(){
-  if(Date.now() - _empLastKeystrokeAt < 500){
+  // Nếu vừa gõ phím trong 300ms qua → đợi thêm (tránh filter giữa lúc đang gõ nhanh)
+  if(Date.now() - _empLastKeystrokeAt < 300){
     clearTimeout(_empSearchTimer);
-    _empSearchTimer = setTimeout(_empDoFilter, 500);
+    _empSearchTimer = setTimeout(_empDoFilter, 300);
     return;
   }
   empPage=1;
-  _empPartialRender();
+  _empPartialRender(); // ❌ KHÔNG fallback render() — giữ focus ô search bằng mọi giá
   clearTimeout(window._empSearchActiveTimer);
   window._empSearchActiveTimer = setTimeout(()=>{ window._empSearchActive = false; }, 3000);
 }
@@ -8939,14 +9261,14 @@ function _empDoFilter(){
 window.addEventListener('compositionend', (e)=>{
   if(e.target && e.target.id === 'empSearchInput'){
     // Delay nhỏ để browser commit IME xong
-    setTimeout(()=>debounceEmpSearch(e.target.value), 100);
+    setTimeout(()=>debounceEmpSearch(e.target.value), 80);
   }
 });
 
-// Partial render: chỉ update tbody — dùng đúng logic gốc từ renderEmployees
+// Partial render: chỉ update tbody + pager — KHÔNG BAO GIỜ gọi render() (giữ focus ô search)
 function _empPartialRender(){
   const tbody = document.getElementById('empTableBody');
-  if(!tbody){ render(); return; }
+  if(!tbody) return; // tbody chưa sẵn → bỏ qua, KHÔNG render() (tránh mất focus)
 
   const EC = window._empCols || {};
   const filtered = applyEmpFilter();
@@ -9004,6 +9326,26 @@ function _empPartialRender(){
   // Update subtitle count
   const subEl = document.getElementById('empListSub');
   if(subEl) subEl.textContent = `${DB.employees.length} nhân viên tổng cộng · ${filtered.length} kết quả lọc`;
+
+  // Update pager (số trang thay đổi theo kết quả search)
+  const pagerWrap = document.getElementById('empPagerWrap');
+  if(pagerWrap){
+    if(empPerPage === 'all' || totalPages <= 1){
+      pagerWrap.innerHTML = '';
+    } else {
+      const maxBtn = 7;
+      let pStart = Math.max(1, empPage - 3), pEnd = Math.min(totalPages, pStart + maxBtn - 1);
+      pStart = Math.max(1, pEnd - maxBtn + 1);
+      let btns = '';
+      for(let p = pStart; p <= pEnd; p++){
+        btns += `<button class="chip ${p===empPage?'active':''}" onclick="setEmpPage(${p})">${p}</button>`;
+      }
+      pagerWrap.innerHTML = `
+        <button class="chip" onclick="setEmpPage(${empPage-1})" ${empPage<=1?'disabled':''}>‹</button>
+        ${btns}
+        <button class="chip" onclick="setEmpPage(${empPage+1})" ${empPage>=totalPages?'disabled':''}>›</button>`;
+    }
+  }
 }
 function clearEmpDateFilter(){ empFilter.joinedFrom=''; empFilter.joinedTo=''; empFilter.joinedMonth=0; empFilter.joinedYear=0; empFilter.dobMonth=0; empFilter.dobYear=0; empPage=1; render(); }
 function setEmpPage(p){ if(p<1) return; empPage=p; render(); }
@@ -9727,12 +10069,13 @@ function saveCustomField(id, isNew){
     return;
   }
 
-  const data = {id, key, label, type, group, placeholder, required, showInTable, options};
+  const data = {id, key, label, type, group, placeholder, required, showInTable, options, _savedAt: Date.now()};
   if(isNew) DB.customFields.push(_sanitizeForFirebase(data));
   else{
     const i = DB.customFields.findIndex(x=>x.id===id);
     if(i>=0) DB.customFields[i] = data;
   }
+  window._selfSaveAt = Date.now();
   saveData(['customFields']);
   toast(isNew?'Đã thêm trường mới':(_lang==="en"?"Updated":"Đã cập nhật"));
   manageCustomFields(); // quay lại danh sách
@@ -9749,10 +10092,12 @@ function deleteCustomField(id, fromEdit=false){
     : `Sẽ xoá trường <b>${escapeHtml(cf.label)}</b>. Hành động này không thể hoàn tác.`;
 
   confirmDialog('Xoá trường tuỳ chỉnh?', msg, ()=>{
+    if(cf.id) _gTombAdd('customFields', cf.id); // 🚨 v30: tombstone chống field xóa hồi sinh sau merge
     DB.customFields = DB.customFields.filter(x=>x.id!==id);
     Object.keys(DB.customData).forEach(empId=>{
       if(DB.customData[empId]) delete DB.customData[empId][cf.key];
     });
+    window._selfSaveAt = Date.now();
     saveData(['customFields']);
     toast('Đã xoá trường tuỳ chỉnh');
     if(fromEdit) manageCustomFields(); // nếu xoá từ form edit thì quay về list
@@ -10903,6 +11248,7 @@ function saveDepartment(id, isNew){
   if(isNew) DB.departments.push(_sanitizeForFirebase(data));
   else{ const i = DB.departments.findIndex(x=>x.id===id); if(i>=0) DB.departments[i] = data; }
   _stampItem(DB.departments, id);
+  window._selfSaveAt = Date.now(); // 🚨 v31: chặn snapshot echo/stale ghi đè phòng ban vừa sửa
   saveData(['departments']); closeModal(); toast(isNew?'Đã thêm phòng ban':(_lang==="en"?"Updated":"Đã cập nhật")); render();
 }
 
@@ -10914,6 +11260,7 @@ function deleteDepartment(id, fromModal=false){
   confirmDialog('Xoá phòng ban?', `Sẽ xoá phòng ban <b>${escapeHtml(d.name)}</b>. Hành động này không thể hoàn tác.`, ()=>{
     _gTombAdd('departments', id);
     DB.departments = DB.departments.filter(x=>x.id!==id);
+    window._selfSaveAt = Date.now(); // 🚨 v31: chặn echo/stale hồi sinh phòng ban vừa xóa
     saveData(['departments']); toast('Đã xoá phòng ban'); render();
   });
 }
@@ -11526,7 +11873,9 @@ function confirmRenewContract(oldContractId, empId){
     notes,
   };
   if(!DB.contracts) DB.contracts = [];
+  newContract._savedAt = Date.now(); // 🚨 v32: stamp để merge chính xác
   DB.contracts.push(_sanitizeForFirebase(newContract));
+  window._selfSaveAt = Date.now();
 
   if(!DB.customData[empId]) DB.customData[empId] = {};
   const typeLabel = {
@@ -12135,7 +12484,9 @@ function doGenerateContract(){
       signedDate: new Date().toISOString().slice(0,10),
       notes: `Gia hạn từ HĐ ${ctLabel(oldC.type)} (hết hạn ${fmtDate(oldC.endDate)||'—'})`,
     };
+    newContract._savedAt = Date.now(); // 🚨 v32: stamp để merge chính xác
     DB.contracts.push(_sanitizeForFirebase(newContract));
+    window._selfSaveAt = Date.now();
     if(!DB.customData[emp.id]) DB.customData[emp.id] = {};
     DB.customData[emp.id].currentContractType = ({
       'probation': 'HĐ Thử việc',
@@ -12766,6 +13117,7 @@ function saveContract(id, isNew){
   if(isNew) DB.contracts.push(_sanitizeForFirebase(data));
   else{ const i = DB.contracts.findIndex(x=>x.id===id); if(i>=0)DB.contracts[i]=_sanitizeForFirebase(data); else DB.contracts.push(_sanitizeForFirebase(data)); }
   _stampItem(DB.contracts, id);
+  window._selfSaveAt = Date.now(); // 🚨 v32: chặn snapshot echo/stale ghi đè HĐ vừa sửa
   saveData(['contracts']); closeModal(); toast(isNew?'Đã thêm hợp đồng':(_lang==="en"?"Updated":"Đã cập nhật")); render();
 }
 
@@ -12774,6 +13126,7 @@ function deleteContract(id, fromModal=false){
   confirmDialog('Xoá hợp đồng?', (_lang==="en"?"This action cannot be undone.":"Hành động này không thể hoàn tác."), ()=>{
     _gTombAdd('contracts', id);
     DB.contracts = (DB.contracts||[]).filter(x=>x.id!==id);
+    window._selfSaveAt = Date.now(); // 🚨 v32: chặn echo/stale hồi sinh HĐ vừa xóa
     saveData(['contracts']); toast('Đã xoá hợp đồng'); render();
   });
 }
@@ -13527,7 +13880,9 @@ function renderLeaveReports(main){
     else if(field==='planNext') sh.planNext=v;
     if(!DB.leaveSheet[empId]) DB.leaveSheet[empId]={};
     if(!DB.leaveSheet[empId][bal.year]) DB.leaveSheet[empId][bal.year]={};
+    sh._savedAt = Date.now(); // 🚨 v33: stamp per-entry để merge không ghi đè sửa của người khác
     DB.leaveSheet[empId][bal.year][leaveType]=sh;
+    window._selfSaveAt = Date.now();
     // Debounce save — chờ 800ms sau phím cuối mới save Firestore
     clearTimeout(_leaveSaveTimer);
     _leaveSaveTimer = setTimeout(()=> saveData(['leaveSheet']), 800);
@@ -14807,7 +15162,9 @@ function renderLeaves(main){
     if(!DB.leaveSheet) DB.leaveSheet = {};
     const sh = getTraineeSheet(tid);
     sh.taken[month] = parseFloat(val)||0;
+    sh._savedAt = Date.now(); // 🚨 v37: stamp để merge per-entry (khớp leaveSheet v33)
     DB.leaveSheet[key][bal.year] = sh;
+    window._selfSaveAt = Date.now();
     clearTimeout(_trLeaveSaveTimer);
     _trLeaveSaveTimer = setTimeout(()=> saveData(['leaveSheet']), 800);
     const totalUsed = sh.taken.reduce((s,x)=>s+x,0);
@@ -15532,21 +15889,27 @@ function saveLeave(id, isNew){
   };
   if(!data.empId || !data.startDate || !data.endDate){ toast((_lang==="en"?"Please fill in all required fields":"Vui lòng nhập đủ thông tin"),'error'); return; }
   const cleanL = _sanitizeForFirebase(data);
+  cleanL._savedAt = Date.now(); // 🚨 v33: stamp để merge không revert đơn nghỉ
   if(isNew) DB.leaves.push(cleanL);
   else{ const i=(DB.leaves||[]).findIndex(x=>x.id===id); if(i>=0)DB.leaves[i]=cleanL; else DB.leaves.push(cleanL); }
+  window._selfSaveAt = Date.now();
   _saveSharded('leaves', ()=>{ closeModal(); render(); toast(isNew?'✅ Đã lưu đơn nghỉ':'✅ Đã cập nhật'); });
 }
 
 function approveLeave(id, approve){
   const l = (DB.leaves||[]).find(x=>x.id===id); if(!l) return;
   l.status = approve ? 'approved' : 'rejected';
+  l._savedAt = Date.now(); // 🚨 v33: stamp để merge KHÔNG revert trạng thái duyệt
+  window._selfSaveAt = Date.now();
   _saveShardedToast('leaves', approve?'✅ Đã duyệt':'✅ Đã từ chối'); render();
 }
 
 function deleteLeave(id, fromModal=false){
   if(fromModal) closeModal();
   confirmDialog('Xoá đơn nghỉ?', (_lang==="en"?"This action cannot be undone.":"Hành động này không thể hoàn tác."), ()=>{
+    _gTombAdd('leaves', id); // 🚨 v33: tombstone chống đơn nghỉ xóa hồi sinh sau merge
     DB.leaves = (DB.leaves||[]).filter(x=>x.id!==id);
+    window._selfSaveAt = Date.now();
     _saveShardedToast('leaves', _lang==="en"?'✅ Deleted':'✅ Đã xoá'); render();
   });
 }
@@ -16908,11 +17271,12 @@ function saveDormHouse(houseId){
 
   if(houseId){
     DB.dormConfig = {...DB.dormConfig, houses: DB.dormConfig.houses.map(h=>
-      h.id===houseId ? {id:h.id, name, capacity:cap, note} : h
+      h.id===houseId ? {id:h.id, name, capacity:cap, note, _savedAt:Date.now()} : h
     )};
   } else {
-    DB.dormConfig = {...DB.dormConfig, houses: [...DB.dormConfig.houses, {id:uid(), name, capacity:cap, note}]};
+    DB.dormConfig = {...DB.dormConfig, houses: [...DB.dormConfig.houses, {id:uid(), name, capacity:cap, note, _savedAt:Date.now()}]};
   }
+  window._selfSaveAt = Date.now(); // 🚨 v41: chặn echo/stale revert staff house
   // Update dormitory custom field options
   const cfIdx = (DB.customFields||[]).findIndex(cf=>cf.key==='dormitory');
   if(cfIdx>=0){
@@ -16930,7 +17294,9 @@ function saveDormHouse(houseId){
 function deleteDormHouse(houseId){
   if(!confirm('Xoá nhà này? NV đang ở nhà này sẽ không bị ảnh hưởng.')) return;
   if(!DB.dormConfig?.houses) return;
+  _gTombAdd('dormHouses', houseId); // 🚨 v41: tombstone chống staff house xóa hồi sinh
   DB.dormConfig = {...DB.dormConfig, houses: DB.dormConfig.houses.filter(h=>h.id!==houseId)};
+  window._selfSaveAt = Date.now();
   saveData(['dormConfig']);
   render();
   toast('Đã xoá Staff House','success');
@@ -18504,6 +18870,7 @@ function advanceCandidate(id){
   }
 
   a.status = next;
+  a._savedAt = Date.now(); // 🚨 v26: stamp để merge không revert status ứng viên
   if(next === 'accepted'){
     a.acceptedDate = new Date().toISOString().slice(0,10);
   }
@@ -18516,10 +18883,12 @@ function advanceCandidate(id){
         if(confirm(`Đã tuyển đủ ${j.positions} người cho "${j.title}". Đánh dấu vị trí "Đã đủ"?`)){
           j.status = 'filled';
           j.closedDate = new Date().toISOString().slice(0,10);
+          j._savedAt = Date.now(); // stamp job status change
         }
       }
     }
   }
+  window._selfSaveAt = Date.now();
   saveData();
   toast(`Đã chuyển ${a.name} → ${CANDIDATE_STATUS[next]}`);
   render();
@@ -18549,6 +18918,7 @@ function acceptOffer(id){
   if(!confirm('Xác nhận ứng viên ' + a.name + ' đã NHẬN OFFER?')) return;
   a.status = 'accepted';
   a.acceptedDate = new Date().toISOString().slice(0,10);
+  a._savedAt = Date.now(); // 🚨 v39: stamp để merge không revert status
   window._selfSaveAt = Date.now();
   saveData(['candidates']);
   toast('🤝 ' + a.name + ' đã nhận offer — chờ ngày nhận việc');
@@ -18561,6 +18931,7 @@ function confirmHired(id){
   if(!confirm('Xác nhận ' + a.name + ' chính thức NHẬN VIỆC?')) return;
   a.status = 'hired';
   if(!a.hiredDate) a.hiredDate = new Date().toISOString().slice(0,10);
+  a._savedAt = Date.now(); // 🚨 v39: stamp để merge không revert status
   const j = DB.jobs ? DB.jobs.find(j=>j.id===a.jobId) : null;
   if(j){
     j.hired = (DB.candidates||[]).filter(c=>c.jobId===j.id&&c.status==='hired').length;
@@ -18570,6 +18941,7 @@ function confirmHired(id){
         j.closedDate = new Date().toISOString().slice(0,10);
       }
     }
+    j._savedAt = Date.now(); // stamp job status change
   }
   window._selfSaveAt = Date.now();
   saveData(['jobs']);
@@ -18600,6 +18972,8 @@ function rejectOffer(id){
   a.status = 'rejected';
   a.rejectedDate = new Date().toISOString().slice(0,10);
   a.rejectedReason = 'Từ chối offer';
+  a._savedAt = Date.now(); // 🚨 v26: stamp để không revert
+  window._selfSaveAt = Date.now();
   saveData();
   toast('✗ ' + a.name + ' đã từ chối offer', 'warning');
   render();
@@ -19012,6 +19386,7 @@ function saveCandidate(id, jobId, isNew){
   };
   // Loại bỏ mọi field undefined trước khi gửi Firebase
   Object.keys(data).forEach(k=>{ if(data[k]===undefined) data[k]=''; });
+  data._savedAt = Date.now(); // 🚨 v39: stamp để merge không revert thông tin ứng viên
 
   if(!DB.candidates) DB.candidates = [];
   // Safety: nếu id này từng bị tombstone (user restore lại?) → remove khỏi tombstone
@@ -19886,12 +20261,18 @@ function renderTraining(main){
     });
   }
 
-  if(!window._trnFilter) window._trnFilter = {status:'', category:'', format:''};
+  if(!window._trnFilter) window._trnFilter = {status:'', category:'', format:'', source:''};
+  if(window._courseNameFilter === undefined){ try{ window._courseNameFilter = sessionStorage.getItem('_courseName') || ''; }catch(_){ window._courseNameFilter = ''; } }
   const f = window._trnFilter;
+  // Helper: xác định khoá nội bộ / ngoài (dùng chung logic với badge ở bảng)
+  const _courseIsInternal = c => !!(c.trainerEmpId && !c.trainerExternal);
+  const _courseIsExternal = c => !!(c.trainerExternal || (c.trainer && !c.trainerEmpId));
   let filtered = periodCourses;
   if(f.status) filtered = filtered.filter(c=>c.status === f.status);
   if(f.category) filtered = filtered.filter(c=>c.category === f.category);
   if(f.format) filtered = filtered.filter(c=>c.format === f.format);
+  if(f.source === 'internal') filtered = filtered.filter(_courseIsInternal);
+  if(f.source === 'external') filtered = filtered.filter(_courseIsExternal);
 
   const yearsSet = new Set();
   DB.courses.forEach(c => {
@@ -20087,7 +20468,7 @@ function renderTraining(main){
       <div class="card-head">
         <div>
           <div class="card-title">📚 Danh sách <em>khoá học</em></div>
-          <div class="card-sub">${filtered.length}/${periodCourses.length} khoá trong ${periodLabel.toLowerCase()} ${(f.status||f.category||f.format)?'(đã lọc thêm)':''}</div>
+          <div class="card-sub">${filtered.length}/${periodCourses.length} khoá trong ${periodLabel.toLowerCase()} ${(f.status||f.category||f.format||f.source)?'(đã lọc thêm)':''}<span id="course_filter_badge" style="background:var(--accent);color:#000;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:600;margin-left:6px;display:none"></span></div>
         </div>
       </div>
 
@@ -20121,6 +20502,10 @@ function renderTraining(main){
       </div>
 
       <div class="filters" style="margin-bottom:14px">
+        <!-- 🔍 Search theo TÊN khoá học — DOM filter, không re-render để giữ focus mượt -->
+        <input type="search" id="course_search" placeholder="🔍 Tìm tên khoá học..." value="${escapeHtml(window._courseNameFilter||'')}"
+          oninput="_courseFilterByName(this.value)"
+          style="background:var(--bg-card);color:var(--ink);border:1px solid var(--border);padding:8px 12px;border-radius:7px;font-size:13px;min-width:200px">
         <select class="filter-select" onchange="setTrnFilter('category', this.value)">
           <option value="">Mọi phân loại</option>
           ${Object.entries(COURSE_CAT).map(([k,v])=>`<option value="${k}" ${f.category===k?'selected':''}>${v}</option>`).join('')}
@@ -20129,7 +20514,12 @@ function renderTraining(main){
           <option value="">Mọi hình thức</option>
           ${Object.entries(COURSE_FORMAT).map(([k,v])=>`<option value="${k}" ${f.format===k?'selected':''}>${v}</option>`).join('')}
         </select>
-        ${(f.status||f.category||f.format) ? `<button class="btn" onclick="clearTrnFilter()">✕ Xoá lọc</button>` : ''}
+        <select class="filter-select" onchange="setTrnFilter('source', this.value)">
+          <option value="">Ngoài / Nội bộ</option>
+          <option value="internal" ${f.source==='internal'?'selected':''}>🏨 Nội bộ</option>
+          <option value="external" ${f.source==='external'?'selected':''}>🌐 Bên ngoài</option>
+        </select>
+        ${(f.status||f.category||f.format||f.source) ? `<button class="btn" onclick="clearTrnFilter()">✕ Xoá lọc</button>` : ''}
       </div>
 
       ${filtered.length===0 ? `<div class="empty-state"><h3>Không có khoá học nào</h3></div>` : `
@@ -20149,7 +20539,7 @@ function renderTraining(main){
                 : deptIds.length >= 10 ? `<span style="color:var(--accent)">Tất cả (${deptIds.length})</span>`
                 : deptIds.length <= 2 ? deptIds.map(id=>`<span style="font-size:11px">${escapeHtml(deptName(id))}</span>`).join(', ')
                 : `<span title="${deptIds.map(id=>deptName(id)).join(', ')}">${deptIds.length} bộ phận</span>`;
-              return `<tr style="${isRunning?'background:rgba(125,211,192,.04)':''};cursor:pointer" onclick="editCourse('${c.id}')">
+              return `<tr class="course-row" data-name="${escapeHtml((c.name||'').toLowerCase())}" data-desc="${escapeHtml((c.description||'').toLowerCase())}" style="${isRunning?'background:rgba(125,211,192,.04)':''};cursor:pointer" onclick="editCourse('${c.id}')">
                 <td>
                   <div class="cell-emp-name">${escapeHtml(c.name)}</div>
                   ${c.trainer ? `<div class="cell-emp-meta">👤 ${escapeHtml(c.trainer)} ${(c.trainerEmpId && !c.trainerExternal) ? '<span style="background:rgba(126,198,153,.15);color:var(--success);padding:1px 6px;border-radius:8px;font-size:9.5px;font-weight:600;margin-left:4px">🏨 Nội bộ</span>' : (c.trainerExternal || (!c.trainerEmpId && c.trainer)) ? '<span style="background:rgba(126,182,232,.15);color:var(--accent);padding:1px 6px;border-radius:8px;font-size:9.5px;font-weight:600;margin-left:4px">🌐 Ngoài</span>' : ''}</div>` : ''}
@@ -20172,7 +20562,7 @@ function renderTraining(main){
                   <button class="btn btn-icon" onclick="editCourse('${c.id}')">${ICONS.edit}</button>
                   <button class="btn btn-icon btn-danger" onclick="deleteCourse('${c.id}')">${ICONS.trash}</button>
                 </div></td>
-              </tr>${c.description ? `<tr style="border-top:none"><td colspan="9" style="padding:0 16px 8px 16px;color:var(--ink-muted);font-size:11.5px;font-style:italic">📖 ${escapeHtml(c.description)}${c.targetAudience?' · 👥 '+escapeHtml(c.targetAudience):''}</td></tr>` : ''}`;
+              </tr>${c.description ? `<tr class="course-desc-row" data-name="${escapeHtml((c.name||'').toLowerCase())}" data-desc="${escapeHtml((c.description||'').toLowerCase())}" style="border-top:none"><td colspan="9" style="padding:0 16px 8px 16px;color:var(--ink-muted);font-size:11.5px;font-style:italic">📖 ${escapeHtml(c.description)}${c.targetAudience?' · 👥 '+escapeHtml(c.targetAudience):''}</td></tr>` : ''}`;
             }).join('')}
           </tbody>
         </table>
@@ -20489,6 +20879,11 @@ function renderTraining(main){
       }
     });
   }
+
+  // Re-apply search tên khoá sau khi re-render (giữ kết quả lọc khi đổi filter khác)
+  if(window._courseNameFilter){
+    requestAnimationFrame(()=>_courseFilterByName(window._courseNameFilter));
+  }
 }
 
 function setTrnPeriod(key, val){
@@ -20505,19 +20900,51 @@ function setTrnPeriodNow(){
 }
 
 function setTrnFilter(key, val){
-  if(!window._trnFilter) window._trnFilter = {status:'',category:'',format:''};
+  if(!window._trnFilter) window._trnFilter = {status:'',category:'',format:'',source:''};
   window._trnFilter[key] = val;
   render();
 }
 function clearTrnFilter(){
-  window._trnFilter = {status:'',category:'',format:''};
+  window._trnFilter = {status:'',category:'',format:'',source:''};
+  window._courseNameFilter = '';
+  try{ sessionStorage.removeItem('_courseName'); }catch(_){}
   render();
+}
+
+// 🔍 Search theo TÊN khoá học — DOM filter, KHÔNG re-render để giữ focus mượt
+// Ẩn/hiện cả row khoá + row mô tả (course-row + course-desc-row) theo cùng data-name
+function _courseFilterByName(query){
+  const q = (query||'').toLowerCase().trim();
+  window._courseNameFilter = query;
+  try{ sessionStorage.setItem('_courseName', query); }catch(_){}
+  const rows = document.querySelectorAll('tr.course-row');
+  let visible = 0;
+  rows.forEach(r => {
+    const name = r.dataset.name || '';
+    const desc = r.dataset.desc || '';
+    const match = !q || name.includes(q) || desc.includes(q);
+    r.style.display = match ? '' : 'none';
+    if(match) visible++;
+  });
+  // Ẩn/hiện row mô tả tương ứng
+  document.querySelectorAll('tr.course-desc-row').forEach(r => {
+    const name = r.dataset.name || '';
+    const desc = r.dataset.desc || '';
+    r.style.display = (!q || name.includes(q) || desc.includes(q)) ? '' : 'none';
+  });
+  const badge = document.getElementById('course_filter_badge');
+  if(badge){
+    if(q){ badge.style.display = ''; badge.textContent = `🔍 ${visible}`; }
+    else { badge.style.display = 'none'; }
+  }
 }
 
 function advanceCourseStatus(id, newStatus){
   const c = DB.courses.find(x=>x.id===id);
   if(!c) return;
   c.status = newStatus;
+  c._savedAt = Date.now(); // 🚨 v26: stamp để không revert status khoá học
+  window._selfSaveAt = Date.now();
   saveData();
   toast(`Đã chuyển khoá "${c.name}" → ${COURSE_STATUS[newStatus]}`);
   render();
@@ -20955,6 +21382,7 @@ function saveCourse(id, isNew){
   if(isNew) DB.courses.push(_sanitizeForFirebase(data));
   else{ const i = DB.courses.findIndex(x=>x.id===id); if(i>=0)DB.courses[i]=_sanitizeForFirebase(data); else DB.courses.push(_sanitizeForFirebase(data)); }
   _stampItem(DB.courses, id);
+  window._selfSaveAt = Date.now(); // 🚨 v42: chặn echo/stale revert khoá học
   saveData(['courses']); closeModal(); toast(isNew?'Đã thêm khoá học':(_lang==="en"?"Updated":"Đã cập nhật")); render();
 }
 
@@ -20963,6 +21391,7 @@ function deleteCourse(id, fromModal=false){
   confirmDialog('Xoá khoá học?', (_lang==="en"?"This action cannot be undone.":"Hành động này không thể hoàn tác."), ()=>{
     _gTombAdd('courses', id);
     DB.courses = DB.courses.filter(x=>x.id!==id);
+    window._selfSaveAt = Date.now(); // 🚨 v42: chặn echo/stale hồi sinh khoá vừa xóa
     saveData(['courses']); toast((_lang==="en"?"Deleted":"Đã xoá")); render();
   });
 }
@@ -21522,6 +21951,21 @@ function renderPerformance(main){
                 <td style="color:var(--ink-dim);font-family:'JetBrains Mono',monospace;font-size:12px">
                   ${fmtDate(p.date)}
                   ${p.effectiveDate ? `<div style="font-size:10px;color:var(--success)">→ ${fmtDate(p.effectiveDate)}</div>` : ''}
+                  ${(()=>{
+                    // ⏳ Đếm ngược đến ngày hiệu lực — chỉ hiện khi CHƯA hoàn thành & CHƯA áp dụng
+                    if(!p.effectiveDate || p.status==='rejected' || p.appliedAt) return '';
+                    const _eff = _parseAnyDate(p.effectiveDate); if(!_eff) return '';
+                    const _t = new Date(); _t.setHours(0,0,0,0); _eff.setHours(0,0,0,0);
+                    const d = Math.round((_eff - _t)/86400000);
+                    if(d > 0){
+                      const col = d<=7?'var(--danger)':d<=30?'var(--warning)':'var(--info)';
+                      return `<div style="font-size:10px;color:${col};font-weight:700;margin-top:2px">⏳ còn ${d} ngày</div>`;
+                    } else if(d === 0){
+                      return `<div style="font-size:10px;color:var(--danger);font-weight:700;margin-top:2px">🔔 hôm nay!</div>`;
+                    } else {
+                      return `<div style="font-size:10px;color:var(--ink-muted);font-weight:600;margin-top:2px">quá hạn ${Math.abs(d)} ngày</div>`;
+                    }
+                  })()}
                 </td>
                 <td><span class="badge" style="background:rgba(212,165,116,.1);color:var(--accent);font-size:11px">${PROMOTION_TYPE[p.type]||p.type}</span></td>
                 <td style="font-size:12px">
@@ -21867,12 +22311,14 @@ function saveReview(id, isNew){
   if(!data.empId || !data.period){ toast((_lang==="en"?"Please fill in all required fields":"Vui lòng nhập đủ thông tin"),'error'); return; }
 
   if(!DB.kpiReviews) DB.kpiReviews = [];
+  data._savedAt = Date.now(); // 🚨 v43: stamp để merge không revert đánh giá KPI
   const cleanR = _sanitizeForFirebase(data);
   if(isNew) DB.kpiReviews.push(cleanR);
   else{ const i = DB.kpiReviews.findIndex(x=>x.id===id); if(i>=0) DB.kpiReviews[i]=cleanR; else DB.kpiReviews.push(cleanR); }
 
   syncEmployeeKPI(data.empId);
   saveEmpProfile(data.empId);
+  window._selfSaveAt = Date.now();
 
   // Write Firestore FIRST, then closeModal
   _saveSharded('kpiReviews', ()=>{
@@ -21887,8 +22333,10 @@ function deleteReview(id, fromModal=false){
   confirmDialog('Xoá đánh giá?', (_lang==="en"?"This action cannot be undone.":"Hành động này không thể hoàn tác."), ()=>{
     const review = (DB.kpiReviews||[]).find(x=>x.id===id);
     const empId = review?.empId;
+    _gTombAdd('kpiReviews', id); // 🚨 v43: tombstone chống đánh giá xóa hồi sinh
     DB.kpiReviews = (DB.kpiReviews||[]).filter(x=>x.id!==id);
     if(empId){ syncEmployeeKPI(empId); saveEmpProfile(empId); }
+    window._selfSaveAt = Date.now();
     render();
     // Direct Firestore write ALL known kpi shards (không chỉ shards có data hiện tại)
     // để đảm bảo xóa sạch kể cả record bị lưu nhầm shard
@@ -22543,6 +22991,7 @@ function savePromotion(id, isNew){
   }
 
   if(!data.date) data.date = new Date().toISOString().slice(0,10);
+  data._savedAt = Date.now(); // 🚨 v40: stamp trực tiếp để merge không revert đề xuất
   const clean2 = _sanitizeForFirebase(data);
   if(isNew){
     DB.promotions.push(clean2);
@@ -22555,6 +23004,7 @@ function savePromotion(id, isNew){
   if(window._pendingRender) delete window._pendingRender[currentPage];
 
   _stampItem(DB.promotions, id);
+  window._selfSaveAt = Date.now(); // 🚨 v40: chặn echo/stale revert
   saveData(['promotions']);
   closeModal();
   render();
@@ -22567,9 +23017,11 @@ function deletePromotion(id, fromModal=false){
     const promo = (DB.promotions||[]).find(x => x.id === id);
     const empId = promo?.empId;
     const delPromo = (DB.promotions||[]).find(x=>x.id===id);
+    _gTombAdd('promotions', id); // 🚨 v40: tombstone chống đề xuất xóa hồi sinh sau merge
     DB.promotions = (DB.promotions||[]).filter(x => x.id !== id);
     if(empId && !delPromo?.isHistorical) syncEmployeeFromPromotions(empId);
     if(empId) saveEmpProfile(empId);
+    window._selfSaveAt = Date.now();
     _saveShardedToast('promotions', _lang==="en"?'✅ Deleted':'✅ Đã xoá');
     render();
   });
@@ -22582,10 +23034,12 @@ function advancePromotion(id){
   const next = flow[p.status];
   if(!next){ toast((_lang==="en"?"No next step":"Không có bước tiếp theo"),'error'); return; }
   p.status = next;
+  p._savedAt = Date.now(); // 🚨 v26: stamp timestamp để merge KHÔNG revert status về bản cũ
   if(next === 'completed'){
     if(!p.effectiveDate) p.effectiveDate = new Date().toISOString().slice(0,10);
     applyPromotionToEmployee(p);
   }
+  window._selfSaveAt = Date.now(); // chặn snapshot echo ghi đè trong 15s
   saveData();
   const emp = empById(p.empId);
   toast(`Đã chuyển ${emp?.name||''} → ${PROMOTION_STATUS[next]}`);
@@ -22608,8 +23062,10 @@ function completePromotion(id){
     `<b>${emp?.name||''}</b> sẽ được thăng chức chính thức. Thông tin cập nhật:${changeList}`,
     ()=>{
       p.status = 'completed';
+      p._savedAt = Date.now(); // 🚨 v26: stamp để không bị revert
       if(!p.effectiveDate) p.effectiveDate = new Date().toISOString().slice(0,10);
       applyPromotionToEmployee(p);
+      window._selfSaveAt = Date.now();
       saveData();
       toast('🎉 Đã xác nhận thăng chức ' + (emp?.name||'') + ' — thông tin đã cập nhật');
       render();
@@ -22626,6 +23082,8 @@ function rejectPromotion(id){
     `Đề xuất thăng chức của <b>${emp?.name||''}</b> sẽ bị từ chối.<br>Thông tin nhân viên <b>không thay đổi</b>.`,
     ()=>{
       p.status = 'rejected';
+      p._savedAt = Date.now(); // 🚨 v26: stamp để không bị revert
+      window._selfSaveAt = Date.now();
       saveData();
       toast(`Đã từ chối đề xuất thăng chức ${emp?.name||''}`);
       render();
@@ -22890,7 +23348,9 @@ function editAwardRecord(recordId, empId){
 }
 function deleteAwardRecord(recordId){
   confirmDialog('Xoá khen thưởng này?', (_lang==="en"?"Cannot be undone.":"Không thể hoàn tác."), ()=>{
+    _gTombAdd('rewardRecords', recordId); // 🚨 v44: tombstone chống hồi sinh
     DB.rewardRecords = (DB.rewardRecords||[]).filter(r=>r.id!==recordId);
+    window._selfSaveAt = Date.now();
     _saveShardedToast('rewardRecords', _lang==="en"?'✅ Deleted':'✅ Đã xoá');
     render();
   });
@@ -23253,7 +23713,9 @@ function editWarnRecord(recordId, empId){
 }
 function deleteWarnRecord(recordId){
   confirmDialog((_lang==="en"?"Delete discipline record?":"Xoá bản ghi kỷ luật?"), (_lang==="en"?"Cannot be undone.":"Không thể hoàn tác."), ()=>{
+    _gTombAdd('disciplineRecords', recordId); // 🚨 v45: tombstone chống hồi sinh
     DB.disciplineRecords = (DB.disciplineRecords||[]).filter(r=>r.id!==recordId);
+    window._selfSaveAt = Date.now();
     _saveShardedToast('disciplineRecords', _lang==="en"?'✅ Deleted':'✅ Đã xoá');
     render();
   });
@@ -25583,6 +26045,7 @@ function renderBonusInline(yr, curYear, curMonth){
   window.saveBonusName = function(y, val){
     if(!DB.bonusName) DB.bonusName={};
     DB.bonusName[y] = val.trim();
+    window._selfSaveAt = Date.now(); // 🚨 v35: chặn echo/stale ghi đè tên cột thưởng
     saveData(['bonusName']);
     const h = document.getElementById('bon_title_'+y);
     if(h) h.textContent = (val.trim()||'Khoản thưởng khác') + ' — ' + y;
@@ -25738,6 +26201,10 @@ function renderSvcTab(){
     if(!DB.svcData) DB.svcData = {};
     if(!DB.svcData[yr]) DB.svcData[yr] = Array(12).fill(0);
     DB.svcData[yr][m] = parseInt(val.replace(/\./g,'').replace(/[^0-9]/g,''))||0;
+    // 🚨 v35: stamp year timestamp + selfSaveAt (bản này bị sót khi fix v19) — chống revert tháng vừa nhập
+    if(!window._svcData_yearTs) window._svcData_yearTs = {};
+    window._svcData_yearTs[yr] = Date.now();
+    window._selfSaveAt = Date.now();
     clearTimeout(window._svcSaveTimer);
     window._svcSaveTimer = setTimeout(()=>saveData(['svcData']), 1500);
   };
@@ -26834,15 +27301,16 @@ function ssSaveLevel(id, isNew){
     .sort((a,b) => a.years - b.years); // sort theo năm tăng dần
 
   if(isNew){
-    DB.salaryStructure.levels.push({id, level, basicSalary:salary, positions:uniquePositions, note, increments});
+    DB.salaryStructure.levels.push({id, level, basicSalary:salary, positions:uniquePositions, note, increments, _savedAt:Date.now()});
   } else {
     const i = DB.salaryStructure.levels.findIndex(x=>x.id===id);
-    if(i>=0) DB.salaryStructure.levels[i] = {id, level, basicSalary:salary, positions:uniquePositions, note, increments};
+    if(i>=0) DB.salaryStructure.levels[i] = {id, level, basicSalary:salary, positions:uniquePositions, note, increments, _savedAt:Date.now()};
   }
   // Clear buffer sau khi lưu
   window._ssIncrementsBuffer = [];
   // Trigger Proxy to mark dirty key (push/filter ko trigger setter)
   DB.salaryStructure = {levels:[...DB.salaryStructure.levels], probations:[...(DB.salaryStructure.probations||[])]};
+  window._selfSaveAt = Date.now(); // 🚨 v34: chặn snapshot echo/stale revert level vừa sửa
   saveData(['salaryStructure']);
   closeModal();
   const incMsg = increments.length > 0 ? ` (+ ${increments.length} mức thăng)` : '';
@@ -26856,9 +27324,11 @@ function ssDeleteLevel(id){
   confirmDialog(`Xoá bậc Level ${l.level}?`,
     `${(l.positions||[]).length} chức danh trong bậc này cũng sẽ bị xoá. Hành động này không thể hoàn tác.`,
     ()=>{
+      _gTombAdd('salLevels', id); // 🚨 v34: tombstone chống level xóa hồi sinh
       const filtered = DB.salaryStructure.levels.filter(x=>x.id!==id);
       // Reassign để trigger Proxy
       DB.salaryStructure = {levels: filtered, probations:[...(DB.salaryStructure.probations||[])]};
+      window._selfSaveAt = Date.now();
       saveData(['salaryStructure']);
       toast(`Đã xoá Level ${l.level}`,'success');
       render();
@@ -26998,13 +27468,14 @@ function ssSaveProbation(id, isNew){
   if(!Array.isArray(DB.salaryStructure.probations)) DB.salaryStructure.probations = [];
 
   if(isNew){
-    DB.salaryStructure.probations.push({id, position, level, durationDays:days, note});
+    DB.salaryStructure.probations.push({id, position, level, durationDays:days, note, _savedAt:Date.now()});
   } else {
     const i = DB.salaryStructure.probations.findIndex(x=>x.id===id);
-    if(i>=0) DB.salaryStructure.probations[i] = {id, position, level, durationDays:days, note};
+    if(i>=0) DB.salaryStructure.probations[i] = {id, position, level, durationDays:days, note, _savedAt:Date.now()};
   }
   // Reassign để trigger Proxy + đảm bảo dirty tracking
   DB.salaryStructure = {levels:[...(DB.salaryStructure.levels||[])], probations:[...DB.salaryStructure.probations]};
+  window._selfSaveAt = Date.now(); // 🚨 v34: chặn echo/stale revert probation
   saveData(['salaryStructure']);
   closeModal();
   toast(`✅ ${isNew?'Đã thêm':'Đã cập nhật'} thử việc ${position}`,'success');
@@ -27017,8 +27488,10 @@ function ssDeleteProbation(id){
   confirmDialog(`Xoá thời gian thử việc cho "${p.position}"?`,
     'Cấu hình này sẽ bị xoá.',
     ()=>{
+      _gTombAdd('salProbations', id); // 🚨 v34: tombstone chống probation xóa hồi sinh
       const filtered = DB.salaryStructure.probations.filter(x=>x.id!==id);
       DB.salaryStructure = {levels:[...(DB.salaryStructure.levels||[])], probations: filtered};
+      window._selfSaveAt = Date.now();
       saveData(['salaryStructure']);
       toast(`Đã xoá ${p.position}`,'success');
       render();
@@ -28029,8 +28502,10 @@ function saveCasual(id, isNew){
     notes: $('#c_notes').value.trim(),
   };
   if(!DB.casuals) DB.casuals=[];
+  data._savedAt = Date.now(); // 🚨 v36: stamp để merge không revert/mất bản ghi casual
   if(isNew) DB.casuals.push(_sanitizeForFirebase(data));
   else { const i=(DB.casuals||[]).findIndex(x=>x.id===id); if(i>=0) DB.casuals[i]=data; }
+  window._selfSaveAt = Date.now();
   _saveShardedToast('casuals', '✅ Đã lưu'); closeModal();
   toast(isNew?'Đã thêm bản ghi casual':(_lang==="en"?"Updated":"Đã cập nhật"));
   render();
@@ -28038,7 +28513,9 @@ function saveCasual(id, isNew){
 
 function deleteCasual(id, fromModal=false){
   confirmDialog('Xoá bản ghi?',(_lang==="en"?"This action cannot be undone.":"Hành động này không thể hoàn tác."),()=>{
+    _gTombAdd('casuals', id); // 🚨 v36: tombstone chống bản ghi casual xóa hồi sinh sau merge
     DB.casuals=(DB.casuals||[]).filter(x=>x.id!==id);
+    window._selfSaveAt = Date.now();
     _saveShardedToast('casuals', '✅ Đã lưu'); if(fromModal) closeModal();
     toast((_lang==="en"?"Deleted":"Đã xoá")); render();
   });
@@ -28119,6 +28596,7 @@ function importCasualXLSX(){
           desc:  colDesc  ? (row[colDesc]||'').toString()  : '',
           qty, hours, rate, total,
           notes: colNotes ? (row[colNotes]||'').toString() : '',
+          _savedAt: Date.now(), // 🚨 v36: stamp để merge chính xác
         };
         if(!DB.casuals) DB.casuals = [];
         DB.casuals.push(_sanitizeForFirebase(rec));
@@ -28128,6 +28606,7 @@ function importCasualXLSX(){
       }
     });
 
+    window._selfSaveAt = Date.now(); // 🚨 v36: bảo vệ bản ghi vừa import
     saveData(['casuals']); // bulk import — fire-and-forget acceptable here
     render();
 
@@ -28942,6 +29421,8 @@ function saveSchedule(id, isNew){
   if(!DB.traineeSchedules) DB.traineeSchedules=[];
   if(isNew) DB.traineeSchedules.push(_sanitizeForFirebase(data));
   else { const i=DB.traineeSchedules.findIndex(x=>x.id===id); if(i>=0) DB.traineeSchedules[i]=data; }
+  _stampItem(DB.traineeSchedules, id); // 🚨 v37: stamp để merge không revert lịch trường
+  window._selfSaveAt = Date.now();
   saveData(['traineeSchedules']); closeModal();
   toast(isNew?'Đã thêm lịch trường':(_lang==="en"?"Updated":"Đã cập nhật"));
   render();
@@ -28949,8 +29430,10 @@ function saveSchedule(id, isNew){
 
 function deleteSchedule(id, fromModal=false){
   confirmDialog('Xoá lịch trường?',(_lang==="en"?"This action cannot be undone.":"Hành động này không thể hoàn tác."),()=>{
+    _gTombAdd('traineeSchedules', id); // 🚨 v37: tombstone chống lịch trường xóa hồi sinh
     DB.traineeSchedules=(DB.traineeSchedules||[]).filter(x=>x.id!==id);
-    saveData(); if(fromModal) closeModal();
+    window._selfSaveAt = Date.now();
+    saveData(['traineeSchedules']); if(fromModal) closeModal();
     toast((_lang==="en"?"Deleted":"Đã xoá")); render();
   });
 }
@@ -29160,6 +29643,7 @@ function saveTrainee(id, isNew){
   if(isNew) DB.trainees.push(_sanitizeForFirebase(data));
   else { const i=DB.trainees.findIndex(x=>x.id===id); if(i>=0) DB.trainees[i]=data; }
   _stampItem(DB.trainees, id);
+  window._selfSaveAt = Date.now(); // 🚨 v37: chặn echo/stale revert thực tập sinh
   saveData(['trainees']); closeModal();
   toast(isNew?'Đã thêm thực tập sinh':(_lang==="en"?"Updated":"Đã cập nhật"));
   render();
@@ -29167,8 +29651,10 @@ function saveTrainee(id, isNew){
 
 function deleteTrainee(id, fromModal=false){
   confirmDialog('Xoá thực tập sinh?',(_lang==="en"?"This action cannot be undone.":"Hành động này không thể hoàn tác."),()=>{
+    _gTombAdd('trainees', id); // 🚨 v37: tombstone chống thực tập sinh xóa hồi sinh
     DB.trainees=(DB.trainees||[]).filter(x=>x.id!==id);
-    saveData(); if(fromModal) closeModal();
+    window._selfSaveAt = Date.now();
+    saveData(['trainees']); if(fromModal) closeModal();
     toast((_lang==="en"?"Deleted":"Đã xoá")); render();
   });
 }
@@ -29432,10 +29918,12 @@ window.confirmTraineeImport = function(){
   data.forEach(t=>{
     const dup = DB.trainees.find(x=>x.name===t.name&&x.school===t.school&&x.startDate===t.startDate);
     if(dup){ skipped++; return; }
+    t._savedAt = Date.now(); // 🚨 v37: stamp để merge chính xác
     DB.trainees.push(_sanitizeForFirebase(t));
     added++;
   });
 
+  window._selfSaveAt = Date.now();
   saveData(['trainees']);
   if(window._pendingRender) delete window._pendingRender[currentPage];
   closeModal();
@@ -29718,11 +30206,16 @@ fbAuth.onAuthStateChanged(async user => {
               window._recoverResaveKeys.add(key);
             }
           });
+          // 🚨 v20 FIX: Load TOÀN BỘ hrdata collection cho dynamic shards (leaves_, kpi_, cand_, ...)
+          // Bug v19: biến hrdataSnap KHÔNG BAO GIỜ được gán → block này bị skip hoàn toàn
+          // Data vẫn load qua real-time listener nhưng cold-load cleanup logic bị bỏ qua
+          const hrdataSnap = await _getCacheFirst(window.fbDb.collection('hrdata'));
           const dynamicAccum = {
             leaves:[], kpiReviews:[], rewardRecords:[], casuals:[], candidates:[],
             promotions:[], disciplineRecords:[],
             leaveSheet:{}, leaveOpening:{}, leavePlan:{}, leavePlanLocked:{},
-            manningPlan:{}, manningActual:{}
+            manningPlan:{}, manningActual:{},
+            plRevenue:{}, plActionPlan:{} // 🚨 v24: P&L Review data (bị mất vì cold-load thiếu nhánh pldata_)
           };
           // Precompute: valid jobIds (từ DB.jobs đã load) + tombstone Set
           // Dùng để: (1) filter candidates đã tombstone, (2) detect orphan cand_ shards
@@ -29833,6 +30326,18 @@ fbAuth.onAuthStateChanged(async user => {
                 });
               });
             }
+            // 🚨 v24 FIX: pldata_YYYY — nạp plRevenue + plActionPlan (P&L Review / tab Productivity)
+            // Bug: cold-load thiếu nhánh này → sau khi fix hrdataSnap (v20), cold-load chạy nhưng
+            // KHÔNG load pldata → DB.plRevenue rỗng → save merge:false ghi đè cloud rỗng → MẤT DATA
+            else if(id.startsWith('pldata_')){
+              ['plRevenue','plActionPlan'].forEach(k=>{
+                if(d[k] && typeof d[k]==='object'){
+                  Object.entries(d[k]).forEach(([yr,yrData])=>{
+                    dynamicAccum[k][yr] = yrData; // {year: {month: {...}}}
+                  });
+                }
+              });
+            }
           });
           const _mergeArr = (key)=>{ if(dynamicAccum[key].length){ 
             // Dedup by id to prevent duplicates from multi-tab saves
@@ -29846,6 +30351,9 @@ fbAuth.onAuthStateChanged(async user => {
           // Manning: merge từ sharded docs
           if(Object.keys(dynamicAccum.manningPlan).length){ DB.manningPlan=dynamicAccum.manningPlan; hasCloud=true; }
           if(Object.keys(dynamicAccum.manningActual).length){ DB.manningActual=dynamicAccum.manningActual; hasCloud=true; }
+          // 🚨 v24: P&L Review data — merge từ pldata_YYYY shards
+          if(Object.keys(dynamicAccum.plRevenue).length){ DB.plRevenue=dynamicAccum.plRevenue; hasCloud=true; }
+          if(Object.keys(dynamicAccum.plActionPlan).length){ DB.plActionPlan=dynamicAccum.plActionPlan; hasCloud=true; }
           // Migration: đọc doc 'manning' cũ (chưa shard) nếu chưa có data mới
           if(!Object.keys(dynamicAccum.manningPlan).length && !Object.keys(dynamicAccum.manningActual).length){
             try{
@@ -30136,6 +30644,15 @@ fbAuth.onAuthStateChanged(async user => {
         // Trước lúc này, mọi saveData sẽ bị SKIP để không wipe cloud bằng DB local chưa đầy đủ
         window._coldLoadDone = true;
         console.log('[Firestore] ✅ Cold-load complete — save operations enabled');
+
+        // ═══════════════════════════════════════════════════════════════
+        // 🛡️ DATA-LOSS SENTINEL (v24): tự phát hiện data mất, KHÔNG cần mở từng section
+        // Cách hoạt động: lưu "high-water mark" = số record CAO NHẤT từng thấy của mỗi key.
+        // Mỗi lần load, nếu key nào tụt mạnh so với đỉnh (VD hôm qua 7 tháng Revenue, nay 0)
+        // → popup CẢNH BÁO NGAY lúc mở app, liệt kê chính xác key nào mất bao nhiêu.
+        // → Đây là lưới an toàn tổng quát: dù có bug load nào lọt (như plRevenue), sentinel bắt được.
+        try { _runDataLossSentinel(); } catch(e){ console.warn('[Sentinel] error:', e.message); }
+        // ═══════════════════════════════════════════════════════════════
         // v17.3: re-save item khôi phục từ localStorage lên cloud (đảm bảo đồng bộ)
         if(window._recoverResaveKeys && window._recoverResaveKeys.size > 0){
           const _keys = [...window._recoverResaveKeys];
@@ -30283,6 +30800,51 @@ fbAuth.onAuthStateChanged(async user => {
                         (DB[key].levels||[]).length, 'levels,', (DB[key].probations||[]).length, 'probations)');
                       return;
                     }
+                    // 🚨 v34: MERGE-BY-ID + timestamp cho levels & probations (thay vì replace toàn bộ)
+                    // Chống revert khi 2 account sửa 2 level/probation khác nhau, hoặc local vừa sửa mà snapshot cũ về.
+                    // Kết hợp: giữ increments local nếu cloud level cùng id bị mất increments (version cũ).
+                    if(cloudHasData || localHasData){
+                      const _justSavedSS = window._selfSaveAt && (Date.now() - window._selfSaveAt) < 15000;
+                      const _lvlTomb = (typeof _gTombGetSetFor==='function') ? _gTombGetSetFor('salLevels') : new Set();
+                      const _probTomb = (typeof _gTombGetSetFor==='function') ? _gTombGetSetFor('salProbations') : new Set();
+                      const _mergeArrById = (localArr, cloudArr, tomb, isLevel)=>{
+                        const byId = new Map();
+                        const _add = (item, fromLocal)=>{
+                          if(!item || !item.id) return;
+                          if(tomb.has(item.id)) return; // đã xóa → bỏ
+                          const prev = byId.get(item.id);
+                          if(!prev){ byId.set(item.id, item); return; }
+                          const pTs = prev._savedAt || 0, nTs = item._savedAt || 0;
+                          // Bản mới hơn hẳn thắng; ts bằng → giữ bản thêm trước (order = ưu tiên)
+                          let winner = (nTs > pTs) ? item : prev;
+                          // Bảo toàn increments: nếu winner (level) mất inc nhưng bên kia có → ghép inc
+                          if(isLevel){
+                            const wInc = Array.isArray(winner.increments) ? winner.increments : [];
+                            const other = (winner===item) ? prev : item;
+                            const oInc = Array.isArray(other.increments) ? other.increments : [];
+                            if(wInc.length === 0 && oInc.length > 0) winner = {...winner, increments: oInc};
+                          }
+                          byId.set(item.id, winner);
+                        };
+                        // justSaved → local trước (ưu tiên local khi hòa ts); ngược lại cloud trước
+                        if(_justSavedSS){ (localArr||[]).forEach(x=>_add(x,true)); (cloudArr||[]).forEach(x=>_add(x,false)); }
+                        else { (cloudArr||[]).forEach(x=>_add(x,false)); (localArr||[]).forEach(x=>_add(x,true)); }
+                        // Giữ thứ tự theo cloud, item local-only nối sau
+                        const cloudOrder = (cloudArr||[]).map(x=>x.id).filter(id=>byId.has(id));
+                        const rest = [...byId.keys()].filter(id=>!cloudOrder.includes(id));
+                        return [...cloudOrder, ...rest].map(id=>byId.get(id));
+                      };
+                      const mergedLevels = _mergeArrById(DB[key].levels||[], cloudData[key].levels||[], _lvlTomb, true);
+                      const mergedProbs  = _mergeArrById(DB[key].probations||[], cloudData[key].probations||[], _probTomb, false);
+                      DB[key] = {...cloudData[key], levels: mergedLevels, probations: mergedProbs};
+                      // Rescue push nếu local có item mà cloud chưa có (đồng bộ ngược)
+                      const _localOnlyLvl = (DB[key].levels||[]).length > (cloudData[key].levels||[]).length;
+                      if(_localOnlyLvl){
+                        clearTimeout(window._salStructResaveTimer);
+                        window._salStructResaveTimer = setTimeout(()=>{ try{ saveData(['salaryStructure']); }catch(_){} }, 3000);
+                      }
+                      return; // đã merge-by-id, skip các nhánh dưới
+                    }
                     // Bảo vệ NESTED: nếu cloud có levels/probations nhưng MẤT increments (version cũ ghi đè)
                     // → merge increments từ local vào cloud levels (match theo level.id)
                     const cloudIncCount = (cloudData[key].levels||[]).reduce((s,l)=>s+((l.increments||[]).length), 0);
@@ -30332,14 +30894,54 @@ fbAuth.onAuthStateChanged(async user => {
                       return; // đã merge thủ công, skip default merge
                     }
                   }
-                  if(key === 'customFields'){
+                  if(key === 'dormConfig'){
+                    // 🚨 v41: dormConfig = {houses:[{id,...}]} — merge houses BY-ID + tombstone
+                    // Chống mất nhà khi 2 account thêm staff house khác nhau (default replace cũ ghi đè)
+                    const cloudDC = cloudData[key] || {};
+                    const localDC = DB.dormConfig || {houses:[]};
+                    const cloudHouses = Array.isArray(cloudDC.houses) ? cloudDC.houses : [];
+                    const localHouses = Array.isArray(localDC.houses) ? localDC.houses : [];
+                    const _dcTomb = (typeof _gTombGetSetFor==='function') ? _gTombGetSetFor('dormHouses') : new Set();
+                    const justSavedDC = window._selfSaveAt && (Date.now() - window._selfSaveAt) < 15000;
+                    const byId = new Map();
+                    const _addH = (h)=>{
+                      if(!h || !h.id) return;
+                      if(_dcTomb.has(h.id)) return; // đã xóa → bỏ
+                      const prev = byId.get(h.id);
+                      if(!prev){ byId.set(h.id, h); return; }
+                      const pTs = prev._savedAt || 0, nTs = h._savedAt || 0;
+                      if(nTs > pTs) byId.set(h.id, h); // mới hơn hẳn thắng; ts bằng giữ bản trước
+                    };
+                    if(justSavedDC){ localHouses.forEach(_addH); cloudHouses.forEach(_addH); }
+                    else { cloudHouses.forEach(_addH); localHouses.forEach(_addH); }
+                    const cloudOrder = cloudHouses.map(h=>h.id).filter(id=>byId.has(id));
+                    const rest = [...byId.keys()].filter(id=>!cloudOrder.includes(id));
+                    DB.dormConfig = {...cloudDC, houses: [...cloudOrder, ...rest].map(id=>byId.get(id))};
+                  } else if(key === 'customFields'){
+                    // 🚨 v30: merge có timestamp + tombstone (thay vì "local luôn thắng")
+                    // - field trùng key → bản _savedAt mới hơn thắng (chống mất sửa của account khác)
+                    // - field đã tombstone (ai đó xóa) → loại (chống hồi sinh)
                     const localFields = DB.customFields || [];
                     const cloudFields = cloudData[key] || [];
-                    const localMap = new Map(localFields.map(cf=>[cf.key, cf]));
-                    cloudFields.forEach(cf=>{ if(!localMap.has(cf.key)) localMap.set(cf.key, cf); });
-                    const cloudOrder = cloudFields.map(cf=>cf.key);
-                    const extra = localFields.filter(cf=>!cloudOrder.includes(cf.key));
-                    DB.customFields = [...cloudOrder.filter(k=>localMap.has(k)).map(k=>localMap.get(k)), ...extra];
+                    const _cfTomb = (typeof _gTombGetSetFor==='function') ? _gTombGetSetFor('customFields') : new Set();
+                    const byKey = new Map();
+                    const _addCf = (cf)=>{
+                      if(!cf || !cf.key) return;
+                      if(cf.id && _cfTomb.has(cf.id)) return; // đã xóa → bỏ
+                      const prev = byKey.get(cf.key);
+                      if(!prev){ byKey.set(cf.key, cf); return; }
+                      const pTs = prev._savedAt || 0, nTs = cf._savedAt || 0;
+                      if(nTs > pTs) byKey.set(cf.key, cf); // CHỈ mới hơn hẳn mới thắng; ts bằng → giữ bản thêm trước (thứ tự = ưu tiên)
+                    };
+                    // Giữ THỨ TỰ theo cloud trước, rồi field local-only nối sau
+                    const justSavedCf = window._selfSaveAt && (Date.now() - window._selfSaveAt) < 15000;
+                    // Nếu vừa self-save: local trước (ưu tiên bản local vừa sửa khi bằng ts)
+                    if(justSavedCf){ localFields.forEach(_addCf); cloudFields.forEach(_addCf); }
+                    else { cloudFields.forEach(_addCf); localFields.forEach(_addCf); }
+                    // Sắp xếp theo thứ tự cloud (ổn định giữa các máy), field mới nối cuối
+                    const cloudOrder = cloudFields.map(cf=>cf.key).filter(k=>byKey.has(k));
+                    const rest = [...byKey.keys()].filter(k=>!cloudOrder.includes(k));
+                    DB.customFields = [...cloudOrder, ...rest].map(k=>byKey.get(k));
                   } else if(Array.isArray(cloudData[key]) && Array.isArray(DB[key])
                             && cloudData[key].length > 0
                             && cloudData[key][0] && typeof cloudData[key][0]==='object' && cloudData[key][0].id !== undefined){
@@ -30712,7 +31314,9 @@ fbAuth.onAuthStateChanged(async user => {
                 }
                 changed = true;
               } else if(key==='manningPlan' && d.manningPlan && typeof d.manningPlan==='object'){
-                // manning_plan_YYYY: merge sharded year data
+                // manning_plan_YYYY: merge sharded year data (theo deptId)
+                // 🚨 v38: read-then-merge lúc save đã đảm bảo cloud đầy đủ; listener merge dept-level.
+                // Object.assign theo deptId an toàn vì cloud (sau merge) chứa đủ dept của cả 2 account.
                 Object.entries(d.manningPlan).forEach(([yr,yrData])=>{
                   if(!DB.manningPlan[yr]) DB.manningPlan[yr]={depts:{}};
                   if(yrData.depts) Object.assign(DB.manningPlan[yr].depts, yrData.depts);
@@ -30723,17 +31327,34 @@ fbAuth.onAuthStateChanged(async user => {
                 Object.entries(d.manningActual).forEach(([yr,yrData])=>{
                   if(!DB.manningActual[yr]) DB.manningActual[yr]={};
                   Object.entries(yrData||{}).forEach(([mi,moData])=>{
+                    if(mi.startsWith('_')) return;
                     if(!DB.manningActual[yr][mi]) DB.manningActual[yr][mi]={};
                     Object.assign(DB.manningActual[yr][mi], moData||{});
                   });
                 });
                 changed = true;
               } else if(key==='_leaveSheet' && d.leaveSheet && typeof d.leaveSheet==='object'){
-                // leavesheet_YYYY_deptId: merge empId → year data
+                // leavesheet_YYYY_deptId: merge empId → year → leaveType (AL/CL)
+                // 🚨 v33: merge PER-ENTRY theo _savedAt (không ghi đè cả block year)
+                // Chống mất data khi 2 account sửa phép 2 NV khác nhau trong cùng dept+năm
+                const _justSavedLS = window._selfSaveAt && (Date.now() - window._selfSaveAt) < 15000;
                 Object.entries(d.leaveSheet).forEach(([eid, yrData])=>{
                   if(!DB.leaveSheet[eid]) DB.leaveSheet[eid]={};
                   Object.entries(yrData||{}).forEach(([yr, typeData])=>{
-                    DB.leaveSheet[eid][yr] = typeData;
+                    if(!DB.leaveSheet[eid][yr] || typeof DB.leaveSheet[eid][yr]!=='object'){ DB.leaveSheet[eid][yr]={}; }
+                    if(typeData && typeof typeData==='object'){
+                      // typeData = {al:{...}, cl:{...}} — merge từng loại phép theo _savedAt
+                      Object.entries(typeData).forEach(([lt, sh])=>{
+                        const localSh = DB.leaveSheet[eid][yr][lt];
+                        const lSA = (localSh && localSh._savedAt) || 0;
+                        const cSA = (sh && sh._savedAt) || 0;
+                        if(_justSavedLS && lSA >= cSA) return; // vừa sửa + local mới hơn/bằng → giữ local
+                        if(lSA > cSA) return; // local mới hơn → giữ
+                        DB.leaveSheet[eid][yr][lt] = sh; // cloud mới hơn hoặc bằng → nhận
+                      });
+                    } else {
+                      DB.leaveSheet[eid][yr] = typeData;
+                    }
                   });
                 });
                 changed = true;
@@ -30789,14 +31410,36 @@ fbAuth.onAuthStateChanged(async user => {
                 });
               } else if(key==='_plData'){
                 // pldata_YYYY: merge plRevenue, plActionPlan
+                // 🚨 v24: merge THEO THÁNG (không ghi đè cả năm) + bảo vệ self-save 15s
+                // Chống: account khác save năm cũ → snapshot đến ghi đè cả năm → mất tháng local vừa nhập
                 const plKeys=['plRevenue','plActionPlan'];
+                const justSavedPL = window._selfSaveAt && (Date.now() - window._selfSaveAt) < 15000;
                 plKeys.forEach(pk=>{
                   if(!d[pk] || typeof d[pk]!=='object') return;
                   if(!DB[pk] || typeof DB[pk]!=='object') DB[pk]={};
                   Object.entries(d[pk]).forEach(([yr,yrData])=>{
-                    DB[pk][yr] = yrData;
+                    if(!yrData || typeof yrData!=='object'){ return; }
+                    if(!DB[pk][yr] || typeof DB[pk][yr]!=='object'){ DB[pk][yr]={}; }
+                    // Merge từng tháng: giữ tất cả tháng của cả 2.
+                    // Ở tháng trùng → so _ts (mới thắng); nếu vừa self-save thì local luôn thắng
+                    Object.entries(yrData).forEach(([mo, moData])=>{
+                      const localMo = DB[pk][yr][mo];
+                      if(pk==='plRevenue' && localMo && typeof localMo==='object' && typeof moData==='object'){
+                        if(justSavedPL) return; // vừa nhập → giữ local
+                        const lTs = localMo._ts || 0, cTs = moData._ts || 0;
+                        if(cTs >= lTs) DB[pk][yr][mo] = moData; // cloud mới hơn hoặc bằng → nhận
+                        // else giữ local (local mới hơn)
+                      } else if(pk==='plActionPlan' && Array.isArray(moData)){
+                        // 🚨 v28: Action Plan là array → merge-by-id (không ghi đè cả tháng)
+                        // Kể cả vừa self-save vẫn merge (merge-by-id đã bảo toàn item local mới nhất qua _savedAt)
+                        DB[pk][yr][mo] = _mergeActionArr(Array.isArray(localMo)?localMo:[], moData);
+                      } else {
+                        if(justSavedPL && localMo !== undefined) return;
+                        DB[pk][yr][mo] = moData;
+                      }
+                    });
+                    changed = true;
                   });
-                  changed = true;
                 });
               }
             });
@@ -30835,6 +31478,23 @@ fbAuth.onAuthStateChanged(async user => {
                 }
                 return;
               }
+              // 🚨 v29 STALE-GUARD: bỏ snapshot có _syncAt CŨ HƠN bản đã biết cho NV này
+              // Chống: snapshot cũ (từ account khác chưa sync / echo trễ) ghi đè bản mới hơn → revert field
+              if(!window._empLastSyncAt) window._empLastSyncAt = {};
+              if(change.type !== 'removed'){
+                const known = window._empLastSyncAt[empId] || 0;
+                if(cloudSyncAt > 0 && cloudSyncAt < known){
+                  console.warn(`[EMP] 🛡️ Skip STALE ${empId}: ${new Date(cloudSyncAt).toISOString()} < known ${new Date(known).toISOString()}`);
+                  return;
+                }
+                // 🚨 v29: nếu vừa self-save trong 15s và đây KHÔNG phải bản mới hơn hẳn → giữ local
+                const justSaved = window._selfSaveAt && (Date.now() - window._selfSaveAt) < 15000;
+                if(justSaved && !isSelf && cloudSyncAt <= known){
+                  console.warn(`[EMP] 🛡️ Vừa self-save, giữ local cho ${empId} (snapshot không mới hơn)`);
+                  return;
+                }
+                if(cloudSyncAt > known) window._empLastSyncAt[empId] = cloudSyncAt;
+              }
               if(change.type === 'removed'){
                 DB.employees = DB.employees.filter(e=>e.id!==empId);
                 delete DB.customData[empId];
@@ -30868,9 +31528,26 @@ fbAuth.onAuthStateChanged(async user => {
                   }
                 }
                 const idx = DB.employees.findIndex(e=>e.id===empId);
-                if(idx>=0) DB.employees[idx] = empObj;
-                else DB.employees.push(empObj);
-                if(Object.keys(cdObj).length>0) DB.customData[empId] = cdObj;
+                // 🚨 v30: nếu vừa self-save (<15s), merge field-level thay vì replace —
+                // bảo vệ field local Meoz vừa sửa nhưng chưa kịp lên cloud (khi account khác
+                // save field KHÁC của cùng NV → snapshot mới hơn về sẽ mang field cũ của mình)
+                const _justSavedEmp = window._selfSaveAt && (Date.now() - window._selfSaveAt) < 15000;
+                if(idx>=0 && _justSavedEmp){
+                  // Giữ field local, cloud chỉ bổ sung/ghi đè field cloud thực sự có giá trị khác
+                  DB.employees[idx] = {...DB.employees[idx], ...empObj};
+                } else if(idx>=0){
+                  DB.employees[idx] = empObj;
+                } else {
+                  DB.employees.push(empObj);
+                }
+                if(Object.keys(cdObj).length>0){
+                  if(_justSavedEmp && DB.customData[empId]){
+                    // Merge field-level: cloud lên trên, GIỮ field local mà cloud không đề cập
+                    DB.customData[empId] = {...DB.customData[empId], ...cdObj};
+                  } else {
+                    DB.customData[empId] = cdObj;
+                  }
+                }
               }
               changed = true;
             });
@@ -30884,7 +31561,16 @@ fbAuth.onAuthStateChanged(async user => {
                 if(!window._pendingRender) window._pendingRender={};
                 ['employees','employee-profile','dashboard','salary','performance'].forEach(p=>{window._pendingRender[p]=true;});
               } else if(['employees','employee-profile','dashboard','salary','performance'].includes(currentPage)){
-                render();
+                // 🚫 FIX "nhảy cà tưng": nếu đang ở trang employees, KHÔNG render() toàn trang
+                // (render vẽ lại cả trang → dropdown reset, scroll nhảy, mất focus khi account khác sync)
+                // → chỉ partial render tbody, giữ nguyên dropdown/scroll/ô search
+                if(currentPage === 'employees'){
+                  const saved = (typeof _saveFocus==='function') ? _saveFocus() : null;
+                  _empPartialRender();
+                  if(saved && typeof _restoreFocus==='function') _restoreFocus(saved);
+                } else {
+                  render();
+                }
               }
               updateBadges();
               try{
@@ -31265,6 +31951,7 @@ function _saveBudgetPos(el, dIdEnc, titEnc, field, yr, bhRate){
   if(!p){ p={title,planned:0,budgetSalary:0,budgetBonus:0,budgetBH:0,mealRate:0,budgetOther:0,notes:''}; dp.positions.push(p); }
   p[field] = val;
   if(field==='budgetSalary' && !p.budgetBH) p.budgetBH = Math.round(val*bhRate);
+  window._selfSaveAt = Date.now(); // 🚨 v38: chặn echo/stale revert budget position
   saveData(['manningPlan']);
   // Re-render để tổng được tính lại
   render();
