@@ -1241,21 +1241,34 @@ function _pushDynamicKey(key, meta){
     const prefix = yearArrayMap[key];
     const arr = DB[key] || [];
     // 🚨 GUARD: nếu arr rỗng, KHÔNG save (tránh wipe cloud khi DB chưa cold-load)
-    // Trade-off: nếu user chủ động xóa hết records, cloud không sync — nhưng an toàn hơn nhiều
-    // User có thể trigger save lại sau khi delete để force sync (rất hiếm case)
     if(arr.length === 0){
       console.warn(`[saveData] ⚠️ SKIP ${prefix} — arr rỗng (tránh wipe cloud). Nếu bạn vừa xóa hết records, F5 và thử lại.`);
       return;
     }
     const byYear = {};
     arr.forEach(r=>{ const y=_recYear(r); (byYear[y]=byYear[y]||[]).push(r); });
-    // ⚠️ BỎ force byYear[thisYear]=[] — nguyên nhân data loss "1-2 ngày"
-    // Chỉ ghi shards THỰC SỰ có data, không tạo empty shard
+    // v18: ghi các shard CÓ data
     Object.entries(byYear).forEach(([yr,records])=>{
-      if(records.length === 0) return; // extra safety: skip empty year
+      if(records.length === 0) return;
       window.fbDb.collection('hrdata').doc(`${prefix}_${yr}`)
         .set({...meta, [key]:records.map(r=>_sanitizeForFirebase(r)), _shard:parseInt(yr)}, {merge:false})
         .catch(err=>console.error(`[saveData] ❌ ${prefix}_${yr}`, err.message));
+    });
+    // 🚨 v18 FIX bug resurrection: nếu 1 NĂM từng có record trên cloud nhưng giờ arr KHÔNG còn record năm đó
+    // → shard năm đó phải bị XÓA (nếu không F5 sẽ load lại records cũ)
+    // Track qua window._<key>KnownYears: các năm đã từng thấy có data
+    const _knownKey = '_'+key+'KnownYears';
+    if(!window[_knownKey]) window[_knownKey] = new Set();
+    // Thêm năm hiện tại vào known
+    Object.keys(byYear).forEach(y=>window[_knownKey].add(String(y)));
+    // Năm nào trong known mà KHÔNG còn trong byYear → shard rỗng → delete
+    window[_knownKey].forEach(yr=>{
+      if(!byYear[yr] && window.fbDb){
+        console.warn(`[saveData] 🗑️ Năm ${yr} không còn record ${key} → xóa shard ${prefix}_${yr} (chống resurrection)`);
+        window.fbDb.collection('hrdata').doc(`${prefix}_${yr}`).delete()
+          .then(()=>window[_knownKey].delete(yr))
+          .catch(()=>{});
+      }
     });
     return;
   }
@@ -1553,7 +1566,23 @@ function saveData(changedKeys=null){
         const val=DB[k];
         if(val===undefined || (typeof val==='number'&&isNaN(val))) return;
         if(Array.isArray(val)){
-          payload[k] = val.map(item=> typeof item==='object'&&item!==null ? _sanitizeForFirebase(item) : item);
+          // v17: stamp _savedAt = thời điểm save cho MỌI item
+          // Vì user chỉ save khi vừa sửa → thời điểm save chính là "mới nhất"
+          // Khi merge, item local vừa save luôn có _savedAt >= cloud → được giữ đúng
+          // Ngoại lệ: nếu item đã có _savedAt cũ và KHÔNG đổi, giữ nguyên timestamp cũ
+          //   (để không đè edit mới hơn của người khác trên cloud)
+          const _now = Date.now();
+          const _prevCloud = window._lastMergedItems && window._lastMergedItems[k];
+          payload[k] = val.map(item=> {
+            if(typeof item==='object' && item!==null){
+              const clean = _sanitizeForFirebase(item);
+              // Giữ _savedAt hiện có nếu item đã có; nếu chưa có → gán now
+              // (saveJob/saveXxx đã stamp _savedAt cho item vừa sửa cụ thể)
+              if(!clean._savedAt) clean._savedAt = _now;
+              return clean;
+            }
+            return item;
+          });
         } else {
           payload[k] = val;
         }
@@ -1612,6 +1641,14 @@ function saveData(changedKeys=null){
 
 
 // Sanitize object trước khi lưu Firebase: đổi undefined/NaN thành ''
+// v17: stamp _savedAt vào item vừa sửa trong array — merge per-item chính xác
+// Gọi ngay sau khi push/update item vào DB array
+function _stampItem(arr, id){
+  if(!Array.isArray(arr)) return;
+  const it = arr.find(x=>x && x.id===id);
+  if(it) it._savedAt = Date.now();
+}
+
 function _sanitizeForFirebase(obj){
   const out = {};
   Object.keys(obj).forEach(k=>{
@@ -10865,6 +10902,7 @@ function saveDepartment(id, isNew){
   const data = {id, name, head, headId, color:$s('f_color'), desc:$('#f_desc').value.trim()};
   if(isNew) DB.departments.push(_sanitizeForFirebase(data));
   else{ const i = DB.departments.findIndex(x=>x.id===id); if(i>=0) DB.departments[i] = data; }
+  _stampItem(DB.departments, id);
   saveData(['departments']); closeModal(); toast(isNew?'Đã thêm phòng ban':(_lang==="en"?"Updated":"Đã cập nhật")); render();
 }
 
@@ -10874,6 +10912,7 @@ function deleteDepartment(id, fromModal=false){
   const d = DB.departments.find(x=>x.id===id); if(!d) return;
   if(fromModal) closeModal();
   confirmDialog('Xoá phòng ban?', `Sẽ xoá phòng ban <b>${escapeHtml(d.name)}</b>. Hành động này không thể hoàn tác.`, ()=>{
+    _gTombAdd('departments', id);
     DB.departments = DB.departments.filter(x=>x.id!==id);
     saveData(['departments']); toast('Đã xoá phòng ban'); render();
   });
@@ -12726,12 +12765,14 @@ function saveContract(id, isNew){
   if(!data.empId || !data.startDate){ toast('Vui lòng chọn nhân viên và ngày bắt đầu','error'); return; }
   if(isNew) DB.contracts.push(_sanitizeForFirebase(data));
   else{ const i = DB.contracts.findIndex(x=>x.id===id); if(i>=0)DB.contracts[i]=_sanitizeForFirebase(data); else DB.contracts.push(_sanitizeForFirebase(data)); }
+  _stampItem(DB.contracts, id);
   saveData(['contracts']); closeModal(); toast(isNew?'Đã thêm hợp đồng':(_lang==="en"?"Updated":"Đã cập nhật")); render();
 }
 
 function deleteContract(id, fromModal=false){
   if(fromModal) closeModal();
   confirmDialog('Xoá hợp đồng?', (_lang==="en"?"This action cannot be undone.":"Hành động này không thể hoàn tác."), ()=>{
+    _gTombAdd('contracts', id);
     DB.contracts = (DB.contracts||[]).filter(x=>x.id!==id);
     saveData(['contracts']); toast('Đã xoá hợp đồng'); render();
   });
@@ -14034,6 +14075,9 @@ function renderLeavePlan(main){
     if(!DB.leavePlan[curYear][deptId]) DB.leavePlan[curYear][deptId]={};
     if(!DB.leavePlan[curYear][deptId][mi]) DB.leavePlan[curYear][deptId][mi]={al:0,cl:0};
     DB.leavePlan[curYear][deptId][mi][type] = parseFloat(val)||0;
+    // v17.2: stamp timestamp cho cell + set selfSaveAt để listener bảo vệ khỏi cloud ghi đè
+    DB.leavePlan[curYear][deptId][mi]._savedAt = Date.now();
+    window._selfSaveAt = Date.now();
     saveData(['leavePlan']);
     // Debounce full re-render để dòng Σ AL+CL "Đạt KH?" cập nhật chính xác
     clearTimeout(window._planRenderTimer);
@@ -19009,9 +19053,19 @@ function saveCandidate(id, jobId, isNew){
     // Đảm bảo cả jobId cũ và mới đều được ghi (kể cả empty) — tránh shard cũ bị giữ lại
     const targetJobs = new Set([jobId, data.jobId||'_nojob']);
     targetJobs.forEach(jid=>{ if(!byJob2[jid]) byJob2[jid] = []; });
-    const writes2 = Object.entries(byJob2).filter(([jid])=>targetJobs.has(jid)).map(([jid,recs])=>
-      window.fbDb?.collection('hrdata').doc(`cand_${jid}`).set({...meta2, candidates:recs, _shard:jid},{merge:false})
-    ).filter(Boolean);
+    const writes2 = Object.entries(byJob2).filter(([jid])=>targetJobs.has(jid)).map(([jid,recs])=>{
+      const _wr = (attempt=1) => window.fbDb?.collection('hrdata').doc(`cand_${jid}`).set({...meta2, candidates:recs, _shard:jid},{merge:false})
+        .catch(err=>{
+          console.error(`[saveCandidate] cand_${jid} attempt ${attempt}:`, err.message);
+          if(attempt < 3){
+            if(typeof toast==='function' && attempt===1) toast(`⚠️ Lưu ứng viên lỗi, đang thử lại...`,'warning',4000);
+            return new Promise(res=>setTimeout(()=>_wr(attempt+1).then(res), attempt===1?3000:8000));
+          } else {
+            if(typeof toast==='function') toast(`❌ KHÔNG lưu được ứng viên sau 3 lần: ${err.message}. Kiểm tra mạng!`,'error',20000);
+          }
+        });
+      return _wr();
+    }).filter(Boolean);
     Promise.all(writes2).then(()=>{ toast(isNew?'✅ Đã thêm ứng viên':(_lang==="en"?"✅ Updated":"✅ Đã cập nhật")); resolve(); })
       .catch(err=>{ toast('❌ Lỗi lưu: '+err.message,'error'); resolve(); });
   });
@@ -19025,6 +19079,40 @@ function saveCandidate(id, jobId, isNew){
 // ══════════════════════════════════════════════════════════════════
 const _CTOMB_KEY = STORE_KEY + '_cand_tombstone';
 const _CTOMB_TTL_MS = 90 * 24 * 3600 * 1000; // 90 ngày
+
+// v17.2: Tombstone TỔNG QUÁT cho mọi array (jobs, contracts, courses, promotions...)
+// Chống bug resurrection: xóa item local nhưng cloud còn → listener merge lại
+const _GTOMB_KEY = STORE_KEY + '_global_tombstone';
+function _gTombRead(){
+  try { return JSON.parse(localStorage.getItem(_GTOMB_KEY) || '{}'); } catch(_){ return {}; }
+}
+function _gTombWrite(obj){
+  try {
+    const now = Date.now();
+    Object.keys(obj).forEach(k => { if(!obj[k] || (now - obj[k]) > _CTOMB_TTL_MS) delete obj[k]; });
+    localStorage.setItem(_GTOMB_KEY, JSON.stringify(obj));
+  } catch(_){}
+}
+// Đánh dấu item đã xóa: key = "collectionKey:itemId"
+function _gTombAdd(collKey, id){
+  if(!collKey || !id) return;
+  const t = _gTombRead(); t[collKey+':'+id] = Date.now(); _gTombWrite(t);
+}
+function _gTombHas(collKey, id){
+  if(!collKey || !id) return false;
+  const t = _gTombRead(); return !!t[collKey+':'+id];
+}
+function _gTombGetSetFor(collKey){
+  const t = _gTombRead();
+  const s = new Set();
+  const prefix = collKey + ':';
+  Object.keys(t).forEach(k => { if(k.startsWith(prefix)) s.add(k.slice(prefix.length)); });
+  return s;
+}
+function _gTombRemove(collKey, id){
+  if(!collKey || !id) return;
+  const t = _gTombRead(); delete t[collKey+':'+id]; _gTombWrite(t);
+}
 
 function _cTombRead(){
   try { return JSON.parse(localStorage.getItem(_CTOMB_KEY) || '{}'); } catch(_){ return {}; }
@@ -19270,6 +19358,7 @@ function saveJob(id, isNew){
   }
   if(isNew) DB.jobs.push(_sanitizeForFirebase(data));
   else{ const i = DB.jobs.findIndex(x=>x.id===id); if(i>=0)DB.jobs[i]=_sanitizeForFirebase(data); else DB.jobs.push(_sanitizeForFirebase(data)); }
+  { const _j = DB.jobs.find(x=>x.id===id); if(_j) _j._savedAt = Date.now(); } // v17: per-item timestamp
   window._selfSaveAt = Date.now(); // chặn snapshot echo cũ ghi đè
   saveData(['jobs']); closeModal(); toast(isNew?'Đã mở vị trí':(_lang==="en"?"Updated":"Đã cập nhật")); render();
 }
@@ -19286,6 +19375,7 @@ function deleteJob(id, fromModal=false){
     // TOMBSTONE: track TẤT CẢ candidate IDs bị xóa cùng job → chặn resurrect
     _cTombAddMany(candList.map(c=>c.id));
     // Xóa job
+    _gTombAdd('jobs', id);
     DB.jobs = DB.jobs.filter(x=>x.id!==id);
     // Xóa candidates của job này
     DB.candidates = (DB.candidates||[]).filter(c=>c.jobId!==id);
@@ -20864,12 +20954,14 @@ function saveCourse(id, isNew){
 
   if(isNew) DB.courses.push(_sanitizeForFirebase(data));
   else{ const i = DB.courses.findIndex(x=>x.id===id); if(i>=0)DB.courses[i]=_sanitizeForFirebase(data); else DB.courses.push(_sanitizeForFirebase(data)); }
+  _stampItem(DB.courses, id);
   saveData(['courses']); closeModal(); toast(isNew?'Đã thêm khoá học':(_lang==="en"?"Updated":"Đã cập nhật")); render();
 }
 
 function deleteCourse(id, fromModal=false){
   if(fromModal) closeModal();
   confirmDialog('Xoá khoá học?', (_lang==="en"?"This action cannot be undone.":"Hành động này không thể hoàn tác."), ()=>{
+    _gTombAdd('courses', id);
     DB.courses = DB.courses.filter(x=>x.id!==id);
     saveData(['courses']); toast((_lang==="en"?"Deleted":"Đã xoá")); render();
   });
@@ -22462,6 +22554,7 @@ function savePromotion(id, isNew){
   saveEmpProfile(empId);
   if(window._pendingRender) delete window._pendingRender[currentPage];
 
+  _stampItem(DB.promotions, id);
   saveData(['promotions']);
   closeModal();
   render();
@@ -23959,6 +24052,7 @@ function saveBlacklistEntry(isNew){
     else DB.manualBlacklist.push(_sanitizeForFirebase(entry));
   }
 
+  _stampItem(DB.manualBlacklist, id);
   saveData(['manualBlacklist']);
   if(window._pendingRender) delete window._pendingRender[currentPage];
   closeModal();
@@ -29057,6 +29151,7 @@ function saveTrainee(id, isNew){
   if(!DB.trainees) DB.trainees = [];
   if(isNew) DB.trainees.push(_sanitizeForFirebase(data));
   else { const i=DB.trainees.findIndex(x=>x.id===id); if(i>=0) DB.trainees[i]=data; }
+  _stampItem(DB.trainees, id);
   saveData(['trainees']); closeModal();
   toast(isNew?'Đã thêm thực tập sinh':(_lang==="en"?"Updated":"Đã cập nhật"));
   render();
@@ -29573,15 +29668,48 @@ fbAuth.onAuthStateChanged(async user => {
           let hasCloud = empLoaded;
           // Push NV chưa có trên Firestore (exit employees) sau 3 giây
           if(empLoaded) setTimeout(()=>pushMissingEmpProfiles(), 3000);
+          // v17.3: LƯU localStorage snapshot TRƯỚC khi cloud override
+          // Để sau đó merge lại item chỉ có trong localStorage (save fail nhưng local đã lưu)
+          const _localBeforeCloud = {};
+          const _arrayKeys = ['jobs','contracts','departments','courses','trainees','manualBlacklist','resignations'];
+          _arrayKeys.forEach(k => { if(Array.isArray(DB[k])) _localBeforeCloud[k] = DB[k].slice(); });
+
           snaps.forEach((snap,i)=>{
             if(!snap.exists) return;
             hasCloud = true;
             const data = snap.data();
-            FS_DOC_MAP[docIds[i]].forEach(key=>{ if(data[key] !== undefined) DB[key] = data[key]; });
+            FS_DOC_MAP[docIds[i]].forEach(key=>{
+              if(data[key] !== undefined){
+                // v17.2: filter items đã tombstone (xóa) — chống resurrection sau F5
+                if(Array.isArray(data[key])){
+                  const _tomb = _gTombGetSetFor(key);
+                  DB[key] = _tomb.size ? data[key].filter(it => !it.id || !_tomb.has(it.id)) : data[key];
+                } else {
+                  DB[key] = data[key];
+                }
+              }
+            });
           });
 
-          // hrdata full collection — cache-first
-          const hrdataSnap = await _getCacheFirst(window.fbDb.collection('hrdata'));
+          // v17.3: MERGE lại item chỉ có trong localStorage (cloud thiếu = save fail lúc trước)
+          // Chống mất data kiểu Lương Huy Hoàng: nhập xong, save fail QUIC, cloud không có
+          // → localStorage vẫn giữ → khôi phục + tự động re-save lên cloud
+          _arrayKeys.forEach(key => {
+            const localArr = _localBeforeCloud[key];
+            if(!Array.isArray(localArr) || localArr.length === 0) return;
+            const cloudArr = Array.isArray(DB[key]) ? DB[key] : [];
+            const cloudIds = new Set(cloudArr.map(it => it && it.id).filter(Boolean));
+            const _tomb = _gTombGetSetFor(key);
+            // Item có trong localStorage nhưng KHÔNG có trên cloud VÀ chưa bị tombstone
+            const localOnly = localArr.filter(it => it && it.id && !cloudIds.has(it.id) && !_tomb.has(it.id));
+            if(localOnly.length > 0){
+              console.warn(`[cold-load] 🛟 Khôi phục ${localOnly.length} item "${key}" chỉ có trong localStorage (cloud thiếu — có thể save fail trước đó):`, localOnly.map(x=>x.name||x.title||x.id).join(', '));
+              DB[key] = [...cloudArr, ...localOnly];
+              // Đánh dấu để re-save lên cloud sau khi cold-load xong
+              if(!window._recoverResaveKeys) window._recoverResaveKeys = new Set();
+              window._recoverResaveKeys.add(key);
+            }
+          });
           const dynamicAccum = {
             leaves:[], kpiReviews:[], rewardRecords:[], casuals:[], candidates:[],
             promotions:[], disciplineRecords:[],
@@ -29597,9 +29725,9 @@ fbAuth.onAuthStateChanged(async user => {
           const _candTomb = _cTombGetSet();
           hrdataSnap.forEach(doc=>{
             const id=doc.id; const d=doc.data();
-            if(id.startsWith('leaves_')      && d.leaves)           dynamicAccum.leaves.push(...d.leaves);
-            else if(id.startsWith('kpi_')    && d.kpiReviews)       dynamicAccum.kpiReviews.push(...d.kpiReviews);
-            else if(id.startsWith('rewards_')&& d.rewardRecords)    dynamicAccum.rewardRecords.push(...d.rewardRecords);
+            if(id.startsWith('leaves_')      && d.leaves)           { dynamicAccum.leaves.push(...d.leaves); const _y=id.slice(7); if(!window._leavesKnownYears)window._leavesKnownYears=new Set(); window._leavesKnownYears.add(_y); }
+            else if(id.startsWith('kpi_')    && d.kpiReviews)       { dynamicAccum.kpiReviews.push(...d.kpiReviews); const _y=id.slice(4); if(!window._kpiReviewsKnownYears)window._kpiReviewsKnownYears=new Set(); window._kpiReviewsKnownYears.add(_y); }
+            else if(id.startsWith('rewards_')&& d.rewardRecords)    { dynamicAccum.rewardRecords.push(...d.rewardRecords); const _y=id.slice(8); if(!window._rewardRecordsKnownYears)window._rewardRecordsKnownYears=new Set(); window._rewardRecordsKnownYears.add(_y); }
             else if(id.startsWith('casuals_')&& d.casuals)          dynamicAccum.casuals.push(...d.casuals);
             else if(id.startsWith('cand_')   && d.candidates){
               // Bỏ qua shard sai format (cand_2026 theo năm — từ bug cũ)
@@ -29661,8 +29789,8 @@ fbAuth.onAuthStateChanged(async user => {
                 dynamicAccum.candidates.push(...filtered);
               }
             }
-            else if(id.startsWith('promos_') && d.promotions)       dynamicAccum.promotions.push(...d.promotions);
-            else if(id.startsWith('discipline_')&&d.disciplineRecords) dynamicAccum.disciplineRecords.push(...d.disciplineRecords);
+            else if(id.startsWith('promos_') && d.promotions)       { dynamicAccum.promotions.push(...d.promotions); const _y=id.slice(7); if(!window._promotionsKnownYears)window._promotionsKnownYears=new Set(); window._promotionsKnownYears.add(_y); }
+            else if(id.startsWith('discipline_')&&d.disciplineRecords) { dynamicAccum.disciplineRecords.push(...d.disciplineRecords); const _y=id.slice(11); if(!window._disciplineRecordsKnownYears)window._disciplineRecordsKnownYears=new Set(); window._disciplineRecordsKnownYears.add(_y); }
             else if(id.startsWith('leavesheet_')&&d.leaveSheet){
               Object.entries(d.leaveSheet).forEach(([eid,yrData])=>{
                 if(!dynamicAccum.leaveSheet[eid]) dynamicAccum.leaveSheet[eid]={};
@@ -30000,6 +30128,16 @@ fbAuth.onAuthStateChanged(async user => {
         // Trước lúc này, mọi saveData sẽ bị SKIP để không wipe cloud bằng DB local chưa đầy đủ
         window._coldLoadDone = true;
         console.log('[Firestore] ✅ Cold-load complete — save operations enabled');
+        // v17.3: re-save item khôi phục từ localStorage lên cloud (đảm bảo đồng bộ)
+        if(window._recoverResaveKeys && window._recoverResaveKeys.size > 0){
+          const _keys = [...window._recoverResaveKeys];
+          window._recoverResaveKeys.clear();
+          setTimeout(()=>{
+            _keys.forEach(k => {
+              try { console.warn(`[cold-load] 🛟 Re-saving recovered "${k}" to cloud`); saveData([k]); } catch(e){}
+            });
+          }, 2000);
+        }
         render();
 
         // 🐱 Daily Greeting — auto show once per day after login
@@ -30202,13 +30340,6 @@ fbAuth.onAuthStateChanged(async user => {
                     // Sau đó listener nhận snapshot cũ (không có notes) → replace local
                     // → Meoz save job khác → save toàn bộ DB.jobs (không có notes) → cloud MẤT notes
                     // Fix: mỗi id, chọn version có nhiều fields non-empty hơn (bảo vệ khỏi stale snapshot)
-                    const _fieldScore = (item) => {
-                      if(!item || typeof item !== 'object') return 0;
-                      return Object.values(item).filter(v => 
-                        v !== null && v !== undefined && v !== '' && v !== 0 && 
-                        !(Array.isArray(v) && v.length === 0)
-                      ).length;
-                    };
                     // v13: shallow diff check — nếu identical thì KHÔNG protect (tránh loop rescue)
                     const _isDiffItem = (a, b) => {
                       if(a === b) return false;
@@ -30223,10 +30354,11 @@ fbAuth.onAuthStateChanged(async user => {
                       return false;
                     };
                     // 🚨 v12: nếu vừa save trong 15s qua, ưu tiên LOCAL kể cả khi score bằng
-                    // Snapshot echo cloud có thể là VERSION CŨ TRƯỚC SAVE → local mới chính là truth
                     const justSaved = window._selfSaveAt && (Date.now() - window._selfSaveAt) < 15000;
                     const localMap = new Map((DB[key]||[]).map(item => [item.id, item]));
                     const cloudMap = new Map(cloudData[key].map(item => [item.id, item]));
+                    // v17.2: tombstone set cho collection này (chống item đã xóa quay lại)
+                    const _gTomb = _gTombGetSetFor(key);
                     const merged = [];
                     let protectedCount = 0;
                     const seenIds = new Set();
@@ -30234,14 +30366,44 @@ fbAuth.onAuthStateChanged(async user => {
                     cloudData[key].forEach(cloudItem => {
                       const id = cloudItem.id;
                       seenIds.add(id);
+                      // v17.2: item đã tombstone (user vừa xóa) → KHÔNG merge lại từ cloud
+                      if(_gTomb.has(id)){
+                        return;
+                      }
                       const localItem = localMap.get(id);
                       if(!localItem){ merged.push(cloudItem); return; }
                       // v13: nếu local và cloud identical → chọn cloud (không protect, không loop)
                       if(!_isDiffItem(localItem, cloudItem)){ merged.push(cloudItem); return; }
+                      // 🚨 v17: per-item timestamp — so sánh _savedAt của local vs cloud item
+                      // Item nào có _savedAt mới hơn = bản mới nhất (kể cả khi xóa field làm score giảm)
+                      const localSavedAt = localItem._savedAt || 0;
+                      const cloudItemSavedAt = cloudItem._savedAt || 0;
+                      // v18: chống clock sai — nếu _savedAt ở tương lai xa (>1 ngày) → bỏ qua timestamp, dùng richer-wins
+                      const _maxValid = Date.now() + 86400000; // now + 1 ngày
+                      const _localValid = localSavedAt > 0 && localSavedAt <= _maxValid;
+                      const _cloudValid = cloudItemSavedAt > 0 && cloudItemSavedAt <= _maxValid;
+                      if(_localValid || _cloudValid){
+                        // Ít nhất 1 timestamp hợp lệ → so sánh (timestamp sai được coi = 0)
+                        const _lsa = _localValid ? localSavedAt : 0;
+                        const _csa = _cloudValid ? cloudItemSavedAt : 0;
+                        if(_lsa >= _csa){
+                          merged.push(localItem); protectedCount++;
+                        } else {
+                          merged.push(cloudItem);
+                        }
+                        return;
+                      }
+                      // Fallback: richer-wins (v11) cho item KHÔNG có _savedAt (data cũ trước v17)
+                      const _fieldScore = (item) => {
+                        if(!item || typeof item !== 'object') return 0;
+                        return Object.values(item).filter(v => 
+                          v !== null && v !== undefined && v !== '' && v !== 0 && 
+                          !(Array.isArray(v) && v.length === 0)
+                        ).length;
+                      };
                       const localScore = _fieldScore(localItem);
                       const cloudScore = _fieldScore(cloudItem);
-                      // v12: prefer local nếu (a) local có nhiều fields hơn, HOẶC (b) vừa save gần đây
-                      if(localScore > cloudScore || (justSaved && localScore >= cloudScore)){
+                      if(localScore > cloudScore){
                         merged.push(localItem);
                         protectedCount++;
                       } else {
@@ -30554,9 +30716,17 @@ fbAuth.onAuthStateChanged(async user => {
                           Object.entries(yrData).forEach(([deptId,deptData])=>{
                             if(typeof deptData==='object' && deptData !== null){
                               if(!DB[mk][yr][deptId] || typeof DB[mk][yr][deptId]!=='object') DB[mk][yr][deptId]={};
-                              // Merge từng tháng vào — không overwrite các tháng đã có
+                              // Merge từng tháng vào — v17.2: per-cell timestamp
                               Object.entries(deptData).forEach(([miKey,miVal])=>{
-                                DB[mk][yr][deptId][miKey] = miVal;
+                                const localCell = DB[mk][yr][deptId][miKey];
+                                // Nếu local cell có _savedAt MỚI HƠN cloud → giữ local (không đè)
+                                const localSA = (localCell && localCell._savedAt) || 0;
+                                const cloudSA = (miVal && miVal._savedAt) || 0;
+                                if(localSA > cloudSA){
+                                  // giữ local — không đè cloud cũ hơn
+                                } else {
+                                  DB[mk][yr][deptId][miKey] = miVal;
+                                }
                               });
                             } else {
                               DB[mk][yr][deptId] = deptData;
