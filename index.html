@@ -25403,6 +25403,10 @@ function renderSvcInline(svcYr, curYear, curMonth){
     // Xử lý format số kiểu VN: "2.263.485" → 2263485
     const cleaned = String(val).replace(/\./g,'').replace(/[^0-9]/g,'');
     DB.svcData[yr][m] = parseInt(cleaned)||0;
+    // v19: stamp timestamp năm này + selfSaveAt để listener bảo vệ khỏi snapshot cũ
+    if(!window._svcData_yearTs) window._svcData_yearTs = {};
+    window._svcData_yearTs[yr] = Date.now();
+    window._selfSaveAt = Date.now();
     // Throttle save 800ms để tránh rapid writes gây snapshot loop
     clearTimeout(window._svcSaveTimer);
     window._svcSaveTimer = setTimeout(()=>saveData(['svcData']), 1500);
@@ -25551,6 +25555,10 @@ function renderBonusInline(yr, curYear, curMonth){
     if(!DB.bonusData) DB.bonusData={};
     if(!DB.bonusData[y]) DB.bonusData[y]=Array(12).fill(0);
     DB.bonusData[y][m] = parseInt(String(val).replace(/\./g,'').replace(/[^0-9]/g,''))||0;
+    // v19: stamp timestamp năm + selfSaveAt để bảo vệ khỏi snapshot cũ
+    if(!window._bonusData_yearTs) window._bonusData_yearTs = {};
+    window._bonusData_yearTs[y] = Date.now();
+    window._selfSaveAt = Date.now();
     // Throttle save 800ms
     clearTimeout(window._bonusSaveTimer);
     window._bonusSaveTimer = setTimeout(()=>saveData(['bonusData']), 1500);
@@ -30428,6 +30436,38 @@ fbAuth.onAuthStateChanged(async user => {
                         } catch(e){ console.warn('Rescue push failed:', e); }
                       }, 3000);
                     }
+                    DB[key] = merged;
+                  } else if((key === 'svcData' || key === 'bonusData') && cloudData[key] && typeof cloudData[key] === 'object'){
+                    // 🚨 v19: svcData/bonusData = {year: [12 tháng]} — deep merge theo year + per-year timestamp
+                    // Bug cũ: else-branch REPLACE toàn bộ → snapshot cũ xóa tháng vừa nhập (T6 mất)
+                    const localObj = DB[key] || {};
+                    const cloudObj = cloudData[key] || {};
+                    const _tsKey = '_'+key+'_yearTs'; // window._svcData_yearTs = {year: savedAt}
+                    if(!window[_tsKey]) window[_tsKey] = {};
+                    const merged = {};
+                    const allYears = new Set([...Object.keys(localObj), ...Object.keys(cloudObj)]);
+                    allYears.forEach(yr=>{
+                      if(yr.startsWith('_')) return; // bỏ meta
+                      const localArr = localObj[yr];
+                      const cloudArr = cloudObj[yr];
+                      if(!Array.isArray(localArr)){ merged[yr] = cloudArr; return; }
+                      if(!Array.isArray(cloudArr)){ merged[yr] = localArr; return; }
+                      // So sánh timestamp năm này: nếu local vừa sửa gần đây → giữ local
+                      const localTs = window[_tsKey][yr] || 0;
+                      const justSavedThisYear = localTs && (Date.now() - localTs) < 15000;
+                      if(justSavedThisYear){
+                        merged[yr] = localArr; // local vừa nhập → giữ
+                      } else {
+                        // Merge từng tháng: giá trị nào KHÁC 0 thì ưu tiên (tránh mất tháng đã nhập)
+                        merged[yr] = cloudArr.map((cv, i) => {
+                          const lv = localArr[i] || 0;
+                          // Nếu local có giá trị mà cloud = 0 → có thể cloud stale → giữ local
+                          // Nếu cả 2 có giá trị → lấy cloud (mới đồng bộ)
+                          if(lv !== 0 && cv === 0) return lv;
+                          return cv;
+                        });
+                      }
+                    });
                     DB[key] = merged;
                   } else {
                     DB[key] = cloudData[key];
