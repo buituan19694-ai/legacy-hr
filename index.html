@@ -30837,11 +30837,14 @@ fbAuth.onAuthStateChanged(async user => {
                       const mergedLevels = _mergeArrById(DB[key].levels||[], cloudData[key].levels||[], _lvlTomb, true);
                       const mergedProbs  = _mergeArrById(DB[key].probations||[], cloudData[key].probations||[], _probTomb, false);
                       DB[key] = {...cloudData[key], levels: mergedLevels, probations: mergedProbs};
-                      // Rescue push nếu local có item mà cloud chưa có (đồng bộ ngược)
+                      // 🚨 v47: chỉ resave khi local THẬT SỰ nhiều level hơn cloud + guard 60s chống ping-pong
                       const _localOnlyLvl = (DB[key].levels||[]).length > (cloudData[key].levels||[]).length;
                       if(_localOnlyLvl){
-                        clearTimeout(window._salStructResaveTimer);
-                        window._salStructResaveTimer = setTimeout(()=>{ try{ saveData(['salaryStructure']); }catch(_){} }, 3000);
+                        const _lastR = window._salStructResaveAt || 0;
+                        if(Date.now() - _lastR > 60000){
+                          clearTimeout(window._salStructResaveTimer);
+                          window._salStructResaveTimer = setTimeout(()=>{ try{ window._salStructResaveAt=Date.now(); saveData(['salaryStructure']); }catch(_){} }, 5000);
+                        }
                       }
                       return; // đã merge-by-id, skip các nhánh dưới
                     }
@@ -30885,11 +30888,14 @@ fbAuth.onAuthStateChanged(async user => {
                       // 🔧 Fix loop: write merged data back to cloud so next snapshot won't need preservation
                       // Debounce 3s để tránh conflict với snapshot echo
                       if(preservedCount > 0){
-                        console.warn('[Listener] Preserved', preservedCount, 'levels\' increments — resaving to cloud to prevent loop');
-                        clearTimeout(window._salStructResaveTimer);
-                        window._salStructResaveTimer = setTimeout(()=>{
-                          try { saveData(['salaryStructure']); } catch(e){ console.warn('Resave salaryStructure error:', e); }
-                        }, 3000);
+                        const _lastR2 = window._salStructResaveAt || 0;
+                        if(Date.now() - _lastR2 > 60000){
+                          console.warn('[Listener] Preserved', preservedCount, 'levels\' increments — resave 1 lần (guard 60s)');
+                          clearTimeout(window._salStructResaveTimer);
+                          window._salStructResaveTimer = setTimeout(()=>{
+                            try { window._salStructResaveAt=Date.now(); saveData(['salaryStructure']); } catch(e){ console.warn('Resave salaryStructure error:', e); }
+                          }, 5000);
+                        }
                       }
                       return; // đã merge thủ công, skip default merge
                     }
@@ -31093,14 +31099,16 @@ fbAuth.onAuthStateChanged(async user => {
                 });
                 if(DB.customFields){
                   const _OBS2=['currentContractStart','currentContractEnd','probationResult','contractExpireMonth'];
-                  const _b2=DB.customFields.length;
                   DB.customFields=DB.customFields.filter(cf=>!_OBS2.includes(cf.key));
                   const _defOrder2=DEFAULT_DATA.customFields.map(cf=>cf.key);
                   const _curMap2=new Map(DB.customFields.map(cf=>[cf.key,cf]));
                   DEFAULT_DATA.customFields.filter(cf=>!_curMap2.has(cf.key)).forEach(cf=>_curMap2.set(cf.key,cf));
                   const _userExtra2=DB.customFields.filter(cf=>!_defOrder2.includes(cf.key));
                   DB.customFields=[..._defOrder2.filter(k=>_curMap2.has(k)).map(k=>_curMap2.get(k)),..._userExtra2];
-                  if(DB.customFields.length!==_b2) setTimeout(()=>saveData(['customFields']),500);
+                  // 🚨 v47 FIX WRITE LOOP: KHÔNG saveData ở đây nữa.
+                  // Cũ: mỗi lần listener fire → thêm default fields → độ dài đổi → saveData → echo → fire lại → LOOP vô hạn
+                  // (đây là nguồn ~570 writes/giờ khi không ai dùng). Chỉ chuẩn hoá in-memory, không ghi ngược cloud.
+                  // Merge customFields đã đúng ở v30 (merge-by-id + tombstone) — không cần tự ghi lại.
                 }
                 if(DB.employees) DB.employees.forEach(e=>{
                   if(!e.photo && localPhotos[e.id]) e.photo = localPhotos[e.id];
