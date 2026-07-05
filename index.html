@@ -30997,7 +30997,8 @@ fbAuth.onAuthStateChanged(async user => {
                         const _lsa = _localValid ? localSavedAt : 0;
                         const _csa = _cloudValid ? cloudItemSavedAt : 0;
                         if(_lsa >= _csa){
-                          merged.push(localItem); protectedCount++;
+                          merged.push(localItem);
+                          if(_lsa > _csa) protectedCount++; // chỉ đếm khi local THỰC SỰ mới hơn (bỏ ties)
                         } else {
                           merged.push(cloudItem);
                         }
@@ -31021,22 +31022,37 @@ fbAuth.onAuthStateChanged(async user => {
                       }
                     });
                     // Thêm items chỉ có trong local (không có trên cloud) — có thể chưa save kịp
+                    // 🚨 v46: đếm RIÊNG localOnly — CHỈ loại này mới là "mất data thật" đáng rescue push
+                    let localOnlyCount = 0;
                     (DB[key]||[]).forEach(localItem => {
                       if(!seenIds.has(localItem.id)){
+                        // Bỏ qua item đã tombstone (đã xóa) — không phải "mất data"
+                        if(localItem.id && _gTomb.has(localItem.id)) return;
                         merged.push(localItem);
-                        protectedCount++;
+                        localOnlyCount++;
                       }
                     });
-                    if(protectedCount > 0){
-                      console.warn(`[Listener] 🛡️ Protected ${protectedCount} items in ${key} from stale cloud override`);
-                      // Rescue push để đồng bộ cloud với local đã merge (tránh save sau ghi đè)
-                      clearTimeout(window['_'+key+'RescueTimer']);
-                      window['_'+key+'RescueTimer'] = setTimeout(()=>{
-                        try {
-                          console.warn(`[Listener] 🚨 Rescue: pushing merged ${key} back to cloud`);
-                          saveData([key]);
-                        } catch(e){ console.warn('Rescue push failed:', e); }
-                      }, 3000);
+                    if(protectedCount > 0 || localOnlyCount > 0){
+                      console.warn(`[Listener] 🛡️ Protected ${protectedCount} newer + ${localOnlyCount} local-only items in ${key}`);
+                    }
+                    // 🚨 v46 FIX WRITE LOOP: CHỈ rescue push khi có item local-only THẬT SỰ (cloud thiếu → mất data).
+                    // KHÔNG rescue khi chỉ "protect do timestamp" — đó là trạng thái bình thường, rescue sẽ gây
+                    // ping-pong vô hạn giữa các máy (bug đốt 98K reads + 20K writes/ngày).
+                    // Thêm guard: không rescue nếu vừa tự rescue key này < 60s (chống echo của chính mình).
+                    if(localOnlyCount > 0){
+                      const _lastRescue = window['_'+key+'RescueAt'] || 0;
+                      if(Date.now() - _lastRescue > 60000){
+                        clearTimeout(window['_'+key+'RescueTimer']);
+                        window['_'+key+'RescueTimer'] = setTimeout(()=>{
+                          try {
+                            window['_'+key+'RescueAt'] = Date.now();
+                            console.warn(`[Listener] 🚨 Rescue: ${localOnlyCount} local-only ${key} → push cloud (1 lần)`);
+                            saveData([key]);
+                          } catch(e){ console.warn('Rescue push failed:', e); }
+                        }, 5000);
+                      } else {
+                        console.warn(`[Listener] ⏸️ Skip rescue ${key} — vừa rescue <60s (chống loop)`);
+                      }
                     }
                     DB[key] = merged;
                   } else if((key === 'svcData' || key === 'bonusData') && cloudData[key] && typeof cloudData[key] === 'object'){
