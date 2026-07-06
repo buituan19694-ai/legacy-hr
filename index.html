@@ -3033,6 +3033,17 @@ function _normVN(s){
     .toLowerCase().trim();
 }
 
+// 🔍 Khớp tìm kiếm CHUẨN cho tên người: bỏ dấu + khớp theo TỪNG TỪ (prefix).
+// Tránh bug "yen" lọt giữa "nguyen". Gõ "huong" ra "Hương", gõ "ngu" ra "Nguyễn".
+// Trả true nếu MỌI từ trong query khớp phần đầu 1 từ nào đó trong text.
+// Dùng: _matchName(e.name, query) || (code&&code.includes(q)) cho mã NV.
+function _matchName(text, query){
+  const q = _normVN(query);
+  if(!q) return true;
+  const words = _normVN(text).split(/\s+/).filter(Boolean);
+  return q.split(/\s+/).filter(Boolean).every(tok => words.some(w => w.startsWith(tok)));
+}
+
 function _parseAnyDate(s){
   if(!s) return null;
   s = s.trim();
@@ -9293,19 +9304,26 @@ function applyEmpFilter(){
     // Tránh bug cũ: "mai" match mọi email gmail.com vì "gmail" chứa "mai"
     const tokens = _normVN(empFilter.search).split(/\s+/).filter(Boolean);
     if(tokens.length){
+      // Khớp theo TỪNG TỪ (prefix), tránh bug "yen" lọt giữa "nguyen".
+      // "yen" khớp từ bắt đầu bằng "yen" (Yên), KHÔNG khớp giữa chữ "ngu-yen".
+      const _wordMatch = (text, tok) => {
+        if(!text) return false;
+        // tách thành các từ, kiểm tra có từ nào bắt đầu bằng tok
+        return text.split(/\s+/).some(w => w.startsWith(tok));
+      };
       r = r.filter(e => {
         const name  = _normVN(e.name);
         const code  = _normVN(e.code);
         const role  = _normVN(e.role);
-        const emailLocal = _normVN((e.email||'').split('@')[0]); // chỉ phần trước @
+        const emailLocal = _normVN((e.email||'').split('@')[0]);
         const phone = (e.phone||'').replace(/\D/g,'');
         // Mỗi token phải khớp ít nhất 1 trường (AND giữa các token)
         return tokens.every(tok => {
-          if(name.includes(tok)) return true;
-          if(code.includes(tok)) return true;
-          if(emailLocal.includes(tok)) return true;
+          if(_wordMatch(name, tok)) return true;      // khớp theo từ trong họ tên
+          if(code.includes(tok)) return true;          // mã NV: khớp substring OK (MG00745...)
+          if(_wordMatch(emailLocal, tok)) return true; // email: theo từ
           if(/\d/.test(tok) && phone.includes(tok.replace(/\D/g,''))) return true;
-          if(tok.length >= 3 && role.includes(tok)) return true;
+          if(tok.length >= 3 && _wordMatch(role, tok)) return true;
           return false;
         });
       });
@@ -11355,14 +11373,13 @@ function renderDepartmentDetail(main){
   const leave = members.filter(e=>getEffectiveStatus(e)==='leave').length;
 
   if(deptDetailFilter.search){
-    const q = deptDetailFilter.search.toLowerCase();
+    const q = deptDetailFilter.search;
+    const qL = q.toLowerCase();
     members = members.filter(e => {
-      const name = (e.name||'').toLowerCase();
-      const code = (e.code||'').toLowerCase();
-      if(name.includes(q) || code.includes(q)) return true;
-      const emailLocal = ((e.email||'').toLowerCase().split('@')[0]) || '';
-      if(emailLocal.includes(q)) return true;
-      if(q.length >= 3 && (e.role||'').toLowerCase().includes(q)) return true;
+      if(_matchName(e.name, q)) return true;
+      if((e.code||'').toLowerCase().includes(qL)) return true;
+      if(_matchName((e.email||'').split('@')[0], q)) return true;
+      if(qL.length >= 3 && _matchName(e.role, q)) return true;
       return false;
     });
   }
@@ -12257,12 +12274,63 @@ function renewContract(contractId, empId){
     </div>
     <div class="modal-actions">
       <button class="btn" onclick="closeModal()">Huỷ</button>
+      <button class="btn" onclick="contractNotRenew('${contractId}','${empId}')" style="border-color:var(--danger);color:var(--danger)">
+        🚫 Không gia hạn → tạo đơn nghỉ
+      </button>
       <button class="btn btn-primary" onclick="confirmRenewContract('${contractId}','${empId}')">
         ✅ Xác nhận gia hạn
       </button>
     </div>
   `);
   setTimeout(()=>initDateInputs($('#modalBox')), 10);
+}
+
+function contractNotRenew(contractId, empId){
+  const emp = DB.employees.find(x=>x.id===empId);
+  if(!emp){ toast('Không tìm thấy nhân viên','error'); return; }
+
+  // Lấy ngày hết hạn HĐ hiện tại (từ contracts hoặc customData)
+  let endDate = '';
+  const c = (DB.contracts||[]).find(x=>x.id===contractId);
+  if(c && c.endDate){ endDate = c.endDate; }
+  else {
+    const cd = DB.customData[empId]||{};
+    endDate = cd.currentContractEnd || cd.contractEnd || '';
+  }
+  const today = new Date().toISOString().slice(0,10);
+  if(!endDate) endDate = today;
+
+  // Đã có đơn nghỉ đang chờ/đã duyệt chưa? tránh tạo trùng
+  if(!DB.resignations) DB.resignations = [];
+  const existed = DB.resignations.find(r=>r.empId===empId && r.status!=='cancelled');
+  if(existed){
+    toast('⚠️ Nhân viên này đã có đơn nghỉ việc trong HR Movement rồi','warning');
+    closeModal();
+    return;
+  }
+
+  if(!confirm(`Không gia hạn hợp đồng cho ${emp.name}?\n\nHệ thống sẽ tạo đơn nghỉ việc trong HR Movement với:\n• Lý do: Không gia hạn hợp đồng\n• Ngày kết thúc: ${_plFmtDate ? _plFmtDate(endDate) : endDate} (ngày hết hạn HĐ)\n\nĐơn sẽ ở trạng thái "Chờ duyệt" — bạn vào HR Movement bấm ✔ để xác nhận nghỉ.`)) return;
+
+  // Tạo đơn nghỉ việc — LIÊN KẾT sang HR Movement
+  const noticeInfo = (typeof calcResignEndDate === 'function') ? calcResignEndDate(empId, today) : {noticeDays:0};
+  const newRec = {
+    id: uid(),
+    empId,
+    submitDate: today,
+    endDate: endDate,                    // ngày hết hạn HĐ = ngày nghỉ dự kiến
+    noticeDays: noticeInfo.noticeDays||0,
+    reason: 'Không gia hạn hợp đồng',
+    note: `Tự động tạo từ Contract — HĐ ${contractId} không gia hạn`,
+    status: 'pending',
+    _fromContract: contractId,           // đánh dấu nguồn gốc để truy vết
+    _savedAt: Date.now()
+  };
+  DB.resignations = [...DB.resignations, newRec];
+  window._selfSaveAt = Date.now();
+  saveData(['resignations']);
+  closeModal();
+  toast(`✅ Đã tạo đơn nghỉ việc cho ${emp.name} (Không gia hạn HĐ) — vào HR Movement để duyệt`, 'success');
+  render();
 }
 
 function confirmRenewContract(oldContractId, empId){
@@ -14163,9 +14231,8 @@ function openNewLeaveYear(){
 }
 
 function _leaveEmpFilter(q){
-  q=(q||'').toLowerCase();
   const pool=(DB.employees||[]).filter(e=>getEffectiveStatus(e)!=='exit');
-  const list=(!q?pool:pool.filter(e=>(e.name||'').toLowerCase().includes(q)||(e.code||'').toLowerCase().includes(q))).slice(0,60);
+  const list=(!q?pool:pool.filter(e=>_matchName(e.name,q)||(e.code||'').toLowerCase().includes((q||'').toLowerCase()))).slice(0,60);
   const el=document.getElementById('leaveEmpList'); if(!el) return;
   let html='<div style="padding:8px 12px;cursor:pointer;font-size:12px;color:#6e7681;border-bottom:1px solid #252d38" onclick="window._leaveEmpSelect(\'\',\'\')">— Tất cả nhân viên —</div>';
   html+=list.map(e=>{
@@ -17274,9 +17341,13 @@ function renderWorkforce(main){
     const x=_parseAnyDate(cd.exitDate); return x&&!isNaN(x)&&x.getFullYear()===yr&&x.getMonth()===mi;
   }).length);
 
-  // Đơn nghỉ pending — tính theo endDate (ngày nghỉ dự kiến) của tháng đó
+  // Đơn nghỉ đã duyệt/chờ duyệt nhưng NV CHƯA thật sự exit (ngày nghỉ ở tương lai)
+  // → vẫn hiện trên biểu đồ theo endDate. Tránh trùng exitByMonth (chỉ đếm người chưa status='exit').
   const resignByMonth = MN.map((_,mi)=>(DB.resignations||[]).filter(r=>{
-    if(r.status!=='pending') return false;
+    if(r.status==='cancelled') return false;
+    // nếu NV đã thật sự exit rồi thì đã tính ở exitByMonth — bỏ để không đếm 2 lần
+    const emp=(DB.employees||[]).find(e=>e.id===r.empId);
+    if(emp && emp.status==='exit') return false;
     const d=_parseAnyDate(r.endDate||r.submitDate);
     return d&&!isNaN(d)&&d.getFullYear()===yr&&d.getMonth()===mi;
   }).length);
@@ -17454,7 +17525,7 @@ function renderWorkforce(main){
           {label:'NV Mới',data:newByMonth.map((v,i)=>isFut(i)?null:v),backgroundColor:newColors,borderRadius:4,borderSkipped:false},
           {label:'Dự kiến onboard',data:upcomingByMonth.map(v=>v||null),backgroundColor:upcomingColors,borderRadius:4,borderSkipped:false},
           {label:'Nghỉ việc',data:exitByMonth.map((v,i)=>isFut(i)?null:v),backgroundColor:exitColors,borderRadius:4,borderSkipped:false},
-          {label:'Đơn nghỉ (chờ duyệt)',data:resignByMonth.map((v,i)=>v||null),backgroundColor:resignColors,borderRadius:4,borderSkipped:false},
+          {label:'Sẽ nghỉ (đã duyệt/chờ duyệt)',data:resignByMonth.map((v,i)=>v||null),backgroundColor:resignColors,borderRadius:4,borderSkipped:false},
         ]},
         options:{responsive:true,maintainAspectRatio:false,
           plugins:{legend:{position:'top',labels:{usePointStyle:true,padding:16,font:{size:11}}},datalabels:{display:false},
@@ -17904,12 +17975,11 @@ function calcResignEndDate(empId, submitDate){
 // ── Resign employee search functions ──
 window._resignEmpAll = [];
 window._resignEmpFilter = function(q){
-  q = (q||'').toLowerCase();
   const list = (window._resignEmpAll||[]).filter(e=>
-    e.name.toLowerCase().includes(q) ||
-    e.code.toLowerCase().includes(q) ||
-    e.dept.toLowerCase().includes(q) ||
-    e.role.toLowerCase().includes(q)
+    _matchName(e.name, q) ||
+    (e.code||'').toLowerCase().includes((q||'').toLowerCase()) ||
+    _matchName(e.dept, q) ||
+    _matchName(e.role, q)
   );
   _resignEmpRenderList(list);
 };
@@ -18172,15 +18242,16 @@ function resignAction(rid, action){
   if(idx<0) return;
   const r=DB.resignations[idx];
   if(action==='confirm'){
-    // Duyệt ngay, không hỏi lại
+    // Duyệt ngay, không hỏi lại → ngày nghỉ = HÔM NAY (ngày duyệt), không phải ngày dự kiến
+    const _today = new Date().toISOString().slice(0,10);
     const eIdx=DB.employees.findIndex(e=>e.id===r.empId);
     if(eIdx>=0){ DB.employees[eIdx].status='exit'; _autoRemoveFromDorm(r.empId); }
     if(!DB.customData) DB.customData={};
     if(!DB.customData[r.empId]) DB.customData[r.empId]={};
-    DB.customData[r.empId].exitDate=r.endDate||r.submitDate;
+    DB.customData[r.empId].exitDate=_today;
     DB.customData[r.empId].exitReason=r.reason||'Theo đơn nghỉ việc';
     const _r2 = [...DB.resignations];
-    _r2[idx] = {..._r2[idx], status:'confirmed', confirmedAt:new Date().toISOString()};
+    _r2[idx] = {..._r2[idx], status:'confirmed', confirmedAt:new Date().toISOString(), endDate:_today, _actualEndDate:_today};
     DB.resignations = _r2;
     console.log('[resignAction] Before save:', rid, 'status now=', DB.resignations[idx].status, 'total=', DB.resignations.length);
     saveEmpProfile(r.empId);
@@ -18884,12 +18955,13 @@ function renderJobDetail(main){
   let filtered = allCandidates;
   if(candidateFilter.status) filtered = filtered.filter(a=>a.status === candidateFilter.status);
   if(candidateFilter.search){
-    const q = candidateFilter.search.toLowerCase();
+    const q = candidateFilter.search;
+    const qL = q.toLowerCase();
     filtered = filtered.filter(a =>
-      a.name.toLowerCase().includes(q) ||
-      (a.phone||'').includes(q) ||
-      (a.email||'').toLowerCase().includes(q) ||
-      (a.notes||'').toLowerCase().includes(q)
+      _matchName(a.name, q) ||
+      (a.phone||'').includes(qL) ||
+      _matchName((a.email||'').split('@')[0], q) ||
+      _matchName(a.notes, q)
     );
   }
   filtered = [...filtered].sort((a,b) => new Date(b.appliedDate) - new Date(a.appliedDate));
@@ -22086,12 +22158,16 @@ function renderPerformance(main){
                 if(psf2==='approved' && p.status!=='completed') return false;
                 if(psf2==='rejected' && p.status!=='rejected') return false;
                 // 🔍 Lọc theo tên nhân viên
-                const _q=(window._promoSearch||'').trim().toLowerCase();
+                const _q=_normVN(window._promoSearch||'');
                 if(_q){
                   const _emp=empById(p.empId);
-                  const _name=(_emp?_emp.name:'').toLowerCase();
-                  const _code=(_emp?(_emp.code||''):'').toLowerCase();
-                  if(!_name.includes(_q) && !_code.includes(_q)) return false;
+                  const _name=_normVN(_emp?_emp.name:'');
+                  const _code=_normVN(_emp?(_emp.code||''):'');
+                  // khớp theo từ (tránh "yen" lọt giữa "nguyen"), mã NV khớp substring
+                  const _hit = _q.split(/\s+/).filter(Boolean).every(tok =>
+                    _name.split(/\s+/).some(w=>w.startsWith(tok)) || _code.includes(tok)
+                  );
+                  if(!_hit) return false;
                 }
                 return true;
               })
@@ -22691,11 +22767,10 @@ function syncAllEmployees(){
    ========================================================= */
 
 function _promoEmpFilter(q){
-  q=(q||'').toLowerCase();
   const list=(DB.employees||[]).filter(e=>getEffectiveStatus(e)!=='exit'&&(
-    (e.name||'').toLowerCase().includes(q)||
-    (e.code||'').toLowerCase().includes(q)||
-    deptName(e.deptId).toLowerCase().includes(q)
+    _matchName(e.name,q)||
+    (e.code||'').toLowerCase().includes((q||'').toLowerCase())||
+    _matchName(deptName(e.deptId),q)
   )).slice(0,50);
   _promoEmpRender(list);
   const el=document.getElementById('pr_empList');
@@ -23050,9 +23125,9 @@ function _prRelSearch(fid, q){
   const list = document.getElementById(fid+'_list');
   if(!list) return;
   const emps = DB.employees.filter(e=>getEffectiveStatus(e)!=='exit');
-  const qq = (q||'').toLowerCase().trim();
+  const qq = (q||'').trim();
   const matches = qq
-    ? emps.filter(e=>(e.name||'').toLowerCase().includes(qq)||(e.code||'').toLowerCase().includes(qq)||(e.role||'').toLowerCase().includes(qq))
+    ? emps.filter(e=>_matchName(e.name,qq)||(e.code||'').toLowerCase().includes(qq.toLowerCase())||_matchName(e.role,qq))
     : emps.slice(0,20);
   if(!matches.length){ list.style.display='none'; return; }
   list.innerHTML = matches.map(e=>{
@@ -23287,11 +23362,11 @@ function renderAwards(main){
   let filtered = inPeriod;
   if(awardsFilter.type)   filtered = filtered.filter(r => r.type === awardsFilter.type);
   if(awardsFilter.search){
-    const q = awardsFilter.search.toLowerCase();
+    const q = awardsFilter.search;
     filtered = filtered.filter(r =>
-      r.emp.name.toLowerCase().includes(q) ||
-      (r.title||'').toLowerCase().includes(q) ||
-      (r.reason||'').toLowerCase().includes(q)
+      _matchName(r.emp.name, q) ||
+      _matchName(r.title, q) ||
+      _matchName(r.reason, q)
     );
   }
   filtered.sort((a,b) => new Date(b.date) - new Date(a.date));
@@ -23607,11 +23682,11 @@ function renderWarnings(main){
   let filtered = inPeriod;
   if(warnFilter.severity) filtered = filtered.filter(r => r.severity === warnFilter.severity);
   if(warnFilter.search){
-    const q = warnFilter.search.toLowerCase();
+    const q = warnFilter.search;
     filtered = filtered.filter(r =>
-      r.emp.name.toLowerCase().includes(q) ||
-      (r.title||'').toLowerCase().includes(q) ||
-      (r.reason||'').toLowerCase().includes(q)
+      _matchName(r.emp.name, q) ||
+      _matchName(r.title, q) ||
+      _matchName(r.reason, q)
     );
   }
   filtered.sort((a,b) => new Date(b.date) - new Date(a.date));
@@ -24179,12 +24254,11 @@ function editManualBlacklist(empId){
 // ── Blacklist employee search functions (global) ──
 window._blEmpAll = [];
 window._blEmpFilter = function(q){
-  q = (q||'').toLowerCase();
   const list = (window._blEmpAll||[]).filter(e=>
-    e.name.toLowerCase().includes(q) ||
-    e.code.toLowerCase().includes(q) ||
-    e.dept.toLowerCase().includes(q) ||
-    e.role.toLowerCase().includes(q)
+    _matchName(e.name, q) ||
+    (e.code||'').toLowerCase().includes((q||'').toLowerCase()) ||
+    _matchName(e.dept, q) ||
+    _matchName(e.role, q)
   );
   window._blEmpRenderList(list);
 };
@@ -24825,10 +24899,10 @@ function renderTasks(main){
     filtered = filtered.filter(t => t.missing.some(f => f.critical));
   }
   if(tasksFilter.search){
-    const q = tasksFilter.search.toLowerCase();
+    const q = tasksFilter.search;
     filtered = filtered.filter(t =>
-      t.emp.name.toLowerCase().includes(q) ||
-      t.emp.code.toLowerCase().includes(q)
+      _matchName(t.emp.name, q) ||
+      (t.emp.code||'').toLowerCase().includes(q.toLowerCase())
     );
   }
   filtered.sort((a,b) => {
@@ -28888,8 +28962,8 @@ function renderTrainee(main){
     if(tdf && t.deptId !== tdf) return false;
     // Name filter — chỉ search theo TÊN (initial render). DOM filter handle thêm khi user gõ.
     if(tnf){
-      const q = tnf.toLowerCase().trim();
-      if(!((t.name||'').toLowerCase().includes(q))) return false;
+      const q = tnf.trim();
+      if(!_matchName(t.name, q)) return false;
     }
     return true;
   });
@@ -33904,7 +33978,7 @@ function exportEmployeesPDF(){
   if(ef.dept)   emps = emps.filter(e=>e.deptId===ef.dept);
   if(ef.status) emps = emps.filter(e=>getEffectiveStatus(e)===ef.status);
   else          emps = emps.filter(e=>getEffectiveStatus(e)!=='exit');
-  if(ef.search) { const q=ef.search.toLowerCase(); emps=emps.filter(e=>(e.name||'').toLowerCase().includes(q)||(e.code||'').toLowerCase().includes(q)); }
+  if(ef.search) { const q=ef.search; emps=emps.filter(e=>_matchName(e.name,q)||(e.code||'').toLowerCase().includes(q.toLowerCase())); }
   emps = emps.sort((a,b)=>{
     const da=depts.find(d=>d.id===a.deptId)?.name||'';
     const db2=depts.find(d=>d.id===b.deptId)?.name||'';
