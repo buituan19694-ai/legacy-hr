@@ -1644,15 +1644,15 @@ function saveData(changedKeys=null){
           // Khi merge, item local vừa save luôn có _savedAt >= cloud → được giữ đúng
           // Ngoại lệ: nếu item đã có _savedAt cũ và KHÔNG đổi, giữ nguyên timestamp cũ
           //   (để không đè edit mới hơn của người khác trên cloud)
-          const _now = Date.now();
-          const _prevCloud = window._lastMergedItems && window._lastMergedItems[k];
+          // 🚨 v50 FIX REVERT: KHÔNG tự gán _savedAt=now cho item chưa có timestamp.
+          // Bug cũ: item cũ (jobs/records tạo trước v17, chưa có _savedAt) → mỗi lần BẤT KỲ ai
+          // save cả mảng → được gán _savedAt=now MỚI TINH → luôn thắng merge-by-id → ĐÈ lựa chọn
+          // mới của máy khác (VD job đổi 'open' bị máy khác đẩy 'filled' cũ trở lại → REVERT + không sync).
+          // Đúng: chỉ item được hàm save cụ thể (saveJob/approveLeave...) stamp mới có timestamp mới.
+          // Item không đổi giữ _savedAt cũ (kể cả chưa có) → không giả vờ "vừa sửa".
           payload[k] = val.map(item=> {
             if(typeof item==='object' && item!==null){
-              const clean = _sanitizeForFirebase(item);
-              // Giữ _savedAt hiện có nếu item đã có; nếu chưa có → gán now
-              // (saveJob/saveXxx đã stamp _savedAt cho item vừa sửa cụ thể)
-              if(!clean._savedAt) clean._savedAt = _now;
-              return clean;
+              return _sanitizeForFirebase(item); // giữ nguyên _savedAt hiện có, KHÔNG bịa now
             }
             return item;
           });
@@ -1880,8 +1880,10 @@ window.saveData = function(changedKeys=null){
 };
 
 function getPerfReviewTypes(){
-  if(!DB.perfReviewTypes || !Array.isArray(DB.perfReviewTypes) || DB.perfReviewTypes.length===0)
-    DB.perfReviewTypes = JSON.parse(JSON.stringify(DEFAULT_PERF_REVIEW_TYPES)); saveData(['perfReviewTypes']);
+  if(!DB.perfReviewTypes || !Array.isArray(DB.perfReviewTypes) || DB.perfReviewTypes.length===0){
+    DB.perfReviewTypes = JSON.parse(JSON.stringify(DEFAULT_PERF_REVIEW_TYPES));
+    saveData(['perfReviewTypes']); // 🚨 v49: CHỈ ghi khi tạo default lần đầu (trước đây ghi MỖI lần gọi → loop writes khi render)
+  }
   return DB.perfReviewTypes;
 }
 function openPerfReviewTypeManager(){
@@ -2523,7 +2525,7 @@ function getBlacklistReasons(){
 }
 
 function renderBrand(){
-  if(!DB.brandConfig) DB.brandConfig = JSON.parse(JSON.stringify(DEFAULT_BRAND_CONFIG)); saveData(['brandConfig']);
+  if(!DB.brandConfig){ DB.brandConfig = JSON.parse(JSON.stringify(DEFAULT_BRAND_CONFIG)); saveData(['brandConfig']); } // 🚨 v49: chỉ ghi khi tạo default
   const b = DB.brandConfig;
 
   // Auto-fix: nếu name kết thúc bằng dấu - thì trim bỏ (data cũ bị lưu sai)
@@ -19731,9 +19733,9 @@ function saveJob(id, isNew){
   if((data.status === 'filled' || data.status === 'closed') && !data.closedDate){
     data.closedDate = new Date().toISOString().slice(0,10);
   }
+  data._savedAt = Date.now(); // 🚨 v51: stamp TRỰC TIẾP trên data (chắc chắn, không phụ thuộc find lookup)
   if(isNew) DB.jobs.push(_sanitizeForFirebase(data));
   else{ const i = DB.jobs.findIndex(x=>x.id===id); if(i>=0)DB.jobs[i]=_sanitizeForFirebase(data); else DB.jobs.push(_sanitizeForFirebase(data)); }
-  { const _j = DB.jobs.find(x=>x.id===id); if(_j) _j._savedAt = Date.now(); } // v17: per-item timestamp
   window._selfSaveAt = Date.now(); // chặn snapshot echo cũ ghi đè
   saveData(['jobs']); closeModal(); toast(isNew?'Đã mở vị trí':(_lang==="en"?"Updated":"Đã cập nhật")); render();
 }
@@ -22397,11 +22399,12 @@ function syncEmployeeKPI(empId){
   if(!emp) return;
   const reviews = (DB.kpiReviews||[]).filter(k => k.empId === empId);
   if(reviews.length === 0){
-    emp.kpi = 0;
+    if(emp.kpi !== 0) emp.kpi = 0; // 🚨 v48: chỉ gán khi khác (chống dirty loop)
     return;
   }
   const sorted = [...reviews].sort((a,b) => (b.period||'').localeCompare(a.period||''));
-  emp.kpi = sorted[0].score || 0;
+  const _newKpi = sorted[0].score || 0;
+  if(emp.kpi !== _newKpi) emp.kpi = _newKpi; // chỉ gán khi khác
 }
 
 /* Apply 1 promotion record vào employee — kiểm tra effectiveDate */
@@ -22494,16 +22497,27 @@ function syncEmployeeFromPromotions(empId){
     const empUpdated = emp.updatedAt || 0;
     // Chỉ sync nếu promotion mới hơn lần sửa thủ công cuối
     if(promoTime > empUpdated){
-      if(latest.newRole && latest.newRole.trim())     emp.role   = latest.newRole.trim();
-      if(latest.newRoleVN && latest.newRoleVN.trim()) emp.roleVN = latest.newRoleVN.trim();
-      if(latest.newLevel)  emp.level  = String(latest.newLevel).trim();
-      if(latest.newDeptId) emp.deptId = latest.newDeptId;
-      if(!DB.customData[emp.id]) DB.customData[emp.id] = {};
-      if(latest.newRole && latest.newRole.trim())     DB.customData[emp.id].position    = latest.newRole.trim();
-      if(latest.newRoleVN && latest.newRoleVN.trim()) DB.customData[emp.id].jobLocation = latest.newRoleVN.trim();
-      if(latest.newLevel)   DB.customData[emp.id].levelNum    = String(latest.newLevel).trim();
-      if(latest.newSalary > 0) DB.customData[emp.id].baseSalary  = latest.newSalary;
-      if(latest.newBonus  > 0) DB.customData[emp.id].bonusSalary = latest.newBonus;
+      // 🚨 v48 FIX WRITE LOOP: CHỈ gán khi giá trị THỰC SỰ đổi.
+      // Cũ: gán lại y hệt mỗi lần sync → Proxy đánh dirty customData → lọt saveData → ghi →
+      // listener fire → sync lại → LOOP (nguồn ~33 writes/phút khi 'chỉ xem').
+      const _r = latest.newRole && latest.newRole.trim();
+      const _rvn = latest.newRoleVN && latest.newRoleVN.trim();
+      const _lv = latest.newLevel ? String(latest.newLevel).trim() : '';
+      if(_r && emp.role !== _r) emp.role = _r;
+      if(_rvn && emp.roleVN !== _rvn) emp.roleVN = _rvn;
+      if(_lv && emp.level !== _lv) emp.level = _lv;
+      if(latest.newDeptId && emp.deptId !== latest.newDeptId) emp.deptId = latest.newDeptId;
+      const _cd = DB.customData[emp.id] || {};
+      const _patch = {};
+      if(_r && _cd.position !== _r) _patch.position = _r;
+      if(_rvn && _cd.jobLocation !== _rvn) _patch.jobLocation = _rvn;
+      if(_lv && _cd.levelNum !== _lv) _patch.levelNum = _lv;
+      if(latest.newSalary > 0 && _cd.baseSalary !== latest.newSalary) _patch.baseSalary = latest.newSalary;
+      if(latest.newBonus > 0 && _cd.bonusSalary !== latest.newBonus) _patch.bonusSalary = latest.newBonus;
+      // Chỉ chạm DB.customData (qua Proxy → dirty) khi THẬT SỰ có thay đổi
+      if(Object.keys(_patch).length > 0){
+        DB.customData[emp.id] = {..._cd, ..._patch};
+      }
     }
   }
 }
@@ -23372,7 +23386,7 @@ function renderWarnings(main){
   const sevLevels = getSeverityLevels();
   const sevByKey = {};
   sevLevels.forEach(s => sevByKey[s.key] = s);
-  if(!DB.blacklistConfig) DB.blacklistConfig = JSON.parse(JSON.stringify(DEFAULT_BLACKLIST_CONFIG)); saveData(['blacklistConfig']);
+  if(!DB.blacklistConfig){ DB.blacklistConfig = JSON.parse(JSON.stringify(DEFAULT_BLACKLIST_CONFIG)); saveData(['blacklistConfig']); } // 🚨 v49: chỉ ghi khi tạo default
   const blCfg = DB.blacklistConfig;
 
   const allRecords = [];
@@ -24562,7 +24576,7 @@ const DEFAULT_REQUIRED_FIELDS = [
 ];
 
 function getRequiredFields(){
-  if(!DB.requiredFieldsConfig) DB.requiredFieldsConfig = JSON.parse(JSON.stringify(DEFAULT_REQUIRED_FIELDS)); saveData(['requiredFieldsConfig']);
+  if(!DB.requiredFieldsConfig){ DB.requiredFieldsConfig = JSON.parse(JSON.stringify(DEFAULT_REQUIRED_FIELDS)); saveData(['requiredFieldsConfig']); } // 🚨 v49: chỉ ghi khi tạo default
   return DB.requiredFieldsConfig;
 }
 
