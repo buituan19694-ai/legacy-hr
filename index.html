@@ -3543,18 +3543,18 @@ function renderAnalytics(main){
     </style>
 
     <!-- Tab navigation -->
-    <div class="pl-tabs-bar" style="display:flex;gap:4px;border-bottom:1px solid var(--border);margin-bottom:20px;overflow-x:auto;padding-bottom:0;scrollbar-width:none">
-    <style>.pl-tabs-bar::-webkit-scrollbar{display:none}</style>
+    <div style="position:relative;margin-bottom:20px">
+    <div class="pl-tabs-bar" style="display:flex;gap:2px;border-bottom:1px solid var(--border);overflow-x:auto;padding-bottom:0;scrollbar-width:thin">
+    <style>.pl-tabs-bar::-webkit-scrollbar{height:6px}.pl-tabs-bar::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}</style>
       ${tabs.map(t=>`
-        <button onclick="window._plTab='${t.k}';navigate('analytics')"
-          style="background:${currentTab===t.k?'var(--bg-card)':'transparent'};border:0;border-bottom:2px solid ${currentTab===t.k?'var(--accent)':'transparent'};color:${currentTab===t.k?'var(--accent)':'var(--ink-dim)'};padding:11px 16px;cursor:pointer;font-weight:600;font-size:12.5px;white-space:nowrap;display:flex;align-items:center;gap:9px">
-          <span style="font-size:18px">${t.icon}</span>
-          <div style="text-align:left">
-            <div>${t.label}</div>
-            <div style="font-size:9.5px;color:var(--ink-muted);font-weight:400">${t.sub}</div>
-          </div>
+        <button onclick="window._plTab='${t.k}';navigate('analytics')" title="${t.label} — ${t.sub}"
+          style="background:${currentTab===t.k?'var(--bg-card)':'transparent'};border:0;border-bottom:2px solid ${currentTab===t.k?'var(--accent)':'transparent'};color:${currentTab===t.k?'var(--accent)':'var(--ink-dim)'};padding:10px 13px;cursor:pointer;font-weight:600;font-size:12.5px;white-space:nowrap;display:flex;align-items:center;gap:7px;flex-shrink:0">
+          <span style="font-size:15px">${t.icon}</span>
+          <span>${t.label}</span>
         </button>
       `).join('')}
+    </div>
+    <div style="position:absolute;right:0;top:0;bottom:6px;width:36px;background:linear-gradient(to right,transparent,var(--bg));pointer-events:none"></div>
     </div>
 
     <div id="plContent"></div>
@@ -5938,20 +5938,21 @@ function _plRenderReport(el, year, month){
     const staffVal = (rec.staff !== undefined && rec.staff !== null && rec.staff !== '') ? rec.staff : '';
     const trVal = (rec.trainee !== undefined && rec.trainee !== null && rec.trainee !== '') ? rec.trainee : '';
     const vac = vacText(d.id);
-    const rowBg = idx % 2 === 0 ? 'transparent' : REDBG;
+    const rowBg = idx % 2 === 0 ? '#ffffff' : '#faf3f3';
+    const inputStyle = 'width:72px;text-align:center;padding:6px 6px;background:#fff;border:1px solid #d9c5c5;border-radius:6px;color:#2a2a2a;font-size:13px;font-family:\'JetBrains Mono\',monospace;font-weight:600';
     return `<tr style="background:${rowBg}">
-      <td style="padding:10px 14px;font-weight:700;color:var(--ink);border-bottom:1px solid rgba(176,58,58,.12)">${escapeHtml(d.name)}</td>
-      <td style="padding:6px 10px;text-align:center;border-bottom:1px solid rgba(176,58,58,.12)">
+      <td style="padding:11px 16px;font-weight:700;color:#3a2020;border-bottom:1px solid #ecdada">${escapeHtml(d.name)}</td>
+      <td style="padding:6px 10px;text-align:center;border-bottom:1px solid #ecdada">
         <input type="number" min="0" value="${staffVal}" placeholder="—"
           onchange="_plSaveManningReport(${year}, '${d.id}', 'staff', this.value)"
-          style="width:70px;text-align:center;padding:5px 6px;background:var(--bg-elev);border:1px solid var(--border);border-radius:6px;color:var(--ink);font-size:13px;font-family:'JetBrains Mono',monospace">
+          style="${inputStyle}">
       </td>
-      <td style="padding:6px 10px;text-align:center;border-bottom:1px solid rgba(176,58,58,.12)">
+      <td style="padding:6px 10px;text-align:center;border-bottom:1px solid #ecdada">
         <input type="number" min="0" value="${trVal}" placeholder="—"
           onchange="_plSaveManningReport(${year}, '${d.id}', 'trainee', this.value)"
-          style="width:70px;text-align:center;padding:5px 6px;background:var(--bg-elev);border:1px solid var(--border);border-radius:6px;color:var(--ink);font-size:13px;font-family:'JetBrains Mono',monospace">
+          style="${inputStyle}">
       </td>
-      <td style="padding:10px 14px;color:var(--ink);border-bottom:1px solid rgba(176,58,58,.12);font-size:13px">${vac || '<span style="color:var(--ink-muted)">—</span>'}</td>
+      <td style="padding:11px 16px;color:#2a2a2a;border-bottom:1px solid #ecdada;font-size:13px">${vac || '<span style="color:#b0a0a0">—</span>'}</td>
     </tr>`;
   }).join('');
 
@@ -5966,7 +5967,7 @@ function _plRenderReport(el, year, month){
         <button onclick="_plExportManningPNG()" style="background:${RED};color:#fff;border:none;padding:7px 14px;border-radius:6px;font-size:12px;cursor:pointer;font-weight:600">📷 Xuất ảnh</button>
       </div>
 
-      <div id="manningReportCard" style="background:#fff;border-radius:10px;overflow:hidden;border:1px solid var(--border)">
+      <div id="manningReportCard" style="background:#fff;border-radius:10px;overflow:hidden;border:1px solid #e0d0d0;box-shadow:0 2px 12px rgba(0,0,0,.08)">
         <div style="display:flex;justify-content:space-between;align-items:center;padding:20px 26px 14px">
           <div style="font-family:'Fraunces',serif;font-size:30px;font-weight:600;color:#2a2a2a;letter-spacing:.02em">MANNING</div>
           <div style="display:flex;align-items:center;gap:14px">
@@ -5976,19 +5977,19 @@ function _plRenderReport(el, year, month){
         <table style="width:100%;border-collapse:collapse">
           <thead>
             <tr style="background:${RED};color:#fff">
-              <th style="padding:12px 14px;text-align:left;font-weight:600;font-size:13px;width:24%">Department</th>
+              <th style="padding:12px 16px;text-align:left;font-weight:600;font-size:13px;width:24%">Department</th>
               <th style="padding:12px 10px;text-align:center;font-weight:600;font-size:13px;width:15%">Number of staff</th>
               <th style="padding:12px 10px;text-align:center;font-weight:600;font-size:13px;width:12%">Trainee</th>
-              <th style="padding:12px 14px;text-align:center;font-weight:600;font-size:13px">Vacancies</th>
+              <th style="padding:12px 16px;text-align:center;font-weight:600;font-size:13px">Vacancies</th>
             </tr>
           </thead>
           <tbody style="color:#2a2a2a">
             ${rowsHtml}
-            <tr style="background:${REDBG2};font-weight:800">
-              <td style="padding:11px 14px;color:#2a2a2a">Total</td>
-              <td style="padding:11px 10px;text-align:center;font-family:'JetBrains Mono',monospace;color:#2a2a2a">${totalStaff}</td>
-              <td style="padding:11px 10px;text-align:center;font-family:'JetBrains Mono',monospace;color:#2a2a2a">${totalTrainee}</td>
-              <td style="padding:11px 14px"></td>
+            <tr style="background:#e8d0d0;font-weight:800">
+              <td style="padding:12px 16px;color:#3a2020">Total</td>
+              <td style="padding:12px 10px;text-align:center;font-family:'JetBrains Mono',monospace;color:#3a2020;font-size:15px">${totalStaff}</td>
+              <td style="padding:12px 10px;text-align:center;font-family:'JetBrains Mono',monospace;color:#3a2020;font-size:15px">${totalTrainee}</td>
+              <td style="padding:12px 16px"></td>
             </tr>
           </tbody>
         </table>
@@ -22321,6 +22322,13 @@ function renderPerformance(main){
               style="padding:5px 14px;border-radius:20px;font-size:12px;font-weight:600;cursor:pointer;border:1.5px solid ${psf===f.k?f.color:'var(--border)'};background:${psf===f.k?f.color+'18':'transparent'};color:${psf===f.k?f.color:'var(--ink-muted)'};transition:all .15s">
               ${f.label} <span style="font-family:'JetBrains Mono',monospace;font-size:11px">${f.count}</span>
             </button>`).join('')}
+            <div style="flex:1;min-width:180px;position:relative;margin-left:auto">
+              <input id="promoSearchInput" type="text" value="${escapeHtml(window._promoSearch||'')}"
+                placeholder="🔍 Tìm theo tên nhân viên..."
+                oninput="window._promoSearch=this.value;clearTimeout(window._promoSearchT);window._promoSearchT=setTimeout(()=>{render();const _i=document.getElementById('promoSearchInput');if(_i){_i.focus();_i.setSelectionRange(_i.value.length,_i.value.length);}},200)"
+                style="width:100%;padding:6px 12px;border-radius:20px;border:1.5px solid var(--border);background:var(--bg-elev);color:var(--ink);font-size:12px">
+              ${window._promoSearch ? `<button onclick="window._promoSearch='';render()" style="position:absolute;right:8px;top:50%;transform:translateY(-50%);background:none;border:none;color:var(--ink-muted);cursor:pointer;font-size:14px" title="Xoá tìm kiếm">✕</button>` : ''}
+            </div>
           </div>`;
         })()}
         <div style="overflow-x:auto">
@@ -22333,10 +22341,17 @@ function renderPerformance(main){
             ${[...allPromotions]
               .filter(p=>{
                 const psf2=window._promoStatusFilter||'all';
-                if(psf2==='all') return true;
-                if(psf2==='pending') return !['completed','rejected'].includes(p.status);
-                if(psf2==='approved') return p.status==='completed';
-                if(psf2==='rejected') return p.status==='rejected';
+                if(psf2==='pending' && ['completed','rejected'].includes(p.status)) return false;
+                if(psf2==='approved' && p.status!=='completed') return false;
+                if(psf2==='rejected' && p.status!=='rejected') return false;
+                // 🔍 Lọc theo tên nhân viên
+                const _q=(window._promoSearch||'').trim().toLowerCase();
+                if(_q){
+                  const _emp=empById(p.empId);
+                  const _name=(_emp?_emp.name:'').toLowerCase();
+                  const _code=(_emp?(_emp.code||''):'').toLowerCase();
+                  if(!_name.includes(_q) && !_code.includes(_q)) return false;
+                }
                 return true;
               })
               .sort((a,b) => new Date(b.date) - new Date(a.date)).map(p => {
