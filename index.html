@@ -5686,6 +5686,8 @@ function _plRenderTurnover(el, year, month){
 // ===== TAB: PERFORMANCE — KPI & Thăng chức =====
 function _plRenderPerformance(el, year, month){
   const monthLabel = `${String(month+1).padStart(2,'0')}/${year}`;
+  // 🔒 Ẩn/hiện lương trong bảng thăng chức — mặc định ẨN, tích mới hiện
+  if(window._perfHideSalary === undefined) window._perfHideSalary = true;
   const deptId = window._plDept || null;
   const deptSuffix = deptId ? ` · ${escapeHtml(deptName(deptId))}` : '';
 
@@ -5741,7 +5743,7 @@ function _plRenderPerformance(el, year, month){
   let promoCountChot = 0;
   promosThisMonth.forEach(p => {
     if(chotStatuses.includes(p.status)){
-      const delta = (p.newSalary||0) - (p.oldSalary||0);
+      const delta = ((p.newSalary||0)+(p.newBonus||0)) - ((p.oldSalary||0)+(p.oldBonus||0));
       if(delta > 0) addedCost += delta;
       promoCountChot++;
     }
@@ -5795,7 +5797,7 @@ function _plRenderPerformance(el, year, month){
       <div style="display:flex;gap:14px;flex-wrap:wrap">
         ${statBox('KPI trung bình', avgKpi>0?avgKpi.toFixed(2):'—', avgKpi>=75?'#7ec699':avgKpi>=60?'#e8b974':'#e57373', `${kpiEmps.length} NV có đánh giá${deptSuffix}`)}
         ${statBox('Thăng chức tháng '+monthLabel, promosThisMonth.length, '#7ec699', `${promoCountChot} đã chốt · ${promosThisMonth.length-promoCountChot} đang xử lý`)}
-        ${statBox('Chi phí tăng thêm', addedCost>0?_plFmtMoneyFull(addedCost):'—', '#e8b974', 'Do thăng chức đã chốt/tháng')}
+        ${statBox('Chi phí tăng thêm', window._perfHideSalary ? '•••••' : (addedCost>0?_plFmtMoneyFull(addedCost):'—'), '#e8b974', 'Do thăng chức đã chốt/tháng')}
         ${statBox('NV xuất sắc (≥85)', bucket.excellent, '#7ec699', `${pct(bucket.excellent)}% tổng số có KPI`)}
       </div>
 
@@ -5839,7 +5841,13 @@ function _plRenderPerformance(el, year, month){
       <div style="${cardStyle}">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
           <div style="font-weight:700;font-size:14px">⭐ Thăng chức trong tháng ${monthLabel}${deptSuffix}</div>
-          <div style="font-size:12px;color:var(--ink-muted)">${promosThisMonth.length} nhân viên · tính theo ngày hiệu lực</div>
+          <div style="display:flex;align-items:center;gap:14px">
+            <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:var(--ink-dim);user-select:none">
+              <input type="checkbox" ${window._perfHideSalary?'':'checked'} onchange="window._perfHideSalary=!this.checked;render()" style="cursor:pointer;width:15px;height:15px">
+              💰 Hiện lương
+            </label>
+            <div style="font-size:12px;color:var(--ink-muted)">${promosThisMonth.length} nhân viên · tính theo ngày hiệu lực</div>
+          </div>
         </div>
         ${promosThisMonth.length ? `
         <div style="overflow-x:auto">
@@ -5864,10 +5872,14 @@ function _plRenderPerformance(el, year, month){
               const posCell = samePos
                 ? `<span style="color:var(--ink-muted)">${escapeHtml(oldR)} <span style="font-size:10px">(giữ vị trí, điều chỉnh lương)</span></span>`
                 : `<span>${escapeHtml(oldR)}</span> <span style="color:#7ec699;font-weight:700">→</span> <span style="font-weight:700;color:#7ec699">${escapeHtml(newR)}</span>`;
-              const oldS = p.oldSalary||0, newS = p.newSalary||0;
-              const salCell = (oldS||newS)
-                ? `<span style="color:var(--ink-muted)">${oldS?oldS.toLocaleString('vi-VN'):'—'}</span> → <span style="font-weight:700;color:${newS>oldS?'#7ec699':'var(--ink)'}">${newS?newS.toLocaleString('vi-VN'):'—'}</span>${newS>oldS?` <span style="color:#7ec699;font-size:10.5px">(+${((newS-oldS)/1e6).toFixed(1)}tr)</span>`:''}`
-                : '—';
+              const oldS = (p.oldSalary||0) + (p.oldBonus||0), newS = (p.newSalary||0) + (p.newBonus||0);
+              const _mask = window._perfHideSalary;
+              const _m = (n) => _mask ? '•••••' : n.toLocaleString('vi-VN');
+              const salCell = _mask
+                ? `<span style="color:var(--ink-muted);letter-spacing:1px">•••••</span> → <span style="color:var(--ink-muted);letter-spacing:1px">•••••</span>`
+                : ((oldS||newS)
+                ? `<span style="color:var(--ink-muted)">${oldS?_m(oldS):'—'}</span> → <span style="font-weight:700;color:${newS>oldS?'#7ec699':'var(--ink)'}">${newS?_m(newS):'—'}</span>${newS>oldS?` <span style="color:#7ec699;font-size:10.5px">(+${((newS-oldS)/1e6).toFixed(1)}tr)</span>`:''}`
+                : '—');
               const dept = emp ? deptName(emp.deptId) : '';
               return `<tr style="border-bottom:1px solid rgba(255,255,255,.04)">
                 <td style="padding:8px;font-weight:600">${escapeHtml(empName)}${dept?`<div style="font-size:10px;color:var(--ink-muted);font-weight:400">${escapeHtml(dept)}</div>`:''}</td>
