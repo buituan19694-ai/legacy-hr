@@ -1867,13 +1867,55 @@ if(!Array.isArray(DB.salaryStructure.probations)) DB.salaryStructure.probations 
 window._dirtyKeys = new Set();
 DB = new Proxy(DB, {
   set(target, key, value){
+    // 🔍 BẪY v53: bắt mọi lần GHI ĐÈ DB.jobs (listener/cold-load/migration)
+    if(key === 'jobs' && Array.isArray(value)){
+      try {
+        const _old = target.jobs && target.jobs.find(j=>(j.title||'').includes('Front Desk'));
+        const _new = value.find(j=>(j.title||'').includes('Front Desk'));
+        const _os = _old ? `${_old.status}(${_old._savedAt||'∅'})` : '∅';
+        const _ns = _new ? `${_new.status}(${_new._savedAt||'∅'})` : '∅';
+        if(_os !== _ns){
+          const _caller = (new Error().stack||'').split('\n').slice(2,6).map(s=>s.trim()).join(' ← ');
+          console.log(`%c[BẪY-JOBS] ⚠️ DB.jobs bị GHI ĐÈ | FrontDesk: ${_os} → ${_ns}`, 'color:#ff5722;font-weight:700;font-size:13px');
+          console.log(`   ↳ gọi từ: ${_caller}`);
+        }
+      } catch(_){}
+    }
     target[key] = value;
     if(typeof key === 'string' && !key.startsWith('_')) window._dirtyKeys.add(key);
     return true;
   }
 });
+// 🔍 BẪY v53: watchdog quét mỗi 2s — bắt MỌI thay đổi status Front Desk (kể cả sửa in-place job.status=...)
+(function _jobWatchdog(){
+  let _last = null;
+  setInterval(()=>{
+    try {
+      if(!Array.isArray(DB.jobs)) return;
+      const j = DB.jobs.find(x=>(x.title||'').includes('Front Desk'));
+      if(!j) return;
+      const cur = `${j.status}|${j._savedAt||'∅'}`;
+      if(_last !== null && _last !== cur){
+        console.log(`%c[BẪY-JOBS] 🔔 WATCHDOG: Front Desk status ĐỔI: ${_last} → ${cur} (lúc ${new Date().toLocaleTimeString()})`, 'color:#9c27b0;font-weight:700;font-size:13px');
+      }
+      _last = cur;
+    } catch(_){}
+  }, 2000);
+})();
 const _saveDataOrig = saveData;
 window.saveData = function(changedKeys=null){
+  // 🔍 BẪY v53: theo dõi mọi lần GHI jobs — ai ghi, status gì, từ đâu
+  try {
+    const _ck = changedKeys ? (Array.isArray(changedKeys)?changedKeys:[changedKeys]) : ['<tất cả>'];
+    const _touchJobs = !changedKeys || _ck.includes('jobs') || _ck[0]==='<tất cả>';
+    if(_touchJobs && Array.isArray(DB.jobs)){
+      const _fda = DB.jobs.find(j=>(j.title||'').includes('Front Desk'));
+      const _snap = _fda ? `FrontDesk=${_fda.status}(_savedAt=${_fda._savedAt||'∅'})` : 'FrontDesk=?';
+      const _caller = (new Error().stack||'').split('\n').slice(2,5).map(s=>s.trim()).join(' ← ');
+      console.log(`%c[BẪY-JOBS] 📝 saveData(${_ck.join(',')}) | ${_snap} | coldLoadDone=${!!window._coldLoadDone}`, 'color:#e91e63;font-weight:700');
+      console.log(`   ↳ gọi từ: ${_caller}`);
+    }
+  } catch(_){}
   const keys = changedKeys || (window._dirtyKeys.size > 0 ? [...window._dirtyKeys] : null);
   window._dirtyKeys.clear();
   return _saveDataOrig(keys);
