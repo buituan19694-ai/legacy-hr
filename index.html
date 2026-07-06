@@ -3483,6 +3483,8 @@ function renderAnalytics(main){
     {k:'liability', icon:'🏖️', label:'AL/CL Liability',  sub:'Quy ra tiền'},
     {k:'recruitment',icon:'🎯',label:'Recruitment Risk', sub:'Vacancy & Source'},
     {k:'turnover',  icon:'📉', label:'Turnover',         sub:'Nghỉ việc'},
+    {k:'performance',icon:'⭐',label:'Performance',      sub:'KPI & Thăng chức'},
+    {k:'report',    icon:'📑', label:'Report',           sub:'Manning tổng hợp'},
     {k:'action',    icon:'📋', label:'HR Action Plan',   sub:'Update hàng tháng'},
   ];
 
@@ -3566,6 +3568,8 @@ function renderAnalytics(main){
   else if(currentTab === 'liability')_plRenderLiability(content, curYear, curMonth);
   else if(currentTab === 'recruitment')_plRenderRecruitmentRisk(content, curYear, curMonth);
   else if(currentTab === 'turnover') _plRenderTurnover(content, curYear, curMonth);
+  else if(currentTab === 'performance') _plRenderPerformance(content, curYear, curMonth);
+  else if(currentTab === 'report')   _plRenderReport(content, curYear, curMonth);
   else if(currentTab === 'action')   _plRenderActionPlan(content, curYear, curMonth);
 }
 
@@ -5679,6 +5683,361 @@ function _plRenderTurnover(el, year, month){
 }
 
 // ===== TAB 7: HR ACTION PLAN =====
+// ===== TAB: PERFORMANCE — KPI & Thăng chức =====
+function _plRenderPerformance(el, year, month){
+  const monthLabel = `${String(month+1).padStart(2,'0')}/${year}`;
+  const deptId = window._plDept || null;
+  const deptSuffix = deptId ? ` · ${escapeHtml(deptName(deptId))}` : '';
+
+  // ---- 1. KPI: nhân viên đang làm, có KPI > 0, lọc theo dept ----
+  const activeEmps = (DB.employees||[]).filter(e =>
+    getEffectiveStatus(e) !== 'exit' && window._plFilterEmp(e)
+  );
+  const kpiEmps = activeEmps.filter(e => (e.kpi||0) > 0);
+  const avgKpi = kpiEmps.length ? kpiEmps.reduce((s,e)=>s+(e.kpi||0),0)/kpiEmps.length : 0;
+
+  // Phân bố KPI: Giỏi ≥8.5 · Khá 7-8.5 · TB 5-7 · Yếu <5 (thang điểm 10)
+  const bucket = { excellent:0, good:0, average:0, weak:0 };
+  kpiEmps.forEach(e => {
+    const k = e.kpi||0;
+    if(k >= 8.5) bucket.excellent++;
+    else if(k >= 7) bucket.good++;
+    else if(k >= 5) bucket.average++;
+    else bucket.weak++;
+  });
+  const kpiTotal = kpiEmps.length || 1;
+  const pct = n => Math.round(n/kpiTotal*100);
+
+  // Top 5 & Bottom 5 theo KPI
+  const sortedKpi = [...kpiEmps].sort((a,b)=>(b.kpi||0)-(a.kpi||0));
+  const top5 = sortedKpi.slice(0,5);
+  const bottom5 = sortedKpi.slice(-5).reverse();
+
+  // KPI theo phòng ban
+  const deptKpi = (DB.departments||[]).map(d => {
+    if(deptId && d.id !== deptId) return null;
+    const emps = kpiEmps.filter(e => e.deptId === d.id);
+    if(emps.length === 0) return null;
+    const avg = emps.reduce((s,e)=>s+(e.kpi||0),0)/emps.length;
+    return { name:d.name, count:emps.length, avg };
+  }).filter(Boolean).sort((a,b)=>b.avg-a.avg);
+
+  // ---- 2. THĂNG CHỨC: theo effectiveDate trong tháng đang chọn ----
+  const promosThisMonth = (DB.promotions||[]).filter(p => {
+    const eff = _parseAnyDate(p.effectiveDate);
+    if(!eff) return false;
+    if(eff.getFullYear() !== year || eff.getMonth() !== month) return false;
+    // lọc dept theo nhân viên
+    if(deptId){
+      const emp = (DB.employees||[]).find(e => e.id === p.empId);
+      if(!emp || emp.deptId !== deptId) return false;
+    }
+    return true;
+  }).sort((a,b) => _parseAnyDate(a.effectiveDate) - _parseAnyDate(b.effectiveDate));
+
+  // Chi phí tăng thêm do thăng chức (chỉ tính approved + completed để sát thực chi)
+  const chotStatuses = ['approved','completed'];
+  let addedCost = 0;
+  let promoCountChot = 0;
+  promosThisMonth.forEach(p => {
+    if(chotStatuses.includes(p.status)){
+      const delta = (p.newSalary||0) - (p.oldSalary||0);
+      if(delta > 0) addedCost += delta;
+      promoCountChot++;
+    }
+  });
+
+  // Nhãn trạng thái
+  const statusBadge = (st) => {
+    const map = {
+      completed: {t:'Hoàn thành', c:'#7ec699', bg:'rgba(126,198,153,.15)'},
+      approved:  {t:'Đã duyệt',   c:'#7eb6e8', bg:'rgba(126,182,232,.15)'},
+      reviewing: {t:'Đang xem xét',c:'#e8b974', bg:'rgba(232,185,116,.15)'},
+      proposed:  {t:'Đề xuất',    c:'#b794d4', bg:'rgba(183,148,212,.15)'},
+      rejected:  {t:'Từ chối',    c:'#e57373', bg:'rgba(229,115,115,.15)'},
+    };
+    const s = map[st] || {t:st||'—', c:'#9e9e9e', bg:'rgba(158,158,158,.15)'};
+    return `<span style="display:inline-block;padding:2px 8px;border-radius:10px;background:${s.bg};color:${s.c};font-size:10.5px;font-weight:700;white-space:nowrap">${s.t}</span>`;
+  };
+  const typeLabel = (t) => (getPromoTypes && getPromoTypes()[t]) || t || '—';
+
+  // ---- RENDER ----
+  const cardStyle = 'background:var(--bg-card);border:1px solid var(--border);border-radius:12px;padding:18px 20px';
+  const statBox = (label, value, color, sub) => `
+    <div style="flex:1;min-width:150px;${cardStyle}">
+      <div style="font-size:11px;color:var(--ink-muted);letter-spacing:.05em;text-transform:uppercase;margin-bottom:6px">${label}</div>
+      <div style="font-size:26px;font-weight:700;color:${color};font-family:'JetBrains Mono',monospace;line-height:1">${value}</div>
+      ${sub?`<div style="font-size:11px;color:var(--ink-muted);margin-top:5px">${sub}</div>`:''}
+    </div>`;
+
+  const barRow = (label, count, color) => `
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+      <div style="width:90px;font-size:12px;color:var(--ink)">${label}</div>
+      <div style="flex:1;height:20px;background:rgba(255,255,255,.05);border-radius:4px;overflow:hidden;position:relative">
+        <div style="width:${pct(count)}%;height:100%;background:${color};min-width:${count>0?2:0}px"></div>
+      </div>
+      <div style="width:74px;text-align:right;font-size:12px;font-family:'JetBrains Mono',monospace;color:var(--ink)">${count} <span style="color:var(--ink-muted)">(${pct(count)}%)</span></div>
+    </div>`;
+
+  const empRow = (e, showLow) => {
+    const k = e.kpi||0;
+    const col = k>=8.5?'#7ec699':k>=7?'#7eb6e8':k>=5?'#e8b974':'#e57373';
+    return `<tr style="border-bottom:1px solid rgba(255,255,255,.04)">
+      <td style="padding:7px 8px;font-weight:600">${escapeHtml(e.name||'—')}<div style="font-size:10.5px;color:var(--ink-muted);font-weight:400">${escapeHtml(e.role||deptName(e.deptId))}</div></td>
+      <td style="padding:7px 8px;text-align:right;font-family:'JetBrains Mono',monospace;font-weight:700;color:${col}">${k.toFixed(1)}</td>
+    </tr>`;
+  };
+
+  el.innerHTML = `
+    <div style="display:flex;flex-direction:column;gap:18px">
+
+      <!-- Hàng chỉ số tổng quan -->
+      <div style="display:flex;gap:14px;flex-wrap:wrap">
+        ${statBox('KPI trung bình', avgKpi>0?avgKpi.toFixed(2):'—', avgKpi>=7.5?'#7ec699':avgKpi>=6?'#e8b974':'#e57373', `${kpiEmps.length} NV có đánh giá${deptSuffix}`)}
+        ${statBox('Thăng chức tháng '+monthLabel, promosThisMonth.length, '#7ec699', `${promoCountChot} đã chốt · ${promosThisMonth.length-promoCountChot} đang xử lý`)}
+        ${statBox('Chi phí tăng thêm', addedCost>0?_plFmtMoneyFull(addedCost):'—', '#e8b974', 'Do thăng chức đã chốt/tháng')}
+        ${statBox('NV xuất sắc (≥8.5)', bucket.excellent, '#7ec699', `${pct(bucket.excellent)}% tổng số có KPI`)}
+      </div>
+
+      <!-- Phân bố KPI + KPI theo phòng ban -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:18px">
+        <div style="${cardStyle}">
+          <div style="font-weight:700;font-size:14px;margin-bottom:14px">📊 Phân bố KPI${deptSuffix}</div>
+          ${kpiEmps.length ? `
+            ${barRow('Giỏi (≥8.5)', bucket.excellent, '#7ec699')}
+            ${barRow('Khá (7–8.5)', bucket.good, '#7eb6e8')}
+            ${barRow('TB (5–7)', bucket.average, '#e8b974')}
+            ${barRow('Yếu (<5)', bucket.weak, '#e57373')}
+          ` : `<div style="color:var(--ink-muted);font-size:13px;padding:20px 0;text-align:center">Chưa có dữ liệu KPI</div>`}
+        </div>
+        <div style="${cardStyle}">
+          <div style="font-weight:700;font-size:14px;margin-bottom:14px">🏢 KPI trung bình theo phòng ban</div>
+          ${deptKpi.length ? `<div style="display:flex;flex-direction:column;gap:9px">${deptKpi.map(d=>{
+            const col = d.avg>=8.5?'#7ec699':d.avg>=7?'#7eb6e8':d.avg>=5?'#e8b974':'#e57373';
+            return `<div style="display:flex;align-items:center;gap:10px">
+              <div style="flex:1;font-size:12.5px;color:var(--ink)">${escapeHtml(d.name)} <span style="color:var(--ink-muted);font-size:11px">(${d.count})</span></div>
+              <div style="width:120px;height:18px;background:rgba(255,255,255,.05);border-radius:4px;overflow:hidden"><div style="width:${Math.round(d.avg/10*100)}%;height:100%;background:${col}"></div></div>
+              <div style="width:38px;text-align:right;font-family:'JetBrains Mono',monospace;font-weight:700;font-size:12.5px;color:${col}">${d.avg.toFixed(1)}</div>
+            </div>`;
+          }).join('')}</div>` : `<div style="color:var(--ink-muted);font-size:13px;padding:20px 0;text-align:center">Chưa có dữ liệu</div>`}
+        </div>
+      </div>
+
+      <!-- Top / Bottom -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:18px">
+        <div style="${cardStyle}">
+          <div style="font-weight:700;font-size:14px;margin-bottom:12px">🏆 Top 5 KPI cao nhất</div>
+          ${top5.length ? `<table style="width:100%;border-collapse:collapse"><tbody>${top5.map(e=>empRow(e)).join('')}</tbody></table>` : `<div style="color:var(--ink-muted);font-size:13px;padding:14px 0;text-align:center">—</div>`}
+        </div>
+        <div style="${cardStyle}">
+          <div style="font-weight:700;font-size:14px;margin-bottom:12px">⚠️ 5 KPI thấp nhất (cần chú ý)</div>
+          ${bottom5.length ? `<table style="width:100%;border-collapse:collapse"><tbody>${bottom5.map(e=>empRow(e)).join('')}</tbody></table>` : `<div style="color:var(--ink-muted);font-size:13px;padding:14px 0;text-align:center">—</div>`}
+        </div>
+      </div>
+
+      <!-- Danh sách thăng chức trong tháng -->
+      <div style="${cardStyle}">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+          <div style="font-weight:700;font-size:14px">⭐ Thăng chức trong tháng ${monthLabel}${deptSuffix}</div>
+          <div style="font-size:12px;color:var(--ink-muted)">${promosThisMonth.length} nhân viên · tính theo ngày hiệu lực</div>
+        </div>
+        ${promosThisMonth.length ? `
+        <div style="overflow-x:auto">
+        <table style="width:100%;border-collapse:collapse;font-size:12.5px">
+          <thead>
+            <tr style="border-bottom:2px solid var(--border)">
+              <th style="padding:8px;text-align:left;color:var(--ink-muted);font-size:10.5px;text-transform:uppercase;letter-spacing:.05em">Nhân viên</th>
+              <th style="padding:8px;text-align:left;color:var(--ink-muted);font-size:10.5px;text-transform:uppercase;letter-spacing:.05em">Từ vị trí → Sang vị trí</th>
+              <th style="padding:8px;text-align:left;color:var(--ink-muted);font-size:10.5px;text-transform:uppercase;letter-spacing:.05em">Loại</th>
+              <th style="padding:8px;text-align:right;color:var(--ink-muted);font-size:10.5px;text-transform:uppercase;letter-spacing:.05em">Lương cũ → mới</th>
+              <th style="padding:8px;text-align:center;color:var(--ink-muted);font-size:10.5px;text-transform:uppercase;letter-spacing:.05em">Hiệu lực</th>
+              <th style="padding:8px;text-align:center;color:var(--ink-muted);font-size:10.5px;text-transform:uppercase;letter-spacing:.05em">Trạng thái</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${promosThisMonth.map(p => {
+              const emp = (DB.employees||[]).find(e => e.id === p.empId);
+              const empName = emp ? emp.name : (p.empName||'—');
+              const oldR = p.oldRole || (emp?emp.role:'') || '—';
+              const newR = p.newRole || '—';
+              const samePos = (oldR === newR);
+              const posCell = samePos
+                ? `<span style="color:var(--ink-muted)">${escapeHtml(oldR)} <span style="font-size:10px">(giữ vị trí, điều chỉnh lương)</span></span>`
+                : `<span>${escapeHtml(oldR)}</span> <span style="color:#7ec699;font-weight:700">→</span> <span style="font-weight:700;color:#7ec699">${escapeHtml(newR)}</span>`;
+              const oldS = p.oldSalary||0, newS = p.newSalary||0;
+              const salCell = (oldS||newS)
+                ? `<span style="color:var(--ink-muted)">${oldS?oldS.toLocaleString('vi-VN'):'—'}</span> → <span style="font-weight:700;color:${newS>oldS?'#7ec699':'var(--ink)'}">${newS?newS.toLocaleString('vi-VN'):'—'}</span>${newS>oldS?` <span style="color:#7ec699;font-size:10.5px">(+${((newS-oldS)/1e6).toFixed(1)}tr)</span>`:''}`
+                : '—';
+              const dept = emp ? deptName(emp.deptId) : '';
+              return `<tr style="border-bottom:1px solid rgba(255,255,255,.04)">
+                <td style="padding:8px;font-weight:600">${escapeHtml(empName)}${dept?`<div style="font-size:10px;color:var(--ink-muted);font-weight:400">${escapeHtml(dept)}</div>`:''}</td>
+                <td style="padding:8px">${posCell}</td>
+                <td style="padding:8px;color:var(--ink-muted)">${escapeHtml(typeLabel(p.type))}</td>
+                <td style="padding:8px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11.5px">${salCell}</td>
+                <td style="padding:8px;text-align:center;white-space:nowrap">${_plFmtDate(p.effectiveDate)}</td>
+                <td style="padding:8px;text-align:center">${statusBadge(p.status)}</td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+        </div>
+        ` : `<div style="color:var(--ink-muted);font-size:13px;padding:26px 0;text-align:center">Không có thăng chức nào có ngày hiệu lực trong tháng ${monthLabel}</div>`}
+      </div>
+
+    </div>
+  `;
+}
+
+// ===== TAB: REPORT — Manning tổng hợp (bảng như slide P&C) =====
+function _plRenderReport(el, year, month){
+  const monthLabel = `${String(month+1).padStart(2,'0')}/${year}`;
+
+  // Store số tự điền: DB.plConfig.manningReport[year][deptId] = {staff, trainee}
+  if(!DB.plConfig) DB.plConfig = {};
+  if(!DB.plConfig.manningReport) DB.plConfig.manningReport = {};
+  if(!DB.plConfig.manningReport[year]) DB.plConfig.manningReport[year] = {};
+  const store = DB.plConfig.manningReport[year];
+
+  // Vacancies TỰ NHẢY: gom jobs đang tuyển (status='open') theo phòng ban,
+  // chỉ lấy vị trí còn thiếu người (positions > đã tuyển). Gộp trùng tên.
+  const vacByDept = {};
+  (DB.jobs||[]).forEach(j => {
+    if(j.status !== 'open') return;
+    const hired = (typeof getJobHired === 'function') ? getJobHired(j.id) : (j.hired||0);
+    const remain = Math.max(0, (j.positions||0) - hired);
+    if(remain <= 0) return; // đã đủ người → không tính là vacancy
+    const did = j.deptId || '_none';
+    if(!vacByDept[did]) vacByDept[did] = [];
+    // Gộp: nếu đã có title này thì cộng dồn số còn thiếu
+    const existing = vacByDept[did].find(v => v.title === j.title);
+    if(existing) existing.remain += remain;
+    else vacByDept[did].push({ title: j.title || '(chưa đặt tên)', remain });
+  });
+  const vacText = (did) => {
+    const list = vacByDept[did] || [];
+    if(list.length === 0) return '';
+    return list.map(v => v.remain > 1 ? `${escapeHtml(v.title)} (${v.remain})` : escapeHtml(v.title)).join(', ');
+  };
+
+  // Danh sách phòng ban theo thứ tự trong DB
+  const depts = (DB.departments||[]);
+
+  // Tổng
+  let totalStaff = 0, totalTrainee = 0;
+  depts.forEach(d => {
+    const rec = store[d.id] || {};
+    totalStaff += parseInt(rec.staff)||0;
+    totalTrainee += parseInt(rec.trainee)||0;
+  });
+
+  // Màu chủ đề đỏ giống slide
+  const RED = '#b03a3a', REDBG = 'rgba(176,58,58,.06)', REDBG2 = 'rgba(176,58,58,.12)';
+
+  const rowsHtml = depts.map((d, idx) => {
+    const rec = store[d.id] || {};
+    const staffVal = (rec.staff !== undefined && rec.staff !== null && rec.staff !== '') ? rec.staff : '';
+    const trVal = (rec.trainee !== undefined && rec.trainee !== null && rec.trainee !== '') ? rec.trainee : '';
+    const vac = vacText(d.id);
+    const rowBg = idx % 2 === 0 ? 'transparent' : REDBG;
+    return `<tr style="background:${rowBg}">
+      <td style="padding:10px 14px;font-weight:700;color:var(--ink);border-bottom:1px solid rgba(176,58,58,.12)">${escapeHtml(d.name)}</td>
+      <td style="padding:6px 10px;text-align:center;border-bottom:1px solid rgba(176,58,58,.12)">
+        <input type="number" min="0" value="${staffVal}" placeholder="—"
+          onchange="_plSaveManningReport(${year}, '${d.id}', 'staff', this.value)"
+          style="width:70px;text-align:center;padding:5px 6px;background:var(--bg-elev);border:1px solid var(--border);border-radius:6px;color:var(--ink);font-size:13px;font-family:'JetBrains Mono',monospace">
+      </td>
+      <td style="padding:6px 10px;text-align:center;border-bottom:1px solid rgba(176,58,58,.12)">
+        <input type="number" min="0" value="${trVal}" placeholder="—"
+          onchange="_plSaveManningReport(${year}, '${d.id}', 'trainee', this.value)"
+          style="width:70px;text-align:center;padding:5px 6px;background:var(--bg-elev);border:1px solid var(--border);border-radius:6px;color:var(--ink);font-size:13px;font-family:'JetBrains Mono',monospace">
+      </td>
+      <td style="padding:10px 14px;color:var(--ink);border-bottom:1px solid rgba(176,58,58,.12);font-size:13px">${vac || '<span style="color:var(--ink-muted)">—</span>'}</td>
+    </tr>`;
+  }).join('');
+
+  el.innerHTML = `
+    <div style="display:flex;flex-direction:column;gap:16px">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
+        <div style="font-size:13px;color:var(--ink-muted)">
+          Bảng nhân sự tổng hợp · <b style="color:var(--ink)">${monthLabel}</b> ·
+          cột <b style="color:var(--ink)">Number of staff</b> & <b style="color:var(--ink)">Trainee</b> tự điền,
+          cột <b style="color:${RED}">Vacancies</b> tự nhảy theo vị trí đang tuyển còn thiếu người
+        </div>
+        <button onclick="_plExportManningPNG()" style="background:${RED};color:#fff;border:none;padding:7px 14px;border-radius:6px;font-size:12px;cursor:pointer;font-weight:600">📷 Xuất ảnh</button>
+      </div>
+
+      <div id="manningReportCard" style="background:#fff;border-radius:10px;overflow:hidden;border:1px solid var(--border)">
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:20px 26px 14px">
+          <div style="font-family:'Fraunces',serif;font-size:30px;font-weight:600;color:#2a2a2a;letter-spacing:.02em">MANNING</div>
+          <div style="display:flex;align-items:center;gap:14px">
+            <div style="background:${RED};color:#fff;padding:10px 30px;border-radius:4px;font-weight:600;letter-spacing:.1em">P&C</div>
+          </div>
+        </div>
+        <table style="width:100%;border-collapse:collapse">
+          <thead>
+            <tr style="background:${RED};color:#fff">
+              <th style="padding:12px 14px;text-align:left;font-weight:600;font-size:13px;width:24%">Department</th>
+              <th style="padding:12px 10px;text-align:center;font-weight:600;font-size:13px;width:15%">Number of staff</th>
+              <th style="padding:12px 10px;text-align:center;font-weight:600;font-size:13px;width:12%">Trainee</th>
+              <th style="padding:12px 14px;text-align:center;font-weight:600;font-size:13px">Vacancies</th>
+            </tr>
+          </thead>
+          <tbody style="color:#2a2a2a">
+            ${rowsHtml}
+            <tr style="background:${REDBG2};font-weight:800">
+              <td style="padding:11px 14px;color:#2a2a2a">Total</td>
+              <td style="padding:11px 10px;text-align:center;font-family:'JetBrains Mono',monospace;color:#2a2a2a">${totalStaff}</td>
+              <td style="padding:11px 10px;text-align:center;font-family:'JetBrains Mono',monospace;color:#2a2a2a">${totalTrainee}</td>
+              <td style="padding:11px 14px"></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div style="font-size:12px;color:var(--ink-muted);padding:0 4px">
+        💡 Vacancies lấy từ module <b>Recruitment</b> — chỉ hiện vị trí đang tuyển (status "Đang tuyển") còn thiếu người.
+        Muốn đổi thì vào Recruitment sửa trạng thái/số lượng vị trí. Số trong ngoặc = số người còn thiếu.
+      </div>
+    </div>
+  `;
+}
+
+// Lưu số staff/trainee tự điền
+window._plSaveManningReport = function(year, deptId, field, value){
+  if(!DB.plConfig) DB.plConfig = {};
+  if(!DB.plConfig.manningReport) DB.plConfig.manningReport = {};
+  if(!DB.plConfig.manningReport[year]) DB.plConfig.manningReport[year] = {};
+  if(!DB.plConfig.manningReport[year][deptId]) DB.plConfig.manningReport[year][deptId] = {};
+  const v = value === '' ? '' : (parseInt(value)||0);
+  DB.plConfig.manningReport[year][deptId][field] = v;
+  window._selfSaveAt = Date.now();
+  saveData(['plConfig']);
+  // Cập nhật lại tổng mà không render cả trang (đỡ mất focus)
+  render();
+};
+
+// Xuất ảnh bảng Manning (dùng html2canvas nếu có, không thì báo)
+window._plExportManningPNG = function(){
+  const card = document.getElementById('manningReportCard');
+  if(!card){ toast('Không tìm thấy bảng','error'); return; }
+  if(typeof html2canvas === 'undefined'){
+    toast('Đang tải thư viện xuất ảnh...','info');
+    const s = document.createElement('script');
+    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js';
+    s.onload = () => _plExportManningPNG();
+    s.onerror = () => toast('Không tải được thư viện. Kiểm tra mạng.','error');
+    document.head.appendChild(s);
+    return;
+  }
+  html2canvas(card, {scale:2, backgroundColor:'#ffffff'}).then(canvas => {
+    const link = document.createElement('a');
+    link.download = 'Manning_Report.png';
+    link.href = canvas.toDataURL('image/png');
+    link.click();
+    toast('✅ Đã xuất ảnh Manning','success');
+  }).catch(err => toast('Lỗi xuất ảnh: '+err.message,'error'));
+};
+
 function _plRenderActionPlan(el, year, month){
   if(!DB.plActionPlan) DB.plActionPlan = {};
   if(!DB.plActionPlan[year]) DB.plActionPlan[year] = {};
@@ -33641,6 +34000,8 @@ function exportPLPDF(){
     liability:'AL/CL Liability — Quy ra tiền',
     recruitment:'Recruitment Risk — Vacancy & Source',
     turnover:'Turnover — Nghỉ việc',
+    performance:'Performance — KPI & Thăng chức',
+    report:'Report — Manning tổng hợp',
     action:'HR Action Plan — Cập nhật hàng tháng',
   };
   const periodLabel = scope === 'year' ? `Cả năm ${yr}`
