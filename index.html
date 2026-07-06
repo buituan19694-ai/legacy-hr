@@ -5696,13 +5696,13 @@ function _plRenderPerformance(el, year, month){
   const kpiEmps = activeEmps.filter(e => (e.kpi||0) > 0);
   const avgKpi = kpiEmps.length ? kpiEmps.reduce((s,e)=>s+(e.kpi||0),0)/kpiEmps.length : 0;
 
-  // Phân bố KPI: Giỏi ≥8.5 · Khá 7-8.5 · TB 5-7 · Yếu <5 (thang điểm 10)
+  // Phân bố KPI: Giỏi ≥85 · Khá 70-85 · TB 50-70 · Yếu <50 (thang điểm 100)
   const bucket = { excellent:0, good:0, average:0, weak:0 };
   kpiEmps.forEach(e => {
     const k = e.kpi||0;
-    if(k >= 8.5) bucket.excellent++;
-    else if(k >= 7) bucket.good++;
-    else if(k >= 5) bucket.average++;
+    if(k >= 85) bucket.excellent++;
+    else if(k >= 70) bucket.good++;
+    else if(k >= 50) bucket.average++;
     else bucket.weak++;
   });
   const kpiTotal = kpiEmps.length || 1;
@@ -5781,7 +5781,7 @@ function _plRenderPerformance(el, year, month){
 
   const empRow = (e, showLow) => {
     const k = e.kpi||0;
-    const col = k>=8.5?'#7ec699':k>=7?'#7eb6e8':k>=5?'#e8b974':'#e57373';
+    const col = k>=85?'#7ec699':k>=70?'#7eb6e8':k>=50?'#e8b974':'#e57373';
     return `<tr style="border-bottom:1px solid rgba(255,255,255,.04)">
       <td style="padding:7px 8px;font-weight:600">${escapeHtml(e.name||'—')}<div style="font-size:10.5px;color:var(--ink-muted);font-weight:400">${escapeHtml(e.role||deptName(e.deptId))}</div></td>
       <td style="padding:7px 8px;text-align:right;font-family:'JetBrains Mono',monospace;font-weight:700;color:${col}">${k.toFixed(1)}</td>
@@ -5793,10 +5793,10 @@ function _plRenderPerformance(el, year, month){
 
       <!-- Hàng chỉ số tổng quan -->
       <div style="display:flex;gap:14px;flex-wrap:wrap">
-        ${statBox('KPI trung bình', avgKpi>0?avgKpi.toFixed(2):'—', avgKpi>=7.5?'#7ec699':avgKpi>=6?'#e8b974':'#e57373', `${kpiEmps.length} NV có đánh giá${deptSuffix}`)}
+        ${statBox('KPI trung bình', avgKpi>0?avgKpi.toFixed(2):'—', avgKpi>=75?'#7ec699':avgKpi>=60?'#e8b974':'#e57373', `${kpiEmps.length} NV có đánh giá${deptSuffix}`)}
         ${statBox('Thăng chức tháng '+monthLabel, promosThisMonth.length, '#7ec699', `${promoCountChot} đã chốt · ${promosThisMonth.length-promoCountChot} đang xử lý`)}
         ${statBox('Chi phí tăng thêm', addedCost>0?_plFmtMoneyFull(addedCost):'—', '#e8b974', 'Do thăng chức đã chốt/tháng')}
-        ${statBox('NV xuất sắc (≥8.5)', bucket.excellent, '#7ec699', `${pct(bucket.excellent)}% tổng số có KPI`)}
+        ${statBox('NV xuất sắc (≥85)', bucket.excellent, '#7ec699', `${pct(bucket.excellent)}% tổng số có KPI`)}
       </div>
 
       <!-- Phân bố KPI + KPI theo phòng ban -->
@@ -5804,19 +5804,19 @@ function _plRenderPerformance(el, year, month){
         <div style="${cardStyle}">
           <div style="font-weight:700;font-size:14px;margin-bottom:14px">📊 Phân bố KPI${deptSuffix}</div>
           ${kpiEmps.length ? `
-            ${barRow('Giỏi (≥8.5)', bucket.excellent, '#7ec699')}
-            ${barRow('Khá (7–8.5)', bucket.good, '#7eb6e8')}
-            ${barRow('TB (5–7)', bucket.average, '#e8b974')}
-            ${barRow('Yếu (<5)', bucket.weak, '#e57373')}
+            ${barRow('Giỏi (≥85)', bucket.excellent, '#7ec699')}
+            ${barRow('Khá (70–85)', bucket.good, '#7eb6e8')}
+            ${barRow('TB (50–70)', bucket.average, '#e8b974')}
+            ${barRow('Yếu (<50)', bucket.weak, '#e57373')}
           ` : `<div style="color:var(--ink-muted);font-size:13px;padding:20px 0;text-align:center">Chưa có dữ liệu KPI</div>`}
         </div>
         <div style="${cardStyle}">
           <div style="font-weight:700;font-size:14px;margin-bottom:14px">🏢 KPI trung bình theo phòng ban</div>
           ${deptKpi.length ? `<div style="display:flex;flex-direction:column;gap:9px">${deptKpi.map(d=>{
-            const col = d.avg>=8.5?'#7ec699':d.avg>=7?'#7eb6e8':d.avg>=5?'#e8b974':'#e57373';
+            const col = d.avg>=85?'#7ec699':d.avg>=70?'#7eb6e8':d.avg>=50?'#e8b974':'#e57373';
             return `<div style="display:flex;align-items:center;gap:10px">
               <div style="flex:1;font-size:12.5px;color:var(--ink)">${escapeHtml(d.name)} <span style="color:var(--ink-muted);font-size:11px">(${d.count})</span></div>
-              <div style="width:120px;height:18px;background:rgba(255,255,255,.05);border-radius:4px;overflow:hidden"><div style="width:${Math.round(d.avg/10*100)}%;height:100%;background:${col}"></div></div>
+              <div style="width:120px;height:18px;background:rgba(255,255,255,.05);border-radius:4px;overflow:hidden"><div style="width:${Math.round(d.avg)}%;height:100%;background:${col}"></div></div>
               <div style="width:38px;text-align:right;font-family:'JetBrains Mono',monospace;font-weight:700;font-size:12.5px;color:${col}">${d.avg.toFixed(1)}</div>
             </div>`;
           }).join('')}</div>` : `<div style="color:var(--ink-muted);font-size:13px;padding:20px 0;text-align:center">Chưa có dữ liệu</div>`}
@@ -21811,279 +21811,8 @@ function perfTabsHTML(active){
     <div class="rec-tabs">
       <button class="rec-tab ${active==='list'?'active':''}" onclick="setPerfView('list')">📋 Thăng chức</button>
       <button class="rec-tab ${active==='history'?'active':''}" onclick="setPerfView('history')">⭐ Đánh giá Performance</button>
-      <button class="rec-tab ${active==='reports'?'active':''}" onclick="setPerfView('reports')">📊 Báo cáo & Phân tích</button>
     </div>
   `;
-}
-
-/* ---- Performance Reports ---- */
-function renderPerformanceReports(main){
-  if(!window._perfPeriod) window._perfPeriod = sessionStorage.getItem('_perfPeriod') || 'year_'+new Date().getFullYear();
-  const periodKey = window._perfPeriod;
-  const {from, to, prevFrom, prevTo, label: periodLabel} = getPeriodBounds(periodKey);
-  const today = new Date();
-  const allReviews = DB.kpiReviews || [];
-
-  function periodToDate(p){
-    if(!p) return null;
-    const qm = p.match(/Q(\d)\/(\d{4})/);
-    if(qm){ const month = (parseInt(qm[1])-1)*3+1; return new Date(parseInt(qm[2]), month-1, 15); }
-    const ym = p.match(/(\d{4})-?(\d{2})?/);
-    if(ym){ return new Date(parseInt(ym[1]), ym[2]?parseInt(ym[2])-1:6, 1); }
-    return null;
-  }
-
-  const reviewsInPeriod = allReviews.filter(r => { const d = periodToDate(r.period); return d && d >= from && d <= to; });
-  const reviewsInPrev   = allReviews.filter(r => { const d = periodToDate(r.period); return d && d >= prevFrom && d <= prevTo; });
-  const activeEmps = DB.employees.filter(e => e.status !== 'exit');
-
-  const latestInPeriod = {};
-  reviewsInPeriod.forEach(r => { if(!latestInPeriod[r.empId] || r.period > latestInPeriod[r.empId].period) latestInPeriod[r.empId] = r; });
-  const latestInPrev = {};
-  reviewsInPrev.forEach(r => { if(!latestInPrev[r.empId] || r.period > latestInPrev[r.empId].period) latestInPrev[r.empId] = r; });
-
-  const scoredArr = Object.values(latestInPeriod);
-  const scoredArrPrev = Object.values(latestInPrev);
-
-  const avgScore = scoredArr.length ? scoredArr.reduce((s,r)=>s+r.score,0)/scoredArr.length : null;
-  const avgScorePrev = scoredArrPrev.length ? scoredArrPrev.reduce((s,r)=>s+r.score,0)/scoredArrPrev.length : null;
-  const coveragePct = activeEmps.length ? Math.round(scoredArr.length/activeEmps.length*100) : 0;
-  const coveragePrev = activeEmps.length && scoredArrPrev.length ? Math.round(scoredArrPrev.length/activeEmps.length*100) : 0;
-  const excellentArr = scoredArr.filter(r=>r.score>=90);
-  const needSupportArr = scoredArr.filter(r=>r.score<70);
-  const excellentPct = scoredArr.length ? Math.round(excellentArr.length/scoredArr.length*100) : 0;
-  const needSupportPct = scoredArr.length ? Math.round(needSupportArr.length/scoredArr.length*100) : 0;
-  const excellentArrPrev = scoredArrPrev.filter(r=>r.score>=90);
-  const needSupportArrPrev = scoredArrPrev.filter(r=>r.score<70);
-
-  const bands = [
-    {label:'<60',   min:0,  max:60,  color:'#e57373'},
-    {label:'60–70', min:60, max:70,  color:'#ef9a5a'},
-    {label:'70–75', min:70, max:75,  color:'#ffa726'},
-    {label:'75–80', min:75, max:80,  color:'#ffcc02'},
-    {label:'80–85', min:80, max:85,  color:'#d4a574'},
-    {label:'85–90', min:85, max:90,  color:'#7eb6e8'},
-    {label:'90–95', min:90, max:95,  color:'#7ec699'},
-    {label:'>95',   min:95, max:101, color:'#50c8a0'},
-  ];
-  const bucketCounts = bands.map(b => scoredArr.filter(r=>r.score>=b.min && r.score<b.max).length);
-
-  const deptMap = {};
-  scoredArr.forEach(r => {
-    const emp = DB.employees.find(e=>e.id===r.empId); if(!emp) return;
-    const did = emp.deptId||'_none';
-    if(!deptMap[did]) deptMap[did]={scores:[]};
-    deptMap[did].scores.push(r.score);
-  });
-  const deptArr = Object.entries(deptMap).map(([did,v])=>({
-    name:deptName(did), count:v.scores.length,
-    avg:v.scores.length?v.scores.reduce((s,n)=>s+n,0)/v.scores.length:0,
-    excellent:v.scores.filter(s=>s>=90).length, needSupport:v.scores.filter(s=>s<70).length,
-  })).sort((a,b)=>b.avg-a.avg);
-
-  const allPeriods = [...new Set(allReviews.map(r=>r.period).filter(Boolean))].sort().slice(-8);
-  const trendAvg = allPeriods.map(p=>{ const rs=allReviews.filter(r=>r.period===p); return rs.length?parseFloat((rs.reduce((s,r)=>s+r.score,0)/rs.length).toFixed(1)):null; });
-  const trendCount = allPeriods.map(p=>allReviews.filter(r=>r.period===p).length);
-
-  const sortedScores = [...scoredArr].sort((a,b)=>b.score-a.score);
-  const top5 = sortedScores.slice(0,5);
-  const bottom5 = [...scoredArr].filter(r=>r.score<80).sort((a,b)=>a.score-b.score).slice(0,5);
-
-  function deltaBadgeScore(curr,prev){
-    if(prev===null||curr===null) return '<span class="kpi-delta flat">—</span>';
-    const d=curr-prev; if(Math.abs(d)<0.5) return '<span class="kpi-delta flat">±0</span>';
-    if(d>0) return `<span class="kpi-delta up">▲ +${d.toFixed(1)}</span>`;
-    return `<span class="kpi-delta down">▼ ${d.toFixed(1)}</span>`;
-  }
-
-  main.innerHTML = `
-    <div class="report-print-header">
-      <h2 style="font-family:'Fraunces',serif;font-size:22px;font-weight:600;margin:0">Báo cáo Performance — ${escapeHtml(DB.company?.name||'')}</h2>
-      <div style="font-size:12px;color:#666;margin-top:2px">Kỳ báo cáo: <b>${periodLabel}</b> · In ngày ${fmtDate(today.toISOString().slice(0,10))}</div>
-    </div>
-    <div class="topbar">
-      <div class="topbar-left">
-        <div class="crumb">Phát triển · <span>Performance</span> · Báo cáo</div>
-        <h1 class="page-title">Báo cáo <em>Performance</em></h1>
-        <div class="page-sub">Kỳ: <b style="color:var(--accent)">${periodLabel}</b> · ${scoredArr.length} NV có đánh giá · ${activeEmps.length} đang làm</div>
-      </div>
-      <div class="topbar-actions">
-        <button class="btn" onclick="openReportConfig('perf')">⚙️ Tuỳ chỉnh chỉ số</button>
-        <button class="btn" onclick="window.print()">
-          <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"/></svg>
-          In / Lưu PDF
-        </button>
-      </div>
-    </div>
-    ${perfTabsHTML('reports')}
-    ${periodSelectorWithMonths(periodKey,'setPerfPeriod','perf')}
-    <div class="kpi-grid">
-      ${(()=>{ const am=getPerfMetrics(); return [
-        showMetric(am,'kpi_avg')   ? `<div class="kpi"><div class="kpi-head"><div class="kpi-label">Điểm TB trong kỳ</div><div class="kpi-icon success"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg></div></div><div class="kpi-value">${avgScore!==null?avgScore.toFixed(1):'—'}</div><div class="kpi-meta">${deltaBadgeScore(avgScore,avgScorePrev)} <span>kỳ trước ${avgScorePrev!==null?avgScorePrev.toFixed(1):'—'}</span></div></div>` : '',
-        showMetric(am,'kpi_cover') ? `<div class="kpi"><div class="kpi-head"><div class="kpi-label">Độ phủ đánh giá</div><div class="kpi-icon info"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"/></svg></div></div><div class="kpi-value">${coveragePct}<span style="font-size:20px;color:var(--ink-muted)">%</span></div><div class="kpi-meta">${deltaBadge(coveragePct,coveragePrev)} <span>${scoredArr.length}/${activeEmps.length} NV</span></div></div>` : '',
-        showMetric(am,'kpi_excel') ? `<div class="kpi"><div class="kpi-head"><div class="kpi-label">Vượt chuẩn (≥90)</div><div class="kpi-icon purple"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z"/></svg></div></div><div class="kpi-value">${excellentArr.length}<span style="font-size:18px;color:var(--ink-muted)"> (${excellentPct}%)</span></div><div class="kpi-meta">${deltaBadge(excellentArr.length,excellentArrPrev.length)} <span>kỳ trước ${excellentArrPrev.length} NV</span></div></div>` : '',
-        showMetric(am,'kpi_need')  ? `<div class="kpi"><div class="kpi-head"><div class="kpi-label">Cần hỗ trợ (&lt;70)</div><div class="kpi-icon danger"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg></div></div><div class="kpi-value">${needSupportArr.length}<span style="font-size:18px;color:var(--ink-muted)"> (${needSupportPct}%)</span></div><div class="kpi-meta">${deltaBadge(needSupportArrPrev.length,needSupportArr.length)} <span>kỳ trước ${needSupportArrPrev.length} NV</span></div></div>` : '',
-      ].filter(Boolean).join('')})()}
-      
-    </div>
-    <div class="card" style="margin-bottom:16px">
-      <div class="card-head"><div>
-        <div class="card-title">📈 Xu hướng <em>điểm Performance</em> theo kỳ</div>
-        <div class="card-sub">Điểm TB & số lượt đánh giá — 8 kỳ gần nhất</div>
-      </div></div>
-      ${allPeriods.length===0?'<div class="empty-state" style="padding:30px"><p>Chưa có dữ liệu đánh giá nào</p></div>':`<div class="chart-wrap tall"><canvas id="chartPerfTrend"></canvas></div>`}
-    </div>
-    <div class="row row-2-equal" style="margin-bottom:16px">
-      <div class="card" style="display:${showMetric(getPerfMetrics(),'chart_dist')?'block':'none'}">
-        <div class="card-head"><div>
-          <div class="card-title">📊 Phân bố <em>điểm trong kỳ</em></div>
-          <div class="card-sub">${scoredArr.length} đánh giá · histogram theo dải điểm</div>
-        </div></div>
-        ${scoredArr.length===0?'<div class="empty-state" style="padding:30px"><p>Chưa có đánh giá nào trong kỳ này</p></div>':`<div class="chart-wrap"><canvas id="chartPerfDist"></canvas></div>`}
-      </div>
-      <div class="card" style="display:${showMetric(getPerfMetrics(),'chart_dept')?'block':'none'}">
-        <div class="card-head"><div>
-          <div class="card-title">🏢 Điểm TB <em>theo phòng ban</em></div>
-          <div class="card-sub">So sánh performance giữa các phòng ban trong kỳ</div>
-        </div></div>
-        ${deptArr.length===0?'<div class="empty-state" style="padding:30px"><p>Chưa có dữ liệu trong kỳ này</p></div>':`<div class="chart-wrap"><canvas id="chartPerfDept"></canvas></div>`}
-      </div>
-    </div>
-    <div class="card" style="margin-bottom:16px;display:${showMetric(getPerfMetrics(),'tbl_dept')?'block':'none'}">
-      <div class="card-head"><div>
-        <div class="card-title">🎯 Phân tích <em>theo phòng ban</em></div>
-        <div class="card-sub">${deptArr.length} phòng ban có đánh giá trong kỳ</div>
-      </div></div>
-      ${deptArr.length===0?'<div class="empty-state" style="padding:20px"><p>Không có dữ liệu</p></div>':`
-      <div style="overflow-x:auto"><table class="tbl">
-        <thead><tr>
-          <th>Phòng ban</th><th style="text-align:center">Đã đánh giá</th><th style="text-align:center">Điểm TB</th>
-          <th style="min-width:180px">Phân bố</th><th style="text-align:center">≥90</th><th style="text-align:center">&lt;70</th><th>${_lang==="en"?"Comments":"Nhận xét"}</th>
-        </tr></thead>
-        <tbody>${deptArr.map(d=>{
-          const scoreColor=d.avg>=90?'var(--success)':d.avg>=80?'var(--accent)':d.avg>=70?'var(--warning)':'var(--danger)';
-          const pct=Math.round((d.avg-50)/50*100);
-          const remark=d.avg>=90?{text:(_lang==="en"?"Excellent":"Xuất sắc"),color:'var(--success)'}:d.avg>=80?{text:(_lang==="en"?"Good":"Tốt"),color:'var(--accent)'}:d.avg>=70?{text:'Đạt yêu cầu',color:'var(--warning)'}:{text:(_lang==="en"?"Needs improvement":"Cần cải thiện"),color:'var(--danger)'};
-          return `<tr>
-            <td><b>${escapeHtml(d.name)}</b></td>
-            <td style="text-align:center;font-family:'JetBrains Mono',monospace">${d.count}</td>
-            <td style="text-align:center;font-family:'JetBrains Mono',monospace;font-weight:700;color:${scoreColor}">${d.avg.toFixed(1)}</td>
-            <td><div style="height:10px;background:var(--bg-elev);border-radius:5px;overflow:hidden"><div style="height:100%;width:${Math.min(pct,100)}%;background:${scoreColor};border-radius:5px"></div></div></td>
-            <td style="text-align:center;font-family:'JetBrains Mono',monospace;color:var(--success)">${d.excellent>0?d.excellent:'—'}</td>
-            <td style="text-align:center;font-family:'JetBrains Mono',monospace;color:${d.needSupport>0?'var(--danger)':'var(--ink-muted)'}">${d.needSupport>0?d.needSupport:'—'}</td>
-            <td style="font-size:11.5px;color:${remark.color};font-weight:600">${remark.text}</td>
-          </tr>`;
-        }).join('')}</tbody>
-      </table></div>`}
-    </div>
-    <div class="row row-2-equal" style="margin-bottom:16px">
-      <div class="card" style="display:${showMetric(getPerfMetrics(),'tbl_top')?'block':'none'}">
-        <div class="card-head"><div>
-          <div class="card-title">⭐ Top <em>performer</em> trong kỳ</div>
-          <div class="card-sub">Nhân viên điểm cao nhất trong kỳ</div>
-        </div></div>
-        ${top5.length===0?'<div class="empty-state" style="padding:24px"><p>Chưa có đánh giá trong kỳ này</p></div>':
-          '<div class="list">'+top5.map((r,i)=>{
-            const emp=DB.employees.find(e=>e.id===r.empId); if(!emp) return '';
-            const rankColor=i===0?'#e8b974':i===1?'#a8b4f0':'var(--ink-muted)';
-            return `<div class="list-item">
-              <div style="font-size:16px;font-weight:700;color:${rankColor};width:24px;text-align:center">#${i+1}</div>
-              ${avatarHTML(emp,34)}
-              <div class="list-main"><div class="list-title">${escapeHtml(emp.name)}</div><div class="list-meta">${escapeHtml(emp.role||'')} · ${deptName(emp.deptId)}</div></div>
-              <div style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:15px;color:var(--success)">${r.score.toFixed(1)}</div>
-            </div>`;
-          }).join('')+'</div>'
-        }
-      </div>
-      <div class="card" style="display:${showMetric(getPerfMetrics(),'tbl_need')?'block':'none'}">
-        <div class="card-head"><div>
-          <div class="card-title">⚠️ Cần <em>hỗ trợ</em> trong kỳ</div>
-          <div class="card-sub">Nhân viên điểm &lt;80 — cần theo dõi</div>
-        </div></div>
-        ${bottom5.length===0?'<div class="empty-state" style="padding:24px"><p style="color:var(--success)">✓ Không có NV nào dưới 80 điểm</p></div>':
-          '<div class="list">'+bottom5.map(r=>{
-            const emp=DB.employees.find(e=>e.id===r.empId); if(!emp) return '';
-            const scoreColor=r.score<70?'var(--danger)':'var(--warning)';
-            return `<div class="list-item">
-              ${avatarHTML(emp,34)}
-              <div class="list-main"><div class="list-title">${escapeHtml(emp.name)}</div><div class="list-meta">${escapeHtml(emp.role||'')} · ${deptName(emp.deptId)} · ${escapeHtml(r.period)}</div></div>
-              <div style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:15px;color:${scoreColor}">${r.score.toFixed(1)}</div>
-            </div>`;
-          }).join('')+'</div>'
-        }
-      </div>
-    </div>
-    <div style="margin-top:8px;padding:14px 18px;background:var(--bg-elev);border-radius:8px;border:1px solid var(--border);font-size:11.5px;color:var(--ink-muted);line-height:1.6">
-      <b style="color:var(--ink-dim)">Ghi chú phương pháp:</b>
-      Điểm TB tính theo đánh giá mới nhất của mỗi NV trong kỳ.
-      Độ phủ = số NV có ít nhất 1 đánh giá / tổng NV đang làm.
-      Kỳ báo cáo áp dụng cho trường "Kỳ đánh giá" (VD: Q1/2026).
-    </div>
-  `;
-
-  setTimeout(()=>{
-    Chart.defaults.font.family="'Inter Tight',sans-serif";
-    Chart.defaults.font.size=11.5;
-    Chart.defaults.color='#8b949e';
-    const trendEl=document.getElementById('chartPerfTrend');
-    if(trendEl&&allPeriods.length>0){
-      if(Chart.getChart(trendEl)) Chart.getChart(trendEl).destroy();
-      new Chart(trendEl,{type:'bar',data:{labels:allPeriods,datasets:[
-        {label:(_lang==="en"?"Reviews":"Số đánh giá"),data:trendCount,backgroundColor:'rgba(126,182,232,.5)',borderColor:'#7eb6e8',borderWidth:1,borderRadius:4,yAxisID:'y1',order:2},
-        {label:(_lang==="en"?"Avg score":"Điểm TB"),type:'line',data:trendAvg,borderColor:'#7ec699',backgroundColor:'rgba(126,198,153,.12)',borderWidth:2.5,tension:0.35,fill:true,pointRadius:4,pointBackgroundColor:'#7ec699',yAxisID:'y',order:1,spanGaps:true},
-      ]},options:{responsive:true,maintainAspectRatio:false,
-        plugins:{legend:{position:'top',labels:{usePointStyle:true,padding:14}},tooltip:{mode:'index',intersect:false}},
-        scales:{x:{grid:{display:false}},y:{beginAtZero:false,min:50,max:100,ticks:{stepSize:10},grid:{color:'rgba(255,255,255,.04)'},title:{display:true,text:'Điểm'}},y1:{position:'right',beginAtZero:true,ticks:{stepSize:1,precision:0},grid:{display:false},title:{display:true,text:(_lang==="en"?"Attempts":"Lượt")}}}
-      }});
-    }
-    const distEl=document.getElementById('chartPerfDist');
-    if(distEl&&scoredArr.length>0){
-      if(Chart.getChart(distEl)) Chart.getChart(distEl).destroy();
-      new Chart(distEl,{type:'bar',
-        data:{
-          labels:bands.map(b=>b.label),
-          datasets:[{
-            data:bucketCounts,
-            backgroundColor:bands.map(b=>b.color+'cc'),
-            borderColor:bands.map(b=>b.color),
-            borderWidth:1,
-            borderRadius:6,
-            borderSkipped:false,
-          }]
-        },
-        options:{
-          responsive:true,maintainAspectRatio:false,
-          plugins:{
-            legend:{display:false},
-            tooltip:{callbacks:{
-              label:(c)=>` ${c.parsed.y} người`,
-              title:(c)=>`Điểm ${c[0].label}`
-            }},
-            datalabels:{
-              display:true,anchor:'end',align:'top',
-              color:'#ccc',font:{size:11,weight:'700'},
-              formatter:(v)=>v||''
-            }
-          },
-          scales:{
-            x:{grid:{display:false},ticks:{color:'#888',font:{size:11}}},
-            y:{beginAtZero:true,ticks:{stepSize:1,precision:0,color:'#888'},grid:{color:'rgba(255,255,255,.04)'}}
-          }
-        }
-      });
-    }
-    const deptEl=document.getElementById('chartPerfDept');
-    if(deptEl&&deptArr.length>0){
-      const pal=['#7ec699','#d4a574','#7eb6e8','#b794d4','#e8b974','#7dd3c0','#e57373','#a8b4f0'];
-      if(Chart.getChart(deptEl)) Chart.getChart(deptEl).destroy();
-      new Chart(deptEl,{type:'bar',data:{labels:deptArr.map(d=>d.name),datasets:[{data:deptArr.map(d=>parseFloat(d.avg.toFixed(1))),backgroundColor:deptArr.map((_,i)=>pal[i%pal.length]+'cc'),borderRadius:6}]},
-        options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,
-          plugins:{legend:{display:false},tooltip:{callbacks:{label:(c)=>` ${c.parsed.x.toFixed(1)} điểm`}}},
-          scales:{x:{min:50,max:100,grid:{color:'rgba(255,255,255,.04)'}},y:{grid:{display:false}}}
-        }
-      });
-    }
-  },0);
 }
 
 /* =========================================================
@@ -22113,7 +21842,7 @@ function renderPerformance(main){
     }
   }
   if(!window._perfView) window._perfView = sessionStorage.getItem('_perfView')||'list';
-  if(window._perfView === 'reports') return renderPerformanceReports(main);
+  if(window._perfView === 'reports') window._perfView = 'list'; // tab Báo cáo đã gỡ → về Thăng chức
   if(window._perfView === 'history') return renderPerformanceHistory(main);
   const scoredEmps = DB.employees.filter(e=>e.kpi>0);
   const avgKPI = scoredEmps.length ? (scoredEmps.reduce((s,e)=>s+e.kpi,0)/scoredEmps.length).toFixed(1) : '—';
@@ -25891,6 +25620,8 @@ function renderSalaryAnalysis(main){
     dailyShowCmp: false,
   };
   const F = window._salF;
+  // 🔒 Toggle bảo mật lương: mặc định ẨN, tích chọn mới hiện. Che tất cả số tiền bằng blur.
+  if(window._salHide === undefined) window._salHide = true;
   if(!window._salSort){ const _ss=sessionStorage.getItem('_salSort'); window._salSort=_ss?JSON.parse(_ss):{key:'total',dir:-1}; }
   const ss = window._salSort;
 
@@ -26025,9 +25756,19 @@ function renderSalaryAnalysis(main){
         <div class="page-sub">${pool.length} NV · ${kpi.withSal.length} có dữ liệu lương · ${mLabel} · ${stLabel}</div>
       </div>
       <div class="topbar-actions">
+        <button class="btn" onclick="window._salHide=!window._salHide;render()" style="${window._salHide?'':'background:var(--accent);color:var(--bg);border-color:var(--accent)'}" title="${window._salHide?'Đang ẩn lương — bấm để hiện toàn bộ số':'Đang hiện lương — bấm để ẩn'}">
+          ${window._salHide?'🙈 Hiện lương':'👁️ Ẩn lương'}
+        </button>
         <button class="btn" onclick="exportEmployeesXLSX()">📥 Xuất Excel</button>
       </div>
     </div>
+    <style>
+      /* Ẩn lương: làm mờ mọi số tiền (font mono) trong trang Salary */
+      #salaryWrap.sal-hidden .sal-money,
+      #salaryWrap.sal-hidden [style*="JetBrains Mono"]{filter:blur(8px);user-select:none;pointer-events:none;transition:filter .12s}
+      #salaryWrap.sal-hidden canvas{filter:blur(10px);pointer-events:none}
+    </style>
+    <div id="salaryWrap" class="${window._salHide?'sal-hidden':''}">
 
     <!-- Tab bar -->
     <div style="display:flex;gap:4px;background:var(--bg-elev);border-radius:8px;padding:4px;margin-bottom:14px;width:fit-content">
@@ -26267,6 +26008,7 @@ function renderSalaryAnalysis(main){
     </div>
 
     `}
+    </div><!-- end #salaryWrap -->
   `;
 }
 
