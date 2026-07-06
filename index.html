@@ -30214,7 +30214,17 @@ fbAuth.onAuthStateChanged(async user => {
           };
 
           const [snaps, _empResult] = await Promise.all([
-            Promise.all(docIds.map(id => _getCacheFirst(window.fbDb.collection('hrdata').doc(id)))),
+            Promise.all(docIds.map(id => {
+              // 🚨 v54 FIX REVERT-ON-REFRESH (GỐC): 'jobs' đọc THẲNG SERVER, KHÔNG cache-first.
+              // Bug: cache IndexedDB giữ bản CŨ (filled). F5 → _getCacheFirst trả cache cũ NGAY,
+              // không hỏi server → DB.jobs = filled cũ → REVERT dù cloud đã đúng 'open'.
+              // jobs là doc nhỏ (vài chục job) → đọc server chỉ tốn 1 read, đổi lấy hết revert.
+              const ref = window.fbDb.collection('hrdata').doc(id);
+              if(id === 'jobs'){
+                return ref.get({ source: 'server' }).catch(()=> _getCacheFirst(ref)); // server fail (offline) → fallback cache
+              }
+              return _getCacheFirst(ref);
+            })),
             loadEmpProfiles(localPhotos).then(r=>{ empLoaded=r; return r; })
           ]);
           let hasCloud = empLoaded;
@@ -30235,7 +30245,22 @@ fbAuth.onAuthStateChanged(async user => {
                 // v17.2: filter items đã tombstone (xóa) — chống resurrection sau F5
                 if(Array.isArray(data[key])){
                   const _tomb = _gTombGetSetFor(key);
-                  DB[key] = _tomb.size ? data[key].filter(it => !it.id || !_tomb.has(it.id)) : data[key];
+                  let _cloudArr = _tomb.size ? data[key].filter(it => !it.id || !_tomb.has(it.id)) : data[key];
+                  // 🚨 v54 FIX REVERT: merge với local theo _savedAt — item local MỚI HƠN không bị cache/server cũ đè.
+                  // (Chống revert khi cache/cloud giữ bản cũ mà local vừa sửa mới hơn.)
+                  const _localArr = _localBeforeCloud[key];
+                  if(Array.isArray(_localArr) && _localArr.length){
+                    const _cloudMap = new Map(_cloudArr.map(it=>[it.id, it]));
+                    _localArr.forEach(li=>{
+                      if(!li || !li.id) return;
+                      if(_tomb.has(li.id)) return; // đã xóa → bỏ
+                      const ci = _cloudMap.get(li.id);
+                      const lSA = li._savedAt || 0, cSA = ci ? (ci._savedAt||0) : 0;
+                      if(lSA > cSA){ _cloudMap.set(li.id, li); } // local mới hơn → giữ local (chống revert)
+                    });
+                    _cloudArr = [..._cloudMap.values()];
+                  }
+                  DB[key] = _cloudArr;
                 } else {
                   DB[key] = data[key];
                 }
