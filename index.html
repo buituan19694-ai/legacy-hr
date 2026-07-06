@@ -30449,6 +30449,15 @@ fbAuth.onAuthStateChanged(async user => {
             }catch(e){ console.warn('[MIGRATE] blacklist read error:', e.message); }
           }
 
+          // 🚨 v52 FIX REVERT-ON-REFRESH: migration v3 CHỈ chạy 1 lần đời.
+          // Bug: doc cũ ('recruitment'...) chứa jobs bản CŨ (filled), lẽ ra đã xóa nhưng .delete()
+          // fail âm thầm (mạng chập chờn) → còn sót. Mỗi F5, migration đọc lại doc cũ → nếu DB.jobs
+          // tạm rỗng → nạp bản filled cũ → saveData() ghi đè lên doc jobs mới → status REVERT về cũ.
+          // Cắt luôn: đã migrate 1 lần thì KHÔNG đọc lại 7 doc cũ nữa (cũng tiết kiệm 7 reads/lần mở).
+          const _MIG_V3_KEY = STORE_KEY + '_migratedV3';
+          let _migV3Done = false;
+          try { _migV3Done = localStorage.getItem(_MIG_V3_KEY) === '1'; } catch(_){}
+          if(!_migV3Done){
           const oldDocIds = ['hr','recruitment','workforce','performance','leavedata','promotions','discipline'];
           const oldSnaps = await Promise.all(oldDocIds.map(id=>window.fbDb.collection('hrdata').doc(id).get()));
           let needMigrate = false;
@@ -30488,6 +30497,9 @@ fbAuth.onAuthStateChanged(async user => {
                 .then(()=>console.log('[Migration v3] Deleted:', oid)).catch(()=>{});
             });
           }
+          // 🚨 v52: đánh dấu đã migrate — F5 sau KHÔNG đọc lại doc cũ (chống revert + tiết kiệm reads)
+          try { localStorage.setItem(_MIG_V3_KEY, '1'); } catch(_){}
+          } // end if(!_migV3Done)
 
           if(empLoaded) DB.employees.forEach(e=>{
             if(!e.photo && localPhotos[e.id]) e.photo = localPhotos[e.id];
