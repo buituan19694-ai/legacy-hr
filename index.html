@@ -1864,55 +1864,13 @@ if(!Array.isArray(DB.salaryStructure.probations)) DB.salaryStructure.probations 
 window._dirtyKeys = new Set();
 DB = new Proxy(DB, {
   set(target, key, value){
-    // 🔍 BẪY v53: bắt mọi lần GHI ĐÈ DB.jobs (listener/cold-load/migration)
-    if(key === 'jobs' && Array.isArray(value)){
-      try {
-        const _old = target.jobs && target.jobs.find(j=>(j.title||'').includes('Front Desk'));
-        const _new = value.find(j=>(j.title||'').includes('Front Desk'));
-        const _os = _old ? `${_old.status}(${_old._savedAt||'∅'})` : '∅';
-        const _ns = _new ? `${_new.status}(${_new._savedAt||'∅'})` : '∅';
-        if(_os !== _ns){
-          const _caller = (new Error().stack||'').split('\n').slice(2,6).map(s=>s.trim()).join(' ← ');
-          console.log(`%c[BẪY-JOBS] ⚠️ DB.jobs bị GHI ĐÈ | FrontDesk: ${_os} → ${_ns}`, 'color:#ff5722;font-weight:700;font-size:13px');
-          console.log(`   ↳ gọi từ: ${_caller}`);
-        }
-      } catch(_){}
-    }
     target[key] = value;
     if(typeof key === 'string' && !key.startsWith('_')) window._dirtyKeys.add(key);
     return true;
   }
 });
-// 🔍 BẪY v53: watchdog quét mỗi 2s — bắt MỌI thay đổi status Front Desk (kể cả sửa in-place job.status=...)
-(function _jobWatchdog(){
-  let _last = null;
-  setInterval(()=>{
-    try {
-      if(!Array.isArray(DB.jobs)) return;
-      const j = DB.jobs.find(x=>(x.title||'').includes('Front Desk'));
-      if(!j) return;
-      const cur = `${j.status}|${j._savedAt||'∅'}`;
-      if(_last !== null && _last !== cur){
-        console.log(`%c[BẪY-JOBS] 🔔 WATCHDOG: Front Desk status ĐỔI: ${_last} → ${cur} (lúc ${new Date().toLocaleTimeString()})`, 'color:#9c27b0;font-weight:700;font-size:13px');
-      }
-      _last = cur;
-    } catch(_){}
-  }, 2000);
-})();
 const _saveDataOrig = saveData;
 window.saveData = function(changedKeys=null){
-  // 🔍 BẪY v53: theo dõi mọi lần GHI jobs — ai ghi, status gì, từ đâu
-  try {
-    const _ck = changedKeys ? (Array.isArray(changedKeys)?changedKeys:[changedKeys]) : ['<tất cả>'];
-    const _touchJobs = !changedKeys || _ck.includes('jobs') || _ck[0]==='<tất cả>';
-    if(_touchJobs && Array.isArray(DB.jobs)){
-      const _fda = DB.jobs.find(j=>(j.title||'').includes('Front Desk'));
-      const _snap = _fda ? `FrontDesk=${_fda.status}(_savedAt=${_fda._savedAt||'∅'})` : 'FrontDesk=?';
-      const _caller = (new Error().stack||'').split('\n').slice(2,5).map(s=>s.trim()).join(' ← ');
-      console.log(`%c[BẪY-JOBS] 📝 saveData(${_ck.join(',')}) | ${_snap} | coldLoadDone=${!!window._coldLoadDone}`, 'color:#e91e63;font-weight:700');
-      console.log(`   ↳ gọi từ: ${_caller}`);
-    }
-  } catch(_){}
   const keys = changedKeys || (window._dirtyKeys.size > 0 ? [...window._dirtyKeys] : null);
   window._dirtyKeys.clear();
   return _saveDataOrig(keys);
@@ -2004,7 +1962,7 @@ const deptName = (id)=> DB.departments.find(d=>d.id===id)?.name || '—';
 const empById = (id)=> DB.employees.find(e=>e.id===id);
 const fmtDate = (s)=>{ if(!s) return '—'; const d=new Date(s+'T00:00:00'); if(isNaN(d)) return s; return String(d.getDate()).padStart(2,'0')+'/'+String(d.getMonth()+1).padStart(2,'0')+'/'+d.getFullYear(); };
 
-function dispToIso(v){ if(!v) return ''; var m=v.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/); if(m) return m[3]+'-'+m[2].padStart(2,'0')+'-'+m[1].padStart(2,'0'); if(/^\d{4}-\d{2}-\d{2}$/.test(v)) return v; return v; }
+function dispToIso(v){ if(!v) return ''; v=String(v).trim(); var m=v.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/); if(m) return m[3]+'-'+m[2].padStart(2,'0')+'-'+m[1].padStart(2,'0'); if(/^\d{4}-\d{1,2}-\d{1,2}/.test(v)){ var p=v.slice(0,10).split('-'); return p[0]+'-'+p[1].padStart(2,'0')+'-'+p[2].padStart(2,'0'); } return ''; }
 function isoToDisp(v){ if(!v) return ''; var m=v.match(/^(\d{4})-(\d{2})-(\d{2})/); if(m) return m[3]+'/'+m[2]+'/'+m[1]; return v; }
 function getDateIso(id){ const el = $('#'+id); if(!el) return ''; return el.getAttribute('data-iso') || dispToIso(el.value||'') || ''; }
 function initDateInputs(root){
@@ -5140,7 +5098,9 @@ function _plRenderRecruitmentRisk(el, year, month){
               : diffDays <= 7 ? `<span style="color:var(--warning);font-weight:600">${diffDays}d</span>`
               : diffDays <= 30 ? `<span style="color:var(--success);font-weight:600">${diffDays}d</span>`
               : `<span style="color:var(--ink-muted)">${diffDays}d</span>`;
-            const statusBadge = c.status === 'hired'
+            const statusBadge = c.blacklisted
+              ? `<span style="background:rgba(229,115,115,.15);color:#e57373;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:700">⛔ Không tuyển</span>`
+              : c.status === 'hired'
               ? `<span style="background:rgba(126,198,153,.15);color:var(--success);padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600">✓ Đã nhận việc</span>`
               : c.status === 'accepted'
               ? `<span style="background:rgba(125,211,192,.12);color:var(--teal);padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600">🤝 Đã nhận offer</span>`
@@ -18468,7 +18428,9 @@ function _wfUpcomingTab(PAL, yr, mon){
               : diffDays <= 7 ? `<span style="color:var(--warning);font-weight:600">${diffDays}d nữa</span>`
               : diffDays <= 30 ? `<span style="color:var(--success);font-weight:600">${diffDays}d nữa</span>`
               : `<span style="color:var(--ink-muted)">${diffDays}d nữa</span>`;
-            const statusBadge = c.status === 'hired'
+            const statusBadge = c.blacklisted
+              ? `<span style="background:rgba(229,115,115,.15);color:#e57373;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:700">⛔ Không tuyển</span>`
+              : c.status === 'hired'
               ? `<span style="background:rgba(126,198,153,.15);color:var(--success);padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600">✓ Đã nhận việc</span>`
               : c.status === 'accepted'
               ? `<span style="background:rgba(125,211,192,.12);color:var(--teal);padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600">🤝 Đã nhận offer</span>`
@@ -18617,7 +18579,7 @@ function _renderCandSearchResults(){
   const statusMap = (typeof CANDIDATE_STATUS!=='undefined') ? CANDIDATE_STATUS : {};
   const rows = hits.slice(0,30).map(c => {
     const job = (DB.jobs||[]).find(j=>j.id===c.jobId);
-    const st = statusMap[c.status]?.label || c.status || '—';
+    const st = c.blacklisted ? '⛔ Không tuyển' : (statusMap[c.status]?.label || c.status || '—');
     return `<tr style="cursor:pointer;border-bottom:1px solid rgba(255,255,255,.04)" onclick="editCandidate('${c.id}','${c.jobId}')">
       <td style="padding:8px 10px"><b style="${c.blacklisted?'color:#e57373':''}">${c.blacklisted?'⛔ ':''}${escapeHtml(c.name||'—')}</b>${c.blacklisted?'<span style="font-size:10px;color:#e57373"> (danh sách đen)</span>':''}</td>
       <td style="padding:8px 10px;font-size:12px">${escapeHtml(job?.title||'(vị trí đã xoá)')}</td>
@@ -19115,8 +19077,8 @@ function renderJobDetail(main){
               const stars = '★'.repeat(a.rating||0) + '☆'.repeat(5-(a.rating||0));
               return `<tr>
                 <td>
-                  <div class="cell-emp-name" onclick="viewCandidate('${a.id}')" style="cursor:pointer;color:var(--accent);transition:color .15s" onmouseover="this.style.textDecoration='underline'" onmouseout="this.style.textDecoration='none'" title="Xem hồ sơ ứng viên">${escapeHtml(a.name)}</div>
-                  <div class="cell-emp-meta">${a.age?a.age+(_lang==="en"?' yrs · ':' tuổi · '):''}${escapeHtml((a.experience||'').slice(0,50))}${a.experience && a.experience.length>50?'…':''}</div>
+                  <div class="cell-emp-name" onclick="viewCandidate('${a.id}')" style="cursor:pointer;color:${a.blacklisted?'#e57373':'var(--accent)'};transition:color .15s" onmouseover="this.style.textDecoration='underline'" onmouseout="this.style.textDecoration='none'" title="${a.blacklisted?'Ứng viên trong danh sách đen':'Xem hồ sơ ứng viên'}">${a.blacklisted?'⛔ ':''}${escapeHtml(a.name)}</div>
+                  <div class="cell-emp-meta">${a.blacklisted?`<span style="color:#e57373">Danh sách đen${a.blacklistReason?': '+escapeHtml(a.blacklistReason):''}</span>`:`${a.age?a.age+(_lang==="en"?' yrs · ':' tuổi · '):''}${escapeHtml((a.experience||'').slice(0,50))}${a.experience && a.experience.length>50?'…':''}`}</div>
                 </td>
                 <td>
                   <div style="font-size:12px"><a href="tel:${escapeHtml(a.phone)}" style="color:var(--accent);text-decoration:none;font-family:'JetBrains Mono',monospace">${escapeHtml(a.phone)||'—'}</a></div>
@@ -19134,7 +19096,7 @@ function renderJobDetail(main){
                     a.cvLink ? `<a href="${escapeHtml(a.cvLink)}" target="_blank" style="color:var(--info);text-decoration:none;font-size:12px">🔗 Link</a>` :
                     '<span style="color:var(--ink-muted);font-size:11px">Chưa có</span>'}
                 </td>
-                <td><span class="badge" style="background:${CANDIDATE_STATUS_COLOR[a.status]}22;color:${CANDIDATE_STATUS_COLOR[a.status]}">${CANDIDATE_STATUS_ICON[a.status]} ${CANDIDATE_STATUS[a.status]}</span></td>
+                <td>${a.blacklisted ? `<span class="badge" style="background:rgba(229,115,115,.15);color:#e57373;font-weight:700">⛔ Không tuyển</span>` : `<span class="badge" style="background:${CANDIDATE_STATUS_COLOR[a.status]}22;color:${CANDIDATE_STATUS_COLOR[a.status]}">${CANDIDATE_STATUS_ICON[a.status]} ${CANDIDATE_STATUS[a.status]}</span>`}</td>
                 <td><div class="row-actions">
                   ${a.status === 'hired' ? `<button class="btn btn-icon" onclick="convertCandidateToEmployee('${a.id}')" title="Tạo hồ sơ nhân viên" style="color:var(--accent)">📥</button>` : ''}
                   ${a.status === 'offer' ? `
@@ -30517,18 +30479,20 @@ fbAuth.onAuthStateChanged(async user => {
                 // v17.2: filter items đã tombstone (xóa) — chống resurrection sau F5
                 if(Array.isArray(data[key])){
                   const _tomb = _gTombGetSetFor(key);
-                  let _cloudArr = _tomb.size ? data[key].filter(it => !it.id || !_tomb.has(it.id)) : data[key];
-                  // 🚨 v54 FIX REVERT: merge với local theo _savedAt — item local MỚI HƠN không bị cache/server cũ đè.
-                  // (Chống revert khi cache/cloud giữ bản cũ mà local vừa sửa mới hơn.)
+                  // 🚨 FIX: manualBlacklist dùng khoá 'empId' (không có 'id'). Trước đây lớp merge này
+                  // bỏ qua item không có .id → blacklist vừa thêm bị mất khi F5 (cold-load đọc server chưa có).
+                  const _kf = (key === 'manualBlacklist') ? 'empId' : 'id';
+                  const _k = (it) => it ? it[_kf] : undefined;
+                  let _cloudArr = _tomb.size ? data[key].filter(it => !_k(it) || !_tomb.has(_k(it))) : data[key];
                   const _localArr = _localBeforeCloud[key];
                   if(Array.isArray(_localArr) && _localArr.length){
-                    const _cloudMap = new Map(_cloudArr.map(it=>[it.id, it]));
+                    const _cloudMap = new Map(_cloudArr.map(it=>[_k(it), it]));
                     _localArr.forEach(li=>{
-                      if(!li || !li.id) return;
-                      if(_tomb.has(li.id)) return; // đã xóa → bỏ
-                      const ci = _cloudMap.get(li.id);
+                      if(!li || !_k(li)) return;
+                      if(_tomb.has(_k(li))) return; // đã xóa → bỏ
+                      const ci = _cloudMap.get(_k(li));
                       const lSA = li._savedAt || 0, cSA = ci ? (ci._savedAt||0) : 0;
-                      if(lSA > cSA){ _cloudMap.set(li.id, li); } // local mới hơn → giữ local (chống revert)
+                      if(lSA > cSA){ _cloudMap.set(_k(li), li); } // local mới hơn → giữ local (chống revert)
                     });
                     _cloudArr = [..._cloudMap.values()];
                   }
