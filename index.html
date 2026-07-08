@@ -1148,16 +1148,13 @@ function saveEmpProfile(empId){
 async function loadEmpProfiles(localPhotos){
   if(!window.fbDb) return false;
   try{
-    // Cache-first: thử cache (0 reads) → fallback server nếu cache rỗng
+    // 🚨 v56: NV đọc THẲNG SERVER (dữ liệu quan trọng + hay sửa nhất: phòng ban, chức danh, lương...).
+    // Trước cache-first → sửa xong F5 có thể revert vì cache cũ. Offline mới fallback cache.
     let snap;
     try {
-      snap = await window.fbDb.collection(EMP_COLLECTION).get({ source: 'cache' });
-      if(snap.empty){
-        // Cache rỗng (lần đầu) → load từ server
-        snap = await window.fbDb.collection(EMP_COLLECTION).get({ source: 'server' });
-      }
-    } catch(_) {
       snap = await window.fbDb.collection(EMP_COLLECTION).get({ source: 'server' });
+    } catch(_) {
+      snap = await window.fbDb.collection(EMP_COLLECTION).get({ source: 'cache' });
     }
     if(snap.empty) return false;
     const employees = [];
@@ -5149,7 +5146,7 @@ function _plRenderRecruitmentRisk(el, year, month){
               ? `<span style="background:rgba(125,211,192,.12);color:var(--teal);padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600">🤝 Đã nhận offer</span>`
               : `<span style="background:rgba(255,193,7,.12);color:var(--warning);padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600">📤 Đã gửi offer</span>`;
             return `<tr style="cursor:pointer" onclick="editCandidate('${c.id}','${c.jobId}')">
-              <td><b>${escapeHtml(c.name||'—')}</b></td>
+              <td><b style="${c.blacklisted?'color:#e57373':''}">${c.blacklisted?'⛔ ':''}${escapeHtml(c.name||'—')}</b>${c.blacklisted?`<div style="font-size:10px;color:#e57373;font-weight:400">Danh sách đen${c.blacklistReason?': '+escapeHtml(c.blacklistReason):''}</div>`:''}</td>
               <td>${escapeHtml(job?.title||'—')}</td>
               <td style="font-size:12px;color:var(--ink-dim)">${escapeHtml(dept?.name||'—')}</td>
               <td>${statusBadge}</td>
@@ -18480,8 +18477,8 @@ function _wfUpcomingTab(PAL, yr, mon){
             const fmtDate = (s) => s ? s.split('-').reverse().join('/') : '—';
             return `<tr style="cursor:pointer" onclick="editCandidate('${c.id}','${c.jobId}')">
               <td>
-                <div style="font-weight:600">${escapeHtml(c.name||'(chưa đặt tên)')}</div>
-                <div style="font-size:10.5px;color:var(--ink-muted);margin-top:2px">${escapeHtml(c.phone||'')}</div>
+                <div style="font-weight:600;${c.blacklisted?'color:#e57373':''}">${c.blacklisted?'⛔ ':''}${escapeHtml(c.name||'(chưa đặt tên)')}</div>
+                <div style="font-size:10.5px;color:${c.blacklisted?'#e57373':'var(--ink-muted)'};margin-top:2px">${c.blacklisted?('Danh sách đen'+(c.blacklistReason?': '+escapeHtml(c.blacklistReason):'')):escapeHtml(c.phone||'')}</div>
               </td>
               <td><b>${escapeHtml(job?.title||'?')}</b></td>
               <td style="font-size:12px;color:var(--ink-dim)">${escapeHtml(dept?.name||'—')}</td>
@@ -18612,6 +18609,38 @@ function exportWorkforce(yr,mon){
   toast(`✅ Xuất xong`,'success');
 }
 
+function _renderCandSearchResults(){
+  const q = window._candSearch;
+  if(!q || !q.trim()) return '';
+  const all = DB.candidates||[];
+  const hits = all.filter(c => _matchName(c.name, q) || (c.phone||'').includes(q.trim()) || (c.email||'').toLowerCase().includes(q.trim().toLowerCase()));
+  const statusMap = (typeof CANDIDATE_STATUS!=='undefined') ? CANDIDATE_STATUS : {};
+  const rows = hits.slice(0,30).map(c => {
+    const job = (DB.jobs||[]).find(j=>j.id===c.jobId);
+    const st = statusMap[c.status]?.label || c.status || '—';
+    return `<tr style="cursor:pointer;border-bottom:1px solid rgba(255,255,255,.04)" onclick="editCandidate('${c.id}','${c.jobId}')">
+      <td style="padding:8px 10px"><b style="${c.blacklisted?'color:#e57373':''}">${c.blacklisted?'⛔ ':''}${escapeHtml(c.name||'—')}</b>${c.blacklisted?'<span style="font-size:10px;color:#e57373"> (danh sách đen)</span>':''}</td>
+      <td style="padding:8px 10px;font-size:12px">${escapeHtml(job?.title||'(vị trí đã xoá)')}</td>
+      <td style="padding:8px 10px;font-size:12px;color:var(--ink-dim)">${escapeHtml(c.phone||c.email||'—')}</td>
+      <td style="padding:8px 10px;font-size:12px">${escapeHtml(st)}</td>
+      <td style="padding:8px 10px;font-size:11.5px;color:var(--ink-muted)">${_plFmtDate(c.appliedDate)}</td>
+    </tr>`;
+  }).join('');
+  return `<div style="background:var(--bg-elev);border:1px solid var(--accent);border-radius:10px;padding:14px 16px;margin-bottom:16px">
+    <div style="font-weight:700;font-size:13px;margin-bottom:10px;color:var(--accent)">🔍 Kết quả tìm ứng viên "${escapeHtml(q)}" — ${hits.length} người${hits.length>30?' (hiện 30 đầu)':''}</div>
+    ${hits.length ? `<table style="width:100%;border-collapse:collapse;font-size:13px">
+      <thead><tr style="border-bottom:2px solid var(--border);text-align:left">
+        <th style="padding:6px 10px;font-size:10.5px;color:var(--ink-muted);text-transform:uppercase">Ứng viên</th>
+        <th style="padding:6px 10px;font-size:10.5px;color:var(--ink-muted);text-transform:uppercase">Vị trí ứng tuyển</th>
+        <th style="padding:6px 10px;font-size:10.5px;color:var(--ink-muted);text-transform:uppercase">Liên hệ</th>
+        <th style="padding:6px 10px;font-size:10.5px;color:var(--ink-muted);text-transform:uppercase">Trạng thái</th>
+        <th style="padding:6px 10px;font-size:10.5px;color:var(--ink-muted);text-transform:uppercase">Ngày nộp</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>` : `<div style="color:var(--ink-muted);font-size:13px;padding:12px 0;text-align:center">Không tìm thấy ứng viên nào tên "${escapeHtml(q)}"</div>`}
+  </div>`;
+}
+
 function renderRecruitment(main){
   if(!window.canDo('recruitment')){
     main.innerHTML='<div class="topbar"><div class="topbar-left"><h1 class="page-title">🔒 Không có quyền</h1><div class="page-sub">Bạn không được cấp quyền truy cập module Tuyển dụng</div></div></div>';
@@ -18691,7 +18720,15 @@ function renderRecruitment(main){
           <div class="card-title">📋 Danh sách <em>vị trí tuyển dụng</em></div>
           <div class="card-sub">${filtered.length} kết quả ${(f.status||f.priority||f.dept)?[_lang==="en"?"(filtered)":"(đã lọc)"]:''}</div>
         </div>
+        <div style="position:relative;min-width:240px">
+          <input id="candSearchInput" type="text" value="${escapeHtml(window._candSearch||'')}"
+            placeholder="🔍 Tìm ứng viên theo tên..."
+            oninput="window._candSearch=this.value;clearTimeout(window._candSearchT);window._candSearchT=setTimeout(()=>{render();const _i=document.getElementById('candSearchInput');if(_i){_i.focus();_i.setSelectionRange(_i.value.length,_i.value.length);}},200)"
+            style="width:100%;padding:8px 12px;border-radius:8px;border:1px solid var(--border);background:var(--bg-elev);color:var(--ink);font-size:13px">
+          ${window._candSearch?`<button onclick="window._candSearch='';render()" style="position:absolute;right:8px;top:50%;transform:translateY(-50%);background:none;border:none;color:var(--ink-muted);cursor:pointer;font-size:14px" title="Xoá">✕</button>`:''}
+        </div>
       </div>
+      ${_renderCandSearchResults()}
 
       <div class="status-chips" style="margin-bottom:14px">
         ${(()=>{
@@ -19711,6 +19748,7 @@ function editCandidate(id, jobId){
     </div>
     <div class="modal-actions">
       ${isNew?'':`<button class="btn btn-danger left" onclick="deleteCandidate('${a.id}', true)">${ICONS.trash} Xoá</button>`}
+      ${isNew?'':`<button class="btn left" onclick="toggleCandidateBlacklist('${a.id}')" style="border-color:${a.blacklisted?'#e57373':'var(--border)'};color:${a.blacklisted?'#e57373':'var(--ink-dim)'}" title="${a.blacklisted?'Bỏ khỏi danh sách đen':'Đưa vào danh sách đen — không tuyển lại'}">${a.blacklisted?'🚫 Bỏ danh sách đen':'⛔ Danh sách đen'}</button>`}
       <button class="btn" onclick="closeModal()">${t('btn_cancel')}</button>
       <button class="btn btn-primary" onclick="saveCandidate('${a.id}', '${a.jobId}', ${isNew})">${isNew?(_lang==="en"?"Add":"Thêm"):(_lang==="en"?"Save":"Lưu")}</button>
     </div>
@@ -19788,6 +19826,30 @@ function _caToggleOnboard(status){
       if(hiredInput && !hiredInput.value) hiredInput.value = new Date().toISOString().slice(0,10);
     }
   }
+}
+
+function toggleCandidateBlacklist(id){
+  const c = (DB.candidates||[]).find(x=>x.id===id);
+  if(!c) return;
+  if(!c.blacklisted){
+    const reason = prompt(`Đưa ứng viên "${c.name}" vào DANH SÁCH ĐEN (không tuyển lại)?\n\nNhập lý do (tuỳ chọn):`, c.blacklistReason||'');
+    if(reason === null) return; // huỷ
+    c.blacklisted = true;
+    c.blacklistReason = (reason||'').trim();
+    c.blacklistedAt = new Date().toISOString().slice(0,10);
+    toast(`⛔ Đã đưa "${c.name}" vào danh sách đen — sẽ bôi đỏ trong danh sách`, 'warning');
+  } else {
+    if(!confirm(`Bỏ "${c.name}" khỏi danh sách đen?`)) return;
+    c.blacklisted = false;
+    c.blacklistReason = '';
+    c.blacklistedAt = '';
+    toast(`✅ Đã bỏ "${c.name}" khỏi danh sách đen`, 'success');
+  }
+  _stampItem(DB.candidates, id);
+  window._selfSaveAt = Date.now();
+  saveData(['candidates']);
+  closeModal();
+  render();
 }
 
 function saveCandidate(id, jobId, isNew){
@@ -24759,7 +24821,10 @@ function saveBlacklistEntry(isNew){
     else DB.manualBlacklist.push(_sanitizeForFirebase(entry));
   }
 
-  _stampItem(DB.manualBlacklist, id);
+  // 🚨 FIX: blacklist item dùng khoá empId (không phải id) → stamp _savedAt trực tiếp theo empId
+  const _blItem = DB.manualBlacklist.find(x => (typeof x==='string'?x:x.empId) === empId);
+  if(_blItem && typeof _blItem === 'object') _blItem._savedAt = Date.now();
+  window._selfSaveAt = Date.now();
   saveData(['manualBlacklist']);
   if(window._pendingRender) delete window._pendingRender[currentPage];
   closeModal();
@@ -30415,18 +30480,18 @@ fbAuth.onAuthStateChanged(async user => {
             return await ref.get({ source: 'server' });
           };
 
+          // 🚨 v56: TẤT CẢ doc đọc THẲNG SERVER khi tải lại (không cache-first) để tận gốc bug
+          // "điền rồi F5 mất" — cache IndexedDB cũ không bao giờ đè được cloud mới. Offline mới fallback cache.
+          // Cả collection ~10 doc → tốn ~10 reads/lần mở (không đáng kể), đổi lấy KHÔNG BAO GIỜ revert.
+          const _serverFirst = async (ref) => {
+            try {
+              const snap = await ref.get({ source: 'server' });
+              if(snap) return snap;
+            } catch(_) { /* offline/mạng lỗi → fallback cache để vẫn dùng được */ }
+            return await _getCacheFirst(ref);
+          };
           const [snaps, _empResult] = await Promise.all([
-            Promise.all(docIds.map(id => {
-              // 🚨 v54 FIX REVERT-ON-REFRESH (GỐC): 'jobs' đọc THẲNG SERVER, KHÔNG cache-first.
-              // Bug: cache IndexedDB giữ bản CŨ (filled). F5 → _getCacheFirst trả cache cũ NGAY,
-              // không hỏi server → DB.jobs = filled cũ → REVERT dù cloud đã đúng 'open'.
-              // jobs là doc nhỏ (vài chục job) → đọc server chỉ tốn 1 read, đổi lấy hết revert.
-              const ref = window.fbDb.collection('hrdata').doc(id);
-              if(id === 'jobs'){
-                return ref.get({ source: 'server' }).catch(()=> _getCacheFirst(ref)); // server fail (offline) → fallback cache
-              }
-              return _getCacheFirst(ref);
-            })),
+            Promise.all(docIds.map(id => _serverFirst(window.fbDb.collection('hrdata').doc(id)))),
             loadEmpProfiles(localPhotos).then(r=>{ empLoaded=r; return r; })
           ]);
           let hasCloud = empLoaded;
@@ -30435,7 +30500,12 @@ fbAuth.onAuthStateChanged(async user => {
           // v17.3: LƯU localStorage snapshot TRƯỚC khi cloud override
           // Để sau đó merge lại item chỉ có trong localStorage (save fail nhưng local đã lưu)
           const _localBeforeCloud = {};
-          const _arrayKeys = ['jobs','contracts','departments','courses','trainees','manualBlacklist','resignations'];
+          // 🚨 v56: lưu TẤT CẢ key array từ FS_DOC_MAP (không chỉ 7 key) — để lớp merge theo _savedAt
+          // bảo vệ MỌI danh sách khỏi bị cache/server cũ đè, không sót module nào.
+          const _arrayKeys = [];
+          Object.values(FS_DOC_MAP).forEach(keys => keys.forEach(k => {
+            if(Array.isArray(DB[k]) && !_arrayKeys.includes(k)) _arrayKeys.push(k);
+          }));
           _arrayKeys.forEach(k => { if(Array.isArray(DB[k])) _localBeforeCloud[k] = DB[k].slice(); });
 
           snaps.forEach((snap,i)=>{
@@ -30492,7 +30562,14 @@ fbAuth.onAuthStateChanged(async user => {
           // 🚨 v20 FIX: Load TOÀN BỘ hrdata collection cho dynamic shards (leaves_, kpi_, cand_, ...)
           // Bug v19: biến hrdataSnap KHÔNG BAO GIỜ được gán → block này bị skip hoàn toàn
           // Data vẫn load qua real-time listener nhưng cold-load cleanup logic bị bỏ qua
-          const hrdataSnap = await _getCacheFirst(window.fbDb.collection('hrdata'));
+          // 🚨 v56: dynamic shards (leaves, kpi, promotions, rewards, discipline, casuals...) cũng đọc
+          // THẲNG SERVER — trước cache-first nên cũng dính bug "điền rồi F5 mất". Offline fallback cache.
+          let hrdataSnap;
+          try {
+            hrdataSnap = await window.fbDb.collection('hrdata').get({ source: 'server' });
+          } catch(_) {
+            hrdataSnap = await _getCacheFirst(window.fbDb.collection('hrdata'));
+          }
           const dynamicAccum = {
             leaves:[], kpiReviews:[], rewardRecords:[], casuals:[], candidates:[],
             promotions:[], disciplineRecords:[],
@@ -31266,8 +31343,12 @@ fbAuth.onAuthStateChanged(async user => {
                     };
                     // 🚨 v12: nếu vừa save trong 15s qua, ưu tiên LOCAL kể cả khi score bằng
                     const justSaved = window._selfSaveAt && (Date.now() - window._selfSaveAt) < 15000;
-                    const localMap = new Map((DB[key]||[]).map(item => [item.id, item]));
-                    const cloudMap = new Map(cloudData[key].map(item => [item.id, item]));
+                    // 🚨 FIX: manualBlacklist dùng khoá 'empId' (không có 'id') → merge phải theo đúng khoá,
+                    // nếu không mọi item có id=undefined bị coi là cùng 1 → merge sai → revert khi 2 máy sửa.
+                    const _keyField = (key === 'manualBlacklist') ? 'empId' : 'id';
+                    const _ik = (item) => item ? item[_keyField] : undefined;
+                    const localMap = new Map((DB[key]||[]).map(item => [_ik(item), item]));
+                    const cloudMap = new Map(cloudData[key].map(item => [_ik(item), item]));
                     // v17.2: tombstone set cho collection này (chống item đã xóa quay lại)
                     const _gTomb = _gTombGetSetFor(key);
                     const merged = [];
@@ -31275,7 +31356,7 @@ fbAuth.onAuthStateChanged(async user => {
                     const seenIds = new Set();
                     // Duyệt theo thứ tự cloud (để giữ order)
                     cloudData[key].forEach(cloudItem => {
-                      const id = cloudItem.id;
+                      const id = _ik(cloudItem);
                       seenIds.add(id);
                       // v17.2: item đã tombstone (user vừa xóa) → KHÔNG merge lại từ cloud
                       if(_gTomb.has(id)){
@@ -31326,9 +31407,9 @@ fbAuth.onAuthStateChanged(async user => {
                     // 🚨 v46: đếm RIÊNG localOnly — CHỈ loại này mới là "mất data thật" đáng rescue push
                     let localOnlyCount = 0;
                     (DB[key]||[]).forEach(localItem => {
-                      if(!seenIds.has(localItem.id)){
+                      if(!seenIds.has(_ik(localItem))){
                         // Bỏ qua item đã tombstone (đã xóa) — không phải "mất data"
-                        if(localItem.id && _gTomb.has(localItem.id)) return;
+                        if(_ik(localItem) && _gTomb.has(_ik(localItem))) return;
                         merged.push(localItem);
                         localOnlyCount++;
                       }
