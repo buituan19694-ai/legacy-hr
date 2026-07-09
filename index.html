@@ -31667,6 +31667,38 @@ fbAuth.onAuthStateChanged(async user => {
             let changed = false;
             snap.docChanges().forEach(change=>{
               const docId = change.doc.id;
+              // 🚨 FIX ĐỒNG BỘ XOÁ REALTIME: khi máy khác xoá item → doc _tombstones đổi → cập nhật
+              // tombstone local NGAY, để item đã xoá không bị hồi sinh (trước đây listener bỏ qua doc này).
+              if(docId === '_tombstones'){
+                try {
+                  const cloudTombs = (change.doc.data()||{}).tombs || {};
+                  const localTombs = _gTombRead();
+                  let tChanged = false;
+                  Object.keys(cloudTombs).forEach(k => {
+                    if(!localTombs[k] || cloudTombs[k] > localTombs[k]){ localTombs[k] = cloudTombs[k]; tChanged = true; }
+                  });
+                  if(tChanged){
+                    const _now3 = Date.now();
+                    Object.keys(localTombs).forEach(k => { if(!localTombs[k] || (_now3 - localTombs[k]) > _CTOMB_TTL_MS) delete localTombs[k]; });
+                    localStorage.setItem(_GTOMB_KEY, JSON.stringify(localTombs));
+                    // Áp tombstone mới vào data hiện tại: loại bỏ item đã bị máy khác xoá
+                    let _removedAny = false;
+                    Object.keys(cloudTombs).forEach(fullKey => {
+                      const _ci = fullKey.indexOf(':');
+                      if(_ci < 0) return;
+                      const _collKey = fullKey.slice(0, _ci), _itemId = fullKey.slice(_ci+1);
+                      if(Array.isArray(DB[_collKey])){
+                        const _kf3 = (_collKey === 'manualBlacklist') ? 'empId' : 'id';
+                        const _before = DB[_collKey].length;
+                        DB[_collKey] = DB[_collKey].filter(it => it && it[_kf3] !== _itemId);
+                        if(DB[_collKey].length < _before) _removedAny = true;
+                      }
+                    });
+                    if(_removedAny){ console.log('[tombstone] 🗑️ Máy khác vừa xoá item → đã gỡ khỏi máy này'); render(); }
+                  }
+                } catch(e){ console.warn('[tombstone] realtime sync fail:', e); }
+                return;
+              }
               const prefix = Object.keys(DYNAMIC_PREFIXES).find(p=>docId.startsWith(p));
               if(!prefix) return;
               const key = DYNAMIC_PREFIXES[prefix];
