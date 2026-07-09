@@ -6518,6 +6518,17 @@ function renderDashboard(main){
       </div>
     </div>
 
+    <!-- Độ tuổi theo cấp bậc -->
+    <div class="row" style="margin-bottom:16px">
+      <div class="card">
+        <div class="card-head"><div>
+          <div class="card-title">Độ tuổi theo <em>cấp bậc</em></div>
+          <div class="card-sub">Số NV mỗi cấp bậc chia theo nhóm tuổi (dưới 25 · 25–29 · 30–49 · 50+)</div>
+        </div></div>
+        <div class="chart-wrap tall"><canvas id="chartAgeLevel"></canvas></div>
+      </div>
+    </div>
+
     <!-- Combo charts -->
     ${(()=>{
       const combos = (DB.dashboardConfig||{}).combos||[];
@@ -7225,7 +7236,14 @@ function renderDashboardCharts(){
   });
 
   const levels = [1,2,3,4,5,6,7,8,9];
-  const levelData = levels.map(l => pool.filter(e=>String(e.level)===String(l)||(DB.customData[e.id]||{}).levelNum===String(l)).length);
+  const _empLvl = (e) => String(e.level)===''||e.level==null ? ((DB.customData[e.id]||{}).levelNum||'') : String(e.level);
+  const _lvlMatch = (e,l) => String(e.level)===String(l) || (DB.customData[e.id]||{}).levelNum===String(l);
+  const levelMale = levels.map(l => pool.filter(e=>_lvlMatch(e,l) && e.gender==='male').length);
+  const levelFemale = levels.map(l => pool.filter(e=>_lvlMatch(e,l) && e.gender==='female').length);
+  // Người chưa khai giới tính → chia đôi vào Nam/Nữ, lẻ dồn Nam (nhất quán với biểu đồ đào tạo)
+  const levelUnknown = levels.map(l => pool.filter(e=>_lvlMatch(e,l) && e.gender!=='male' && e.gender!=='female').length);
+  levels.forEach((l,i)=>{ const u=levelUnknown[i]; if(u>0){ const f=Math.floor(u/2); levelFemale[i]+=f; levelMale[i]+=(u-f); } });
+  const levelData = levels.map((_,i)=>levelMale[i]+levelFemale[i]);
   const totalWithLevel = levelData.reduce((a,b)=>a+b,0);
   const levelEl = $('#chartLevel');
   if(!totalWithLevel){
@@ -7247,19 +7265,26 @@ function renderDashboardCharts(){
       type:'bar',
       data:{
         labels: levels.map(String),
-        datasets:[{
-          label:(_lang==="en"?"Headcount":"Số NV"),
-          data:levelData,
-          backgroundColor: levelData.map(n=>n>0?'#d4a574':'rgba(212,165,116,.1)'),
-          borderRadius:4,
-          barThickness:20
-        }]
+        datasets:[
+          {
+            label:(_lang==="en"?"Male":"Nam"),
+            data:levelMale,
+            backgroundColor:'#7eb6e8',
+            borderRadius:4, barPercentage:0.9, categoryPercentage:0.8
+          },
+          {
+            label:(_lang==="en"?"Female":"Nữ"),
+            data:levelFemale,
+            backgroundColor:'#e897b4',
+            borderRadius:4, barPercentage:0.9, categoryPercentage:0.8
+          }
+        ]
       },
       options:{
         responsive:true, maintainAspectRatio:false,
-        plugins:{legend:{display:false}, tooltip:{callbacks:{label:ctx=>'Bậc '+ctx.label+': '+ctx.raw+' NV'}}},
+        plugins:{legend:{display:true, position:'top', labels:{usePointStyle:true, padding:10, boxWidth:8}}, tooltip:{callbacks:{label:ctx=>ctx.dataset.label+' — Bậc '+ctx.label+': '+ctx.raw+' NV'}}},
         scales:{
-          x:{grid:{display:false}, ticks:{color:'#8b949e'}},
+          x:{grid:{display:false}, ticks:{color:'#8b949e'}, title:{display:true, text:(_lang==="en"?"Level (1=highest)":"Cấp bậc (1=cao nhất)"), color:'#8b949e', font:{size:10}}},
           y:{grid:{color:'#1f2630'}, beginAtZero:true, ticks:{stepSize:1, color:'#8b949e'}}
         }
       }
@@ -7306,27 +7331,92 @@ function renderDashboardCharts(){
   const tenureEl = $('#chartTenure');
   if(tenureEl){
     if(Chart.getChart(tenureEl)) Chart.getChart(tenureEl).destroy();
-    const tenureBuckets = {[_lang==="en"?"<1 year":"<1 năm"]:0,[_lang==="en"?"1-2 years":"1-2 năm"]:0,[_lang==="en"?"3-5 years":"3-5 năm"]:0,[_lang==="en"?"6-10 years":"6-10 năm"]:0,[_lang==="en"?">10 years":">10 năm"]:0};
+    // 6 nhóm: <6 tháng · 6 tháng–2 năm · 2–5 năm · 5–10 năm · 10–20 năm · >20 năm
+    const _tLabels = _lang==="en"
+      ? ['<6 months','6mo–2yr','2–5 yrs','5–10 yrs','10–20 yrs','>20 yrs']
+      : ['Dưới 6 tháng','6 tháng–2 năm','2–5 năm','5–10 năm','10–20 năm','Trên 20 năm'];
+    const tenureData = [0,0,0,0,0,0];
     pool.filter(e=>e.joined).forEach(e=>{
-      const _jd2=_parseAnyDate(e.joined); const yrs = _jd2?(new Date()-_jd2)/(365.25*24*3600*1000):0;
-      if(yrs<1) tenureBuckets[(_lang==="en"?"<1 year":"<1 năm")]++;
-      else if(yrs<=2) tenureBuckets[(_lang==="en"?"1-2 years":"1-2 năm")]++;
-      else if(yrs<=5) tenureBuckets[(_lang==="en"?"3-5 years":"3-5 năm")]++;
-      else if(yrs<=10) tenureBuckets[(_lang==="en"?"6-10 years":"6-10 năm")]++;
-      else tenureBuckets[(_lang==="en"?">10 years":">10 năm")]++;
+      const _jd2=_parseAnyDate(e.joined);
+      if(!_jd2) return;
+      const months = (new Date()-_jd2)/(365.25/12*24*3600*1000); // số tháng thâm niên
+      const yrs = months/12;
+      if(months < 6) tenureData[0]++;
+      else if(yrs < 2) tenureData[1]++;      // 6 tháng đến dưới 2 năm
+      else if(yrs < 5) tenureData[2]++;      // 2 đến dưới 5 năm
+      else if(yrs < 10) tenureData[3]++;     // 5 đến dưới 10 năm
+      else if(yrs < 20) tenureData[4]++;     // 10 đến dưới 20 năm
+      else tenureData[5]++;                  // 20 năm trở lên
     });
-    if(Chart.getChart(tenureEl)) Chart.getChart(tenureEl).destroy();
     new Chart(tenureEl, {
       type:'bar',
       data:{
-        labels:Object.keys(tenureBuckets),
-        datasets:[{label:(_lang==="en"?"Headcount":"Số NV"), data:Object.values(tenureBuckets), backgroundColor:'#7ec699', borderRadius:4, barThickness:20}]
+        labels:_tLabels,
+        datasets:[{label:(_lang==="en"?"Headcount":"Số NV"), data:tenureData, backgroundColor:'#7ec699', borderRadius:4, barThickness:26}]
       },
       options:{responsive:true, maintainAspectRatio:false,
-        plugins:{legend:{display:false}},
-        scales:{x:{grid:{display:false}}, y:{grid:{color:'#1f2630'}, beginAtZero:true, ticks:{stepSize:1}}}
+        plugins:{legend:{display:false}, tooltip:{callbacks:{label:ctx=>ctx.label+': '+ctx.raw+' NV'}}},
+        scales:{x:{grid:{display:false}, ticks:{color:'#8b949e', font:{size:10}}}, y:{grid:{color:'#1f2630'}, beginAtZero:true, ticks:{stepSize:1, color:'#8b949e'}}}
       }
     });
+  }
+
+  // Độ tuổi theo cấp bậc: mỗi cấp (1-9) chia 4 nhóm tuổi (<25, 25-29, 30-49, 50+)
+  const ageLvlEl = $('#chartAgeLevel');
+  if(ageLvlEl){
+    if(Chart.getChart(ageLvlEl)) Chart.getChart(ageLvlEl).destroy();
+    const _lvls = [1,2,3,4,5,6,7,8,9];
+    const _lvlMatchAL = (e,l) => String(e.level)===String(l) || (DB.customData[e.id]||{}).levelNum===String(l);
+    // 4 nhóm tuổi
+    const g_u25 = [], g_2529 = [], g_3049 = [], g_50 = [];
+    const _today3 = new Date();
+    _lvls.forEach(l => {
+      let u25=0, a2529=0, a3049=0, a50=0;
+      pool.filter(e=>e.dob && _lvlMatchAL(e,l)).forEach(e=>{
+        const age = Math.floor((_today3-_parseDob(e.dob))/(365.25*24*3600*1000));
+        if(age < 25) u25++;
+        else if(age <= 29) a2529++;      // 25 đến 29
+        else if(age <= 49) a3049++;      // 30 đến 49
+        else a50++;                       // 50 trở lên
+      });
+      g_u25.push(u25); g_2529.push(a2529); g_3049.push(a3049); g_50.push(a50);
+    });
+    const _hasAny = [...g_u25,...g_2529,...g_3049,...g_50].some(n=>n>0);
+    if(!_hasAny){
+      ageLvlEl.style.display='none';
+      const p = ageLvlEl.parentNode;
+      if(!p.querySelector('.no-agelvl-msg')){
+        const m=document.createElement('div');
+        m.className='no-agelvl-msg';
+        m.style.cssText='display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;color:var(--ink-muted);font-size:13px;gap:6px;padding:20px';
+        m.innerHTML='<div style="font-size:28px">📊</div><div>Chưa có dữ liệu cấp bậc + ngày sinh</div><div style="font-size:11px">NV cần có cả Cấp bậc và Ngày sinh để hiển thị</div>';
+        p.appendChild(m);
+      }
+    } else {
+      ageLvlEl.style.display='';
+      const _m = ageLvlEl.parentNode.querySelector('.no-agelvl-msg'); if(_m) _m.remove();
+      new Chart(ageLvlEl, {
+        type:'bar',
+        data:{
+          labels:_lvls.map(l=>'Bậc '+l),
+          datasets:[
+            {label:(_lang==="en"?"<25":"Dưới 25"),   data:g_u25,  backgroundColor:'#7eb6e8', borderRadius:3},
+            {label:'25–29',                            data:g_2529, backgroundColor:'#7ec699', borderRadius:3},
+            {label:'30–49',                            data:g_3049, backgroundColor:'#e8b974', borderRadius:3},
+            {label:(_lang==="en"?"50+":"Từ 50"),      data:g_50,   backgroundColor:'#e57373', borderRadius:3},
+          ]
+        },
+        options:{
+          responsive:true, maintainAspectRatio:false,
+          interaction:{mode:'index', intersect:false},
+          plugins:{legend:{position:'top', labels:{usePointStyle:true, padding:12, boxWidth:8}}, tooltip:{callbacks:{label:ctx=>ctx.dataset.label+' — '+ctx.label+': '+ctx.raw+' NV'}}},
+          scales:{
+            x:{grid:{display:false}, ticks:{color:'#8b949e'}, title:{display:true, text:(_lang==="en"?"Level (1=highest)":"Cấp bậc (1=cao nhất)"), color:'#8b949e', font:{size:10}}},
+            y:{grid:{color:'#1f2630'}, beginAtZero:true, ticks:{stepSize:1, color:'#8b949e'}}
+          }
+        }
+      });
+    }
   }
 
   const salaryDeptEl = $('#chartSalaryDept');
@@ -20775,10 +20865,16 @@ function renderTraining(main){
         else unknown++;
       });
     } else {
-      // Khoá chỉ ghi SỐ LƯỢNG (không chọn người) → chia đôi Nam/Nữ, số lẻ dồn cho Nam.
-      const total = parseInt(c.attendees) || 0;
-      female = Math.floor(total / 2);
-      male = total - female; // phần dư (số lẻ) về Nam
+      // Khoá chỉ ghi SỐ LƯỢNG (không chọn người)
+      unknown = parseInt(c.attendees) || 0;
+    }
+    // Phần chưa rõ giới tính (khoá chỉ có số, HOẶC người được chọn chưa khai GT)
+    // → chia đôi Nam/Nữ, số lẻ dồn cho Nam. KHÔNG để lại cột "Chưa rõ".
+    if(unknown > 0){
+      const fAdd = Math.floor(unknown / 2);
+      female += fAdd;
+      male += (unknown - fAdd); // phần dư (lẻ) về Nam
+      unknown = 0;
     }
     return {male, female, unknown};
   };
