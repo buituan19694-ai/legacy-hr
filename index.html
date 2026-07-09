@@ -6512,7 +6512,7 @@ function renderDashboard(main){
       <div class="card">
         <div class="card-head"><div>
           <div class="card-title">Tuyển dụng theo <em>tháng</em></div>
-          <div class="card-sub">CBNV onboard mỗi tháng chia theo nhóm tuổi · Năm ${_dashYear||new Date().getFullYear()}</div>
+          <div class="card-sub">CBNV onboard mỗi tháng chia theo nhóm tuổi · Năm ${new Date().getFullYear()}</div>
         </div></div>
         <div class="chart-wrap tall"><canvas id="chartHireAge"></canvas></div>
       </div>
@@ -7412,7 +7412,7 @@ function renderDashboardCharts(){
   const hireAgeEl = $('#chartHireAge');
   if(hireAgeEl){
     if(Chart.getChart(hireAgeEl)) Chart.getChart(hireAgeEl).destroy();
-    const _yr = _dashYear || new Date().getFullYear();
+    const _yr = (window._dashPeriod && window._dashPeriod.year) || new Date().getFullYear();
     const _today4 = new Date();
     const ha_u25=[],ha_2529=[],ha_3049=[],ha_50=[];
     for(let m=1;m<=12;m++){
