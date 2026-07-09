@@ -1864,6 +1864,18 @@ if(!Array.isArray(DB.salaryStructure.probations)) DB.salaryStructure.probations 
 window._dirtyKeys = new Set();
 DB = new Proxy(DB, {
   set(target, key, value){
+    // 🔍 BẪY-COURSES: bắt mọi lần ghi đè DB.courses để chẩn đoán lệch số liệu giữa các máy
+    if(key === 'courses' && Array.isArray(value)){
+      try {
+        const _n = value.length;
+        const _att = value.reduce((s,c)=>s+(parseInt(c.attendees)||0),0);
+        const _hrs = value.reduce((s,c)=>s+(parseInt(c.hours)||0),0);
+        const _oldN = Array.isArray(target.courses) ? target.courses.length : 0;
+        const _caller = (new Error().stack||'').split('\n').slice(2,5).map(s=>s.trim().replace(/^at /,'')).join(' ← ');
+        console.log(`%c[BẪY-COURSES] ghi ${_oldN}→${_n} khoá | ∑lượt=${_att} ∑giờ=${_hrs}h`, 'color:#0288d1;font-weight:700;font-size:13px');
+        console.log(`   ↳ từ: ${_caller}`);
+      } catch(_){}
+    }
     target[key] = value;
     if(typeof key === 'string' && !key.startsWith('_')) window._dirtyKeys.add(key);
     return true;
