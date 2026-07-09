@@ -20017,7 +20017,47 @@ function _gTombWrite(obj){
     const now = Date.now();
     Object.keys(obj).forEach(k => { if(!obj[k] || (now - obj[k]) > _CTOMB_TTL_MS) delete obj[k]; });
     localStorage.setItem(_GTOMB_KEY, JSON.stringify(obj));
+    // 🚨 FIX ĐỒNG BỘ XOÁ: đẩy tombstone LÊN CLOUD để mọi máy biết item nào đã xoá.
+    // Trước đây tombstone chỉ ở localStorage máy xoá → máy khác không biết → hồi sinh item đã xoá.
+    _gTombPushCloud(obj);
   } catch(_){}
+}
+// Đẩy tombstone lên cloud (debounce để gộp nhiều lần xoá liên tiếp)
+function _gTombPushCloud(obj){
+  try {
+    if(!window.fbDb || !window._coldLoadDone) return;
+    clearTimeout(window._gTombPushTimer);
+    window._gTombPushTimer = setTimeout(()=>{
+      try {
+        window.fbDb.collection('hrdata').doc('_tombstones')
+          .set({ tombs: obj, _updatedAt: Date.now() }, { merge: true })
+          .catch(e=>console.warn('[tombstone] push cloud fail:', e && e.code));
+      } catch(_){}
+    }, 1500);
+  } catch(_){}
+}
+// Đọc tombstone từ cloud + gộp vào localStorage (gọi khi cold-load)
+async function _gTombPullCloud(){
+  try {
+    if(!window.fbDb) return;
+    let snap;
+    try { snap = await window.fbDb.collection('hrdata').doc('_tombstones').get({ source:'server' }); }
+    catch(_){ snap = await window.fbDb.collection('hrdata').doc('_tombstones').get({ source:'cache' }).catch(()=>null); }
+    if(!snap || !snap.exists) return;
+    const cloudTombs = (snap.data()||{}).tombs || {};
+    const localTombs = _gTombRead();
+    // Gộp: giữ timestamp mới nhất giữa local và cloud cho mỗi key
+    let changed = false;
+    Object.keys(cloudTombs).forEach(k => {
+      if(!localTombs[k] || cloudTombs[k] > localTombs[k]){ localTombs[k] = cloudTombs[k]; changed = true; }
+    });
+    if(changed){
+      const now = Date.now();
+      Object.keys(localTombs).forEach(k => { if(!localTombs[k] || (now - localTombs[k]) > _CTOMB_TTL_MS) delete localTombs[k]; });
+      localStorage.setItem(_GTOMB_KEY, JSON.stringify(localTombs));
+      console.log('[tombstone] ✅ Đã đồng bộ tombstone từ cloud:', Object.keys(cloudTombs).length, 'mục');
+    }
+  } catch(e){ console.warn('[tombstone] pull cloud fail:', e); }
 }
 // Đánh dấu item đã xóa: key = "collectionKey:itemId"
 function _gTombAdd(collKey, id){
@@ -30503,26 +30543,9 @@ fbAuth.onAuthStateChanged(async user => {
           const _serverFirst = async (ref) => {
             try {
               const snap = await ref.get({ source: 'server' });
-              if(snap){
-                // 🔍 BẪY-SYNC: xác nhận đọc từ SERVER thành công
-                try {
-                  const _d = snap.data ? snap.data() : null;
-                  const _nc = (_d && Array.isArray(_d.courses)) ? _d.courses.length : '';
-                  console.log(`%c[BẪY-SYNC] ${ref.id}: đọc từ SERVER ✅${_nc!==''?' | courses='+_nc:''}`, 'color:#2e7d32;font-weight:700');
-                } catch(_){}
-                return snap;
-              }
-            } catch(e) {
-              // 🔍 BẪY-SYNC: đọc SERVER LỖI → fallback cache (đây là nguồn gây lệch số liệu!)
-              console.log(`%c[BẪY-SYNC] ${ref.id}: SERVER LỖI ❌ → dùng CACHE cũ | ${e && e.code||e}`, 'color:#c62828;font-weight:700;font-size:13px');
-            }
-            const _cs = await _getCacheFirst(ref);
-            try {
-              const _d2 = _cs && _cs.data ? _cs.data() : null;
-              const _nc2 = (_d2 && Array.isArray(_d2.courses)) ? _d2.courses.length : '';
-              console.log(`%c[BẪY-SYNC] ${ref.id}: đã lấy từ CACHE${_nc2!==''?' | courses='+_nc2:''}`, 'color:#f57c00;font-weight:700');
-            } catch(_){}
-            return _cs;
+              if(snap) return snap;
+            } catch(_) { /* offline/mạng lỗi → fallback cache để vẫn dùng được */ }
+            return await _getCacheFirst(ref);
           };
           const [snaps, _empResult] = await Promise.all([
             Promise.all(docIds.map(id => _serverFirst(window.fbDb.collection('hrdata').doc(id)))),
@@ -30575,6 +30598,10 @@ fbAuth.onAuthStateChanged(async user => {
               }
             });
           });
+
+          // 🚨 FIX ĐỒNG BỘ XOÁ: đọc tombstone từ cloud TRƯỚC khi khôi phục localOnly.
+          // Nếu không, máy này sẽ hồi sinh item mà máy khác đã xoá (vì không biết nó đã bị xoá).
+          await _gTombPullCloud();
 
           // v17.3: MERGE lại item chỉ có trong localStorage (cloud thiếu = save fail lúc trước)
           // Chống mất data kiểu Lương Huy Hoàng: nhập xong, save fail QUIC, cloud không có
