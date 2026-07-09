@@ -30614,6 +30614,14 @@ fbAuth.onAuthStateChanged(async user => {
             const cloudArr = Array.isArray(DB[key]) ? DB[key] : [];
             const cloudIds = new Set(cloudArr.map(it => _k2(it)).filter(Boolean));
             const _tomb = _gTombGetSetFor(key);
+            // 🔍 BẪY-COLDLOAD: cho jobs/courses, log số item đọc từ cloud + tombstone
+            if(key === 'jobs' || key === 'courses'){
+              try {
+                console.log(`%c[BẪY-COLDLOAD] ${key}: cloud=${cloudArr.length} item | local=${localArr.length} | tombstone=${_tomb.size} dấu`, 'color:#6a1b9a;font-weight:700;font-size:13px');
+                const _cloudNames = cloudArr.map(x=>x.title||x.name||_k2(x)).join(', ');
+                console.log(`   ↳ cloud có: ${_cloudNames}`);
+              } catch(_){}
+            }
             // Item có trong localStorage nhưng KHÔNG có trên cloud VÀ chưa bị tombstone
             const localOnly = localArr.filter(it => it && _k2(it) && !cloudIds.has(_k2(it)) && !_tomb.has(_k2(it)));
             if(localOnly.length > 0){
