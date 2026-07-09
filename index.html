@@ -20761,13 +20761,38 @@ function renderTraining(main){
   const totalDeptHours = deptTrainingStats.reduce((s,d)=>s+d.hours, 0);
 
   const trendYear = p.year;
+  // Helper: đếm lượt tham gia theo giới tính cho 1 khoá (dựa attendeeIds → gender của NV)
+  const _empGender = {};
+  (DB.employees||[]).forEach(e => { _empGender[e.id] = e.gender; });
+  const _courseGenderCount = (c) => {
+    let male = 0, female = 0, unknown = 0;
+    if(c.attendeeIds && c.attendeeIds.length){
+      // Có danh sách người → tra giới tính thật từng người
+      c.attendeeIds.forEach(eid => {
+        const g = _empGender[eid];
+        if(g === 'male') male++;
+        else if(g === 'female') female++;
+        else unknown++;
+      });
+    } else {
+      // Khoá chỉ ghi SỐ LƯỢNG (không chọn người) → chia đôi Nam/Nữ, số lẻ dồn cho Nam.
+      const total = parseInt(c.attendees) || 0;
+      female = Math.floor(total / 2);
+      male = total - female; // phần dư (số lẻ) về Nam
+    }
+    return {male, female, unknown};
+  };
+
   const monthlyTrend = [];
   for(let m = 1; m <= 12; m++){
     const inMonth = DB.courses.filter(c => courseInPeriod(c, 'month', m, trendYear));
+    let maleAtt = 0, femaleAtt = 0, unknownAtt = 0;
+    inMonth.forEach(c => { const g = _courseGenderCount(c); maleAtt += g.male; femaleAtt += g.female; unknownAtt += g.unknown; });
     monthlyTrend.push({
       month: m,
       courses: inMonth.length,
       attendees: inMonth.reduce((s,c)=>s+(c.attendees||0),0),
+      maleAtt, femaleAtt, unknownAtt,
       hours: inMonth.reduce((s,c)=>s+(c.hours||0),0),
       cost: inMonth.reduce((s,c)=>s+(c.cost||0),0),
     });
@@ -20925,7 +20950,7 @@ function renderTraining(main){
       <div class="card-head">
         <div>
           <div class="card-title">📈 Xu hướng <em>đào tạo 12 tháng</em></div>
-          <div class="card-sub">Năm ${trendYear} · ${monthlyTrend.reduce((s,m)=>s+m.courses,0)} lượt khoá tổng cộng (1 khoá đếm nhiều tháng nếu kéo dài)</div>
+          <div class="card-sub">Năm ${trendYear} · Lượt tham gia tách theo giới tính (Nam · Nữ) · ${monthlyTrend.reduce((s,m)=>s+m.maleAtt+m.femaleAtt+m.unknownAtt,0)} lượt tổng</div>
         </div>
         ${renderChartTypeSelector('trend', [
           {v:'bar',     label:(_lang==="en"?"📊 Grouped bar":"📊 Cột nhóm")},
@@ -21097,38 +21122,23 @@ function renderTraining(main){
       type: isLine ? 'line' : 'bar',
       data: {
         labels: monthlyTrend.map(m => 'T'+m.month),
-        datasets: [
-          {
-            label: (_lang==="en"?"Sessions":"Số khoá"),
-            data: monthlyTrend.map(m => m.courses),
-            backgroundColor: isLine ? 'rgba(212,165,116,0.15)' : '#d4a574',
-            borderColor: '#d4a574',
-            borderWidth: isLine ? 2.5 : 1,
-            borderRadius: 4,
-            fill: isLine,
-            pointRadius: isLine ? 4 : 0,
-            pointBackgroundColor: '#d4a574',
-            pointBorderColor: '#1a2028',
-            pointBorderWidth: 2,
-            tension: 0.3,
-            yAxisID: isStacked ? undefined : 'y',
-          },
-          {
-            label: (_lang==="en"?"Participants":"Lượt tham gia"),
-            data: monthlyTrend.map(m => m.attendees),
-            backgroundColor: isLine ? 'rgba(126,182,232,0.15)' : '#7eb6e8',
-            borderColor: '#7eb6e8',
-            borderWidth: isLine ? 2.5 : 1,
-            borderRadius: 4,
-            fill: isLine,
-            pointRadius: isLine ? 4 : 0,
-            pointBackgroundColor: '#7eb6e8',
-            pointBorderColor: '#1a2028',
-            pointBorderWidth: 2,
-            tension: 0.3,
-            yAxisID: isStacked ? undefined : 'y1',
-          }
-        ]
+        datasets: (function(){
+          const hasUnknown = monthlyTrend.some(m => m.unknownAtt > 0);
+          const _mk = (label, key, solid, soft) => ({
+            label, data: monthlyTrend.map(m => m[key]),
+            backgroundColor: isLine ? soft : solid, borderColor: solid,
+            borderWidth: isLine ? 2.5 : 1, borderRadius: 4, fill: isLine,
+            pointRadius: isLine ? 4 : 0, pointBackgroundColor: solid,
+            pointBorderColor: '#1a2028', pointBorderWidth: 2, tension: 0.3,
+            yAxisID: 'y',
+          });
+          const ds = [
+            _mk((_lang==="en"?"Male":"Nam"), 'maleAtt', '#7eb6e8', 'rgba(126,182,232,0.15)'),
+            _mk((_lang==="en"?"Female":"Nữ"), 'femaleAtt', '#e897b4', 'rgba(232,151,180,0.15)'),
+          ];
+          if(hasUnknown) ds.push(_mk((_lang==="en"?"Unspecified":"Chưa rõ GT"), 'unknownAtt', '#9e9e9e', 'rgba(158,158,158,0.15)'));
+          return ds;
+        })()
       },
       options: {
         responsive: true, maintainAspectRatio: false,
@@ -21138,8 +21148,7 @@ function renderTraining(main){
           x: {stacked: true, grid: {color: 'rgba(255,255,255,0.03)'}},
           y: {stacked: true, beginAtZero: true, ticks: {color: '#8b949e'}, grid: {color: 'rgba(255,255,255,0.04)'}},
         } : {
-          y: {position: 'left', beginAtZero: true, ticks: {color: '#d4a574'}, grid: {color: 'rgba(255,255,255,0.04)'}},
-          y1: {position: 'right', beginAtZero: true, ticks: {color: '#7eb6e8'}, grid: {drawOnChartArea: false}},
+          y: {position: 'left', beginAtZero: true, ticks: {color: '#8b949e'}, grid: {color: 'rgba(255,255,255,0.04)'}, title: {display: true, text: (_lang==="en"?"Attendees":"Lượt tham gia"), color: '#8b949e'}},
           x: {grid: {color: 'rgba(255,255,255,0.03)'}}
         }
       }
