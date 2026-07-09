@@ -30614,14 +30614,6 @@ fbAuth.onAuthStateChanged(async user => {
             const cloudArr = Array.isArray(DB[key]) ? DB[key] : [];
             const cloudIds = new Set(cloudArr.map(it => _k2(it)).filter(Boolean));
             const _tomb = _gTombGetSetFor(key);
-            // 🔍 BẪY-COLDLOAD: cho jobs/courses, log số item đọc từ cloud + tombstone
-            if(key === 'jobs' || key === 'courses'){
-              try {
-                console.log(`%c[BẪY-COLDLOAD] ${key}: cloud=${cloudArr.length} item | local=${localArr.length} | tombstone=${_tomb.size} dấu`, 'color:#6a1b9a;font-weight:700;font-size:13px');
-                const _cloudNames = cloudArr.map(x=>x.title||x.name||_k2(x)).join(', ');
-                console.log(`   ↳ cloud có: ${_cloudNames}`);
-              } catch(_){}
-            }
             // Item có trong localStorage nhưng KHÔNG có trên cloud VÀ chưa bị tombstone
             const localOnly = localArr.filter(it => it && _k2(it) && !cloudIds.has(_k2(it)) && !_tomb.has(_k2(it)));
             if(localOnly.length > 0){
@@ -31281,8 +31273,12 @@ fbAuth.onAuthStateChanged(async user => {
                       const mergedLevels = _mergeArrById(DB[key].levels||[], cloudData[key].levels||[], _lvlTomb, true);
                       const mergedProbs  = _mergeArrById(DB[key].probations||[], cloudData[key].probations||[], _probTomb, false);
                       DB[key] = {...cloudData[key], levels: mergedLevels, probations: mergedProbs};
-                      // 🚨 v47: chỉ resave khi local THẬT SỰ nhiều level hơn cloud + guard 60s chống ping-pong
-                      const _localOnlyLvl = (DB[key].levels||[]).length > (cloudData[key].levels||[]).length;
+                      // 🚨 FIX: KHÔNG rescue push nếu "local thừa" chỉ vì local chưa xoá tombstone items.
+                      // Trước đây: local nhiều level hơn cloud → rescue push toàn bộ → hồi sinh levels đã xoá.
+                      // Giờ: lọc tombstone trước khi so sánh. Chỉ rescue khi local thừa items CHƯA bị tombstone.
+                      const _cleanLocalLvl = mergedLevels.filter(l => l && l.id && !_lvlTomb.has(l.id));
+                      const _cleanCloudLvl = (cloudData[key].levels||[]).filter(l => l && l.id && !_lvlTomb.has(l.id));
+                      const _localOnlyLvl = _cleanLocalLvl.length > _cleanCloudLvl.length;
                       if(_localOnlyLvl){
                         const _lastR = window._salStructResaveAt || 0;
                         if(Date.now() - _lastR > 60000){
@@ -31299,10 +31295,18 @@ fbAuth.onAuthStateChanged(async user => {
                     const cloudLevelsCount = (cloudData[key].levels||[]).length;
                     const localLevelsCount = (DB[key].levels||[]).length;
 
-                    // 🚨 CRITICAL SAFETY: nếu cloud RỖNG bất thường nhưng local CÓ data → KHÔNG merge
-                    // Cloud có thể đã bị wipe do save fail silent → giữ local + tự động push back
+                    // 🚨 CRITICAL SAFETY: nếu cloud RỖNG bất thường nhưng local CÓ data → kiểm tombstone
+                    // Nếu local levels ĐỀU đã bị tombstone (máy khác xoá hết) → KHÔNG rescue, theo cloud.
+                    // Chỉ rescue khi local có levels CHƯA tombstone thật sự (cloud wipe do save fail).
                     if(cloudLevelsCount === 0 && localLevelsCount > 0){
-                      console.warn(`[Listener] ⚠️ Cloud ${key} EMPTY nhưng local có ${localLevelsCount} levels — SKIP merge, PROTECT local + rescue push`);
+                      const _lvlTomb2 = (typeof _gTombGetSetFor==='function') ? _gTombGetSetFor('salLevels') : new Set();
+                      const _nonTombLocal = (DB[key].levels||[]).filter(l => l && l.id && !_lvlTomb2.has(l.id));
+                      if(_nonTombLocal.length === 0){
+                        // Tất cả levels local đều đã tombstone → cloud empty là đúng (đã xoá hết), KHÔNG rescue
+                        DB[key] = cloudData[key];
+                        return;
+                      }
+                      console.warn(`[Listener] ⚠️ Cloud ${key} EMPTY nhưng local có ${_nonTombLocal.length} levels chưa tombstone — rescue push`);
                       clearTimeout(window._salStructRescueTimer);
                       window._salStructRescueTimer = setTimeout(()=>{
                         try {
