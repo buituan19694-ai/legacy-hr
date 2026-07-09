@@ -30554,9 +30554,26 @@ fbAuth.onAuthStateChanged(async user => {
           const _serverFirst = async (ref) => {
             try {
               const snap = await ref.get({ source: 'server' });
-              if(snap) return snap;
-            } catch(_) { /* offline/mạng lỗi → fallback cache để vẫn dùng được */ }
-            return await _getCacheFirst(ref);
+              if(snap){
+                // 🔍 BẪY-SYNC: xác nhận đọc từ SERVER thành công
+                try {
+                  const _d = snap.data ? snap.data() : null;
+                  const _nc = (_d && Array.isArray(_d.courses)) ? _d.courses.length : '';
+                  console.log(`%c[BẪY-SYNC] ${ref.id}: đọc từ SERVER ✅${_nc!==''?' | courses='+_nc:''}`, 'color:#2e7d32;font-weight:700');
+                } catch(_){}
+                return snap;
+              }
+            } catch(e) {
+              // 🔍 BẪY-SYNC: đọc SERVER LỖI → fallback cache (đây là nguồn gây lệch số liệu!)
+              console.log(`%c[BẪY-SYNC] ${ref.id}: SERVER LỖI ❌ → dùng CACHE cũ | ${e && e.code||e}`, 'color:#c62828;font-weight:700;font-size:13px');
+            }
+            const _cs = await _getCacheFirst(ref);
+            try {
+              const _d2 = _cs && _cs.data ? _cs.data() : null;
+              const _nc2 = (_d2 && Array.isArray(_d2.courses)) ? _d2.courses.length : '';
+              console.log(`%c[BẪY-SYNC] ${ref.id}: đã lấy từ CACHE${_nc2!==''?' | courses='+_nc2:''}`, 'color:#f57c00;font-weight:700');
+            } catch(_){}
+            return _cs;
           };
           const [snaps, _empResult] = await Promise.all([
             Promise.all(docIds.map(id => _serverFirst(window.fbDb.collection('hrdata').doc(id)))),
@@ -30621,21 +30638,10 @@ fbAuth.onAuthStateChanged(async user => {
             const cloudArr = Array.isArray(DB[key]) ? DB[key] : [];
             const cloudIds = new Set(cloudArr.map(it => _k2(it)).filter(Boolean));
             const _tomb = _gTombGetSetFor(key);
-            // 🚨 FIX PHÂN KỲ: chỉ khôi phục item local mà cloud thiếu NẾU item đó VỪA được lưu gần đây
-            // (save fail thật). Item CŨ mà cloud không có = đã bị máy khác XOÁ hợp lệ → KHÔNG hồi sinh.
-            // Trước đây hồi sinh mọi item local-only → mỗi máy tự thêm lại data cũ đã xoá → 4 máy 3 số liệu khác nhau.
-            const _RECENT_MS = 10 * 60 * 1000; // 10 phút: đủ để bắt save-fail thật, đủ ngắn để không hồi sinh data cũ
-            const _now2 = Date.now();
-            const localOnly = localArr.filter(it => {
-              if(!it || !_k2(it)) return false;
-              if(cloudIds.has(_k2(it))) return false;   // cloud đã có → không cần khôi phục
-              if(_tomb.has(_k2(it))) return false;       // đã tombstone (xoá) → bỏ
-              const sa = it._savedAt || 0;
-              // chỉ khôi phục nếu item được lưu trong 10 phút gần đây (nghi save fail), KHÔNG phải data cũ
-              return sa > 0 && (_now2 - sa) < _RECENT_MS;
-            });
+            // Item có trong localStorage nhưng KHÔNG có trên cloud VÀ chưa bị tombstone
+            const localOnly = localArr.filter(it => it && _k2(it) && !cloudIds.has(_k2(it)) && !_tomb.has(_k2(it)));
             if(localOnly.length > 0){
-              console.warn(`[cold-load] 🛟 Khôi phục ${localOnly.length} item "${key}" vừa lưu gần đây mà cloud thiếu (nghi save fail):`, localOnly.map(x=>x.name||x.title||_k2(x)).join(', '));
+              console.warn(`[cold-load] 🛟 Khôi phục ${localOnly.length} item "${key}" chỉ có trong localStorage (cloud thiếu — có thể save fail trước đó):`, localOnly.map(x=>x.name||x.title||_k2(x)).join(', '));
               DB[key] = [...cloudArr, ...localOnly];
               if(!window._recoverResaveKeys) window._recoverResaveKeys = new Set();
               window._recoverResaveKeys.add(key);
@@ -31487,26 +31493,17 @@ fbAuth.onAuthStateChanged(async user => {
                     });
                     // Thêm items chỉ có trong local (không có trên cloud) — có thể chưa save kịp
                     // 🚨 v46: đếm RIÊNG localOnly — CHỈ loại này mới là "mất data thật" đáng rescue push
-                    // 🚨 FIX PHÂN KỲ (4 máy 3 số liệu): CHỈ giữ item local-only VỪA LƯU gần đây (save fail thật).
-                    // Item CŨ mà snapshot cloud không có = đã bị máy khác XOÁ hợp lệ (tombstone chưa sync kịp)
-                    // → nếu giữ lại + rescue push, mỗi máy sẽ hồi sinh set khác nhau → không bao giờ hội tụ.
-                    const _RECENT_MS_L = 10 * 60 * 1000; // 10 phút
-                    const _nowL = Date.now();
                     let localOnlyCount = 0;
                     (DB[key]||[]).forEach(localItem => {
                       if(!seenIds.has(_ik(localItem))){
-                        if(_ik(localItem) && _gTomb.has(_ik(localItem))) return; // đã tombstone → bỏ
-                        const _sa = localItem._savedAt || 0;
-                        // chỉ giữ nếu vừa lưu gần đây (nghi save fail); item cũ cloud thiếu = đã xoá → bỏ theo cloud
-                        if(_sa > 0 && (_nowL - _sa) < _RECENT_MS_L){
-                          merged.push(localItem);
-                          localOnlyCount++;
-                        }
-                        // else: item cũ không có trên cloud → KHÔNG giữ (để hội tụ theo cloud)
+                        // Bỏ qua item đã tombstone (đã xóa) — không phải "mất data"
+                        if(_ik(localItem) && _gTomb.has(_ik(localItem))) return;
+                        merged.push(localItem);
+                        localOnlyCount++;
                       }
                     });
                     if(protectedCount > 0 || localOnlyCount > 0){
-                      console.warn(`[Listener] 🛡️ Protected ${protectedCount} newer + ${localOnlyCount} recent local-only items in ${key}`);
+                      console.warn(`[Listener] 🛡️ Protected ${protectedCount} newer + ${localOnlyCount} local-only items in ${key}`);
                     }
                     // 🚨 v46 FIX WRITE LOOP: CHỈ rescue push khi có item local-only THẬT SỰ (cloud thiếu → mất data).
                     // KHÔNG rescue khi chỉ "protect do timestamp" — đó là trạng thái bình thường, rescue sẽ gây
