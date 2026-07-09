@@ -1822,6 +1822,35 @@ const _saveDataOrig = saveData;
 window.saveData = function(changedKeys=null){
   const keys = changedKeys || (window._dirtyKeys.size > 0 ? [...window._dirtyKeys] : null);
   window._dirtyKeys.clear();
+  // 🚨 FIX TRIỆT ĐỂ ĐỒNG BỘ XOÁ: trước khi ghi lên cloud, TỰ ĐỘNG lọc bỏ mọi item đã tombstone.
+  // Dù bất kỳ cơ chế "cứu hộ" nào đã hồi sinh item vào DB, cloud KHÔNG BAO GIỜ nhận lại item đã xoá.
+  // Đây là tầng cuối cùng — nếu item bị tombstone thì KHÔNG THỂ lên cloud bằng bất kỳ đường nào.
+  try {
+    const _keysToCheck = Array.isArray(keys) ? keys : Object.keys(DB).filter(k=>typeof k==='string'&&!k.startsWith('_'));
+    _keysToCheck.forEach(k => {
+      if(k === 'salaryStructure' && DB.salaryStructure && typeof DB.salaryStructure === 'object'){
+        const _lt = (typeof _gTombGetSetFor==='function') ? _gTombGetSetFor('salLevels') : new Set();
+        const _pt = (typeof _gTombGetSetFor==='function') ? _gTombGetSetFor('salProbations') : new Set();
+        if(_lt.size && Array.isArray(DB.salaryStructure.levels)){
+          const _before = DB.salaryStructure.levels.length;
+          DB.salaryStructure.levels = DB.salaryStructure.levels.filter(l=>!l||!l.id||!_lt.has(l.id));
+          if(DB.salaryStructure.levels.length < _before) console.log('[saveData] 🗑️ Lọc', _before-DB.salaryStructure.levels.length, 'levels đã tombstone trước khi ghi cloud');
+        }
+        if(_pt.size && Array.isArray(DB.salaryStructure.probations)){
+          DB.salaryStructure.probations = DB.salaryStructure.probations.filter(p=>!p||!p.id||!_pt.has(p.id));
+        }
+      }
+      if(Array.isArray(DB[k]) && DB[k].length > 0){
+        const _kf = (k==='manualBlacklist')?'empId':'id';
+        const _t = (typeof _gTombGetSetFor==='function') ? _gTombGetSetFor(k) : new Set();
+        if(_t.size){
+          const _before = DB[k].length;
+          DB[k] = DB[k].filter(it=>!it||!it[_kf]||!_t.has(it[_kf]));
+          if(DB[k].length < _before) console.log(`[saveData] 🗑️ Lọc ${_before-DB[k].length} ${k} đã tombstone trước khi ghi cloud`);
+        }
+      }
+    });
+  } catch(e){ console.warn('[saveData] tombstone filter error:', e); }
   return _saveDataOrig(keys);
 };
 
@@ -6478,6 +6507,17 @@ function renderDashboard(main){
       </div>
     </div>
 
+    <!-- Tuyển dụng theo tháng (nhóm tuổi) -->
+    <div class="row" style="margin-bottom:16px">
+      <div class="card">
+        <div class="card-head"><div>
+          <div class="card-title">Tuyển dụng theo <em>tháng</em></div>
+          <div class="card-sub">CBNV onboard mỗi tháng chia theo nhóm tuổi · Năm ${_dashYear||new Date().getFullYear()}</div>
+        </div></div>
+        <div class="chart-wrap tall"><canvas id="chartHireAge"></canvas></div>
+      </div>
+    </div>
+
     <!-- Combo charts -->
     ${(()=>{
       const combos = (DB.dashboardConfig||{}).combos||[];
@@ -7366,6 +7406,55 @@ function renderDashboardCharts(){
         }
       });
     }
+  }
+
+  // Tuyển dụng theo tháng — nhóm tuổi: đếm CBNV onboard mỗi tháng, chia <25 / 25-29 / 30-49 / 50+
+  const hireAgeEl = $('#chartHireAge');
+  if(hireAgeEl){
+    if(Chart.getChart(hireAgeEl)) Chart.getChart(hireAgeEl).destroy();
+    const _yr = _dashYear || new Date().getFullYear();
+    const _today4 = new Date();
+    const ha_u25=[],ha_2529=[],ha_3049=[],ha_50=[];
+    for(let m=1;m<=12;m++){
+      let u25=0,a2529=0,a3049=0,a50p=0;
+      (DB.employees||[]).forEach(e=>{
+        if(!e.joined) return;
+        const jd=_parseAnyDate(e.joined); if(!jd||isNaN(jd)) return;
+        if(jd.getFullYear()!==_yr || jd.getMonth()+1!==m) return;
+        // Tính tuổi tại thời điểm onboard
+        if(!e.dob) return;
+        const dob=_parseDob(e.dob); if(!dob||isNaN(dob)) return;
+        const age=Math.floor((jd-dob)/(365.25*24*3600*1000));
+        if(age<25) u25++;
+        else if(age<=29) a2529++;
+        else if(age<=49) a3049++;
+        else a50p++;
+      });
+      ha_u25.push(u25); ha_2529.push(a2529); ha_3049.push(a3049); ha_50.push(a50p);
+    }
+    new Chart(hireAgeEl, {
+      type:'bar',
+      data:{
+        labels:Array.from({length:12},(_,i)=>'T'+(i+1)),
+        datasets:[
+          {label:(_lang==="en"?"<25":"Dưới 25"), data:ha_u25, backgroundColor:'#7eb6e8', borderRadius:3},
+          {label:'25–29', data:ha_2529, backgroundColor:'#7ec699', borderRadius:3},
+          {label:'30–49', data:ha_3049, backgroundColor:'#e8b974', borderRadius:3},
+          {label:(_lang==="en"?"50+":"Từ 50"), data:ha_50, backgroundColor:'#e57373', borderRadius:3},
+        ]
+      },
+      options:{
+        responsive:true, maintainAspectRatio:false,
+        interaction:{mode:'index', intersect:false},
+        plugins:{legend:{position:'top', labels:{usePointStyle:true, padding:12, boxWidth:8}},
+          tooltip:{callbacks:{label:ctx=>ctx.dataset.label+': '+ctx.raw+' người'}}},
+        scales:{
+          x:{grid:{display:false}, ticks:{color:'#8b949e'}},
+          y:{grid:{color:'#1f2630'}, beginAtZero:true, ticks:{stepSize:1, color:'#8b949e'},
+             title:{display:true, text:(_lang==="en"?"Onboarded":"CBNV onboard"), color:'#8b949e', font:{size:10}}}
+        }
+      }
+    });
   }
 
   const salaryDeptEl = $('#chartSalaryDept');
@@ -20080,6 +20169,46 @@ function _gTombRemove(collKey, id){
   const t = _gTombRead(); delete t[collKey+':'+id]; _gTombWrite(t);
 }
 
+// 🚨 FIX TRIỆT ĐỂ ĐỒNG BỘ XOÁ: quét toàn bộ DB, gỡ mọi item đã tombstone.
+// Gọi sau cold-load, sau listener merge, trong saveData — chặn MỌI đường hồi sinh.
+function _stripTombstoned(){
+  try {
+    const allTombs = _gTombRead();
+    if(!allTombs || Object.keys(allTombs).length === 0) return;
+    let totalRemoved = 0;
+    // Quét tất cả array keys trong DB
+    Object.keys(DB).forEach(k => {
+      if(typeof k !== 'string' || k.startsWith('_')) return;
+      if(Array.isArray(DB[k]) && DB[k].length > 0){
+        const _kf = (k==='manualBlacklist')?'empId':'id';
+        const _t = _gTombGetSetFor(k);
+        if(_t.size){
+          const before = DB[k].length;
+          DB[k] = DB[k].filter(it => !it || !it[_kf] || !_t.has(it[_kf]));
+          const removed = before - DB[k].length;
+          if(removed > 0) totalRemoved += removed;
+        }
+      }
+    });
+    // Quét salaryStructure riêng (levels + probations dùng key khác)
+    if(DB.salaryStructure && typeof DB.salaryStructure === 'object'){
+      const _lt = _gTombGetSetFor('salLevels');
+      const _pt = _gTombGetSetFor('salProbations');
+      if(_lt.size && Array.isArray(DB.salaryStructure.levels)){
+        const b = DB.salaryStructure.levels.length;
+        DB.salaryStructure.levels = DB.salaryStructure.levels.filter(l => !l || !l.id || !_lt.has(l.id));
+        totalRemoved += (b - DB.salaryStructure.levels.length);
+      }
+      if(_pt.size && Array.isArray(DB.salaryStructure.probations)){
+        const b = DB.salaryStructure.probations.length;
+        DB.salaryStructure.probations = DB.salaryStructure.probations.filter(p => !p || !p.id || !_pt.has(p.id));
+        totalRemoved += (b - DB.salaryStructure.probations.length);
+      }
+    }
+    if(totalRemoved > 0) console.log(`[tombstone] 🗑️ Đã lọc ${totalRemoved} items đã xoá khỏi DB`);
+  } catch(e){ console.warn('[_stripTombstoned] error:', e); }
+}
+
 function _cTombRead(){
   try { return JSON.parse(localStorage.getItem(_CTOMB_KEY) || '{}'); } catch(_){ return {}; }
 }
@@ -31076,6 +31205,10 @@ fbAuth.onAuthStateChanged(async user => {
         }
         try { autoApplyPendingPromotions(); } catch(e){ console.warn('Auto-apply promo error', e); }
         try { syncAllEmployees(); } catch(e){ console.warn('Sync error', e); }
+        // 🚨 FIX TRIỆT ĐỂ: sau khi cold-load đọc MỌI data từ cloud + merge xong,
+        // LỌC BỎ mọi item đã tombstone. Dù item nằm trên cloud (từ rescue cũ), dù merge
+        // đã gộp lại, dù rescue đã hồi sinh — ở đây lọc HẾT. Không item nào sống sót.
+        _stripTombstoned();
         // 🚨 CRITICAL: mark cold-load done → cho phép save (chống bug rollback "1-2 ngày")
         // Trước lúc này, mọi saveData sẽ bị SKIP để không wipe cloud bằng DB local chưa đầy đủ
         window._coldLoadDone = true;
@@ -31588,6 +31721,7 @@ fbAuth.onAuthStateChanged(async user => {
                 }
                 _lastSyncAt[docId] = cloudSyncAt;
                 mergeCloudIntoDb();
+                _stripTombstoned(); // lọc items đã xoá sau merge
                 if(window._dirtyKeys) window._dirtyKeys.clear();
                 return;
               }
@@ -31612,6 +31746,7 @@ fbAuth.onAuthStateChanged(async user => {
               _lastSyncAt[docId] = cloudSyncAt;
 
               mergeCloudIntoDb();
+              _stripTombstoned(); // lọc items đã xoá sau merge
               try { syncAllEmployees(); } catch(_){}
               if(window._dirtyKeys) window._dirtyKeys.clear();
 
