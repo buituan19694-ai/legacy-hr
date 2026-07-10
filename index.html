@@ -18380,7 +18380,7 @@ function _autoConfirmExpiredResignations(){
   DB.resignations.forEach(r => {
     if(r.status !== 'pending') return;
     if(!r.endDate) return;
-    if(r.endDate >= todayStr) return; // chưa qua endDate → giữ pending
+    if(r.endDate > todayStr) return; // chưa tới endDate → giữ pending (= hôm nay thì auto-confirm)
 
     // Đã qua ngày làm việc cuối → auto-confirm
     const emp = DB.employees.find(e => e.id === r.empId);
@@ -18410,6 +18410,30 @@ function _autoConfirmExpiredResignations(){
 
     autoConfirmed.push({name: emp.name, code: emp.code, endDate: r.endDate});
   });
+
+  // 🚨 LƯỚI AN TOÀN: quét tất cả resignation đã confirmed + endDate đã tới
+  // mà employee vẫn active → sửa sang exit.
+  // Bắt mọi trường hợp lọt: TH1 (manual confirm) save fail, TH2 (auto) bỏ sót,
+  // hoặc máy khác ghi đè status về active do sync.
+  const fixedByNet = [];
+  DB.resignations.forEach(r => {
+    if(r.status !== 'confirmed') return;
+    if(!r.endDate || r.endDate > todayStr) return; // endDate chưa tới → chưa cần exit
+    const emp = DB.employees.find(e => e.id === r.empId);
+    if(!emp || emp.status === 'exit') return; // đã exit hoặc không tìm thấy → OK
+    // NV có đơn nghỉ confirmed + đã tới/qua ngày cuối nhưng VẪN active → sửa
+    emp.status = 'exit';
+    emp._dirty = true;
+    if(!DB.customData) DB.customData = {};
+    if(!DB.customData[r.empId]) DB.customData[r.empId] = {};
+    if(!DB.customData[r.empId].exitDate) DB.customData[r.empId].exitDate = r.endDate;
+    if(!DB.customData[r.empId].exitReason) DB.customData[r.empId].exitReason = r.reason || 'Theo đơn nghỉ việc';
+    fixedByNet.push(emp.name || r.empId);
+  });
+  if(fixedByNet.length > 0){
+    console.warn(`[autoExit] 🛡️ Lưới an toàn: ${fixedByNet.length} NV đã confirmed nghỉ nhưng vẫn Active → sửa sang Exit:`, fixedByNet.join(', '));
+    autoConfirmed.push(...fixedByNet.map(n=>({name:n})));
+  }
 
   if(autoConfirmed.length > 0){
     // Trigger Proxy setter
