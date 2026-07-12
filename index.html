@@ -30478,58 +30478,247 @@ render();
 
 </script>
 <!-- Auth Screen -->
-<div id="authScreen">
-  <!-- Lamp animation — pull chain to reveal login form -->
-  <div id="lampScene" style="width:100%;max-width:520px;padding:20px;display:flex;flex-direction:column;align-items:center;margin:0 auto">
-    <div id="lampBox" style="position:relative;width:300px;height:420px;margin-bottom:16px">
-      <svg id="lampSvg" viewBox="0 0 300 520" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:100%">
+<div id="authScreen" style="flex-direction:row!important;padding:20px">
+  <!-- Split layout: lamp left, form right. Light spills diagonally when lit. -->
+  <div id="lampSceneRow" style="width:100%;max-width:1100px;margin:0 auto;padding:24px;display:flex;align-items:center;justify-content:space-between;gap:40px;flex-wrap:wrap">
+
+    <!-- LEFT: Lamp -->
+    <div id="lampBox" style="position:relative;flex:1;min-width:320px;max-width:480px;display:flex;justify-content:center;align-items:center">
+      <!-- Wrapper cho đèn -->
+      <div id="lampInner" style="position:relative;width:100%;max-width:400px">
+        <!-- Dây điện & ổ điện: dùng CSS var để JS căn theo tâm chao đèn -->
+        <div id="lampWireCeiling" style="position:fixed;left:0;top:0;width:34px;height:8px;background:#4a3a2a;border:1px solid #7a6a5a;border-radius:2px;pointer-events:none;z-index:9998;transform:translateX(-50%)"></div>
+        <div id="lampWireLine" style="position:fixed;left:0;top:8px;width:2.5px;background:linear-gradient(to bottom,#4a3a2a 0%,#8a7a6a 20px,#8a7a6a 100%);pointer-events:none;z-index:9998;transform:translateX(-50%);height:0"></div>
+        <svg id="lampSvg" viewBox="0 0 400 720" xmlns="http://www.w3.org/2000/svg" style="width:100%;max-width:400px;height:auto;overflow:visible;display:block;position:relative;z-index:3">
         <defs>
-          <radialGradient id="lampConeGrad" cx="50%" cy="0%" r="80%">
-            <stop offset="0%" stop-color="#f5e6c8" stop-opacity="0.85"/>
-            <stop offset="50%" stop-color="#e8b974" stop-opacity="0.35"/>
+          <!-- Vùng sáng liền mạch tỏa từ bóng đèn ra tứ phía, hơi lệch về phải -->
+          <radialGradient id="lampGlowGrad" cx="35%" cy="30%" r="70%">
+            <stop offset="0%" stop-color="#fff4d6" stop-opacity="0.7"/>
+            <stop offset="25%" stop-color="#f5e6c8" stop-opacity="0.35"/>
+            <stop offset="50%" stop-color="#e8b974" stop-opacity="0.15"/>
+            <stop offset="80%" stop-color="#d4a574" stop-opacity="0.04"/>
             <stop offset="100%" stop-color="#d4a574" stop-opacity="0"/>
           </radialGradient>
+          <!-- Filter làm mờ mạnh cho cạnh tan mượt -->
+          <filter id="lampSoftBlur" x="-100%" y="-100%" width="300%" height="300%">
+            <feGaussianBlur stdDeviation="30"/>
+          </filter>
         </defs>
-        <path d="M150,0 L150,80" stroke="#3a2f24" stroke-width="2" fill="none"/>
-        <ellipse cx="150" cy="85" rx="18" ry="4" fill="#3a2a1a"/>
-        <path id="lampShade" d="M110,90 L190,90 L210,155 L90,155 Z" fill="#2a1f15" stroke="#5a4a3a" stroke-width="1" style="transition:fill 1.2s ease-out"/>
-        <ellipse id="lampRim" cx="150" cy="155" rx="60" ry="6" fill="#3a2a1a" style="transition:fill 1.2s ease-out,filter 1.2s ease-out"/>
-        <path id="lampCone" d="M95,155 L205,155 L260,520 L40,520 Z" fill="url(#lampConeGrad)" opacity="0" style="transition:opacity 1.5s ease-out"/>
-        <ellipse id="lampBulb" cx="150" cy="170" rx="14" ry="18" fill="#1a1410" style="transition:fill 1.2s ease-out,filter 1.2s ease-out"/>
-        <path id="lampChainLine" d="M190,155 L190,270" stroke="#a8845a" stroke-width="1.5" stroke-dasharray="2 2" fill="none"/>
-        <circle id="lampChainBall" cx="190" cy="275" r="7" fill="#d4a574" stroke="#8b6a4a" stroke-width="0.8" style="cursor:grab"/>
+        <!-- shade top cap -->
+        <ellipse cx="200" cy="105" rx="24" ry="5" fill="#3a2a1a"/>
+        <!-- shade -->
+        <path id="lampShade" d="M150,110 L250,110 L275,195 L125,195 Z" fill="#2a1f15" stroke="#5a4a3a" stroke-width="1.2" style="transition:fill 1.2s ease-out"/>
+        <!-- shade bottom rim -->
+        <ellipse id="lampRim" cx="200" cy="195" rx="75" ry="7" fill="#3a2a1a" style="transition:fill 1.2s ease-out,filter 1.2s ease-out"/>
+        <!-- MỘT vùng sáng liền mạch — tỏa từ bóng đèn ra, hắt cả xuống và sang phải -->
+        <ellipse id="lampCone" cx="240" cy="320" rx="420" ry="320" fill="url(#lampGlowGrad)" opacity="0" filter="url(#lampSoftBlur)" style="transition:opacity 1.5s ease-out"/>
+        <!-- Giữ id lampSpill để script hoạt động, nhưng ẩn đi (không dùng nữa) -->
+        <ellipse id="lampSpill" cx="0" cy="0" rx="0" ry="0" fill="transparent" opacity="0"/>
+        <!-- bulb -->
+        <ellipse id="lampBulb" cx="200" cy="215" rx="18" ry="24" fill="#1a1410" style="transition:fill 1.2s ease-out,filter 1.2s ease-out"/>
+        <!-- pull chain -->
+        <path id="lampChainLine" d="M250,195 L250,335" stroke="#a8845a" stroke-width="2" stroke-dasharray="2.5 2.5" fill="none"/>
+        <circle id="lampChainBall" cx="250" cy="340" r="9" fill="#d4a574" stroke="#8b6a4a" stroke-width="1" style="cursor:grab"/>
       </svg>
+      </div>
     </div>
-  </div>
 
-  <div class="auth-card" id="authCard" style="opacity:0;transform:translateY(20px);transition:opacity 1s ease-out,transform 1s ease-out">
-    <div class="auth-logo" style="margin-bottom:8px;" id="authLogoWrap">
-      <!-- Brand logo rendered dynamically -->
+    <!-- RIGHT: Login form -->
+    <div class="auth-card" id="authCard" style="flex:1;min-width:340px;max-width:440px;opacity:0;transform:translateX(20px);transition:opacity 1s ease-out,transform 1s ease-out,box-shadow 1.5s ease-out;position:relative">
+      <div class="auth-logo" style="margin-bottom:8px;" id="authLogoWrap">
+        <!-- Brand logo rendered dynamically -->
+      </div>
+      <div style="margin-top:4px;margin-bottom:28px;text-align:center;" id="authNameWrap">
+        <!-- Brand name rendered dynamically -->
+      </div>
+      <div class="auth-title">Đăng nhập hệ thống</div>
+      <div class="auth-sub">Vui lòng đăng nhập bằng tài khoản được cấp</div>
+      <div class="auth-field">
+        <label>Email</label>
+        <input type="email" id="loginEmail" placeholder="your@email.com" autocomplete="email">
+      </div>
+      <div class="auth-field">
+        <label>Mật khẩu</label>
+        <input type="password" id="loginPass" placeholder="••••••••" autocomplete="current-password"
+          onkeydown="if(event.key==='Enter') doLogin()">
+      </div>
+      <button class="auth-btn" id="loginBtn" onclick="doLogin()">Đăng nhập</button>
+      <div class="auth-error" id="loginError"></div>
+      <div id="loginStuckHelp" style="display:none;margin-top:12px;padding:10px 12px;background:rgba(255,200,120,.08);border:1px solid rgba(255,200,120,.3);border-radius:6px;font-size:11.5px;line-height:1.5">
+        <div style="color:#ffc878;font-weight:600;margin-bottom:6px">⚠️ Đăng nhập lâu hơn bình thường</div>
+        <div style="color:var(--ink-dim)">Có thể do cache trình duyệt bị lỗi. Thử xoá cache rồi đăng nhập lại:</div>
+        <button onclick="window.clearFirestoreCache()" style="margin-top:8px;background:var(--accent);color:#000;border:0;padding:6px 12px;border-radius:5px;font-size:12px;font-weight:600;cursor:pointer;width:100%">🔄 Xoá cache & tải lại</button>
+      </div>
+      <div class="auth-footer">Liên hệ quản trị viên nếu quên mật khẩu</div>
     </div>
-    <div style="margin-top:4px;margin-bottom:28px;text-align:center;" id="authNameWrap">
-      <!-- Brand name rendered dynamically -->
-    </div>
-    <div class="auth-title">Đăng nhập hệ thống</div>
-    <div class="auth-sub">Vui lòng đăng nhập bằng tài khoản được cấp</div>
-    <div class="auth-field">
-      <label>Email</label>
-      <input type="email" id="loginEmail" placeholder="your@email.com" autocomplete="email">
-    </div>
-    <div class="auth-field">
-      <label>Mật khẩu</label>
-      <input type="password" id="loginPass" placeholder="••••••••" autocomplete="current-password"
-        onkeydown="if(event.key==='Enter') doLogin()">
-    </div>
-    <button class="auth-btn" id="loginBtn" onclick="doLogin()">Đăng nhập</button>
-    <div class="auth-error" id="loginError"></div>
-    <div id="loginStuckHelp" style="display:none;margin-top:12px;padding:10px 12px;background:rgba(255,200,120,.08);border:1px solid rgba(255,200,120,.3);border-radius:6px;font-size:11.5px;line-height:1.5">
-      <div style="color:#ffc878;font-weight:600;margin-bottom:6px">⚠️ Đăng nhập lâu hơn bình thường</div>
-      <div style="color:var(--ink-dim)">Có thể do cache trình duyệt bị lỗi. Thử xoá cache rồi đăng nhập lại:</div>
-      <button onclick="window.clearFirestoreCache()" style="margin-top:8px;background:var(--accent);color:#000;border:0;padding:6px 12px;border-radius:5px;font-size:12px;font-weight:600;cursor:pointer;width:100%">🔄 Xoá cache & tải lại</button>
-    </div>
-    <div class="auth-footer">Liên hệ quản trị viên nếu quên mật khẩu</div>
+
   </div>
 </div>
+
+<script>
+// Lamp pull-chain animation — split layout with diagonal light spill toward form
+(function(){
+  function initLamp(){
+    const ball = document.getElementById('lampChainBall');
+    if(!ball) return;
+    const line = document.getElementById('lampChainLine');
+    const shade = document.getElementById('lampShade');
+    const rim = document.getElementById('lampRim');
+    const bulb = document.getElementById('lampBulb');
+    const cone = document.getElementById('lampCone');
+    const spill = document.getElementById('lampSpill');
+    const svg = document.getElementById('lampSvg');
+    const authScreen = document.getElementById('authScreen');
+    const authCard = document.getElementById('authCard');
+
+    const REST_Y = 340, CHAIN_TOP = 195, MAX_PULL = 180, TRIGGER_PULL = 85;
+    let dragging = false, currentY = REST_Y, startPointerY = 0, startBallY = REST_Y, isLit = false;
+
+    authScreen.style.transition = 'background 1.5s ease-out';
+    authScreen.style.background = '#000';
+
+    function updateBrightness(t){
+      // shade
+      const sr = Math.round(0x2a + t*(0x4a-0x2a));
+      const sg = Math.round(0x1f + t*(0x3a-0x1f));
+      const sb = Math.round(0x15 + t*(0x2a-0x15));
+      shade.style.fill = `rgb(${sr},${sg},${sb})`;
+      // rim
+      const rr = Math.round(0x3a + t*(0xe8-0x3a));
+      const rg = Math.round(0x2a + t*(0xb9-0x2a));
+      const rb = Math.round(0x1a + t*(0x74-0x1a));
+      rim.style.fill = `rgb(${rr},${rg},${rb})`;
+      rim.style.filter = `drop-shadow(0 0 ${10*t}px rgba(232,185,116,${0.9*t}))`;
+      // bulb
+      const br = Math.round(0x1a + t*(0xff-0x1a));
+      const bg = Math.round(0x14 + t*(0xf9-0x14));
+      const bb = Math.round(0x10 + t*(0xe8-0x10));
+      bulb.style.fill = `rgb(${br},${bg},${bb})`;
+      bulb.style.filter = `drop-shadow(0 0 ${25*t}px rgba(255,240,180,${1*t})) drop-shadow(0 0 ${50*t}px rgba(232,185,116,${0.8*t}))`;
+      // cones
+      cone.style.opacity = 0.6*t;
+      spill.style.opacity = 0.9*t;
+
+      // Background: warm glow strongest on LEFT (where lamp is), spilling diagonally right
+      if(t > 0.05){
+        authScreen.style.background =
+          `radial-gradient(ellipse 45% 55% at 30% 25%,rgba(232,185,116,${0.25*t}),transparent 60%),` +
+          `radial-gradient(ellipse 60% 80% at 40% 100%,rgba(212,165,116,${0.12*t}),transparent 70%),` +
+          `radial-gradient(ellipse 80% 50% at 70% 60%,rgba(212,165,116,${0.06*t}),transparent 70%),` +
+          `var(--bg)`;
+        // Card gets warm glow from the LEFT (as if lit by lamp)
+        authCard.style.boxShadow = `-${20*t}px 0 ${60*t}px -10px rgba(232,185,116,${0.25*t}), 0 8px 40px rgba(0,0,0,.5)`;
+      } else {
+        authScreen.style.background = '#000';
+        authCard.style.boxShadow = '';
+      }
+
+      // Reveal/hide form
+      if(t > 0.9){
+        authCard.style.opacity = '1';
+        authCard.style.transform = 'translateX(0)';
+      } else if(t < 0.1){
+        authCard.style.opacity = '0';
+        authCard.style.transform = 'translateX(20px)';
+      }
+    }
+
+    function setY(y){
+      y = Math.max(REST_Y, Math.min(REST_Y+MAX_PULL, y));
+      currentY = y;
+      ball.setAttribute('cy', y);
+      line.setAttribute('d', `M250,${CHAIN_TOP} L250,${y-6}`);
+      if(dragging && !isLit){
+        const t = Math.min(1, (y-REST_Y)/TRIGGER_PULL);
+        updateBrightness(t);
+      } else if(dragging && isLit){
+        const t = Math.max(0, 1 - (y-REST_Y)/TRIGGER_PULL);
+        updateBrightness(t);
+      }
+    }
+
+    function pointerY(e){
+      const rect = svg.getBoundingClientRect();
+      const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+      const scale = 720/rect.height;
+      return (clientY - rect.top)*scale;
+    }
+
+    function onDown(e){
+      e.preventDefault();
+      dragging = true;
+      ball.style.cursor = 'grabbing';
+      startPointerY = pointerY(e);
+      startBallY = currentY;
+      ball.style.transition = 'none';
+      line.style.transition = 'none';
+      shade.style.transition = 'none';
+      rim.style.transition = 'none';
+      bulb.style.transition = 'none';
+      cone.style.transition = 'none';
+      spill.style.transition = 'none';
+    }
+
+    function onMove(e){
+      if(!dragging) return;
+      e.preventDefault();
+      const delta = pointerY(e) - startPointerY;
+      setY(startBallY + delta);
+    }
+
+    function onUp(){
+      if(!dragging) return;
+      dragging = false;
+      ball.style.cursor = 'grab';
+      const pulled = currentY - REST_Y;
+      const triggered = pulled >= TRIGGER_PULL;
+      ball.style.transition = 'cy 0.5s cubic-bezier(.34,1.3,.5,1)';
+      line.style.transition = 'd 0.5s cubic-bezier(.34,1.3,.5,1)';
+      setY(REST_Y);
+      shade.style.transition = 'fill 1.2s ease-out';
+      rim.style.transition = 'fill 1.2s ease-out, filter 1.2s ease-out';
+      bulb.style.transition = 'fill 1.2s ease-out, filter 1.2s ease-out';
+      cone.style.transition = 'opacity 1.5s ease-out';
+      spill.style.transition = 'opacity 1.5s ease-out';
+      if(triggered){
+        isLit = !isLit;
+        updateBrightness(isLit ? 1 : 0);
+      } else {
+        updateBrightness(isLit ? 1 : 0);
+      }
+    }
+
+    ball.addEventListener('mousedown', onDown);
+    ball.addEventListener('touchstart', onDown, {passive:false});
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('touchmove', onMove, {passive:false});
+    document.addEventListener('mouseup', onUp);
+    document.addEventListener('touchend', onUp);
+    // Căn dây điện: đế ổ điện + dây thẳng đứng theo tâm chao đèn
+    function positionWire(){
+      const rect = svg.getBoundingClientRect();
+      const cx = rect.left + rect.width * 0.5;
+      const shadeTop = rect.top + rect.height * 0.146;
+      const ceilingEl = document.getElementById('lampWireCeiling');
+      const lineEl = document.getElementById('lampWireLine');
+      if(ceilingEl && lineEl){
+        ceilingEl.style.left = cx + 'px';
+        lineEl.style.left = cx + 'px';
+        lineEl.style.height = Math.max(0, shadeTop - 8) + 'px';
+      }
+    }
+    positionWire();
+    window.addEventListener('resize', positionWire);
+    // Khởi tạo trạng thái TẮT rõ ràng — đèn tối, form ẩn
+    updateBrightness(0);
+  }
+  if(document.readyState === 'loading'){
+    document.addEventListener('DOMContentLoaded', initLamp);
+  } else {
+    initLamp();
+  }
+})();
+</script>
 
 <script>
 // Lamp pull-chain animation for login screen
@@ -30546,7 +30735,7 @@ render();
     const authScreen = document.getElementById('authScreen');
     const authCard = document.getElementById('authCard');
 
-    const REST_Y = 275, CHAIN_TOP = 155, MAX_PULL = 150, TRIGGER_PULL = 70;
+    const REST_Y = 340, CHAIN_TOP = 195, MAX_PULL = 180, TRIGGER_PULL = 85;
     let dragging = false, currentY = REST_Y, startPointerY = 0, startBallY = REST_Y, isLit = false;
 
     // Save original authScreen background, start dark
@@ -30570,10 +30759,18 @@ render();
       bulb.style.fill = `rgb(${br},${bg},${bb})`;
       bulb.style.filter = `drop-shadow(0 0 ${20*t}px rgba(255,240,180,${1*t})) drop-shadow(0 0 ${40*t}px rgba(232,185,116,${0.8*t}))`;
       cone.style.opacity = 0.7*t;
+      const spill = document.getElementById('lampSpill');
+      if(spill) spill.style.opacity = 0.85*t; // đậm hơn để hắt sang form rõ
       if(t > 0.05){
-        authScreen.style.background = `radial-gradient(ellipse 80% 60% at 50% 30%,rgba(232,185,116,${0.15*t}),transparent 60%),radial-gradient(ellipse 80% 50% at 50% -20%,rgba(212,165,116,${0.06*t}),transparent 70%),var(--bg)`;
+        // Nền: ánh vàng ấm lệch về phía đèn (trái) + lan sang form (phải)
+        authScreen.style.background = `radial-gradient(ellipse 60% 70% at 25% 45%,rgba(232,185,116,${0.28*t}),transparent 70%),radial-gradient(ellipse 70% 60% at 75% 55%,rgba(232,185,116,${0.14*t}),transparent 65%),radial-gradient(ellipse 80% 50% at 50% -20%,rgba(212,165,116,${0.08*t}),transparent 70%),var(--bg)`;
+        // Ánh vàng ấm hắt lên card login (glow + đường viền vàng nhẹ)
+        authCard.style.boxShadow = `0 0 ${60*t}px ${10*t}px rgba(232,185,116,${0.18*t}), 0 20px 60px rgba(0,0,0,0.4), inset 0 1px 0 rgba(232,185,116,${0.15*t})`;
+        authCard.style.borderColor = `rgba(232,185,116,${0.25*t})`;
       } else {
         authScreen.style.background = '#000';
+        authCard.style.boxShadow = '';
+        authCard.style.borderColor = '';
       }
       // Show/hide auth card based on brightness
       if(t > 0.9){
@@ -30589,14 +30786,8 @@ render();
       y = Math.max(REST_Y, Math.min(REST_Y+MAX_PULL, y));
       currentY = y;
       ball.setAttribute('cy', y);
-      line.setAttribute('d', `M190,${CHAIN_TOP} L190,${y-5}`);
-      if(dragging && !isLit){
-        const t = Math.min(1, (y-REST_Y)/TRIGGER_PULL);
-        updateBrightness(t);
-      } else if(dragging && isLit){
-        const t = Math.max(0, 1 - (y-REST_Y)/TRIGGER_PULL);
-        updateBrightness(t);
-      }
+      line.setAttribute('d', `M250,${CHAIN_TOP} L250,${y-5}`);
+      // KHÔNG thay đổi độ sáng trong lúc kéo — chỉ bật/tắt hẳn khi thả tay (xem onUp).
     }
 
     function pointerY(e){
@@ -30654,6 +30845,23 @@ render();
     document.addEventListener('touchmove', onMove, {passive:false});
     document.addEventListener('mouseup', onUp);
     document.addEventListener('touchend', onUp);
+    // Căn dây điện: đế ổ điện + dây thẳng đứng theo tâm chao đèn
+    function positionWire(){
+      const rect = svg.getBoundingClientRect();
+      const cx = rect.left + rect.width * 0.5;
+      const shadeTop = rect.top + rect.height * 0.146;
+      const ceilingEl = document.getElementById('lampWireCeiling');
+      const lineEl = document.getElementById('lampWireLine');
+      if(ceilingEl && lineEl){
+        ceilingEl.style.left = cx + 'px';
+        lineEl.style.left = cx + 'px';
+        lineEl.style.height = Math.max(0, shadeTop - 8) + 'px';
+      }
+    }
+    positionWire();
+    window.addEventListener('resize', positionWire);
+    // Khởi tạo trạng thái TẮT rõ ràng — đèn tối, form ẩn
+    updateBrightness(0);
   }
   if(document.readyState === 'loading'){
     document.addEventListener('DOMContentLoaded', initLamp);
