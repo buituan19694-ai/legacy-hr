@@ -30479,7 +30479,30 @@ render();
 </script>
 <!-- Auth Screen -->
 <div id="authScreen">
-  <div class="auth-card">
+  <!-- Lamp animation — pull chain to reveal login form -->
+  <div id="lampScene" style="width:100%;max-width:520px;padding:20px;display:flex;flex-direction:column;align-items:center;margin:0 auto">
+    <div id="lampBox" style="position:relative;width:300px;height:420px;margin-bottom:16px">
+      <svg id="lampSvg" viewBox="0 0 300 520" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:100%">
+        <defs>
+          <radialGradient id="lampConeGrad" cx="50%" cy="0%" r="80%">
+            <stop offset="0%" stop-color="#f5e6c8" stop-opacity="0.85"/>
+            <stop offset="50%" stop-color="#e8b974" stop-opacity="0.35"/>
+            <stop offset="100%" stop-color="#d4a574" stop-opacity="0"/>
+          </radialGradient>
+        </defs>
+        <path d="M150,0 L150,80" stroke="#3a2f24" stroke-width="2" fill="none"/>
+        <ellipse cx="150" cy="85" rx="18" ry="4" fill="#3a2a1a"/>
+        <path id="lampShade" d="M110,90 L190,90 L210,155 L90,155 Z" fill="#2a1f15" stroke="#5a4a3a" stroke-width="1" style="transition:fill 1.2s ease-out"/>
+        <ellipse id="lampRim" cx="150" cy="155" rx="60" ry="6" fill="#3a2a1a" style="transition:fill 1.2s ease-out,filter 1.2s ease-out"/>
+        <path id="lampCone" d="M95,155 L205,155 L260,520 L40,520 Z" fill="url(#lampConeGrad)" opacity="0" style="transition:opacity 1.5s ease-out"/>
+        <ellipse id="lampBulb" cx="150" cy="170" rx="14" ry="18" fill="#1a1410" style="transition:fill 1.2s ease-out,filter 1.2s ease-out"/>
+        <path id="lampChainLine" d="M190,155 L190,270" stroke="#a8845a" stroke-width="1.5" stroke-dasharray="2 2" fill="none"/>
+        <circle id="lampChainBall" cx="190" cy="275" r="7" fill="#d4a574" stroke="#8b6a4a" stroke-width="0.8" style="cursor:grab"/>
+      </svg>
+    </div>
+  </div>
+
+  <div class="auth-card" id="authCard" style="opacity:0;transform:translateY(20px);transition:opacity 1s ease-out,transform 1s ease-out">
     <div class="auth-logo" style="margin-bottom:8px;" id="authLogoWrap">
       <!-- Brand logo rendered dynamically -->
     </div>
@@ -30507,6 +30530,138 @@ render();
     <div class="auth-footer">Liên hệ quản trị viên nếu quên mật khẩu</div>
   </div>
 </div>
+
+<script>
+// Lamp pull-chain animation for login screen
+(function(){
+  function initLamp(){
+    const ball = document.getElementById('lampChainBall');
+    if(!ball) return;
+    const line = document.getElementById('lampChainLine');
+    const shade = document.getElementById('lampShade');
+    const rim = document.getElementById('lampRim');
+    const bulb = document.getElementById('lampBulb');
+    const cone = document.getElementById('lampCone');
+    const svg = document.getElementById('lampSvg');
+    const authScreen = document.getElementById('authScreen');
+    const authCard = document.getElementById('authCard');
+
+    const REST_Y = 275, CHAIN_TOP = 155, MAX_PULL = 150, TRIGGER_PULL = 70;
+    let dragging = false, currentY = REST_Y, startPointerY = 0, startBallY = REST_Y, isLit = false;
+
+    // Save original authScreen background, start dark
+    const origBg = getComputedStyle(authScreen).backgroundColor || 'var(--bg)';
+    authScreen.style.transition = 'background 1.5s ease-out';
+    authScreen.style.background = '#000';
+
+    function updateBrightness(t){
+      const sr = Math.round(0x2a + t*(0x4a-0x2a));
+      const sg = Math.round(0x1f + t*(0x3a-0x1f));
+      const sb = Math.round(0x15 + t*(0x2a-0x15));
+      shade.style.fill = `rgb(${sr},${sg},${sb})`;
+      const rr = Math.round(0x3a + t*(0xe8-0x3a));
+      const rg = Math.round(0x2a + t*(0xb9-0x2a));
+      const rb = Math.round(0x1a + t*(0x74-0x1a));
+      rim.style.fill = `rgb(${rr},${rg},${rb})`;
+      rim.style.filter = `drop-shadow(0 0 ${8*t}px rgba(232,185,116,${0.9*t}))`;
+      const br = Math.round(0x1a + t*(0xff-0x1a));
+      const bg = Math.round(0x14 + t*(0xf9-0x14));
+      const bb = Math.round(0x10 + t*(0xe8-0x10));
+      bulb.style.fill = `rgb(${br},${bg},${bb})`;
+      bulb.style.filter = `drop-shadow(0 0 ${20*t}px rgba(255,240,180,${1*t})) drop-shadow(0 0 ${40*t}px rgba(232,185,116,${0.8*t}))`;
+      cone.style.opacity = 0.7*t;
+      if(t > 0.05){
+        authScreen.style.background = `radial-gradient(ellipse 80% 60% at 50% 30%,rgba(232,185,116,${0.15*t}),transparent 60%),radial-gradient(ellipse 80% 50% at 50% -20%,rgba(212,165,116,${0.06*t}),transparent 70%),var(--bg)`;
+      } else {
+        authScreen.style.background = '#000';
+      }
+      // Show/hide auth card based on brightness
+      if(t > 0.9){
+        authCard.style.opacity = '1';
+        authCard.style.transform = 'translateY(0)';
+      } else if(t < 0.1){
+        authCard.style.opacity = '0';
+        authCard.style.transform = 'translateY(20px)';
+      }
+    }
+
+    function setY(y){
+      y = Math.max(REST_Y, Math.min(REST_Y+MAX_PULL, y));
+      currentY = y;
+      ball.setAttribute('cy', y);
+      line.setAttribute('d', `M190,${CHAIN_TOP} L190,${y-5}`);
+      if(dragging && !isLit){
+        const t = Math.min(1, (y-REST_Y)/TRIGGER_PULL);
+        updateBrightness(t);
+      } else if(dragging && isLit){
+        const t = Math.max(0, 1 - (y-REST_Y)/TRIGGER_PULL);
+        updateBrightness(t);
+      }
+    }
+
+    function pointerY(e){
+      const rect = svg.getBoundingClientRect();
+      const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+      const scale = 520/rect.height;
+      return (clientY - rect.top)*scale;
+    }
+
+    function onDown(e){
+      e.preventDefault();
+      dragging = true;
+      ball.style.cursor = 'grabbing';
+      startPointerY = pointerY(e);
+      startBallY = currentY;
+      ball.style.transition = 'none';
+      line.style.transition = 'none';
+      shade.style.transition = 'none';
+      rim.style.transition = 'none';
+      bulb.style.transition = 'none';
+      cone.style.transition = 'none';
+    }
+
+    function onMove(e){
+      if(!dragging) return;
+      e.preventDefault();
+      const delta = pointerY(e) - startPointerY;
+      setY(startBallY + delta);
+    }
+
+    function onUp(){
+      if(!dragging) return;
+      dragging = false;
+      ball.style.cursor = 'grab';
+      const pulled = currentY - REST_Y;
+      const triggered = pulled >= TRIGGER_PULL;
+      ball.style.transition = 'cy 0.5s cubic-bezier(.34,1.3,.5,1)';
+      line.style.transition = 'd 0.5s cubic-bezier(.34,1.3,.5,1)';
+      setY(REST_Y);
+      shade.style.transition = 'fill 1.2s ease-out';
+      rim.style.transition = 'fill 1.2s ease-out, filter 1.2s ease-out';
+      bulb.style.transition = 'fill 1.2s ease-out, filter 1.2s ease-out';
+      cone.style.transition = 'opacity 1.5s ease-out';
+      if(triggered){
+        isLit = !isLit;
+        updateBrightness(isLit ? 1 : 0);
+      } else {
+        updateBrightness(isLit ? 1 : 0);
+      }
+    }
+
+    ball.addEventListener('mousedown', onDown);
+    ball.addEventListener('touchstart', onDown, {passive:false});
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('touchmove', onMove, {passive:false});
+    document.addEventListener('mouseup', onUp);
+    document.addEventListener('touchend', onUp);
+  }
+  if(document.readyState === 'loading'){
+    document.addEventListener('DOMContentLoaded', initLamp);
+  } else {
+    initLamp();
+  }
+})();
+</script>
 
 <!-- Firebase init + Auth logic -->
 <script>
