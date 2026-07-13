@@ -31172,7 +31172,7 @@ fbAuth.onAuthStateChanged(async user => {
                   const _tomb = _gTombGetSetFor(key);
                   // 🚨 FIX: manualBlacklist dùng khoá 'empId' (không có 'id'). Trước đây lớp merge này
                   // bỏ qua item không có .id → blacklist vừa thêm bị mất khi F5 (cold-load đọc server chưa có).
-                  const _kf = (key === 'manualBlacklist') ? 'empId' : 'id';
+                  const _kf = (key === 'manualBlacklist') ? 'empId' : (key === 'requiredFieldsConfig') ? 'key' : 'id';
                   const _k = (it) => it ? it[_kf] : undefined;
                   let _cloudArr = _tomb.size ? data[key].filter(it => !_k(it) || !_tomb.has(_k(it))) : data[key];
                   const _localArr = _localBeforeCloud[key];
@@ -31205,7 +31205,7 @@ fbAuth.onAuthStateChanged(async user => {
           _arrayKeys.forEach(key => {
             const localArr = _localBeforeCloud[key];
             if(!Array.isArray(localArr) || localArr.length === 0) return;
-            const _kf2 = (key === 'manualBlacklist') ? 'empId' : 'id';
+            const _kf2 = (key === 'manualBlacklist') ? 'empId' : (key === 'requiredFieldsConfig') ? 'key' : 'id';
             const _k2 = (it) => it ? it[_kf2] : undefined;
             const cloudArr = Array.isArray(DB[key]) ? DB[key] : [];
             const cloudIds = new Set(cloudArr.map(it => _k2(it)).filter(Boolean));
@@ -32017,11 +32017,14 @@ fbAuth.onAuthStateChanged(async user => {
                       }
                       return false;
                     };
-                    // 🚨 v12: nếu vừa save trong 15s qua, ưu tiên LOCAL kể cả khi score bằng
+                    // v12: nếu vừa save trong 15s qua, ưu tiên LOCAL kể cả khi score bằng
                     const justSaved = window._selfSaveAt && (Date.now() - window._selfSaveAt) < 15000;
                     // 🚨 FIX: manualBlacklist dùng khoá 'empId' (không có 'id') → merge phải theo đúng khoá,
+                    // requiredFieldsConfig dùng khoá 'key' (không có 'id') → merge phải theo đúng khoá,
                     // nếu không mọi item có id=undefined bị coi là cùng 1 → merge sai → revert khi 2 máy sửa.
-                    const _keyField = (key === 'manualBlacklist') ? 'empId' : 'id';
+                    const _keyField = (key === 'manualBlacklist') ? 'empId' 
+                                     : (key === 'requiredFieldsConfig') ? 'key' 
+                                     : 'id';
                     const _ik = (item) => item ? item[_keyField] : undefined;
                     const localMap = new Map((DB[key]||[]).map(item => [_ik(item), item]));
                     const cloudMap = new Map(cloudData[key].map(item => [_ik(item), item]));
