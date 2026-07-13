@@ -11649,8 +11649,88 @@ function setDeptDetailFilter(key, val){
   render();
 }
 
+function _dedupeDepartments(){
+  const depts = DB.departments || [];
+  // Nhóm theo tên (trim + lowercase)
+  const groups = {};
+  depts.forEach(d=>{
+    const k = (d.name||'').trim().toLowerCase();
+    if(!k) return;
+    (groups[k] = groups[k] || []).push(d);
+  });
+  const dupGroups = Object.values(groups).filter(arr=>arr.length>1);
+  if(dupGroups.length === 0){ toast('Không có phòng ban trùng'); return; }
+
+  // Tính số nhân viên tham chiếu mỗi dept
+  const empCount = {};
+  (DB.employees||[]).forEach(e=>{ if(e.deptId){ empCount[e.deptId] = (empCount[e.deptId]||0)+1; } });
+
+  let toDelete = [];
+  let reassignMap = {}; // oldDeptId -> newDeptId
+  const summary = [];
+
+  dupGroups.forEach(group=>{
+    // Chọn bản CHÍNH: nhiều nhân viên nhất; nếu bằng nhau thì lấy bản có id ngắn nhất (thường là bản gốc)
+    group.sort((a,b)=>{
+      const ea = empCount[a.id]||0, eb = empCount[b.id]||0;
+      if(ea !== eb) return eb - ea;
+      return (a.id||'').length - (b.id||'').length;
+    });
+    const master = group[0];
+    const dupes = group.slice(1);
+    dupes.forEach(dup=>{
+      reassignMap[dup.id] = master.id;
+      toDelete.push(dup.id);
+    });
+    summary.push(`${master.name}: giữ 1, gộp ${dupes.length} bản trùng (chuyển ${dupes.reduce((s,d)=>s+(empCount[d.id]||0),0)} NV về master)`);
+  });
+
+  const msg = `Phát hiện ${toDelete.length} phòng ban trùng:\n\n${summary.join('\n')}\n\nNhân viên/khóa học đang thuộc bản trùng sẽ được CHUYỂN sang bản chính. Sau đó xóa các bản trùng.\n\nTiếp tục?`;
+  if(!confirm(msg)) return;
+
+  // 1. Chuyển tất cả reference: employee + course
+  (DB.employees||[]).forEach(e=>{
+    if(reassignMap[e.deptId]){
+      e.deptId = reassignMap[e.deptId];
+      e._dirty = true;
+    }
+  });
+  // Course có thể chứa deptId trong participantsByDept, targetDepts, v.v.
+  (DB.courses||[]).forEach(c=>{
+    if(Array.isArray(c.targetDepts)){
+      c.targetDepts = c.targetDepts.map(id => reassignMap[id] || id);
+    }
+    if(c.deptId && reassignMap[c.deptId]) c.deptId = reassignMap[c.deptId];
+  });
+  // Jobs cũng có deptId
+  (DB.jobs||[]).forEach(j=>{
+    if(j.deptId && reassignMap[j.deptId]) j.deptId = reassignMap[j.deptId];
+  });
+
+  // 2. Xóa các bản trùng + tombstone
+  toDelete.forEach(id=>{
+    if(typeof _gTombAdd === 'function') _gTombAdd('departments', id);
+  });
+  DB.departments = DB.departments.filter(d => !toDelete.includes(d.id));
+
+  // 3. Save
+  saveData(['departments','employees','courses','jobs']);
+  toast(`✅ Đã gộp ${toDelete.length} phòng ban trùng. Refresh để kiểm tra các máy khác.`);
+  render();
+}
+window._dedupeDepartments = _dedupeDepartments;
+
 function renderDepartments(main){
   if(!window.canDo('departments')){ main.innerHTML='<div class="topbar"><div class="topbar-left"><h1 class="page-title">Không có quyền truy cập</h1></div></div>'; return; }
+  // Phát hiện phòng ban trùng tên (không phân biệt hoa/thường + trim)
+  const _dedupeMap = {};
+  (DB.departments||[]).forEach(d=>{
+    const k = (d.name||'').trim().toLowerCase();
+    if(!k) return;
+    (_dedupeMap[k] = _dedupeMap[k] || []).push(d);
+  });
+  const _dupCount = Object.values(_dedupeMap).filter(arr=>arr.length>1).reduce((s,arr)=>s+arr.length-1, 0);
+  const _dupBtn = _dupCount > 0 ? `<button class="btn" onclick="_dedupeDepartments()" style="background:rgba(229,115,115,.15);color:#e57373;border:1px solid #e57373;margin-right:8px" title="Phát hiện ${_dupCount} phòng ban trùng — bấm để gộp lại">⚠️ Dọn ${_dupCount} phòng ban trùng</button>` : '';
   main.innerHTML = `
     <div class="topbar">
       <div class="topbar-left">
@@ -11658,7 +11738,7 @@ function renderDepartments(main){
         <h1 class="page-title">Phòng <em>ban</em></h1>
         <div class="page-sub">${DB.departments.length} phòng ban · ${DB.employees.length} thành viên</div>
       </div>
-      <button class="btn btn-primary" onclick="editDepartment()">${ICONS.plus} Thêm phòng ban</button>
+      <div>${_dupBtn}<button class="btn btn-primary" onclick="editDepartment()">${ICONS.plus} Thêm phòng ban</button></div>
     </div>
     <div class="row row-3" id="deptGrid"></div>
   `;
