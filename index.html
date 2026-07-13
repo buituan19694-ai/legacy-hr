@@ -2,8 +2,18 @@
 <html lang="vi">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>Legacy Yên Tử HR — Human Capital Intelligence</title>
+
+<!-- PWA: cho phép "Add to Home Screen" trên mobile, mở như app thật (ẩn thanh địa chỉ) -->
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Legacy HR">
+<meta name="theme-color" content="#1a1a1a">
+<meta name="application-name" content="Legacy HR">
+<link rel="apple-touch-icon" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 180 180'><rect width='180' height='180' rx='36' fill='%231a1a1a'/><text x='50%25' y='58%25' text-anchor='middle' font-family='Georgia,serif' font-size='90' font-weight='700' fill='%23d4a574'>L</text></svg>">
+<link rel="manifest" href='data:application/json;charset=utf-8,{"name":"Legacy Y%C3%AAn T%E1%BB%AD HR","short_name":"Legacy HR","description":"H%E1%BB%87 th%E1%BB%91ng qu%E1%BA%A3n l%C3%BD nh%C3%A2n s%E1%BB%B1 Legacy Y%C3%AAn T%E1%BB%AD MGallery","start_url":"/","display":"standalone","orientation":"any","background_color":"%231a1a1a","theme_color":"%231a1a1a","icons":[{"src":"data:image/svg+xml;utf8,<svg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 512 512%27><rect width=%27512%27 height=%27512%27 rx=%27102%27 fill=%27%231a1a1a%27/><text x=%2750%25%27 y=%2758%25%27 text-anchor=%27middle%27 font-family=%27Georgia,serif%27 font-size=%27260%27 font-weight=%27700%27 fill=%27%23d4a574%27>L</text></svg>","sizes":"512x512","type":"image/svg+xml","purpose":"any"},{"src":"data:image/svg+xml;utf8,<svg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 192 192%27><rect width=%27192%27 height=%27192%27 rx=%2738%27 fill=%27%231a1a1a%27/><text x=%2750%25%27 y=%2758%25%27 text-anchor=%27middle%27 font-family=%27Georgia,serif%27 font-size=%2798%27 font-weight=%27700%27 fill=%27%23d4a574%27>L</text></svg>","sizes":"192x192","type":"image/svg+xml","purpose":"any"}]}'>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300..900;1,9..144,300..900&family=Inter+Tight:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
@@ -2018,7 +2028,10 @@ function openModal(html, wide=false){
   box.className = 'modal-box' + (wide?' wide':'');
   box.innerHTML = html;
   $('#modal').classList.add('open');
-  setTimeout(function(){ initDateInputs(box); }, 10);
+  setTimeout(function(){
+    initDateInputs(box);
+    if(typeof window._updateTotalSalary === 'function') window._updateTotalSalary();
+  }, 10);
 }
 function closeModal(){
   $('#modal').classList.remove('open');
@@ -10258,6 +10271,18 @@ function toggleFormGroup(name){
   if(el) el.classList.toggle('expanded');
 }
 
+// Helper: cập nhật ô "Tổng lương" (readonly) khi user gõ vào baseSalary/bonusSalary
+window._updateTotalSalary = function(){
+  const baseEl = document.getElementById('cf_baseSalary');
+  const bonusEl = document.getElementById('cf_bonusSalary');
+  const totalEl = document.getElementById('cf_totalSalaryDisplay');
+  if(!totalEl) return;
+  const base = parseInt(baseEl?.value) || 0;
+  const bonus = parseInt(bonusEl?.value) || 0;
+  const total = base + bonus;
+  totalEl.value = total > 0 ? total.toLocaleString('vi-VN') + ' VNĐ' : '';
+};
+
 function renderCustomFieldInput(cf, value){
   const v = value == null ? '' : value;
   const req = (cf.required === true || cf.required === 'true') ? ' *' : '';
@@ -10292,9 +10317,20 @@ function renderCustomFieldInput(cf, value){
     </div>`;
   }
   if(cf.type === 'number'){
+    // Đặc biệt cho baseSalary / bonusSalary: thêm listener cập nhật ô "Tổng lương" động
+    const isSalaryField = (cf.key === 'baseSalary' || cf.key === 'bonusSalary');
+    const salaryHook = isSalaryField ? ` oninput="_updateTotalSalary()"` : '';
+    let extra = '';
+    // Chèn ô "Tổng lương" tự tính NGAY SAU bonusSalary
+    if(cf.key === 'bonusSalary'){
+      // Tính giá trị hiện tại (base + bonus từ data đang render)
+      extra = `<div class="field"><label><span style="color:#7ec699;font-weight:700">💰 Tổng lương (tự tính)</span></label>
+        <input id="cf_totalSalaryDisplay" type="text" readonly value="" placeholder="Sẽ tự tính khi bạn nhập" style="background:rgba(126,198,153,.08);border-color:#7ec699;color:#7ec699;font-weight:700;cursor:default">
+      </div>`;
+    }
     return `<div class="${cls}"><label>${label}</label>
-      <input id="${id}" ${dataAttr} type="number" step="any" value="${escapeHtml(v)}" placeholder="${placeholder}">
-    </div>`;
+      <input id="${id}" ${dataAttr} type="number" step="any" value="${escapeHtml(v)}" placeholder="${placeholder}"${salaryHook}>
+    </div>${extra}`;
   }
   if(cf.type === 'date'){
     const isoV = (()=>{
