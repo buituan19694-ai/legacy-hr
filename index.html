@@ -22614,27 +22614,40 @@ function renderPerformance(main){
             ${allYearsPromo.map(y=>`<option value="${y}" ${y===chartYr?'selected':''}>${y}</option>`).join('')}
           </select>
         </div>
-        <div style="display:flex;align-items:flex-end;gap:6px;height:160px;padding:0 4px">
-          ${byMonthTotal.map((cnt,i)=>{
-            const barTotalH = Math.round(cnt/maxM*120);
-            const isCur = chartYr===new Date().getFullYear() && i===new Date().getMonth();
-            // Vẽ từng segment bộ phận trong cột
-            const segs = Object.entries(byMonthDept[i]||{}).sort((a,b)=>b[1]-a[1]);
-            const segHtml = segs.map(([deptId, n])=>{
-              const segH = cnt>0 ? Math.round(barTotalH * n / cnt) : 0;
-              const d = (DB.departments||[]).find(x=>x.id===deptId);
-              const dn = d?.name || 'Chưa gán';
-              return `<div style="width:100%;height:${segH}px;background:${deptColor(deptId)};" title="${escapeHtml(dn)}: ${n}"></div>`;
-            }).join('');
-            const clickable = cnt>0;
-            return `<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px">
-              <div style="font-size:11px;font-weight:700;color:${cnt?'var(--accent)':'transparent'};min-height:16px;line-height:16px">${cnt||''}</div>
-              <div style="width:100%;height:120px;display:flex;align-items:flex-end;${clickable?'cursor:pointer':''}" ${clickable?`onclick="window._promoMonthDrill(${i})"`:''}>
-                <div style="width:100%;display:flex;flex-direction:column-reverse;border-radius:4px 4px 0 0;overflow:hidden;box-shadow:${isCur?'0 0 0 2px var(--success)':'none'};${cnt===0?'height:4px;background:var(--border)':''}">${segHtml}</div>
-              </div>
-              <div style="font-size:10px;color:${isCur?'var(--success)':'var(--ink-muted)'};font-weight:${isCur?700:400}">${MN_SHORT[i]}</div>
-            </div>`;
-          }).join('')}
+        <div style="overflow-x:auto;padding:0 4px">
+          <div style="display:flex;align-items:flex-end;gap:12px;height:180px;min-width:100%">
+            ${byMonthTotal.map((cnt,i)=>{
+              const isCur = chartYr===new Date().getFullYear() && i===new Date().getMonth();
+              // Với mỗi tháng, list các bộ phận có data, sort desc, cột cạnh nhau
+              const segs = Object.entries(byMonthDept[i]||{}).sort((a,b)=>b[1]-a[1]);
+              const clickable = cnt>0;
+              // Nếu tháng không có → 1 cột trống mảnh
+              if(segs.length === 0){
+                return `<div style="flex:1;min-width:32px;display:flex;flex-direction:column;align-items:center;gap:4px">
+                  <div style="font-size:11px;font-weight:700;color:transparent;min-height:16px;line-height:16px">-</div>
+                  <div style="width:100%;height:140px;display:flex;align-items:flex-end;justify-content:center">
+                    <div style="width:60%;height:3px;background:var(--border);border-radius:2px"></div>
+                  </div>
+                  <div style="font-size:10px;color:${isCur?'var(--success)':'var(--ink-muted)'};font-weight:${isCur?700:400}">${MN_SHORT[i]}</div>
+                </div>`;
+              }
+              const barW = Math.max(60, segs.length * 22 + 8); // cột rộng đủ chứa sub-bars
+              const subBars = segs.map(([deptId, n])=>{
+                const h = Math.round(n/maxM*130);
+                const d = (DB.departments||[]).find(x=>x.id===deptId);
+                const dn = d?.name || 'Chưa gán';
+                return `<div style="display:flex;flex-direction:column;align-items:center;gap:3px;height:100%;justify-content:flex-end">
+                  <div style="font-size:9px;font-weight:600;color:${deptColor(deptId)};line-height:11px">${n}</div>
+                  <div style="width:16px;height:${Math.max(h, 3)}px;background:${deptColor(deptId)};border-radius:3px 3px 0 0;transition:filter .15s" title="${escapeHtml(dn)}: ${n} lượt" onmouseover="this.style.filter='brightness(1.25)'" onmouseout="this.style.filter=''"></div>
+                </div>`;
+              }).join('');
+              return `<div style="display:flex;flex-direction:column;align-items:center;gap:4px;min-width:${barW}px">
+                <div style="font-size:11px;font-weight:700;color:var(--accent);min-height:16px;line-height:16px">${cnt}</div>
+                <div style="height:140px;display:flex;align-items:flex-end;gap:6px;padding:0 4px;border-radius:4px;${clickable?'cursor:pointer':''};${isCur?'box-shadow:0 -2px 0 var(--success)':''}" ${clickable?`onclick="window._promoMonthDrill(${i})"`:''}>${subBars}</div>
+                <div style="font-size:10px;color:${isCur?'var(--success)':'var(--ink-muted)'};font-weight:${isCur?700:400}">${MN_SHORT[i]}</div>
+              </div>`;
+            }).join('')}
+          </div>
         </div>
         ${deptsInYear.length ? `<div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:14px;padding-top:12px;border-top:1px solid var(--border);font-size:11px;color:var(--ink-dim)">
           ${deptsInYear.map(id=>{
