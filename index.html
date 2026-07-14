@@ -22531,37 +22531,118 @@ function renderPerformance(main){
       const chartYr = window._promoChartYear;
       const allYearsPromo = [...new Set(allPromotions.map(p=>p.date?new Date(p.date).getFullYear():null).filter(Boolean))].sort((a,b)=>b-a);
       const MN_SHORT = ['T1','T2','T3','T4','T5','T6','T7','T8','T9','T10','T11','T12'];
-      const byMonth = Array(12).fill(0);
+      // Build: byMonthDept[m][deptId] = số lượt, byMonthTotal[m] = tổng, byMonthPromoIds[m] = danh sách promotion id
+      const byMonthDept = Array.from({length:12}, ()=>({}));
+      const byMonthTotal = Array(12).fill(0);
+      const byMonthIds = Array.from({length:12}, ()=>[]);
       allPromotions.forEach(p=>{
         if(!p.date) return;
         const d = new Date(p.date);
-        if(d.getFullYear()===chartYr) byMonth[d.getMonth()]++;
+        if(d.getFullYear()!==chartYr) return;
+        const m = d.getMonth();
+        const emp = empById(p.empId);
+        const deptId = emp?.deptId || '_none';
+        byMonthDept[m][deptId] = (byMonthDept[m][deptId]||0) + 1;
+        byMonthTotal[m]++;
+        byMonthIds[m].push(p.id);
       });
-      const maxM = Math.max(...byMonth, 1);
+      const maxM = Math.max(...byMonthTotal, 1);
+      // Bảng màu bộ phận (dùng lại colorOf hoặc gán theo dept id)
+      const deptColor = (deptId)=>{
+        if(deptId==='_none') return '#6e7681';
+        const d = (DB.departments||[]).find(x=>x.id===deptId);
+        return d?.color || colorOf(deptId);
+      };
+      // Legend: liệt kê các bộ phận có xuất hiện trong năm
+      const deptsInYear = [...new Set(byMonthDept.flatMap(o=>Object.keys(o)))];
+      window._promoMonthDrill = function(monthIdx){
+        const ids = byMonthIds[monthIdx] || [];
+        if(ids.length === 0){ toast('Tháng này chưa có thăng chức'); return; }
+        const items = ids.map(id => allPromotions.find(p=>p.id===id)).filter(Boolean);
+        const monthLabel = MN_SHORT[monthIdx] + '/' + chartYr;
+        const rows = items.map(p=>{
+          const emp = empById(p.empId);
+          const dept = emp?.deptId ? (DB.departments||[]).find(x=>x.id===emp.deptId) : null;
+          const oldR = p.oldRole || '—', newR = p.newRole || '—';
+          const changed = oldR !== newR;
+          return `<tr style="cursor:pointer" onclick="closeModal();viewEmployee('${p.empId}')">
+            <td style="padding:10px 12px;border-bottom:1px solid var(--border)">
+              <div style="display:flex;align-items:center;gap:10px">
+                ${emp ? avatarHTML(emp, 32) : ''}
+                <div>
+                  <div style="font-weight:600;font-size:13px">${escapeHtml(emp?.name || 'N/A')}</div>
+                  <div style="font-size:11px;color:var(--ink-muted)">${escapeHtml(dept?.name || '—')}</div>
+                </div>
+              </div>
+            </td>
+            <td style="padding:10px 12px;border-bottom:1px solid var(--border);font-size:12.5px">
+              ${changed ? `<span style="color:var(--ink-muted);text-decoration:line-through">${escapeHtml(oldR)}</span><br><span style="color:var(--accent);font-weight:600">↗ ${escapeHtml(newR)}</span>` : escapeHtml(newR)}
+            </td>
+            <td style="padding:10px 12px;border-bottom:1px solid var(--border);font-size:12px;color:var(--ink-dim);font-family:'JetBrains Mono',monospace">${fmtDate(p.date)}</td>
+            <td style="padding:10px 12px;border-bottom:1px solid var(--border)"><span class="badge ${p.status}">${PROMOTION_STATUS[p.status]||p.status}</span></td>
+          </tr>`;
+        }).join('');
+        openModal(`
+          <div class="modal-head">
+            <div class="modal-title">🚀 Thăng chức tháng ${monthLabel}</div>
+            <div class="modal-sub">${items.length} bản ghi · bấm 1 dòng để mở hồ sơ NV</div>
+          </div>
+          <div style="max-height:60vh;overflow-y:auto">
+            <table style="width:100%;border-collapse:collapse;font-size:13px">
+              <thead>
+                <tr style="background:var(--bg-elev)">
+                  <th style="text-align:left;padding:10px 12px;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-muted);border-bottom:1px solid var(--border)">Nhân viên</th>
+                  <th style="text-align:left;padding:10px 12px;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-muted);border-bottom:1px solid var(--border)">Vị trí cũ → mới</th>
+                  <th style="text-align:left;padding:10px 12px;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-muted);border-bottom:1px solid var(--border)">Ngày</th>
+                  <th style="text-align:left;padding:10px 12px;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-muted);border-bottom:1px solid var(--border)">Trạng thái</th>
+                </tr>
+              </thead>
+              <tbody>${rows}</tbody>
+            </table>
+          </div>
+          <div class="modal-actions"><button class="btn" onclick="closeModal()">Đóng</button></div>
+        `, true);
+      };
       return `
       <div class="card" style="margin-top:16px">
         <div class="card-head">
           <div>
             <div class="card-title">📅 Thăng chức <em>theo tháng</em></div>
-            <div class="card-sub">Phân bố đề xuất trong năm ${chartYr}</div>
+            <div class="card-sub">Chia màu theo bộ phận · bấm cột để xem chi tiết · Năm ${chartYr}</div>
           </div>
           <select class="filter-select" style="font-size:12px" onchange="window._promoChartYear=parseInt(this.value);render()">
             ${allYearsPromo.map(y=>`<option value="${y}" ${y===chartYr?'selected':''}>${y}</option>`).join('')}
           </select>
         </div>
-        <div style="display:flex;align-items:flex-end;gap:6px;height:140px;padding:0 4px">
-          ${byMonth.map((cnt,i)=>{
-            const barH = Math.round(cnt/maxM*100); // px out of 100px max bar area
+        <div style="display:flex;align-items:flex-end;gap:6px;height:160px;padding:0 4px">
+          ${byMonthTotal.map((cnt,i)=>{
+            const barTotalH = Math.round(cnt/maxM*120);
             const isCur = chartYr===new Date().getFullYear() && i===new Date().getMonth();
+            // Vẽ từng segment bộ phận trong cột
+            const segs = Object.entries(byMonthDept[i]||{}).sort((a,b)=>b[1]-a[1]);
+            const segHtml = segs.map(([deptId, n])=>{
+              const segH = cnt>0 ? Math.round(barTotalH * n / cnt) : 0;
+              const d = (DB.departments||[]).find(x=>x.id===deptId);
+              const dn = d?.name || 'Chưa gán';
+              return `<div style="width:100%;height:${segH}px;background:${deptColor(deptId)};" title="${escapeHtml(dn)}: ${n}"></div>`;
+            }).join('');
+            const clickable = cnt>0;
             return `<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px">
               <div style="font-size:11px;font-weight:700;color:${cnt?'var(--accent)':'transparent'};min-height:16px;line-height:16px">${cnt||''}</div>
-              <div style="width:100%;height:100px;display:flex;align-items:flex-end">
-                <div style="width:100%;height:${Math.max(barH,cnt?4:0)}px;background:${isCur?'var(--success)':cnt?'var(--accent)':'var(--border)'};border-radius:4px 4px 0 0"></div>
+              <div style="width:100%;height:120px;display:flex;align-items:flex-end;${clickable?'cursor:pointer':''}" ${clickable?`onclick="window._promoMonthDrill(${i})"`:''}>
+                <div style="width:100%;display:flex;flex-direction:column-reverse;border-radius:4px 4px 0 0;overflow:hidden;box-shadow:${isCur?'0 0 0 2px var(--success)':'none'};${cnt===0?'height:4px;background:var(--border)':''}">${segHtml}</div>
               </div>
               <div style="font-size:10px;color:${isCur?'var(--success)':'var(--ink-muted)'};font-weight:${isCur?700:400}">${MN_SHORT[i]}</div>
             </div>`;
           }).join('')}
         </div>
+        ${deptsInYear.length ? `<div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:14px;padding-top:12px;border-top:1px solid var(--border);font-size:11px;color:var(--ink-dim)">
+          ${deptsInYear.map(id=>{
+            const d = (DB.departments||[]).find(x=>x.id===id);
+            const dn = id==='_none' ? 'Chưa gán' : (d?.name || id);
+            return `<div style="display:inline-flex;align-items:center;gap:5px"><div style="width:10px;height:10px;border-radius:2px;background:${deptColor(id)}"></div>${escapeHtml(dn)}</div>`;
+          }).join('')}
+        </div>` : ''}
       </div>`;
     })()}
 
