@@ -22539,9 +22539,10 @@ function renderPerformance(main){
         if(!p.date) return;
         const d = new Date(p.date);
         if(d.getFullYear()!==chartYr) return;
-        const m = d.getMonth();
         const emp = empById(p.empId);
-        const deptId = emp?.deptId || '_none';
+        if(!emp) return; // bỏ promotion mồ côi (NV đã bị xoá) — không đếm, không hiện
+        const m = d.getMonth();
+        const deptId = emp.deptId || '_none';
         byMonthDept[m][deptId] = (byMonthDept[m][deptId]||0) + 1;
         byMonthTotal[m]++;
         byMonthIds[m].push(p.id);
