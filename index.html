@@ -8165,19 +8165,6 @@ function renderEmployeeProfile(main){
     fieldsByGroup[g].push({cf, val});
   });
 
-  // Chèn Giới tính vào ĐẦU nhóm "Cá nhân" (là field cứng e.gender)
-  if(e.gender === 'male' || e.gender === 'female'){
-    const _pGroup = (_lang==="en"?"Personal":"Cá nhân");
-    if(!fieldsByGroup[_pGroup]) fieldsByGroup[_pGroup] = [];
-    const _genderVal = e.gender === 'male'
-      ? (_lang==="en"?"Male":"Nam")
-      : (_lang==="en"?"Female":"Nữ");
-    fieldsByGroup[_pGroup].unshift({
-      cf: {key:'_gender', label:(_lang==="en"?"Gender":"Giới tính"), type:'text'},
-      val: _genderVal
-    });
-  }
-
   Object.entries(cd).forEach(([key, val])=>{
     if(registeredKeys.has(key)) return;
     if(val == null || val === '') return;
@@ -8270,6 +8257,7 @@ function renderEmployeeProfile(main){
           </div>
           <div class="profile-quick">
             <div class="profile-quick-item"><span class="profile-quick-label">Mã NV</span><span class="profile-quick-value" style="font-family:'JetBrains Mono',monospace">${escapeHtml(e.code)}</span></div>
+            ${(e.gender === 'male' || e.gender === 'female') ? `<div class="profile-quick-item"><span class="profile-quick-label">${_lang==="en"?"Gender":"Giới tính"}</span><span class="profile-quick-value" style="color:${e.gender==='male'?'#7eb6e8':'#e897b4'}">${e.gender==='male'?(_lang==="en"?"Male":"Nam"):(_lang==="en"?"Female":"Nữ")}</span></div>` : ''}
             ${e.email ? `<div class="profile-quick-item">${ICONS.mail}<a href="mailto:${escapeHtml(e.email)}" style="color:var(--accent);text-decoration:none">${escapeHtml(e.email)}</a></div>` : ''}
             ${e.phone ? `<div class="profile-quick-item">${ICONS.phone}<a href="tel:${escapeHtml(e.phone)}" style="color:var(--accent);text-decoration:none;font-family:'JetBrains Mono',monospace">${escapeHtml(e.phone)}</a></div>` : ''}
           </div>
