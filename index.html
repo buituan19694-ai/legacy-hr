@@ -8165,6 +8165,19 @@ function renderEmployeeProfile(main){
     fieldsByGroup[g].push({cf, val});
   });
 
+  // Chèn Giới tính vào ĐẦU nhóm "Cá nhân" (là field cứng emp.gender)
+  if(emp.gender === 'male' || emp.gender === 'female'){
+    const _pGroup = (_lang==="en"?"Personal":"Cá nhân");
+    if(!fieldsByGroup[_pGroup]) fieldsByGroup[_pGroup] = [];
+    const _genderVal = emp.gender === 'male'
+      ? (_lang==="en"?"Male":"Nam")
+      : (_lang==="en"?"Female":"Nữ");
+    fieldsByGroup[_pGroup].unshift({
+      cf: {key:'_gender', label:(_lang==="en"?"Gender":"Giới tính"), type:'text'},
+      val: _genderVal
+    });
+  }
+
   Object.entries(cd).forEach(([key, val])=>{
     if(registeredKeys.has(key)) return;
     if(val == null || val === '') return;
