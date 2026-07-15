@@ -12189,7 +12189,8 @@ function renderContracts(main){
       </div>
       <div class="topbar-actions">
         <button class="btn" onclick="exportContractExcel()">${ICONS.download} Xuất Excel</button>
-        <button class="btn" onclick="exportContractPDF()">📄 Xuất PDF</button>
+        <button class="btn" onclick="exportContractPDF()">📄 Xuất PDF (tháng)</button>
+        <button class="btn" onclick="exportContractPDFByDept()">📊 PDF theo bộ phận</button>
         <button class="btn btn-primary" onclick="editContract()">${ICONS.plus} ${_lang==="en"?"Add Contract":"Thêm hợp đồng"}</button>
       </div>
     </div>
@@ -35031,51 +35032,144 @@ function exportEmployeesPDF(){
 }
 
 // ── HỢP ĐỒNG ──
-function exportContractPDF(){
-  const today = new Date().toISOString().slice(0,10);
-  const in30  = new Date(Date.now()+30*864e5).toISOString().slice(0,10);
-  const in60  = new Date(Date.now()+60*864e5).toISOString().slice(0,10);
-  const depts = DB.departments||[];
-  const cf2 = typeof empFilter!=='undefined' ? empFilter : {};
-  const contracts = (DB.contracts||[])
-    .filter(c=>{ const emp=(DB.employees||[]).find(e=>e.id===c.empId); if(!emp||getEffectiveStatus(emp)==='exit') return false; if(cf2.dept&&emp.deptId!==cf2.dept) return false; return true; })
-    .sort((a,b)=>(a.endDate||'9999').localeCompare(b.endDate||'9999'));
+function _getExpiringInMonth(){
+  /* Tái tạo đúng logic expiringInMonth từ renderContracts — dùng cho export */
+  const today = new Date();
+  const _toISO = s => s&&/^\d{2}\/\d{2}\/\d{4}$/.test(s)?s.split('/').reverse().join('-'):s;
+  const activeEmpsAll = (DB.employees||[]).filter(e=>e.status!=='exit');
+  const activeEmpIds  = new Set(activeEmpsAll.map(e=>e.id));
 
-  const rows = contracts.map((c,i)=>{
-    const emp = (DB.employees||[]).find(e=>e.id===c.empId);
-    const expiringSoon = c.endDate && c.endDate >= today && c.endDate <= in30;
-    const expiring60   = c.endDate && c.endDate > in30  && c.endDate <= in60;
-    const expired      = c.endDate && c.endDate < today;
-    const rowStyle = expiringSoon ? 'background:#fff3e0' : expired ? 'background:#fce4ec' : '';
-    const endStyle = expiringSoon ? 'color:#e65100;font-weight:700' : expired ? 'color:#c62828;font-weight:700' : expiring60 ? 'color:#f57c00' : '';
-    const flagCol = expiringSoon ? '<span style="background:#ff9800;color:#fff;padding:1px 6px;border-radius:3px;font-size:8pt">⚠ &lt;30 ngày</span>' :
-                    expired      ? '<span style="background:#f44336;color:#fff;padding:1px 6px;border-radius:3px;font-size:8pt">HẾT HẠN</span>' : '';
+  function _latestContract(empId){
+    const list=(DB.contracts||[]).filter(c=>c.empId===empId);
+    if(!list.length) return null;
+    const sorted=[...list].sort((a,b)=>new Date(b.startDate)-new Date(a.startDate));
+    return sorted.find(c=>!c.endDate||new Date(c.endDate)>=today)||sorted[0];
+  }
+
+  const currentContracts=[];
+  activeEmpIds.forEach(id=>{ const c=_latestContract(id); if(c) currentContracts.push(c); });
+
+  const empContractEndList=activeEmpsAll.map(e=>{
+    const cd=DB.customData[e.id]||{};
+    const endRaw=cd.contractEnd||cd.currentContractEnd||'';
+    if(!endRaw) return null;
+    const endISO=_toISO(endRaw);
+    const endDate=endISO?new Date(endISO):null;
+    if(!endDate||isNaN(endDate)) return null;
+    if(currentContracts.some(c=>c.empId===e.id)) return null;
+    return {id:'cf_'+e.id,empId:e.id,endDate:endISO,type:cd.currentContractType||'',_fromCustom:true};
+  }).filter(Boolean);
+
+  return [...currentContracts,...empContractEndList].filter(c=>{
+    if(!c.endDate) return false;
+    const ed=new Date(c.endDate);
+    if(ed.getMonth()+1!==contractFilter.month||ed.getFullYear()!==contractFilter.year) return false;
+    const emp=(DB.employees||[]).find(e=>e.id===c.empId);
+    return emp&&emp.status!=='exit';
+  }).sort((a,b)=>new Date(a.endDate)-new Date(b.endDate));
+}
+
+function exportContractPDF(){
+  const today = new Date();
+  const depts = DB.departments||[];
+  const expiringInMonth = _getExpiringInMonth();
+
+  if(!expiringInMonth.length){
+    toast(`Không có HĐ hết hạn trong tháng ${contractFilter.month}/${contractFilter.year}`,'error');
+    return;
+  }
+
+  const rows = expiringInMonth.map((c,i)=>{
+    const emp=(DB.employees||[]).find(e=>e.id===c.empId); if(!emp) return '';
+    const days=Math.ceil((new Date(c.endDate)-today)/86400000);
+    const isUrgent=days<=7, isWarn=days<=30;
+    const rowStyle=isUrgent?'background:#fce4ec':isWarn?'background:#fff3e0':'';
+    const dayStyle=isUrgent?'color:#c62828;font-weight:700':isWarn?'color:#e65100;font-weight:700':'';
+    const typeLabel=CONTRACT_TYPE[c.type]||c.type||'—';
+    const typeBg=c.type==='probation'?'#f3e5f5;color:#7b1fa2':
+                 (c.type==='term12'||c.type==='term24')?'#e8f5e9;color:#2e7d32':'#fff3e0;color:#e65100';
     return `<tr style="${rowStyle}">
       <td>${i+1}</td>
-      <td style="font-family:monospace;font-size:9pt">${emp?.code||'—'}</td>
-      <td><b>${escapeHtml(emp?.name||'—')}</b></td>
-      <td>${depts.find(d=>d.id===emp?.deptId)?.name||'—'}</td>
-      <td>${CONTRACT_TYPE[c.type]||c.type||'—'}</td>
-      <td>${c.startDate||'—'}</td>
-      <td style="${endStyle}">${c.endDate||'Không xác định'} ${flagCol}</td>
-      <td>${escapeHtml(c.notes||'')}</td>
+      <td style="font-family:monospace;font-size:9pt">${escapeHtml(emp.code||'—')}</td>
+      <td><b>${escapeHtml(emp.name||'—')}</b></td>
+      <td>${escapeHtml(depts.find(d=>d.id===emp.deptId)?.name||'—')}</td>
+      <td style="font-size:8.5pt;color:#555">${escapeHtml(emp.role||'—')}</td>
+      <td><span style="background:${typeBg};padding:2px 8px;border-radius:4px;font-size:8.5pt;font-weight:600">${typeLabel}</span></td>
+      <td style="${dayStyle}">${c.endDate}</td>
+      <td style="${dayStyle}">${days>=0?days+' ngày':'Đã quá hạn'}</td>
     </tr>`;
   }).join('');
 
-  // Count by type
-  const byType = {};
-  contracts.forEach(c=>{ byType[c.type]=(byType[c.type]||0)+1; });
-  const typeSummary = Object.entries(byType).map(([t,n])=>`${CONTRACT_TYPE[t]||t}: <b>${n}</b>`).join(' &nbsp;|&nbsp; ');
-  const expCount = contracts.filter(c=>c.endDate && c.endDate >= today && c.endDate <= in30).length;
+  const byType={};
+  expiringInMonth.forEach(c=>{ const k=CONTRACT_TYPE[c.type]||c.type||'Khác'; byType[k]=(byType[k]||0)+1; });
+  const typeSummary=Object.entries(byType).map(([t,n])=>`${t}: <b>${n}</b>`).join(' &nbsp;|&nbsp; ');
 
-  _openPDF('Danh sách Hợp đồng Lao động',
-    `<div style="margin-bottom:12px;font-size:9.5pt;color:#555">${typeSummary}
-     ${expCount ? `&nbsp;·&nbsp; <span style="color:#e65100;font-weight:600">⚠ ${expCount} HĐ hết hạn trong 30 ngày</span>` : ''}</div>
+  _openPDF(
+    `Danh sách HĐ hết hạn tháng ${contractFilter.month}/${contractFilter.year}`,
+    `<div style="margin-bottom:12px;font-size:9.5pt;color:#555">${typeSummary}</div>
     <table><thead><tr>
       <th>#</th><th>Mã NV</th><th>Họ tên</th><th>Phòng ban</th>
-      <th>Loại HĐ</th><th>Ngày bắt đầu</th><th>Ngày kết thúc</th><th>Ghi chú</th>
+      <th>Chức danh</th><th>Loại HĐ</th><th>Ngày kết thúc</th><th>Còn lại</th>
     </tr></thead><tbody>${rows}</tbody></table>`,
-    `${contracts.length} hợp đồng đang hiệu lực`);
+    `${expiringInMonth.length} HĐ · tháng ${contractFilter.month}/${contractFilter.year}`
+  );
+}
+
+function exportContractPDFByDept(){
+  const today = new Date();
+  const depts = DB.departments||[];
+  const expiringInMonth = _getExpiringInMonth();
+
+  if(!expiringInMonth.length){
+    toast(`Không có HĐ hết hạn trong tháng ${contractFilter.month}/${contractFilter.year}`,'error');
+    return;
+  }
+
+  // Group theo phòng ban, sort theo tên bộ phận rồi ngày hết hạn
+  const byDept={};
+  expiringInMonth.forEach(c=>{
+    const emp=(DB.employees||[]).find(e=>e.id===c.empId); if(!emp) return;
+    const dName=depts.find(d=>d.id===emp.deptId)?.name||'Chưa phân bổ';
+    if(!byDept[dName]) byDept[dName]=[];
+    byDept[dName].push({c,emp});
+  });
+
+  let rows='', rowNum=0;
+  Object.entries(byDept).sort(([a],[b])=>a.localeCompare(b,'vi')).forEach(([dName,items])=>{
+    rows+=`<tr style="background:#e8eaf6"><td colspan="7" style="font-weight:700;color:#1a237e;padding:8px 10px;font-size:10pt">
+      📂 ${escapeHtml(dName)} <span style="font-weight:400;font-size:8.5pt;color:#555">(${items.length} hợp đồng)</span>
+    </td></tr>`;
+    items.forEach(({c,emp})=>{
+      rowNum++;
+      const days=Math.ceil((new Date(c.endDate)-today)/86400000);
+      const isUrgent=days<=7, isWarn=days<=30;
+      const rowStyle=isUrgent?'background:#fce4ec':isWarn?'background:#fff3e0':'';
+      const dayStyle=isUrgent?'color:#c62828;font-weight:700':isWarn?'color:#e65100;font-weight:700':'';
+      const typeLabel=CONTRACT_TYPE[c.type]||c.type||'—';
+      const typeBg=c.type==='probation'?'#f3e5f5;color:#7b1fa2':
+                   (c.type==='term12'||c.type==='term24')?'#e8f5e9;color:#2e7d32':'#fff3e0;color:#e65100';
+      rows+=`<tr style="${rowStyle}">
+        <td>${rowNum}</td>
+        <td style="font-family:monospace;font-size:9pt">${escapeHtml(emp.code||'—')}</td>
+        <td><b>${escapeHtml(emp.name||'—')}</b></td>
+        <td style="font-size:8.5pt;color:#555">${escapeHtml(emp.role||'—')}</td>
+        <td><span style="background:${typeBg};padding:2px 8px;border-radius:4px;font-size:8.5pt;font-weight:600">${typeLabel}</span></td>
+        <td style="${dayStyle}">${c.endDate}</td>
+        <td style="${dayStyle}">${days>=0?days+' ngày':'Đã quá hạn'}</td>
+      </tr>`;
+    });
+  });
+
+  const numDepts=Object.keys(byDept).length;
+
+  _openPDF(
+    `HĐ hết hạn tháng ${contractFilter.month}/${contractFilter.year} — Theo bộ phận`,
+    `<table><thead><tr>
+      <th>#</th><th>Mã NV</th><th>Họ tên</th>
+      <th>Chức danh</th><th>Loại HĐ</th><th>Ngày kết thúc</th><th>Còn lại</th>
+    </tr></thead><tbody>${rows}</tbody></table>`,
+    `${expiringInMonth.length} HĐ · ${numDepts} bộ phận · tháng ${contractFilter.month}/${contractFilter.year}`
+  );
 }
 
 // ── NGHỈ PHÉP ──
