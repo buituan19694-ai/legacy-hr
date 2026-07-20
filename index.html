@@ -24187,6 +24187,11 @@ function renderAwards(main){
   const today = new Date();
   const {from, to, prevFrom, prevTo, label: periodLabel} = getPeriodBounds(_awardPeriod);
 
+  // Khai báo ở scope hàm để dùng được trong toàn bộ template + chart
+  const activeYear = _awardPeriod.startsWith('year_') ? parseInt(_awardPeriod.slice(5))
+                   : _awardPeriod.startsWith('month_') ? parseInt(_awardPeriod.split('_')[2])
+                   : new Date().getFullYear();
+
   const allRewards = (DB.rewardRecords||[]).map(r=>{ const emp=empById(r.empId); return emp?{...r,emp}:null; }).filter(Boolean);
 
   const inPeriod = allRewards.filter(r => inRange(r.date, from, to));
@@ -24243,9 +24248,6 @@ function renderAwards(main){
       const yearPeriods = getDataYears('award');
       const chipBtn = (key, label, active) =>
         `<button class="period-chip${active?' active':''}" data-period="${key}" data-fn="setAwardPeriod" onclick="window[this.dataset.fn](this.dataset.period)">${label}</button>`;
-      const activeYear = _awardPeriod.startsWith('year_') ? parseInt(_awardPeriod.slice(5))
-                       : _awardPeriod.startsWith('month_') ? parseInt(_awardPeriod.split('_')[2])
-                       : new Date().getFullYear();
       const monthRow = ['T1','T2','T3','T4','T5','T6','T7','T8','T9','T10','T11','T12']
         .map((m,i)=>chipBtn(`month_${i+1}_${activeYear}`, m, _awardPeriod===`month_${i+1}_${activeYear}`)).join('');
       return `
@@ -24422,9 +24424,6 @@ function renderAwards(main){
 
   // ── Vẽ biểu đồ Awards theo phòng ban x tháng ──
   setTimeout(()=>{
-    const activeYear = _awardPeriod.startsWith('year_') ? parseInt(_awardPeriod.slice(5))
-                     : _awardPeriod.startsWith('month_') ? parseInt(_awardPeriod.split('_')[2])
-                     : new Date().getFullYear();
     const yearRewards = (DB.rewardRecords||[]).filter(r=>{
       if(!r.date) return false;
       const d = new Date(r.date);
