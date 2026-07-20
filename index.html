@@ -18656,8 +18656,13 @@ function resignAction(rid, action){
     const _r2 = [...DB.resignations];
     _r2[idx] = {..._r2[idx], status:'confirmed', confirmedAt:new Date().toISOString(), endDate:_today, _actualEndDate:_today};
     DB.resignations = _r2;
-    console.log('[resignAction] Before save:', rid, 'status now=', DB.resignations[idx].status, 'total=', DB.resignations.length);
+    // 🚨 Trigger Proxy setter cho employees + customData để đảm bảo localStorage sync
+    DB.employees = [...DB.employees];
+    DB.customData = {...DB.customData};
+    console.log('[resignAction] Before save:', rid, 'status now=', DB.resignations[idx].status, 'emp status=', DB.employees.find(e=>e.id===r.empId)?.status, 'total=', DB.resignations.length);
     saveEmpProfile(r.empId);
+    // Save employees + customData qua saveData để đảm bảo localStorage cũng sync
+    saveData(['employees','customData']);
     // Verify Firestore write success
     if(window.fbDb && window.currentUser){
       const meta = { _syncBy: window.currentUser.uid, _syncAt: Date.now(), _lastSaved: Date.now() };
@@ -18764,6 +18769,18 @@ function _autoConfirmExpiredResignations(){
 
     // Save: resignations + employees (per-emp) + customData
     saveData(['resignations', 'employees', 'customData']);
+
+    // 🚨 Cũng gọi saveEmpProfile cho từng NV để đảm bảo Firestore emp_profiles/{empId} sync
+    DB.resignations.forEach(r => {
+      if(r._autoConfirmed && r.status === 'confirmed'){
+        try { saveEmpProfile(r.empId); } catch(_){}
+      }
+    });
+    // Safety-net NV
+    fixedByNet.forEach(name => {
+      const emp = DB.employees.find(e => e.name === name || e.id === name);
+      if(emp) try { saveEmpProfile(emp.id); } catch(_){}
+    });
 
     // Notify user — delay 1.5s để toast hiển thị sau khi UI ổn định
     setTimeout(() => {
@@ -31927,8 +31944,7 @@ fbAuth.onAuthStateChanged(async user => {
             }
           } // end if(hasCloud)
         }catch(cloudErr){ console.warn('Cloud load warn:',cloudErr.message); }
-        // Auto-confirm resignations đã qua ngày làm việc cuối (sau khi DB sync xong)
-        try { if(typeof _autoConfirmExpiredResignations === 'function') _autoConfirmExpiredResignations(); } catch(e){ console.warn('autoExit warn:', e.message); }
+        // Auto-confirm resignations — sẽ được gọi SAU _coldLoadDone = true (xem bên dưới)
         document.getElementById('authScreen').style.display = 'none';
         document.getElementById('app').style.display = '';
         const nameEl = document.getElementById('sidebarUserName');
@@ -32013,6 +32029,10 @@ fbAuth.onAuthStateChanged(async user => {
         // Trước lúc này, mọi saveData sẽ bị SKIP để không wipe cloud bằng DB local chưa đầy đủ
         window._coldLoadDone = true;
         console.log('[Firestore] ✅ Cold-load complete — save operations enabled');
+
+        // 🚨 Auto-confirm resignations đã qua ngày làm việc cuối
+        // PHẢI chạy SAU _coldLoadDone = true để saveEmpProfile + saveData không bị SKIP
+        try { if(typeof _autoConfirmExpiredResignations === 'function') _autoConfirmExpiredResignations(); } catch(e){ console.warn('autoExit warn:', e.message); }
 
         // ═══════════════════════════════════════════════════════════════
         // 🛡️ DATA-LOSS SENTINEL (v24): tự phát hiện data mất, KHÔNG cần mở từng section
