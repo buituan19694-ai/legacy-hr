@@ -11502,26 +11502,31 @@ function exportRecruitmentPDF(pdfMode){
         return (order.indexOf(a.status)||99)-(order.indexOf(b.status)||99);
       });
     if(!cands.length) return `<div style="break-inside:avoid;margin-bottom:20px">
-      <div style="background:#f8f9fa;border-left:4px solid #ccc;padding:8px 12px;margin-bottom:6px">
+      <div style="background:#f8f9fa;border-left:4px solid #ccc;padding:8px 12px;margin-bottom:0">
         <span style="font-weight:700;font-size:11pt">${escapeHtml(j.title||'')}</span>
         <span style="color:#888;font-size:9pt;margin-left:8px">${dept?.name||'—'} · ${j.positions||1} vị trí</span>
         <span style="color:#999;font-size:9pt;margin-left:8px;font-style:italic">Chưa có CV</span>
       </div>
+      ${j.notes ? `<div style="background:#fffde7;border-left:4px solid #ccc;border-top:1px solid #ffe082;padding:5px 12px;font-size:9pt;color:#795548;font-style:italic;margin-bottom:6px">📝 ${escapeHtml(j.notes)}</div>` : '<div style="margin-bottom:6px"></div>'}
     </div>`;
 
     const hiredCount = getJobHired(j.id);
     const statusBadgeColor = j.status==='open'?'#4caf50':j.status==='paused'?'#ff9800':j.status==='closed'?'#9e9e9e':'#2196f3';
 
     const candRows = cands.map((c,idx)=>{
-      const sc = CAND_STATUS_COLOR[c.status]||'#607d8b';
-      const sl = CAND_STATUS_LABEL[c.status]||c.status||'—';
+      const isBlack = !!c.blacklisted;
+      const sc = isBlack ? '#f44336' : (CAND_STATUS_COLOR[c.status]||'#607d8b');
+      const sl = isBlack
+        ? `⛔ Không tuyển${c.blacklistReason ? ' · ' + c.blacklistReason : ''}`
+        : (CAND_STATUS_LABEL[c.status]||c.status||'—');
       // Vòng phỏng vấn hiện tại
       const rounds = [c.round1,c.round2,c.round3,c.round4,c.round5].filter(Boolean);
       const latestRound = rounds[rounds.length-1];
       const roundNote = latestRound ? `${latestRound.result||''} ${latestRound.note?'· '+latestRound.note:''}`.trim() : '';
-      return `<tr style="background:${idx%2===0?'#fff':'#fafafa'}">
+      const rowBg = isBlack ? '#fff5f5' : (idx%2===0?'#fff':'#fafafa');
+      return `<tr style="background:${rowBg}${isBlack?';border-left:3px solid #f44336':''}">
         <td style="text-align:center;color:#999;font-size:9pt">${idx+1}</td>
-        <td style="font-weight:600">${escapeHtml(c.name||'—')}</td>
+        <td style="font-weight:600;${isBlack?'color:#f44336;':''}">${isBlack?'⛔ ':''}${escapeHtml(c.name||'—')}</td>
         <td style="color:#555">${escapeHtml(c.phone||'—')}</td>
         <td style="color:#555;font-size:9pt">${escapeHtml(c.source||'—')}</td>
         <td>${c.appliedDate?fmtDate(c.appliedDate):'—'}</td>
@@ -11529,6 +11534,8 @@ function exportRecruitmentPDF(pdfMode){
         <td style="font-size:9pt;color:#666;max-width:160px">${escapeHtml(roundNote||c.notes||'—')}</td>
       </tr>`;
     }).join('');
+
+    const jobNotesHtml = j.notes ? `<div style="background:#fffde7;border-top:1px solid #ffe082;padding:5px 12px;font-size:9pt;color:#795548;font-style:italic">📝 ${escapeHtml(j.notes)}</div>` : '';
 
     return `<div style="break-inside:avoid;margin-bottom:24px">
       <div style="background:#f0f4ff;border-left:4px solid #1a1a2e;padding:9px 12px;margin-bottom:0;display:flex;align-items:center;gap:12px;flex-wrap:wrap">
@@ -11538,6 +11545,7 @@ function exportRecruitmentPDF(pdfMode){
         <span style="color:${statusBadgeColor};font-size:9pt;font-weight:600">${JOB_STATUS[j.status]||j.status}</span>
         <span style="font-size:9pt;color:#888;margin-left:auto">${cands.length} CV</span>
       </div>
+      ${jobNotesHtml}
       <table style="width:100%;border-collapse:collapse;font-size:9.5pt">
         <thead><tr style="background:#e8ecf0">
           <th style="padding:5px 6px;text-align:center;width:28px">#</th>
