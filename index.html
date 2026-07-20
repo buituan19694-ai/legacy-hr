@@ -6505,10 +6505,96 @@ function renderDashboard(main){
       </div>
     </div>
 
+    <!-- Bảng hỗ trợ ngoại tỉnh & di chuyển theo tháng -->
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-head">
+        <div>
+          <div class="card-title">🚌 Hỗ trợ <em>ngoại tỉnh & di chuyển</em> theo tháng</div>
+          <div class="card-sub">Số NV nhận hỗ trợ tại thời điểm cuối mỗi tháng · Năm ${p.year}</div>
+        </div>
+      </div>
+      ${(()=>{
+        const cd = DB.customData || {};
+        const months = ['T1','T2','T3','T4','T5','T6','T7','T8','T9','T10','T11','T12'];
+        const monthData = months.map((_,mi) => {
+          const monthEnd = new Date(p.year, mi+1, 0);
+          const monthEndStr = monthEnd.toISOString().slice(0,10);
+          // NV đang làm tại cuối tháng đó: joined <= cuối tháng && (không exit HOẶC exitDate > cuối tháng)
+          const activeAtMonth = DB.employees.filter(e => {
+            const joinD = _parseAnyDate(e.joined);
+            if(!joinD || joinD > monthEnd) return false;
+            if(e.status === 'exit'){
+              const ed = cd[e.id]||{};
+              const exitD = _parseAnyDate(ed.exitDate);
+              if(exitD && exitD <= monthEnd) return false;
+            }
+            return true;
+          });
+          let outProv = 0, transport = 0, dorm = 0;
+          activeAtMonth.forEach(e => {
+            const ed = cd[e.id]||{};
+            if(ed.supportOutProvince === 'Có') outProv++;
+            if(ed.supportTransport === 'Có') transport++;
+            if(ed.dormitory) dorm++;
+          });
+          return { total: activeAtMonth.length, outProv, transport, dorm };
+        });
+        const curMonth = (p.year === today.getFullYear()) ? today.getMonth() : 11;
+        return `
+          <div style="overflow-x:auto">
+          <table class="tbl" style="font-size:12.5px">
+            <thead>
+              <tr>
+                <th style="padding:8px 10px;min-width:160px">Chỉ tiêu</th>
+                ${months.map((m,i)=>`<th style="padding:8px 6px;text-align:center;${i===p.month-1?'background:rgba(212,165,116,.15);color:var(--accent)':''}">${m}</th>`).join('')}
+                <th style="padding:8px 10px;text-align:center;font-weight:700">Hiện tại</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td style="padding:8px 10px;font-weight:600;color:var(--ink)">
+                  <div style="display:flex;align-items:center;gap:6px">
+                    <span style="width:8px;height:8px;border-radius:50%;background:var(--info);flex-shrink:0"></span>
+                    Hỗ trợ ngoại tỉnh
+                  </div>
+                </td>
+                ${monthData.map((d,i)=>`<td style="padding:8px 6px;text-align:center;font-family:'JetBrains Mono',monospace;${i>curMonth?'color:var(--ink-muted);opacity:.4':'color:var(--info);font-weight:600'}${i===p.month-1?';background:rgba(212,165,116,.06)':''}">${i>curMonth?'—':d.outProv}</td>`).join('')}
+                <td style="padding:8px 10px;text-align:center;font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--info);font-size:14px">${monthData[Math.min(curMonth,11)].outProv}</td>
+              </tr>
+              <tr>
+                <td style="padding:8px 10px;font-weight:600;color:var(--ink)">
+                  <div style="display:flex;align-items:center;gap:6px">
+                    <span style="width:8px;height:8px;border-radius:50%;background:var(--accent);flex-shrink:0"></span>
+                    Hỗ trợ di chuyển
+                  </div>
+                </td>
+                ${monthData.map((d,i)=>`<td style="padding:8px 6px;text-align:center;font-family:'JetBrains Mono',monospace;${i>curMonth?'color:var(--ink-muted);opacity:.4':'color:var(--accent);font-weight:600'}${i===p.month-1?';background:rgba(212,165,116,.06)':''}">${i>curMonth?'—':d.transport}</td>`).join('')}
+                <td style="padding:8px 10px;text-align:center;font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--accent);font-size:14px">${monthData[Math.min(curMonth,11)].transport}</td>
+              </tr>
+              <tr>
+                <td style="padding:8px 10px;font-weight:600;color:var(--ink)">
+                  <div style="display:flex;align-items:center;gap:6px">
+                    <span style="width:8px;height:8px;border-radius:50%;background:var(--success);flex-shrink:0"></span>
+                    Ở Staff House
+                  </div>
+                </td>
+                ${monthData.map((d,i)=>`<td style="padding:8px 6px;text-align:center;font-family:'JetBrains Mono',monospace;${i>curMonth?'color:var(--ink-muted);opacity:.4':'color:var(--success);font-weight:600'}${i===p.month-1?';background:rgba(212,165,116,.06)':''}">${i>curMonth?'—':d.dorm}</td>`).join('')}
+                <td style="padding:8px 10px;text-align:center;font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--success);font-size:14px">${monthData[Math.min(curMonth,11)].dorm}</td>
+              </tr>
+              <tr style="border-top:2px solid var(--border)">
+                <td style="padding:8px 10px;font-weight:700;color:var(--ink)">Tổng HC cuối tháng</td>
+                ${monthData.map((d,i)=>`<td style="padding:8px 6px;text-align:center;font-family:'JetBrains Mono',monospace;${i>curMonth?'color:var(--ink-muted);opacity:.4':'color:var(--ink);font-weight:600'}${i===p.month-1?';background:rgba(212,165,116,.06)':''}">${i>curMonth?'—':d.total}</td>`).join('')}
+                <td style="padding:8px 10px;text-align:center;font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--ink);font-size:14px">${monthData[Math.min(curMonth,11)].total}</td>
+              </tr>
+            </tbody>
+          </table>
+          </div>
+          <div style="margin-top:14px"><div class="chart-wrap" style="height:220px"><canvas id="chartSupportMonthly"></canvas></div></div>
+        `;
+      })()}
+    </div>
+
     <div class="row row-2">
-      <div class="card">
-        <div class="card-head"><div>
-          <div class="card-title">Phân bố <em>độ tuổi</em></div>
           <div class="card-sub">${filteredPool.filter(e=>e.dob).length} NV có thông tin ngày sinh</div>
         </div></div>
         <div class="chart-wrap"><canvas id="chartAge"></canvas></div>
@@ -7840,6 +7926,51 @@ function renderDashboardCharts(){
     new Chart(warnEl, {type:'bar', data:{labels:mnL,datasets:[{data:wData,backgroundColor:'rgba(229,115,115,.7)',borderRadius:3}]}, options:chartOpts('#e57373')});
   }
   }, 800);
+
+  // Chart hỗ trợ ngoại tỉnh & di chuyển theo tháng
+  const supportEl = document.getElementById('chartSupportMonthly');
+  if(supportEl){
+    if(Chart.getChart(supportEl)) Chart.getChart(supportEl).destroy();
+    const cd = DB.customData || {};
+    const _p = window._dashPeriod || {year: new Date().getFullYear()};
+    const _today = new Date();
+    const _curMonth = (_p.year === _today.getFullYear()) ? _today.getMonth() : 11;
+    const outData = [], transData = [], dormData = [];
+    for(let mi=0;mi<12;mi++){
+      if(mi > _curMonth){ outData.push(null); transData.push(null); dormData.push(null); continue; }
+      const mEnd = new Date(_p.year, mi+1, 0);
+      let op=0,tr=0,dm=0;
+      DB.employees.forEach(e=>{
+        const jd=_parseAnyDate(e.joined);
+        if(!jd||jd>mEnd) return;
+        if(e.status==='exit'){const ed=cd[e.id]||{};const xd=_parseAnyDate(ed.exitDate);if(xd&&xd<=mEnd)return;}
+        const ed=cd[e.id]||{};
+        if(ed.supportOutProvince==='Có') op++;
+        if(ed.supportTransport==='Có') tr++;
+        if(ed.dormitory) dm++;
+      });
+      outData.push(op); transData.push(tr); dormData.push(dm);
+    }
+    new Chart(supportEl, {
+      type:'line',
+      data:{
+        labels:['T1','T2','T3','T4','T5','T6','T7','T8','T9','T10','T11','T12'],
+        datasets:[
+          {label:'Hỗ trợ ngoại tỉnh', data:outData, borderColor:'#7eb6e8', backgroundColor:'rgba(126,182,232,.1)', fill:true, tension:.3, pointRadius:4, pointHoverRadius:6, borderWidth:2},
+          {label:'Hỗ trợ di chuyển', data:transData, borderColor:'#d4a574', backgroundColor:'rgba(212,165,116,.1)', fill:true, tension:.3, pointRadius:4, pointHoverRadius:6, borderWidth:2},
+          {label:'Ở Staff House', data:dormData, borderColor:'#7ec699', backgroundColor:'rgba(126,198,153,.1)', fill:true, tension:.3, pointRadius:4, pointHoverRadius:6, borderWidth:2}
+        ]
+      },
+      options:{
+        responsive:true, maintainAspectRatio:false, spanGaps:true,
+        plugins:{legend:{position:'top', labels:{usePointStyle:true, padding:12, boxWidth:8, font:{size:11}}}, tooltip:{mode:'index', intersect:false}},
+        scales:{
+          x:{grid:{display:false}, ticks:{color:'#8b949e', font:{size:11}}},
+          y:{grid:{color:'rgba(255,255,255,.04)'}, beginAtZero:true, ticks:{stepSize:1, color:'#8b949e'}}
+        }
+      }
+    });
+  }
 }
 
 function renderDeptPerformance(){
@@ -24161,6 +24292,28 @@ function renderAwards(main){
       </div>
     </div>
 
+    <!-- Biểu đồ Awards theo tháng & phòng ban -->
+    <div class="row-2-equal" style="margin-bottom:16px">
+      <div class="card">
+        <div class="card-head">
+          <div>
+            <div class="card-title">📊 Khen thưởng theo <em>phòng ban</em></div>
+            <div class="card-sub">Năm ${activeYear} · từng tháng</div>
+          </div>
+        </div>
+        <div class="chart-wrap tall"><canvas id="chartAwardsDeptMonth"></canvas></div>
+      </div>
+      <div class="card">
+        <div class="card-head">
+          <div>
+            <div class="card-title">🏅 Top phòng ban <em>nổi bật</em></div>
+            <div class="card-sub">Năm ${activeYear} · tổng lượt khen thưởng</div>
+          </div>
+        </div>
+        <div class="chart-wrap tall"><canvas id="chartAwardsDeptPie"></canvas></div>
+      </div>
+    </div>
+
     <!-- Danh sách + filter -->
     <div class="card" style="margin-bottom:16px">
       <div class="card-head">
@@ -24266,6 +24419,96 @@ function renderAwards(main){
       </div>
     </div>
   `;
+
+  // ── Vẽ biểu đồ Awards theo phòng ban x tháng ──
+  setTimeout(()=>{
+    const activeYear = _awardPeriod.startsWith('year_') ? parseInt(_awardPeriod.slice(5))
+                     : _awardPeriod.startsWith('month_') ? parseInt(_awardPeriod.split('_')[2])
+                     : new Date().getFullYear();
+    const yearRewards = (DB.rewardRecords||[]).filter(r=>{
+      if(!r.date) return false;
+      const d = new Date(r.date);
+      return d.getFullYear() === activeYear;
+    });
+
+    // Tập hợp phòng ban có awards
+    const deptMap = {};
+    yearRewards.forEach(r=>{
+      const emp = empById(r.empId);
+      if(!emp) return;
+      const dn = deptName(emp.deptId) || 'Khác';
+      if(!deptMap[dn]) deptMap[dn] = new Array(12).fill(0);
+      const m = new Date(r.date).getMonth();
+      deptMap[dn][m]++;
+    });
+
+    const deptNames = Object.keys(deptMap).sort((a,b)=>{
+      const sa = deptMap[a].reduce((x,y)=>x+y,0);
+      const sb = deptMap[b].reduce((x,y)=>x+y,0);
+      return sb - sa;
+    });
+
+    const chartPalette = ['#d4a574','#7eb6e8','#b794d4','#7ec699','#e8b974','#e57373','#7dd3c0','#a8b4f0','#f0a8c4','#90caf9','#ce93d8','#ffcc80'];
+
+    // Stacked Bar Chart
+    const barEl = document.getElementById('chartAwardsDeptMonth');
+    if(barEl){
+      if(Chart.getChart(barEl)) Chart.getChart(barEl).destroy();
+      new Chart(barEl, {
+        type:'bar',
+        data:{
+          labels:['T1','T2','T3','T4','T5','T6','T7','T8','T9','T10','T11','T12'],
+          datasets: deptNames.map((dn,i)=>({
+            label: dn,
+            data: deptMap[dn],
+            backgroundColor: chartPalette[i % chartPalette.length],
+            borderRadius: 3,
+            barPercentage: 0.7
+          }))
+        },
+        options:{
+          responsive:true, maintainAspectRatio:false,
+          plugins:{
+            legend:{display:true, position:'bottom', labels:{usePointStyle:true, padding:10, boxWidth:8, font:{size:11}}},
+            tooltip:{
+              mode:'index', intersect:false,
+              callbacks:{
+                footer: items => 'Tổng: ' + items.reduce((s,i)=>s+i.raw, 0) + ' lượt'
+              }
+            }
+          },
+          scales:{
+            x:{stacked:true, grid:{display:false}, ticks:{color:'#8b949e', font:{size:11}}},
+            y:{stacked:true, grid:{color:'#1f2630'}, beginAtZero:true, ticks:{stepSize:1, color:'#8b949e'}}
+          }
+        }
+      });
+    }
+
+    // Doughnut Chart — top phòng ban
+    const pieEl = document.getElementById('chartAwardsDeptPie');
+    if(pieEl){
+      if(Chart.getChart(pieEl)) Chart.getChart(pieEl).destroy();
+      const deptTotals = deptNames.map(dn => deptMap[dn].reduce((s,v)=>s+v,0));
+      new Chart(pieEl, {
+        type:'doughnut',
+        data:{
+          labels: deptNames.map((dn,i)=> dn + ' (' + deptTotals[i] + ')'),
+          datasets:[{
+            data: deptTotals,
+            backgroundColor: deptNames.map((_,i)=> chartPalette[i % chartPalette.length]),
+            borderColor:'#1a2028', borderWidth:2, hoverOffset:6
+          }]
+        },
+        options:{
+          responsive:true, maintainAspectRatio:false, cutout:'55%',
+          plugins:{
+            legend:{position:'bottom', labels:{usePointStyle:true, padding:10, boxWidth:8, font:{size:11}}}
+          }
+        }
+      });
+    }
+  }, 100);
 }
 function addAwardFromList(){
   if(DB.employees.length === 0){ toast((_lang==="en"?"No employees yet":"Chưa có nhân viên"),'error'); return; }
