@@ -24462,7 +24462,8 @@ function renderAwards(main){
             data: deptMap[dn],
             backgroundColor: chartPalette[i % chartPalette.length],
             borderRadius: 3,
-            barPercentage: 0.7
+            barPercentage: 0.85,
+            categoryPercentage: 0.9
           }))
         },
         options:{
@@ -24477,8 +24478,8 @@ function renderAwards(main){
             }
           },
           scales:{
-            x:{stacked:true, grid:{display:false}, ticks:{color:'#8b949e', font:{size:11}}},
-            y:{stacked:true, grid:{color:'#1f2630'}, beginAtZero:true, ticks:{stepSize:1, color:'#8b949e'}}
+            x:{stacked:false, grid:{display:false}, ticks:{color:'#8b949e', font:{size:11}}},
+            y:{stacked:false, grid:{color:'#1f2630'}, beginAtZero:true, ticks:{stepSize:1, color:'#8b949e'}}
           }
         }
       });
