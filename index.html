@@ -22796,7 +22796,7 @@ function renderPerformance(main){
       // Biểu đồ theo tháng — năm được chọn
       if(!window._promoChartYear) window._promoChartYear = new Date().getFullYear();
       const chartYr = window._promoChartYear;
-      const allYearsPromo = [...new Set(allPromotions.map(p=>{
+      const allYearsPromo = [...new Set(allPromotions.filter(p=>p.status==='completed'||p.status==='approved').map(p=>{
         const gd = p.effectiveDate || p.date;
         return gd ? new Date(gd).getFullYear() : null;
       }).filter(Boolean))].sort((a,b)=>b-a);
@@ -22806,6 +22806,8 @@ function renderPerformance(main){
       const byMonthTotal = Array(12).fill(0);
       const byMonthIds = Array.from({length:12}, ()=>[]);
       allPromotions.forEach(p=>{
+        // Chỉ count những TH đã được duyệt/hoàn thành — bỏ qua pending/reviewing/rejected
+        if(p.status !== 'completed' && p.status !== 'approved') return;
         // Ưu tiên effectiveDate (ngày hiệu lực) để group theo tháng
         // Fallback về date (ngày tạo đề xuất) nếu không có effectiveDate
         const groupDate = p.effectiveDate || p.date;
