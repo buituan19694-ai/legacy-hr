@@ -27857,7 +27857,7 @@ function renderPayrollTab(){
     const cd=DB.customData[e.id]||{};
     if(!DB.payrollData[pY][mo]) DB.payrollData[pY][mo]={};
     const pd=DB.payrollData[pY][mo][e.id]||{};
-    const base=parseFloat(pd.baseSalary)>=0?parseFloat(pd.baseSalary):(parseInt(cd.baseSalary)||0);
+    const base=parseFloat(pd.baseSalary)||0;
     const biz=parseFloat(pd.bizSalary)||0;
     const sum=base+biz;
     const act=parseFloat(pd.actualSalary)||0;
@@ -27914,6 +27914,75 @@ function renderPayrollTab(){
     }).join('');
 
     const thS=`padding:8px 5px;font-size:9.5px;font-weight:700;white-space:nowrap;text-align:right;letter-spacing:.05em`;
+
+    // ── Overview: Forecast vs Actual vs Cùng kỳ năm trước ──
+    const planDepts = ((DB.manningPlan||{})[pY]||{}).depts||{};
+    let fcHC=0, fcSalTotal=0, fcBH=0;
+    Object.values(planDepts).forEach(dp=>{
+      (dp.positions||[]).forEach(p=>{
+        const hc=parseInt(p.planned)||0;
+        const sal=(parseFloat(p.budgetSalary)||0)+(parseFloat(p.budgetBonus)||0);
+        const bh=parseFloat(p.budgetBH)||Math.round((parseFloat(p.budgetSalary)||0)*INS_RATE);
+        fcHC+=hc; fcSalTotal+=sal*hc; fcBH+=bh*hc;
+      });
+    });
+    const fcCasual=_plGetCasualCost(pY,pM-1).total;
+    const actHC=pool.filter(e=>{const pd=(mData[e.id]||{}); return (parseFloat(pd.actualSalary)||0)>0;}).length;
+    const actHCTotal=pool.length;
+
+    // Cùng kỳ năm trước
+    const prevY=pY-1;
+    const prevMData=(DB.payrollData||{})[prevY]?.[pM]||{};
+    const prevPool=DB.employees.filter(e=>{const eff=getEffectiveStatus(e);if(eff==='exit'){const ed=e.exitDate?_parseAnyDate(e.exitDate):null;if(!ed||ed<new Date(prevY,pM-1,1))return false;return true;}if(e.joined){const j=_parseAnyDate(e.joined);if(j>new Date(prevY,pM,0))return false;}return true;});
+    let prevActSum=0,prevIns=0,prevCasual=0,prevHC=0;
+    prevPool.forEach(e=>{
+      const pd=prevMData[e.id]||{};
+      const act=parseFloat(pd.actualSalary)||0;
+      const allow=parseFloat(pd.allowance)||0;
+      if(act>0) prevHC++;
+      prevActSum+=act+allow;
+      prevIns+=Math.round(act*INS_RATE);
+      prevCasual+=parseFloat(pd.casual)||0;
+    });
+    const prevCasualMod=_plGetCasualCost(prevY,pM-1).total;
+
+    const diffPct=(a,f)=>f?Math.round((a-f)/f*100):0;
+    const diffClr=(v)=>v>0?'var(--danger)':v<0?'var(--success)':'var(--ink-muted)';
+    const diffBadge=(a,f)=>{
+      if(!f) return '<span style="font-size:10px;color:var(--ink-muted)">—</span>';
+      const d=diffPct(a,f);
+      return `<span style="font-size:10px;font-weight:600;color:${diffClr(d)}">${d>0?'▲ +':'▼ '}${d}%</span>`;
+    };
+
+    const kpiCard=(label,forecast,actual,prevVal,color)=>{
+      return `<div style="flex:1;min-width:170px;background:var(--bg-card);border:1px solid var(--border);border-radius:10px;padding:14px 16px">
+        <div style="font-size:10px;color:var(--ink-muted);letter-spacing:.12em;text-transform:uppercase;font-weight:600;margin-bottom:10px">${label}</div>
+        <div style="font-family:'JetBrains Mono',monospace;font-size:18px;font-weight:700;color:${color};margin-bottom:10px">${fmtV(actual)}</div>
+        <div style="display:flex;flex-direction:column;gap:6px">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <span style="font-size:10px;color:var(--ink-muted)">vs Forecast</span>
+            <div style="display:flex;align-items:center;gap:6px">
+              <span style="font-size:11px;color:var(--ink-dim);font-family:'JetBrains Mono',monospace">${fmtV(forecast)}</span>
+              ${diffBadge(actual,forecast)}
+            </div>
+          </div>
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <span style="font-size:10px;color:var(--ink-muted)">vs T${pM}/${prevY}</span>
+            <div style="display:flex;align-items:center;gap:6px">
+              <span style="font-size:11px;color:var(--ink-dim);font-family:'JetBrains Mono',monospace">${fmtV(prevVal)}</span>
+              ${diffBadge(actual,prevVal)}
+            </div>
+          </div>
+        </div>
+      </div>`;
+    };
+    const overview = `<div style="display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap">
+      ${kpiCard('HC (có lương)',fcHC,actHC,prevHC,'var(--accent)')}
+      ${kpiCard('Tổng lương thực tế',fcSalTotal,totActSum,prevActSum,'var(--warning)')}
+      ${kpiCard('BHXH + TU',fcBH,totIns,prevIns,'var(--purple)')}
+      ${kpiCard('Casual',fcCasual,totCasual,prevCasual||prevCasualMod,'var(--accent)')}
+    </div>`;
+
     return `
       <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:14px">
         <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
@@ -27930,9 +27999,10 @@ function renderPayrollTab(){
         </div>
       </div>
       <div style="font-size:11px;color:var(--ink-muted);margin-bottom:10px">
-        📋 Bảng lương tháng ${pM}/${pY} · ${pool.length} CBNV · Casual tháng: <b style="color:var(--accent)">${fmtV(casualMonth.total)} đ</b>
+        📋 Bảng lương tháng ${pM}/${pY} · ${actHCTotal} CBNV · ${actHC} có lương · Casual tháng: <b style="color:var(--accent)">${fmtV(casualMonth.total)} đ</b>
         · BHXH+TU: <b style="color:var(--purple)">${(INS_RATE*100).toFixed(1)}%</b> · Công thức: (Tổng LTT + BHXH+TU + Casual) × Cluster%
       </div>
+      ${overview}
       <div class="card" style="padding:0;overflow:hidden"><div style="overflow-x:auto">
         <table style="border-collapse:collapse;font-size:12px;width:100%">
           <thead><tr style="background:var(--bg-elev);border-bottom:2px solid var(--border-strong)">
@@ -28050,7 +28120,7 @@ function exportPayrollTemplate(year,month){
   const pool=DB.employees.filter(e=>{const eff=getEffectiveStatus(e);if(eff==='exit')return false;if(e.joined){const j=_parseAnyDate(e.joined);if(j>new Date(year,month,0))return false;}return true;}).sort((a,b)=>{const da=(DB.departments||[]).findIndex(d=>d.id===a.deptId);const db=(DB.departments||[]).findIndex(d=>d.id===b.deptId);return da-db||(a.name||'').localeCompare(b.name||'');});
   const INS=0.225;const mData=(DB.payrollData||{})[year]?.[month]||{};
   const header=['Mã NV','Họ tên','Bộ phận','Chức danh','Lương cơ bản','Lương kinh doanh','Tổng lương (auto)','Lương thực tế','Phụ cấp','Tổng lương TT (auto)','BHXH+TU (22.5%)','Casual','Cluster (%)','Tổng phải chi (auto)'];
-  const rows=pool.map(e=>{const cd=DB.customData[e.id]||{};const pd=mData[e.id]||{};const base=parseFloat(pd.baseSalary)>=0?parseFloat(pd.baseSalary):(parseInt(cd.baseSalary)||0);const biz=parseFloat(pd.bizSalary)||0;const act=parseFloat(pd.actualSalary)||0;const allow=parseFloat(pd.allowance)||0;const casual=parseFloat(pd.casual)||0;const cluster=parseFloat(pd.cluster)||100;return[e.empId||'',e.name||'',deptName(e.deptId),e.role||'',base,biz,null,act,allow,null,null,casual,cluster,null];});
+  const rows=pool.map(e=>{const cd=DB.customData[e.id]||{};const pd=mData[e.id]||{};const base=parseFloat(pd.baseSalary)||0;const biz=parseFloat(pd.bizSalary)||0;const act=parseFloat(pd.actualSalary)||0;const allow=parseFloat(pd.allowance)||0;const casual=parseFloat(pd.casual)||0;const cluster=parseFloat(pd.cluster)||100;return[e.empId||'',e.name||'',deptName(e.deptId),e.role||'',base,biz,null,act,allow,null,null,casual,cluster,null];});
   const wb=XLSX.utils.book_new();const ws=XLSX.utils.aoa_to_sheet([header,...rows]);
   for(let r=1;r<=rows.length;r++){const row=r+1;ws[XLSX.utils.encode_cell({c:6,r:r})]={t:'n',f:`E${row}+F${row}`};ws[XLSX.utils.encode_cell({c:9,r:r})]={t:'n',f:`H${row}+I${row}`};ws[XLSX.utils.encode_cell({c:10,r:r})]={t:'n',f:`ROUND(H${row}*${INS},0)`};ws[XLSX.utils.encode_cell({c:13,r:r})]={t:'n',f:`ROUND((J${row}+K${row}+L${row})*M${row}/100,0)`};}
   ws['!cols']=[{wch:10},{wch:22},{wch:18},{wch:18},{wch:15},{wch:15},{wch:15},{wch:15},{wch:12},{wch:15},{wch:15},{wch:12},{wch:10},{wch:18}];
@@ -28069,7 +28139,7 @@ function exportPayrollFull(year,month){
   const pool=DB.employees.filter(e=>{const eff=getEffectiveStatus(e);if(eff==='exit')return false;if(e.joined){const j=_parseAnyDate(e.joined);if(j>new Date(year,month,0))return false;}return true;}).sort((a,b)=>{const da=(DB.departments||[]).findIndex(d=>d.id===a.deptId);const db=(DB.departments||[]).findIndex(d=>d.id===b.deptId);return da-db||(a.name||'').localeCompare(b.name||'');});
   const INS=0.225;const mData=(DB.payrollData||{})[year]?.[month]||{};
   const header=['Mã NV','Họ tên','Bộ phận','Chức danh','Lương cơ bản','Lương KD','Tổng lương','Lương thực tế','Phụ cấp','Tổng LTT','BHXH+TU','Casual','Cluster (%)','Tổng phải chi'];
-  const rows=pool.map(e=>{const cd=DB.customData[e.id]||{};const pd=mData[e.id]||{};const base=parseFloat(pd.baseSalary)>=0?parseFloat(pd.baseSalary):(parseInt(cd.baseSalary)||0);const biz=parseFloat(pd.bizSalary)||0;const sum=base+biz;const act=parseFloat(pd.actualSalary)||0;const allow=parseFloat(pd.allowance)||0;const actSum=act+allow;const ins=Math.round(act*INS);const casual=parseFloat(pd.casual)||0;const cluster=parseFloat(pd.cluster)||100;const grand=Math.round((actSum+ins+casual)*cluster/100);return[e.empId||'',e.name||'',deptName(e.deptId),e.role||'',base,biz,sum,act,allow,actSum,ins,casual,cluster,grand];});
+  const rows=pool.map(e=>{const cd=DB.customData[e.id]||{};const pd=mData[e.id]||{};const base=parseFloat(pd.baseSalary)||0;const biz=parseFloat(pd.bizSalary)||0;const sum=base+biz;const act=parseFloat(pd.actualSalary)||0;const allow=parseFloat(pd.allowance)||0;const actSum=act+allow;const ins=Math.round(act*INS);const casual=parseFloat(pd.casual)||0;const cluster=parseFloat(pd.cluster)||100;const grand=Math.round((actSum+ins+casual)*cluster/100);return[e.empId||'',e.name||'',deptName(e.deptId),e.role||'',base,biz,sum,act,allow,actSum,ins,casual,cluster,grand];});
   const wb=XLSX.utils.book_new();const ws=XLSX.utils.aoa_to_sheet([header,...rows]);ws['!cols']=[{wch:10},{wch:22},{wch:18},{wch:18},{wch:15},{wch:15},{wch:15},{wch:15},{wch:12},{wch:15},{wch:15},{wch:12},{wch:10},{wch:18}];
   XLSX.utils.book_append_sheet(wb,ws,`BangLuong_T${month}`);XLSX.writeFile(wb,`BangLuong_T${month}_${year}.xlsx`);toast('📊 Đã xuất bảng lương T'+month+'/'+year,'success');
 }
@@ -28084,7 +28154,7 @@ function exportPayrollFullYear(year){
     const pool=DB.employees.filter(e=>{const eff=getEffectiveStatus(e);if(eff==='exit')return false;if(e.joined){const j=_parseAnyDate(e.joined);if(j>new Date(year,mi,0))return false;}return true;});
     const mData=(DB.payrollData||{})[year]?.[mi]||{};
     let mt={hc:pool.length,base:0,biz:0,sum:0,act:0,allow:0,actSum:0,ins:0,casual:0,grand:0};
-    pool.forEach(e=>{const cd=DB.customData[e.id]||{};const pd=mData[e.id]||{};const base=parseFloat(pd.baseSalary)>=0?parseFloat(pd.baseSalary):(parseInt(cd.baseSalary)||0);const biz=parseFloat(pd.bizSalary)||0;const sum=base+biz;const act=parseFloat(pd.actualSalary)||0;const allow=parseFloat(pd.allowance)||0;const actSum=act+allow;const ins=Math.round(act*INS);const casual=parseFloat(pd.casual)||0;const cluster=parseFloat(pd.cluster)||100;const grand=Math.round((actSum+ins+casual)*cluster/100);mt.base+=base;mt.biz+=biz;mt.sum+=sum;mt.act+=act;mt.allow+=allow;mt.actSum+=actSum;mt.ins+=ins;mt.casual+=casual;mt.grand+=grand;});
+    pool.forEach(e=>{const cd=DB.customData[e.id]||{};const pd=mData[e.id]||{};const base=parseFloat(pd.baseSalary)||0;const biz=parseFloat(pd.bizSalary)||0;const sum=base+biz;const act=parseFloat(pd.actualSalary)||0;const allow=parseFloat(pd.allowance)||0;const actSum=act+allow;const ins=Math.round(act*INS);const casual=parseFloat(pd.casual)||0;const cluster=parseFloat(pd.cluster)||100;const grand=Math.round((actSum+ins+casual)*cluster/100);mt.base+=base;mt.biz+=biz;mt.sum+=sum;mt.act+=act;mt.allow+=allow;mt.actSum+=actSum;mt.ins+=ins;mt.casual+=casual;mt.grand+=grand;});
     sumRows.push([MN_FULL[mi-1],mt.hc,mt.base,mt.biz,mt.sum,mt.act,mt.allow,mt.actSum,mt.ins,mt.casual,mt.grand]);
     Object.keys(yTot).forEach(k=>yTot[k]+=mt[k]);
   }
@@ -28096,7 +28166,7 @@ function exportPayrollFullYear(year){
     const pool=DB.employees.filter(e=>{const eff=getEffectiveStatus(e);if(eff==='exit')return false;if(e.joined){const j=_parseAnyDate(e.joined);if(j>new Date(year,mi,0))return false;}return true;}).sort((a,b)=>{const da=(DB.departments||[]).findIndex(d=>d.id===a.deptId);const db=(DB.departments||[]).findIndex(d=>d.id===b.deptId);return da-db||(a.name||'').localeCompare(b.name||'');});
     const mData=(DB.payrollData||{})[year]?.[mi]||{};
     const header=['Mã NV','Họ tên','Bộ phận','Chức danh','Lương CB','Lương KD','Tổng lương','Lương TT','Phụ cấp','Tổng LTT','BHXH+TU','Casual','Cluster (%)','Tổng chi'];
-    const rows=pool.map(e=>{const cd=DB.customData[e.id]||{};const pd=mData[e.id]||{};const base=parseFloat(pd.baseSalary)>=0?parseFloat(pd.baseSalary):(parseInt(cd.baseSalary)||0);const biz=parseFloat(pd.bizSalary)||0;const sum=base+biz;const act=parseFloat(pd.actualSalary)||0;const allow=parseFloat(pd.allowance)||0;const actSum=act+allow;const ins=Math.round(act*INS);const casual=parseFloat(pd.casual)||0;const cluster=parseFloat(pd.cluster)||100;const grand=Math.round((actSum+ins+casual)*cluster/100);return[e.empId||'',e.name||'',deptName(e.deptId),e.role||'',base,biz,sum,act,allow,actSum,ins,casual,cluster,grand];});
+    const rows=pool.map(e=>{const cd=DB.customData[e.id]||{};const pd=mData[e.id]||{};const base=parseFloat(pd.baseSalary)||0;const biz=parseFloat(pd.bizSalary)||0;const sum=base+biz;const act=parseFloat(pd.actualSalary)||0;const allow=parseFloat(pd.allowance)||0;const actSum=act+allow;const ins=Math.round(act*INS);const casual=parseFloat(pd.casual)||0;const cluster=parseFloat(pd.cluster)||100;const grand=Math.round((actSum+ins+casual)*cluster/100);return[e.empId||'',e.name||'',deptName(e.deptId),e.role||'',base,biz,sum,act,allow,actSum,ins,casual,cluster,grand];});
     const ws=XLSX.utils.aoa_to_sheet([header,...rows]);ws['!cols']=header.map(()=>({wch:15}));
     XLSX.utils.book_append_sheet(wb,ws,`T${mi}`);
   }
