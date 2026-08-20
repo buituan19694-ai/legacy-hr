@@ -27888,100 +27888,124 @@ function renderPayrollTab(){
       </button>`;
     }).join('');
 
-    const rows=pool.map(e=>{
-      const d=calcEmp(e,pM);
-      totBase+=d.base;totBiz+=d.biz;totSum+=d.sum;totAct+=d.act;totAllow+=d.allow;totActSum+=d.actSum;totIns+=d.ins;totCasual+=d.casual;totGrand+=d.grand;
-      const saveF=(field)=>`(function(v){if(!DB.payrollData['${pY}'])DB.payrollData['${pY}']={};if(!DB.payrollData['${pY}']['${pM}'])DB.payrollData['${pY}']['${pM}']={};if(!DB.payrollData['${pY}']['${pM}']['${e.id}'])DB.payrollData['${pY}']['${pM}']['${e.id}']={};DB.payrollData['${pY}']['${pM}']['${e.id}']['${field}']=parseFloat(String(v).replace(/\\\\./g,'').replace(/,/g,'.'))||0;saveData(['payrollData']);render();})(this.value)`;
-      const inp=(field,val,color,w)=>`<input type="text" inputmode="numeric" value="${val?fmtV(val):''}" placeholder="0" onfocus="this.value=this.value.replace(/\\\\./g,'')" onblur="const n=parseFloat(this.value.replace(/\\\\.(?=\\\\d{3}(?:\\\\.|$))/g,'').replace(/,/g,'.'))||0;this.value=n?Math.round(n).toLocaleString('vi-VN').replace(/,/g,'.'):'';${saveF(field)}" onkeydown="if(event.key==='Enter'){this.blur();}" style="width:${w||95}px;padding:3px 5px;background:var(--bg-elev);border:1px solid ${color||'var(--border)'};border-radius:4px;color:${color||'var(--ink)'};font-family:'JetBrains Mono',monospace;font-size:11px;text-align:right">`;
-      const inpPct=(field,val,color)=>`<input type="number" min="0" max="200" step="1" value="${val||100}" onchange="${saveF(field)}" style="width:55px;padding:3px 4px;background:var(--bg-elev);border:1px solid ${color};border-radius:4px;color:${color};font-family:'JetBrains Mono',monospace;font-size:11px;text-align:right">`;
-      const dept=deptName(e.deptId);
-      return `<tr style="border-bottom:1px solid var(--border)">
-        <td style="padding:6px 8px;font-size:11px;color:var(--ink-muted);font-family:'JetBrains Mono',monospace">${escapeHtml(e.empId||'—')}</td>
-        <td style="padding:6px 8px;font-size:12px;font-weight:500">${escapeHtml(e.name)}</td>
-        <td style="padding:6px 8px;font-size:11px;color:var(--ink-dim)">${escapeHtml(dept)}</td>
-        <td style="padding:6px 8px;font-size:11px;color:var(--ink-dim)">${escapeHtml(e.role||'—')}</td>
-        <td style="padding:3px 4px;text-align:right">${inp('baseSalary',d.base,'var(--success)')}</td>
-        <td style="padding:3px 4px;text-align:right">${inp('bizSalary',d.biz,'var(--info)')}</td>
-        <td style="padding:6px 6px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:600;color:var(--success)">${fmtV(d.sum)}</td>
-        <td style="padding:3px 4px;text-align:right">${inp('actualSalary',d.act,'var(--warning)')}</td>
-        <td style="padding:3px 4px;text-align:right">${inp('allowance',d.allow,'var(--teal)')}</td>
-        <td style="padding:6px 6px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:600;color:var(--warning)">${fmtV(d.actSum)}</td>
-        <td style="padding:6px 6px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--purple)">${fmtV(d.ins)}</td>
-        <td style="padding:3px 4px;text-align:right">${inp('casual',d.casual,'var(--accent)',80)}</td>
-        <td style="padding:3px 4px;text-align:center">${inpPct('cluster',d.cluster,'var(--info)')}</td>
-        <td style="padding:6px 8px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:#FFCC00">${fmtV(d.grand)}</td>
-      </tr>`;
-    }).join('');
+    // Pool: NV chính thức + Trainee
+    const poolRegular=pool.filter(e=>getEffectiveStatus(e)!=='trainee');
+    const poolTrainee=DB.employees.filter(e=>getEffectiveStatus(e)==='trainee').sort((a,b)=>(a.name||'').localeCompare(b.name||''));
+    const allPool=[...poolRegular,...poolTrainee];
 
-    const thS=`padding:8px 5px;font-size:9.5px;font-weight:700;white-space:nowrap;text-align:right;letter-spacing:.05em`;
+    allPool.forEach(e=>{const d=calcEmp(e,pM);totBase+=d.base;totBiz+=d.biz;totSum+=d.sum;totAct+=d.act;totAllow+=d.allow;totActSum+=d.actSum;totIns+=d.ins;totCasual+=d.casual;totGrand+=d.grand;});
+    const actHC=allPool.filter(e=>{const pd=(mData[e.id]||{});return(parseFloat(pd.actualSalary)||0)>0;}).length;
 
-    // ── Overview: Forecast vs Actual vs Cùng kỳ năm trước ──
-    const planDepts = ((DB.manningPlan||{})[pY]||{}).depts||{};
-    let fcHC=0, fcSalTotal=0, fcBH=0;
-    Object.values(planDepts).forEach(dp=>{
-      (dp.positions||[]).forEach(p=>{
-        const hc=parseInt(p.planned)||0;
-        const sal=(parseFloat(p.budgetSalary)||0)+(parseFloat(p.budgetBonus)||0);
-        const bh=parseFloat(p.budgetBH)||Math.round((parseFloat(p.budgetSalary)||0)*INS_RATE);
-        fcHC+=hc; fcSalTotal+=sal*hc; fcBH+=bh*hc;
-      });
-    });
+    // Forecast từ Manning
+    const planDepts=((DB.manningPlan||{})[pY]||{}).depts||{};
+    let fcHC=0,fcSal=0,fcBH=0;
+    Object.values(planDepts).forEach(dp=>{(dp.positions||[]).forEach(p=>{const hc=parseInt(p.planned)||0;fcHC+=hc;fcSal+=(parseFloat(p.budgetSalary)||0)*hc+(parseFloat(p.budgetBonus)||0)*hc;fcBH+=(parseFloat(p.budgetBH)||Math.round((parseFloat(p.budgetSalary)||0)*INS_RATE))*hc;});});
     const fcCasual=_plGetCasualCost(pY,pM-1).total;
-    const actHC=pool.filter(e=>{const pd=(mData[e.id]||{}); return (parseFloat(pd.actualSalary)||0)>0;}).length;
-    const actHCTotal=pool.length;
 
     // Cùng kỳ năm trước
-    const prevY=pY-1;
-    const prevMData=(DB.payrollData||{})[prevY]?.[pM]||{};
-    const prevPool=DB.employees.filter(e=>{const eff=getEffectiveStatus(e);if(eff==='exit'){const ed=e.exitDate?_parseAnyDate(e.exitDate):null;if(!ed||ed<new Date(prevY,pM-1,1))return false;return true;}if(e.joined){const j=_parseAnyDate(e.joined);if(j>new Date(prevY,pM,0))return false;}return true;});
-    let prevActSum=0,prevIns=0,prevCasual=0,prevHC=0;
-    prevPool.forEach(e=>{
-      const pd=prevMData[e.id]||{};
-      const act=parseFloat(pd.actualSalary)||0;
-      const allow=parseFloat(pd.allowance)||0;
-      if(act>0) prevHC++;
-      prevActSum+=act+allow;
-      prevIns+=Math.round(act*INS_RATE);
-      prevCasual+=parseFloat(pd.casual)||0;
-    });
-    const prevCasualMod=_plGetCasualCost(prevY,pM-1).total;
+    const prevY=pY-1;const prevMData=(DB.payrollData||{})[prevY]?.[pM]||{};
+    let pvHC=0,pvActSum=0,pvIns=0,pvCasual=0;
+    DB.employees.forEach(e=>{const pd=prevMData[e.id]||{};const act=parseFloat(pd.actualSalary)||0;const allow=parseFloat(pd.allowance)||0;if(act>0)pvHC++;pvActSum+=act+allow;pvIns+=Math.round(act*INS_RATE);pvCasual+=parseFloat(pd.casual)||0;});
+    const pvCasualMod=_plGetCasualCost(prevY,pM-1).total;if(!pvCasual&&pvCasualMod)pvCasual=pvCasualMod;
 
-    const diffPct=(a,f)=>f?Math.round((a-f)/f*100):0;
-    const diffClr=(v)=>v>0?'var(--danger)':v<0?'var(--success)':'var(--ink-muted)';
-    const diffBadge=(a,f)=>{
-      if(!f) return '<span style="font-size:10px;color:var(--ink-muted)">—</span>';
-      const d=diffPct(a,f);
-      return `<span style="font-size:10px;font-weight:600;color:${diffClr(d)}">${d>0?'▲ +':'▼ '}${d}%</span>`;
-    };
+    // Bảng so sánh Overview
+    const diffBg=(a,f)=>{if(!f)return'';const d=Math.round((a-f)/f*100);return d>5?'color:var(--danger)':d<-5?'color:var(--success)':'';};
+    const diffTxt=(a,f)=>{if(!f)return'—';const d=Math.round((a-f)/f*100);return(d>0?'+':'')+d+'%';};
+    const ct=`padding:10px 12px;font-family:'JetBrains Mono',monospace;font-size:12px;text-align:right`;
+    const ch=`padding:10px 12px;font-size:10px;font-weight:700;letter-spacing:.1em;text-align:right;white-space:nowrap`;
+    const overviewTable=`
+    <div class="card" style="padding:0;overflow:hidden;margin-bottom:16px">
+      <div style="padding:14px 18px 8px"><div style="font-size:14px;font-weight:700;color:var(--ink)">📊 So sánh tổng quan <em style="color:var(--accent)">T${pM}/${pY}</em></div></div>
+      <div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%">
+        <thead><tr style="background:var(--bg-elev);border-bottom:2px solid var(--border-strong)">
+          <th style="${ch};text-align:left;min-width:180px"></th>
+          <th style="${ch};color:var(--accent)">HC</th>
+          <th style="${ch};color:var(--warning)">TỔNG LƯƠNG TT</th>
+          <th style="${ch};color:var(--purple)">BHXH + TU</th>
+          <th style="${ch};color:var(--accent)">CASUAL</th>
+          <th style="${ch};color:#FFCC00">TỔNG CHI</th>
+        </tr></thead><tbody>
+          <tr style="border-bottom:1px solid var(--border)">
+            <td style="padding:10px 12px;font-size:12px;font-weight:600;color:var(--ink-dim)">📋 Forecast (Manning Budget)</td>
+            <td style="${ct}">${fmtV(fcHC)}</td><td style="${ct}">${fmtV(fcSal)}</td><td style="${ct}">${fmtV(fcBH)}</td><td style="${ct}">${fmtV(fcCasual)}</td>
+            <td style="${ct};font-weight:700">${fmtV(fcSal+fcBH+fcCasual)}</td>
+          </tr>
+          <tr style="border-bottom:1px solid var(--border);background:rgba(212,165,116,.06)">
+            <td style="padding:10px 12px;font-size:13px;font-weight:700;color:var(--accent)">✅ Actual T${pM}/${pY}</td>
+            <td style="${ct};font-weight:700;color:var(--accent);font-size:14px">${fmtV(actHC)}</td>
+            <td style="${ct};font-weight:700;color:var(--warning);font-size:14px">${fmtV(totActSum)}</td>
+            <td style="${ct};font-weight:700;color:var(--purple);font-size:14px">${fmtV(totIns)}</td>
+            <td style="${ct};font-weight:700;color:var(--accent);font-size:14px">${fmtV(totCasual)}</td>
+            <td style="${ct};font-weight:800;color:#FFCC00;font-size:14px">${fmtV(totGrand)}</td>
+          </tr>
+          <tr style="border-bottom:1px solid var(--border);background:rgba(255,255,255,.02)">
+            <td style="padding:8px 12px;font-size:11px;color:var(--ink-muted)">↕ Chênh lệch vs Forecast</td>
+            <td style="${ct};font-size:11px;font-weight:600;${diffBg(actHC,fcHC)}">${diffTxt(actHC,fcHC)}</td>
+            <td style="${ct};font-size:11px;font-weight:600;${diffBg(totActSum,fcSal)}">${diffTxt(totActSum,fcSal)}</td>
+            <td style="${ct};font-size:11px;font-weight:600;${diffBg(totIns,fcBH)}">${diffTxt(totIns,fcBH)}</td>
+            <td style="${ct};font-size:11px;font-weight:600;${diffBg(totCasual,fcCasual)}">${diffTxt(totCasual,fcCasual)}</td>
+            <td style="${ct};font-size:11px;font-weight:600;${diffBg(totGrand,fcSal+fcBH+fcCasual)}">${diffTxt(totGrand,fcSal+fcBH+fcCasual)}</td>
+          </tr>
+          <tr style="border-bottom:1px solid var(--border)">
+            <td style="padding:10px 12px;font-size:12px;font-weight:600;color:var(--ink-dim)">📅 Cùng kỳ T${pM}/${prevY}</td>
+            <td style="${ct}">${fmtV(pvHC)}</td><td style="${ct}">${fmtV(pvActSum)}</td><td style="${ct}">${fmtV(pvIns)}</td><td style="${ct}">${fmtV(pvCasual)}</td>
+            <td style="${ct};font-weight:700">${fmtV(pvActSum+pvIns+pvCasual)}</td>
+          </tr>
+          <tr>
+            <td style="padding:8px 12px;font-size:11px;color:var(--ink-muted)">↕ Chênh lệch vs cùng kỳ</td>
+            <td style="${ct};font-size:11px;font-weight:600;${diffBg(actHC,pvHC)}">${diffTxt(actHC,pvHC)}</td>
+            <td style="${ct};font-size:11px;font-weight:600;${diffBg(totActSum,pvActSum)}">${diffTxt(totActSum,pvActSum)}</td>
+            <td style="${ct};font-size:11px;font-weight:600;${diffBg(totIns,pvIns)}">${diffTxt(totIns,pvIns)}</td>
+            <td style="${ct};font-size:11px;font-weight:600;${diffBg(totCasual,pvCasual)}">${diffTxt(totCasual,pvCasual)}</td>
+            <td style="${ct};font-size:11px;font-weight:600;${diffBg(totGrand,pvActSum+pvIns+pvCasual)}">${diffTxt(totGrand,pvActSum+pvIns+pvCasual)}</td>
+          </tr>
+        </tbody></table></div></div>`;
 
-    const kpiCard=(label,forecast,actual,prevVal,color)=>{
-      return `<div style="flex:1;min-width:170px;background:var(--bg-card);border:1px solid var(--border);border-radius:10px;padding:14px 16px">
-        <div style="font-size:10px;color:var(--ink-muted);letter-spacing:.12em;text-transform:uppercase;font-weight:600;margin-bottom:10px">${label}</div>
-        <div style="font-family:'JetBrains Mono',monospace;font-size:18px;font-weight:700;color:${color};margin-bottom:10px">${fmtV(actual)}</div>
-        <div style="display:flex;flex-direction:column;gap:6px">
-          <div style="display:flex;justify-content:space-between;align-items:center">
-            <span style="font-size:10px;color:var(--ink-muted)">vs Forecast</span>
-            <div style="display:flex;align-items:center;gap:6px">
-              <span style="font-size:11px;color:var(--ink-dim);font-family:'JetBrains Mono',monospace">${fmtV(forecast)}</span>
-              ${diffBadge(actual,forecast)}
-            </div>
-          </div>
-          <div style="display:flex;justify-content:space-between;align-items:center">
-            <span style="font-size:10px;color:var(--ink-muted)">vs T${pM}/${prevY}</span>
-            <div style="display:flex;align-items:center;gap:6px">
-              <span style="font-size:11px;color:var(--ink-dim);font-family:'JetBrains Mono',monospace">${fmtV(prevVal)}</span>
-              ${diffBadge(actual,prevVal)}
-            </div>
-          </div>
-        </div>
-      </div>`;
-    };
-    const overview = `<div style="display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap">
-      ${kpiCard('HC (có lương)',fcHC,actHC,prevHC,'var(--accent)')}
-      ${kpiCard('Tổng lương thực tế',fcSalTotal,totActSum,prevActSum,'var(--warning)')}
-      ${kpiCard('BHXH + TU',fcBH,totIns,prevIns,'var(--purple)')}
-      ${kpiCard('Casual',fcCasual,totCasual,prevCasual||prevCasualMod,'var(--accent)')}
-    </div>`;
+    // Detail rows chia theo bộ phận
+    const thS=`padding:8px 5px;font-size:9.5px;font-weight:700;white-space:nowrap;text-align:right;letter-spacing:.05em`;
+    const sf=(eId,field)=>`(function(v){if(!DB.payrollData['${pY}'])DB.payrollData['${pY}']={};if(!DB.payrollData['${pY}']['${pM}'])DB.payrollData['${pY}']['${pM}']={};if(!DB.payrollData['${pY}']['${pM}']['`+eId+`'])DB.payrollData['${pY}']['${pM}']['`+eId+`']={};DB.payrollData['${pY}']['${pM}']['`+eId+`']['`+field+`']=parseFloat(String(v).replace(/\\\\./g,'').replace(/,/g,'.'))||0;saveData(['payrollData']);render();})(this.value)`;
+    const inp=(eId,field,val,color,w)=>`<input type="text" inputmode="numeric" value="${val?fmtV(val):''}" placeholder="0" onfocus="this.value=this.value.replace(/\\./g,'')" onblur="const n=parseFloat(this.value.replace(/\\.(?=\\d{3}(?:\\.|$))/g,'').replace(/,/g,'.'))||0;this.value=n?Math.round(n).toLocaleString('vi-VN').replace(/,/g,'.'):'';${sf(eId,field)}" onkeydown="if(event.key==='Enter'){this.blur();}" style="width:${w||85}px;padding:3px 4px;background:var(--bg-elev);border:1px solid ${color||'var(--border)'};border-radius:4px;color:${color||'var(--ink)'};font-family:'JetBrains Mono',monospace;font-size:11px;text-align:right">`;
+    const inpPct=(eId,field,val,color)=>`<input type="number" min="0" max="200" step="1" value="${val||100}" onchange="${sf(eId,field)}" style="width:50px;padding:3px 3px;background:var(--bg-elev);border:1px solid ${color};border-radius:4px;color:${color};font-family:'JetBrains Mono',monospace;font-size:11px;text-align:right">`;
+
+    const renderEmpRow=(e)=>{const d=calcEmp(e,pM);
+      return `<tr style="border-bottom:1px solid var(--border)">
+        <td style="padding:5px 8px;font-size:11px;color:var(--ink-muted);font-family:'JetBrains Mono',monospace">${escapeHtml(e.empId||'—')}</td>
+        <td style="padding:5px 8px;font-size:12px;font-weight:500">${escapeHtml(e.name)}</td>
+        <td style="padding:5px 5px;font-size:11px;color:var(--ink-dim)">${escapeHtml(e.role||'—')}</td>
+        <td style="padding:2px 3px;text-align:right">${inp(e.id,'baseSalary',d.base,'var(--success)')}</td>
+        <td style="padding:2px 3px;text-align:right">${inp(e.id,'bizSalary',d.biz,'var(--info)')}</td>
+        <td style="padding:5px 4px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:600;color:var(--success)">${fmtV(d.sum)}</td>
+        <td style="padding:2px 3px;text-align:right">${inp(e.id,'actualSalary',d.act,'var(--warning)')}</td>
+        <td style="padding:2px 3px;text-align:right">${inp(e.id,'allowance',d.allow,'var(--teal)')}</td>
+        <td style="padding:5px 4px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:600;color:var(--warning)">${fmtV(d.actSum)}</td>
+        <td style="padding:5px 4px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--purple)">${fmtV(d.ins)}</td>
+        <td style="padding:2px 3px;text-align:right">${inp(e.id,'casual',d.casual,'var(--accent)',70)}</td>
+        <td style="padding:2px 3px;text-align:center">${inpPct(e.id,'cluster',d.cluster,'var(--info)')}</td>
+        <td style="padding:5px 5px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:700;color:#FFCC00">${fmtV(d.grand)}</td>
+      </tr>`;};
+
+    const renderDeptBlock=(label,emps)=>{if(!emps.length)return'';
+      let dt={base:0,biz:0,sum:0,act:0,allow:0,actSum:0,ins:0,casual:0,grand:0};
+      emps.forEach(e=>{const d=calcEmp(e,pM);dt.base+=d.base;dt.biz+=d.biz;dt.sum+=d.sum;dt.act+=d.act;dt.allow+=d.allow;dt.actSum+=d.actSum;dt.ins+=d.ins;dt.casual+=d.casual;dt.grand+=d.grand;});
+      return `<tr style="background:rgba(212,165,116,.07);border-bottom:1px solid var(--border-strong)">
+        <td colspan="3" style="padding:8px 10px;font-weight:700;font-size:12px;color:var(--accent)">${escapeHtml(label)} <span style="font-weight:400;font-size:11px;color:var(--ink-muted)">${emps.length} NV</span></td>
+        <td style="padding:6px 3px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--success)">${fmtV(dt.base)}</td>
+        <td style="padding:6px 3px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--info)">${fmtV(dt.biz)}</td>
+        <td style="padding:6px 3px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:600;color:var(--success)">${fmtV(dt.sum)}</td>
+        <td style="padding:6px 3px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--warning)">${fmtV(dt.act)}</td>
+        <td style="padding:6px 3px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--teal)">${fmtV(dt.allow)}</td>
+        <td style="padding:6px 3px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:600;color:var(--warning)">${fmtV(dt.actSum)}</td>
+        <td style="padding:6px 3px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--purple)">${fmtV(dt.ins)}</td>
+        <td style="padding:6px 3px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--accent)">${fmtV(dt.casual)}</td><td></td>
+        <td style="padding:6px 3px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:700;color:#FFCC00">${fmtV(dt.grand)}</td>
+      </tr>`+emps.map(renderEmpRow).join('');};
+
+    const depts=DB.departments||[];
+    let detailRows='';
+    depts.forEach(dept=>{const emps=poolRegular.filter(e=>e.deptId===dept.id).sort((a,b)=>(a.name||'').localeCompare(b.name||''));detailRows+=renderDeptBlock(dept.name,emps);});
+    const noDept=poolRegular.filter(e=>!e.deptId||!depts.find(d=>d.id===e.deptId));
+    if(noDept.length) detailRows+=renderDeptBlock('Chưa phân bổ',noDept);
+    if(poolTrainee.length) detailRows+=renderDeptBlock('🎓 Trainee / Thực tập',poolTrainee);
 
     return `
       <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:14px">
@@ -27998,42 +28022,37 @@ function renderPayrollTab(){
           <button class="btn" onclick="exportPayrollFull(${pY},${pM})" style="font-size:12px">📊 Xuất bảng lương</button>
         </div>
       </div>
-      <div style="font-size:11px;color:var(--ink-muted);margin-bottom:10px">
-        📋 Bảng lương tháng ${pM}/${pY} · ${actHCTotal} CBNV · ${actHC} có lương · Casual tháng: <b style="color:var(--accent)">${fmtV(casualMonth.total)} đ</b>
-        · BHXH+TU: <b style="color:var(--purple)">${(INS_RATE*100).toFixed(1)}%</b> · Công thức: (Tổng LTT + BHXH+TU + Casual) × Cluster%
+      <div style="font-size:11px;color:var(--ink-muted);margin-bottom:12px">
+        📋 T${pM}/${pY} · ${allPool.length} CBNV (${poolRegular.length} NV + ${poolTrainee.length} Trainee) · ${actHC} có lương · BHXH+TU: <b style="color:var(--purple)">${(INS_RATE*100).toFixed(1)}%</b>
       </div>
-      ${overview}
+      ${overviewTable}
       <div class="card" style="padding:0;overflow:hidden"><div style="overflow-x:auto">
         <table style="border-collapse:collapse;font-size:12px;width:100%">
           <thead><tr style="background:var(--bg-elev);border-bottom:2px solid var(--border-strong)">
-            <th style="${thS};text-align:left;min-width:65px">MÃ NV</th>
-            <th style="${thS};text-align:left;min-width:120px">HỌ TÊN</th>
-            <th style="${thS};text-align:left;min-width:90px">BỘ PHẬN</th>
-            <th style="${thS};text-align:left;min-width:90px">CHỨC DANH</th>
-            <th style="${thS};color:var(--success)">LƯƠNG CB</th>
-            <th style="${thS};color:var(--info)">LƯƠNG KD</th>
+            <th style="${thS};text-align:left;min-width:60px">MÃ NV</th>
+            <th style="${thS};text-align:left;min-width:110px">HỌ TÊN</th>
+            <th style="${thS};text-align:left;min-width:80px">CHỨC DANH</th>
+            <th style="${thS};color:var(--success)">LƯƠNG CB</th><th style="${thS};color:var(--info)">LƯƠNG KD</th>
             <th style="${thS};color:var(--success)">TỔNG LƯƠNG<br><span style="font-size:8px;opacity:.6">CB+KD</span></th>
-            <th style="${thS};color:var(--warning)">LƯƠNG TT</th>
-            <th style="${thS};color:var(--teal)">PHỤ CẤP</th>
+            <th style="${thS};color:var(--warning)">LƯƠNG TT</th><th style="${thS};color:var(--teal)">PHỤ CẤP</th>
             <th style="${thS};color:var(--warning)">TỔNG LTT<br><span style="font-size:8px;opacity:.6">TT+PC</span></th>
             <th style="${thS};color:var(--purple)">BHXH+TU<br><span style="font-size:8px;opacity:.6">22.5%</span></th>
             <th style="${thS};color:var(--accent)">CASUAL</th>
             <th style="${thS};color:var(--info);text-align:center">CLUSTER<br><span style="font-size:8px;opacity:.6">%</span></th>
             <th style="${thS};color:#FFCC00">TỔNG CHI<br><span style="font-size:8px;opacity:.6">×Cluster</span></th>
           </tr></thead>
-          <tbody>${rows}</tbody>
+          <tbody>${detailRows}</tbody>
           <tfoot><tr style="background:#0f1a28;border-top:2px solid var(--border-strong)">
-            <td colspan="4" style="padding:8px 10px;font-weight:800;color:#FFCC00">∑ TỔNG · ${pool.length} NV</td>
-            <td style="padding:8px 5px;text-align:right;font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--success)">${fmtV(totBase)}</td>
-            <td style="padding:8px 5px;text-align:right;font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--info)">${fmtV(totBiz)}</td>
-            <td style="padding:8px 5px;text-align:right;font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--success)">${fmtV(totSum)}</td>
-            <td style="padding:8px 5px;text-align:right;font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--warning)">${fmtV(totAct)}</td>
-            <td style="padding:8px 5px;text-align:right;font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--teal)">${fmtV(totAllow)}</td>
-            <td style="padding:8px 5px;text-align:right;font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--warning)">${fmtV(totActSum)}</td>
-            <td style="padding:8px 5px;text-align:right;font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--purple)">${fmtV(totIns)}</td>
-            <td style="padding:8px 5px;text-align:right;font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--accent)">${fmtV(totCasual)}</td>
-            <td></td>
-            <td style="padding:8px 5px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:800;color:#FFCC00">${fmtV(totGrand)}</td>
+            <td colspan="3" style="padding:8px 10px;font-weight:800;color:#FFCC00">∑ TỔNG · ${allPool.length}</td>
+            <td style="padding:8px 3px;text-align:right;font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--success);font-size:11px">${fmtV(totBase)}</td>
+            <td style="padding:8px 3px;text-align:right;font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--info);font-size:11px">${fmtV(totBiz)}</td>
+            <td style="padding:8px 3px;text-align:right;font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--success);font-size:11px">${fmtV(totSum)}</td>
+            <td style="padding:8px 3px;text-align:right;font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--warning);font-size:11px">${fmtV(totAct)}</td>
+            <td style="padding:8px 3px;text-align:right;font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--teal);font-size:11px">${fmtV(totAllow)}</td>
+            <td style="padding:8px 3px;text-align:right;font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--warning);font-size:11px">${fmtV(totActSum)}</td>
+            <td style="padding:8px 3px;text-align:right;font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--purple);font-size:11px">${fmtV(totIns)}</td>
+            <td style="padding:8px 3px;text-align:right;font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--accent);font-size:11px">${fmtV(totCasual)}</td><td></td>
+            <td style="padding:8px 3px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:800;color:#FFCC00">${fmtV(totGrand)}</td>
           </tr></tfoot>
         </table>
       </div></div>`;
