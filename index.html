@@ -27864,11 +27864,9 @@ function renderPayrollTab(){
     const allow=parseFloat(pd.allowance)||0;
     const actSum=act+allow;
     const ins=Math.round(act*INS_RATE);
-    const casual=parseFloat(pd.casual)||0;
     const cluster=parseFloat(pd.cluster)||100;
-    const subTotal=actSum+ins+casual;
-    const grand=Math.round(subTotal*cluster/100);
-    return {base,biz,sum,act,allow,actSum,ins,casual,cluster,grand};
+    // Casual tự lấy từ module Casual theo dept
+    return {base,biz,sum,act,allow,actSum,ins,cluster};
   };
 
   // ═══════ VIEW: MONTH ═══════
@@ -27877,7 +27875,9 @@ function renderPayrollTab(){
     const mData=DB.payrollData[pY][pM];
     const pool=getPool(pM);
     const casualMonth=_plGetCasualCost(pY,pM-1);
-    let totBase=0,totBiz=0,totSum=0,totAct=0,totAllow=0,totActSum=0,totIns=0,totCasual=0,totGrand=0;
+    const casualByDept=casualMonth.byDept||{};
+    let totBase=0,totBiz=0,totSum=0,totAct=0,totAllow=0,totActSum=0,totIns=0,totGrand=0;
+    const totCasual=casualMonth.total;
 
     const monthBar=MN.map((m,i)=>{
       const mi=i+1;
@@ -27893,7 +27893,9 @@ function renderPayrollTab(){
     const poolTrainee=DB.employees.filter(e=>getEffectiveStatus(e)==='trainee').sort((a,b)=>(a.name||'').localeCompare(b.name||''));
     const allPool=[...poolRegular,...poolTrainee];
 
-    allPool.forEach(e=>{const d=calcEmp(e,pM);totBase+=d.base;totBiz+=d.biz;totSum+=d.sum;totAct+=d.act;totAllow+=d.allow;totActSum+=d.actSum;totIns+=d.ins;totCasual+=d.casual;totGrand+=d.grand;});
+    allPool.forEach(e=>{const d=calcEmp(e,pM);totBase+=d.base;totBiz+=d.biz;totSum+=d.sum;totAct+=d.act;totAllow+=d.allow;totActSum+=d.actSum;totIns+=d.ins;});
+    // Grand = sum of all dept (actSum+ins)*cluster + casual auto
+    totGrand = allPool.reduce((s,e)=>{const d=calcEmp(e,pM);return s+Math.round((d.actSum+d.ins)*d.cluster/100);},0) + totCasual;
     const actHC=allPool.filter(e=>{const pd=(mData[e.id]||{});return(parseFloat(pd.actualSalary)||0)>0;}).length;
 
     // Forecast từ Manning
@@ -27979,14 +27981,16 @@ function renderPayrollTab(){
         <td style="padding:2px 3px;text-align:right">${inp(e.id,'allowance',d.allow,'var(--teal)')}</td>
         <td style="padding:5px 4px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:600;color:var(--warning)">${fmtV(d.actSum)}</td>
         <td style="padding:5px 4px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--purple)">${fmtV(d.ins)}</td>
-        <td style="padding:2px 3px;text-align:right">${inp(e.id,'casual',d.casual,'var(--accent)',70)}</td>
+        <td style="padding:5px 4px;text-align:center;font-size:10px;color:var(--ink-muted)">—</td>
         <td style="padding:2px 3px;text-align:center">${inpPct(e.id,'cluster',d.cluster,'var(--info)')}</td>
-        <td style="padding:5px 5px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:700;color:#FFCC00">${fmtV(d.grand)}</td>
+        <td style="padding:5px 5px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:700;color:#FFCC00">${fmtV(Math.round((d.actSum+d.ins)*d.cluster/100))}</td>
       </tr>`;};
 
-    const renderDeptBlock=(label,emps)=>{if(!emps.length)return'';
-      let dt={base:0,biz:0,sum:0,act:0,allow:0,actSum:0,ins:0,casual:0,grand:0};
-      emps.forEach(e=>{const d=calcEmp(e,pM);dt.base+=d.base;dt.biz+=d.biz;dt.sum+=d.sum;dt.act+=d.act;dt.allow+=d.allow;dt.actSum+=d.actSum;dt.ins+=d.ins;dt.casual+=d.casual;dt.grand+=d.grand;});
+    const renderDeptBlock=(label,emps,deptId)=>{if(!emps.length)return'';
+      let dt={base:0,biz:0,sum:0,act:0,allow:0,actSum:0,ins:0,grand:0};
+      emps.forEach(e=>{const d=calcEmp(e,pM);dt.base+=d.base;dt.biz+=d.biz;dt.sum+=d.sum;dt.act+=d.act;dt.allow+=d.allow;dt.actSum+=d.actSum;dt.ins+=d.ins;dt.grand+=Math.round((d.actSum+d.ins)*d.cluster/100);});
+      const deptCasual = deptId ? (casualByDept[deptId]||0) : 0;
+      const deptGrandWithCasual = dt.grand + deptCasual;
       return `<tr style="background:rgba(212,165,116,.07);border-bottom:1px solid var(--border-strong)">
         <td colspan="3" style="padding:8px 10px;font-weight:700;font-size:12px;color:var(--accent)">${escapeHtml(label)} <span style="font-weight:400;font-size:11px;color:var(--ink-muted)">${emps.length} NV</span></td>
         <td style="padding:6px 3px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--success)">${fmtV(dt.base)}</td>
@@ -27996,16 +28000,16 @@ function renderPayrollTab(){
         <td style="padding:6px 3px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--teal)">${fmtV(dt.allow)}</td>
         <td style="padding:6px 3px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:600;color:var(--warning)">${fmtV(dt.actSum)}</td>
         <td style="padding:6px 3px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--purple)">${fmtV(dt.ins)}</td>
-        <td style="padding:6px 3px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--accent)">${fmtV(dt.casual)}</td><td></td>
-        <td style="padding:6px 3px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:700;color:#FFCC00">${fmtV(dt.grand)}</td>
+        <td style="padding:6px 3px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:600;color:var(--accent)">${deptCasual?fmtV(deptCasual):'0'}</td><td></td>
+        <td style="padding:6px 3px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:700;color:#FFCC00">${fmtV(deptGrandWithCasual)}</td>
       </tr>`+emps.map(renderEmpRow).join('');};
 
     const depts=DB.departments||[];
     let detailRows='';
-    depts.forEach(dept=>{const emps=poolRegular.filter(e=>e.deptId===dept.id).sort((a,b)=>(a.name||'').localeCompare(b.name||''));detailRows+=renderDeptBlock(dept.name,emps);});
+    depts.forEach(dept=>{const emps=poolRegular.filter(e=>e.deptId===dept.id).sort((a,b)=>(a.name||'').localeCompare(b.name||''));detailRows+=renderDeptBlock(dept.name,emps,dept.id);});
     const noDept=poolRegular.filter(e=>!e.deptId||!depts.find(d=>d.id===e.deptId));
-    if(noDept.length) detailRows+=renderDeptBlock('Chưa phân bổ',noDept);
-    if(poolTrainee.length) detailRows+=renderDeptBlock('🎓 Trainee / Thực tập',poolTrainee);
+    if(noDept.length) detailRows+=renderDeptBlock('Chưa phân bổ',noDept,null);
+    if(poolTrainee.length) detailRows+=renderDeptBlock('🎓 Trainee / Thực tập',poolTrainee,null);
 
     return `
       <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:14px">
@@ -28068,7 +28072,11 @@ function renderPayrollTab(){
     mt.hc=mPool.length;
     mPool.forEach(e=>{
       const d=calcEmp(e,mi);
-      mt.base+=d.base;mt.biz+=d.biz;mt.sum+=d.sum;mt.act+=d.act;mt.allow+=d.allow;mt.actSum+=d.actSum;mt.ins+=d.ins;mt.casual+=d.casual;mt.grand+=d.grand;
+      mt.base+=d.base;mt.biz+=d.biz;mt.sum+=d.sum;mt.act+=d.act;mt.allow+=d.allow;mt.actSum+=d.actSum;mt.ins+=d.ins;
+    });
+    const miCasual=_plGetCasualCost(pY,mi-1).total;
+    mt.casual=miCasual;
+    mt.grand=mPool.reduce((s,e)=>{const d=calcEmp(e,mi);return s+Math.round((d.actSum+d.ins)*d.cluster/100);},0)+miCasual;
     });
     yTot.base+=mt.base;yTot.biz+=mt.biz;yTot.sum+=mt.sum;yTot.act+=mt.act;yTot.allow+=mt.allow;yTot.actSum+=mt.actSum;yTot.ins+=mt.ins;yTot.casual+=mt.casual;yTot.grand+=mt.grand;
     monthTots.push(mt);
