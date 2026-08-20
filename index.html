@@ -28077,7 +28077,6 @@ function renderPayrollTab(){
     const miCasual=_plGetCasualCost(pY,mi-1).total;
     mt.casual=miCasual;
     mt.grand=mPool.reduce((s,e)=>{const d=calcEmp(e,mi);return s+Math.round((d.actSum+d.ins)*d.cluster/100);},0)+miCasual;
-    });
     yTot.base+=mt.base;yTot.biz+=mt.biz;yTot.sum+=mt.sum;yTot.act+=mt.act;yTot.allow+=mt.allow;yTot.actSum+=mt.actSum;yTot.ins+=mt.ins;yTot.casual+=mt.casual;yTot.grand+=mt.grand;
     monthTots.push(mt);
     const hasData=DB.payrollData[pY]&&DB.payrollData[pY][mi]&&Object.keys(DB.payrollData[pY][mi]).length>0;
