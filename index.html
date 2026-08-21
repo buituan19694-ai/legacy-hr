@@ -34526,12 +34526,13 @@ function renderManning(main){
       });
       // Clean stale data: nếu budgetSalary=0 thì reset budgetBH=0 (tránh số rác từ data cũ)
       dp.positions.forEach(p=>{ if(!(parseFloat(p.budgetSalary)||0)) p.budgetBH=0; });
-      // Tự xóa plan roles không còn NV nào làm VÀ không có data thực sự
+      // Tự xóa plan roles: chỉ xóa nếu ko có NV, ko có data, VÀ ko phải position user vừa thêm thủ công
+      // (giữ lại mọi position đã tồn tại trong plan — user có thể vừa thêm)
       dp.positions = dp.positions.filter(p=>{
         const hasEmp = allEmps.some(e=>e.deptId===dept.id && (e.role||'').trim()===p.title);
-        // hasData: chỉ tính budgetSalary và planned — mealRate/BH không đủ để giữ
         const hasData = (p.planned||0)>0 || (p.budgetSalary||0)>0;
-        return hasEmp || hasData;
+        const isInPlan = planTitles.includes(p.title); // user đã thêm vào plan
+        return hasEmp || hasData || isInPlan;
       });
 
       const roles = [...new Set([...planTitles, ...extraActive])];
