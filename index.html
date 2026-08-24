@@ -1028,7 +1028,7 @@ const FS_DOC_MAP = {
   jobs:       ['jobs'],
   blacklist:  ['manualBlacklist','blacklistConfig','blacklistReasons','candRequiredFields'],
   config:     ['customFields','rewardTypes','perfReviewTypes','promoTypes','company',
-               'dashboardConfig','brandConfig','customRecruitSources',
+               'dashboardConfig','brandConfig','customRecruitSources','docChecklistItems',
                'disciplineSeverityConfig','requiredFieldsConfig',
                'contractTemplates','quickFilterPrefs','recReportConfig','perfReportConfig','plConfig','trainingKpi',
                'salaryStructure',
@@ -10399,12 +10399,137 @@ function editEmployee(id, prefill = null){
 
     ${Object.entries(grouped).map(([g,fields])=> renderGroup(g, fields, false)).join('')}
 
+    ${(()=>{
+      // ── HỒ SƠ CỨNG CHECKLIST ──
+      const DEFAULT_DOCS = [
+        'Đề nghị tuyển dụng',
+        'CV/ Đơn xin việc',
+        'Đánh giá phỏng vấn',
+        'Sơ yếu lý lịch',
+        'Giấy xác nhận dân sự/ Lý lịch tư pháp',
+        'Bản sao công chứng CCCD',
+        'Giấy xác nhận cư trú',
+        'Giấy khai sinh (Bản sao)',
+        'Bằng cấp các loại',
+        'Giấy khám sức khỏe (Bếp, F&B, HK: HAV, HEV, BK, HIV)',
+        'Tờ khai đăng ký BHXH',
+        'Đơn xin Công đoàn',
+        'Cam kết bảo mật dữ liệu',
+        'Cam kết bảo mật tiền lương',
+        'Nguyên tắc sử dụng truyền thông',
+        'Đăng ký ở KTX, cam kết tuân thủ nội quy KTX'
+      ];
+      if(!DB.docChecklistItems) DB.docChecklistItems = [...DEFAULT_DOCS];
+      const items = DB.docChecklistItems;
+      const checked = (customData.docChecklist || {});
+      const checkedCount = items.filter((_,i)=>checked[i]).length;
+
+      const checkboxes = items.map((doc,i)=>{
+        const ck = checked[i] ? 'checked' : '';
+        return `<label style="display:flex;align-items:flex-start;gap:8px;padding:7px 0;border-bottom:1px solid var(--border);cursor:pointer;user-select:none"
+          onmouseenter="this.style.background='rgba(212,165,116,.04)'" onmouseleave="this.style.background=''">
+          <input type="checkbox" id="doc_${i}" ${ck}
+            style="margin-top:2px;width:16px;height:16px;accent-color:var(--accent);cursor:pointer;flex-shrink:0">
+          <span style="font-size:12.5px;color:${ck?'var(--ink)':'var(--ink-dim)'};line-height:1.4">${escapeHtml(doc)}</span>
+        </label>`;
+      }).join('');
+
+      return `<div class="form-group ${isNew?'expanded':''}" data-group="docChecklist">
+        <div class="form-group-head" onclick="toggleFormGroup('docChecklist')">
+          <div class="form-group-title">
+            <svg class="form-group-chev" fill="none" stroke="currentColor" viewBox="0 0 24 24" width="14" height="14"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9 5l7 7-7 7"/></svg>
+            <span>📋 Hồ sơ cứng</span>
+            <span class="form-group-count">${checkedCount}/${items.length}</span>
+          </div>
+        </div>
+        <div class="form-group-body">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+            <div style="font-size:11px;color:var(--ink-muted)">Tích vào giấy tờ nhân viên đã nộp · ${checkedCount}/${items.length} hoàn tất</div>
+            <button type="button" class="btn" onclick="_editDocChecklistItems()" style="font-size:11px;padding:4px 10px">⚙️ Sửa danh sách</button>
+          </div>
+          <div style="display:flex;flex-direction:column;padding:0 4px">
+            ${checkboxes}
+          </div>
+          ${checkedCount===items.length?'<div style="text-align:center;padding:12px;color:var(--success);font-weight:600;font-size:12px">✅ Hồ sơ đầy đủ!</div>':''}
+          ${checkedCount>0&&checkedCount<items.length?'<div style="text-align:center;padding:10px;color:var(--warning);font-size:11px">⚠️ Còn thiếu '+(items.length-checkedCount)+' giấy tờ</div>':''}
+        </div>
+      </div>`;
+    })()}
+
     <div class="modal-actions">
       ${isNew?'':`<button class="btn btn-danger left" onclick="deleteEmployee('${e.id}', true)">${ICONS.trash} Xoá</button>`}
       <button class="btn" onclick="closeModal()">${t('btn_cancel')}</button>
       <button class="btn btn-primary" onclick="saveEmployee('${e.id}', ${isNew})">${isNew?'Tạo hồ sơ':(_lang==="en"?"Save changes":"Lưu thay đổi")}</button>
     </div>
   `, true);
+}
+
+function _editDocChecklistItems(){
+  const DEFAULT_DOCS = [
+    'Đề nghị tuyển dụng','CV/ Đơn xin việc','Đánh giá phỏng vấn','Sơ yếu lý lịch',
+    'Giấy xác nhận dân sự/ Lý lịch tư pháp','Bản sao công chứng CCCD','Giấy xác nhận cư trú',
+    'Giấy khai sinh (Bản sao)','Bằng cấp các loại',
+    'Giấy khám sức khỏe (Bếp, F&B, HK: HAV, HEV, BK, HIV)',
+    'Tờ khai đăng ký BHXH','Đơn xin Công đoàn','Cam kết bảo mật dữ liệu',
+    'Cam kết bảo mật tiền lương','Nguyên tắc sử dụng truyền thông',
+    'Đăng ký ở KTX, cam kết tuân thủ nội quy KTX'
+  ];
+  if(!DB.docChecklistItems) DB.docChecklistItems = [...DEFAULT_DOCS];
+  const items = DB.docChecklistItems;
+
+  const rows = items.map((doc,i)=>`
+    <div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border)" id="_dcRow${i}">
+      <span style="font-size:12px;flex:1;color:var(--ink)">${escapeHtml(doc)}</span>
+      <button type="button" onclick="_removeDocItem(${i})" style="background:transparent;border:1px solid rgba(229,115,115,.3);border-radius:4px;color:var(--danger);font-size:10px;padding:2px 8px;cursor:pointer">✕</button>
+    </div>
+  `).join('');
+
+  openModal('⚙️ Quản lý danh sách hồ sơ cứng', `
+    <div style="font-size:11px;color:var(--ink-muted);margin-bottom:12px">Thêm hoặc xóa loại giấy tờ. Thay đổi áp dụng cho tất cả nhân viên.</div>
+    <div id="_dcListWrap" style="max-height:400px;overflow-y:auto;margin-bottom:12px">${rows}</div>
+    <div style="display:flex;gap:8px;margin-bottom:16px">
+      <input id="_dcNewItem" placeholder="Tên giấy tờ mới..." style="flex:1;padding:8px 12px;background:var(--bg-elev);border:1px solid var(--border);border-radius:6px;color:var(--ink);font-size:12px"
+        onkeydown="if(event.key==='Enter')_addDocItem()">
+      <button type="button" class="btn btn-primary" onclick="_addDocItem()" style="font-size:12px;padding:6px 16px">+ Thêm</button>
+    </div>
+    <div style="display:flex;gap:8px;justify-content:flex-end">
+      <button type="button" class="btn" onclick="_resetDocItems()" style="font-size:12px">↺ Reset mặc định</button>
+      <button type="button" class="btn btn-primary" onclick="closeModal();render()" style="font-size:12px">✓ Xong</button>
+    </div>
+  `);
+}
+function _addDocItem(){
+  const inp=document.getElementById('_dcNewItem');
+  const v=(inp?.value||'').trim();
+  if(!v){toast('Nhập tên giấy tờ','error');return;}
+  if(!DB.docChecklistItems) DB.docChecklistItems=[];
+  if(DB.docChecklistItems.includes(v)){toast('Đã có trong danh sách','error');return;}
+  DB.docChecklistItems.push(v);
+  saveData(['config']);
+  toast('✅ Đã thêm: '+v,'success');
+  _editDocChecklistItems(); // refresh modal
+}
+function _removeDocItem(idx){
+  if(!DB.docChecklistItems) return;
+  const name=DB.docChecklistItems[idx];
+  DB.docChecklistItems.splice(idx,1);
+  saveData(['config']);
+  toast('Đã xóa: '+name,'info');
+  _editDocChecklistItems(); // refresh modal
+}
+function _resetDocItems(){
+  DB.docChecklistItems = [
+    'Đề nghị tuyển dụng','CV/ Đơn xin việc','Đánh giá phỏng vấn','Sơ yếu lý lịch',
+    'Giấy xác nhận dân sự/ Lý lịch tư pháp','Bản sao công chứng CCCD','Giấy xác nhận cư trú',
+    'Giấy khai sinh (Bản sao)','Bằng cấp các loại',
+    'Giấy khám sức khỏe (Bếp, F&B, HK: HAV, HEV, BK, HIV)',
+    'Tờ khai đăng ký BHXH','Đơn xin Công đoàn','Cam kết bảo mật dữ liệu',
+    'Cam kết bảo mật tiền lương','Nguyên tắc sử dụng truyền thông',
+    'Đăng ký ở KTX, cam kết tuân thủ nội quy KTX'
+  ];
+  saveData(['config']);
+  toast('↺ Đã reset về mặc định','success');
+  _editDocChecklistItems();
 }
 
 function removePhoto(){
@@ -10763,6 +10888,16 @@ function saveEmployee(id, isNew){
     if(ei>=0) DB.employees[ei].level = data.level;
   }
   DB.customData = {...DB.customData, [id]: customValues}; // assign new obj → Proxy tracks 'customData'
+
+  // Save doc checklist
+  const docItems = DB.docChecklistItems||[];
+  const docChecklist = {};
+  docItems.forEach((_,i)=>{
+    const el = document.getElementById('doc_'+i);
+    if(el && el.checked) docChecklist[i] = true;
+  });
+  customValues.docChecklist = docChecklist;
+  DB.customData[id] = customValues;
 
   const ei2 = DB.employees.findIndex(x=>x.id===id);
   if(ei2 >= 0){
@@ -35451,11 +35586,17 @@ function renderManning(main){
         <button class="btn" style="font-size:12px" onclick="window._manningShowSalary=!window._manningShowSalary;render()">
           ${window._manningShowSalary?'🔓 Ẩn lương':'🔒 Hiện lương'}
         </button>
+        <button class="btn" style="font-size:12px;${window._manningLocked?'background:var(--danger);color:#fff;border-color:var(--danger)':''}" onclick="window._manningLocked=!window._manningLocked;render()">
+          ${window._manningLocked?'🔒 Đang khóa':'🔓 Khóa chỉnh sửa'}
+        </button>
         <button class="btn" style="font-size:12px" onclick="window._budgetCollapsed={};render()">▼ Mở tất cả</button>
         <button class="btn" style="font-size:12px" onclick="(function(){if(!window._budgetCollapsed)window._budgetCollapsed={};(DB.departments||[]).forEach(d=>window._budgetCollapsed[d.id]=true);render()})()">▶ Đóng tất cả</button>
         ` : `
         <button class="btn" style="font-size:12px" onclick="window._manningShowSalary=!window._manningShowSalary;render()">
           ${window._manningShowSalary?'🔓 Ẩn lương':'🔒 Hiện lương'}
+        </button>
+        <button class="btn" style="font-size:12px;${window._manningLocked?'background:var(--danger);color:#fff;border-color:var(--danger)':''}" onclick="window._manningLocked=!window._manningLocked;render()">
+          ${window._manningLocked?'🔒 Đang khóa':'🔓 Khóa chỉnh sửa'}
         </button>
         `}
         <button class="btn btn-primary" onclick="openNewManningYear()" style="font-size:12px">✨ Mở năm mới</button>
@@ -35467,6 +35608,16 @@ function renderManning(main){
         </label>
       </div>
     </div>
+    ${window._manningLocked?`<style>
+      .manning-budget-tbl input,.manning-budget-tbl select,.manning-budget-tbl textarea,
+      .manning-actual-tbl input,.manning-actual-tbl select,.manning-actual-tbl textarea,
+      [data-dept-pos] input,[data-dept-pos] select,[data-dept-pos] button,
+      .manning-budget-tbl button{pointer-events:none !important;opacity:.6 !important}
+      [data-dept-pos] input,[data-dept-pos] select{background:transparent !important;border-color:transparent !important}
+    </style>
+    <div style="text-align:center;padding:8px;background:rgba(229,115,115,.1);border:1px solid rgba(229,115,115,.3);border-radius:8px;margin-bottom:12px;font-size:12px;color:var(--danger);font-weight:600">
+      🔒 Đang khóa chỉnh sửa — ấn "🔒 Đang khóa" để mở lại
+    </div>`:''}
     <div class="tab-bar" style="margin-bottom:20px">
       <button class="tab-btn ${tab==='budget'?'active':''}"   onclick="window._manningTab='budget';render()">📋 Budget — Kế hoạch</button>
       <button class="tab-btn ${tab==='actual'?'active':''}"   onclick="window._manningTab='actual';render()">📊 Forecast — Thực tế</button>
