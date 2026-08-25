@@ -2334,8 +2334,8 @@ function updateBadges(){
     if(reqFields.length){
       const cd=DB.customData[e.id]||{};
       const hasMissing=reqFields.some(f=>{
-        const val=f.source==='emp'?e[f.key]:cd[f.key];
-        return val===undefined||val===null||val===''||val===0;
+        const val=f.source==='emp'?e[f.key]:f.source==='doc'?((cd.docChecklist||{})[f.docIdx]||false):cd[f.key];
+        return val===undefined||val===null||val===''||val===0||val===false;
       });
       if(hasMissing) taskCount++;
     }
@@ -8499,6 +8499,8 @@ function renderEmployeeProfile(main){
   Object.entries(cd).forEach(([key, val])=>{
     if(registeredKeys.has(key)) return;
     if(val == null || val === '') return;
+    if(key === 'docChecklist') return; // Render riêng section Hồ sơ cứng
+    if(typeof val === 'object') return; // Skip objects
     const fakeCf = {
       key, label: key.charAt(0).toUpperCase()+key.slice(1).replace(/([A-Z])/g,' $1').trim(),
       type: 'text', group: (_lang==="en"?"Other":"Khác"),
@@ -8747,6 +8749,41 @@ function renderEmployeeProfile(main){
         </table>
       </div>
     `:''}
+
+    <!-- Hồ sơ cứng -->
+    ${(()=>{
+      const docItems = DB.docChecklistItems||[];
+      if(!docItems.length) return '';
+      const docChecked = (cd.docChecklist||{});
+      const checkedCount = docItems.filter((_,i)=>docChecked[i]).length;
+      const pct = docItems.length ? Math.round(checkedCount/docItems.length*100) : 0;
+      const barColor = pct===100?'var(--success)':pct>=60?'var(--accent)':'var(--danger)';
+      return `<div class="card" style="margin-top:16px">
+        <div class="card-head">
+          <div>
+            <div class="card-title">📋 Hồ sơ <em>cứng</em></div>
+            <div class="card-sub">${checkedCount}/${docItems.length} giấy tờ đã nộp</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:12px">
+            <div style="width:120px;height:8px;background:var(--bg-elev);border-radius:4px;overflow:hidden">
+              <div style="width:${pct}%;height:100%;background:${barColor};border-radius:4px;transition:width .3s"></div>
+            </div>
+            <span style="font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:700;color:${barColor}">${pct}%</span>
+          </div>
+        </div>
+        <div style="padding:0 18px 16px;display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:4px 24px">
+          ${docItems.map((doc,i)=>{
+            const ok = docChecked[i];
+            return '<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border)">'
+              +'<span style="font-size:16px">'+(ok?'✅':'⬜')+'</span>'
+              +'<span style="font-size:12px;color:'+(ok?'var(--ink)':'var(--ink-muted)')+';'+(ok?'':'opacity:.7')+'">'
+              +escapeHtml(doc)+'</span></div>';
+          }).join('')}
+        </div>
+        ${pct===100?'<div style="text-align:center;padding:0 18px 16px;color:var(--success);font-weight:600;font-size:12px">✅ Hồ sơ đầy đủ!</div>':''}
+        ${pct<100?'<div style="text-align:center;padding:0 18px 16px;color:var(--warning);font-size:11px">⚠️ Còn thiếu '+(docItems.length-checkedCount)+' giấy tờ — ấn "Chỉnh sửa" để cập nhật</div>':''}
+      </div>`;
+    })()}
 
     <!-- Khen thưởng -->
     <div class="card" style="margin-top:16px">
@@ -10384,7 +10421,14 @@ function editEmployee(id, prefill = null){
             ${DB.departments.map(d=>`<option value="${d.id}" ${e.deptId===d.id?'selected':''}>${d.name}</option>`).join('')}
           </select></div>
           <div class="field"><label style="color:var(--accent);font-weight:600">Ngày vào làm *</label><input lang="vi" id="f_joined" type="date" value="${dispToIso(e.joined||'')}"></div>
-          <div class="field"><label style="color:var(--accent);font-weight:600">Chức vụ * <span style="font-size:9px;opacity:.6;font-weight:400">(EN)</span></label><input id="f_role" value="${escapeHtml(e.role||customData.position||'')}" placeholder="Vd: Chief Engineering, Front Office Manager..."></div>
+          <div class="field" style="position:relative"><label style="color:var(--accent);font-weight:600">Chức vụ * <span style="font-size:9px;opacity:.6;font-weight:400">(EN)</span></label>
+            <input id="f_role" value="${escapeHtml(e.role||customData.position||'')}" placeholder="Tìm từ Manning hoặc tự nhập..."
+              autocomplete="off"
+              onfocus="_showRoleSuggestions(this)"
+              oninput="_filterRoleSuggestions(this)"
+              onblur="setTimeout(()=>{const dd=document.getElementById('_roleSuggest');if(dd)dd.style.display='none'},200)">
+            <div id="_roleSuggest" style="display:none;position:absolute;top:100%;left:0;right:0;z-index:100;max-height:220px;overflow-y:auto;background:var(--bg-card);border:1px solid var(--border-strong);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.4);margin-top:2px"></div>
+          </div>
           <div class="field"><label>Chức vụ (VI)</label><input id="f_roleVN" value="${escapeHtml(e.roleVN||customData.jobLocation||'')}"></div>
           <input type="hidden" id="f_level" value="${escapeHtml(e.level||'')}">
           <div class="field"><label>Trạng thái</label><select id="f_status">
@@ -10462,6 +10506,78 @@ function editEmployee(id, prefill = null){
       <button class="btn btn-primary" onclick="saveEmployee('${e.id}', ${isNew})">${isNew?'Tạo hồ sơ':(_lang==="en"?"Save changes":"Lưu thay đổi")}</button>
     </div>
   `, true);
+}
+
+/* ── Role Suggestions từ Manning Budget ── */
+function _getRoleSuggestions(){
+  // Lấy năm mới nhất trong Manning Plan (ưu tiên năm đang chọn trên trang Manning, rồi năm cao nhất)
+  const planYears = Object.keys(DB.manningPlan||{}).map(Number).filter(y=>!isNaN(y)).sort((a,b)=>b-a);
+  const yr = window._manningYear || planYears[0] || new Date().getFullYear();
+  const plan = (DB.manningPlan||{})[yr]||{};
+  const depts = DB.departments||[];
+  const results = [];
+  const seen = new Set();
+  Object.entries(plan.depts||{}).forEach(([deptId, dp])=>{
+    const dept = depts.find(d=>d.id===deptId);
+    const dName = dept ? dept.name : deptId;
+    (dp.positions||[]).forEach(p=>{
+      if(p.title && !seen.has(p.title)){
+        seen.add(p.title);
+        results.push({title:p.title, dept:dName, hc:parseInt(p.planned)||0});
+      }
+    });
+  });
+  (DB.employees||[]).forEach(e=>{
+    if(e.role && !seen.has(e.role)){
+      seen.add(e.role);
+      const dept = depts.find(d=>d.id===e.deptId);
+      results.push({title:e.role, dept:dept?dept.name:'', hc:-1});
+    }
+  });
+  return results;
+}
+
+// Generic: dùng cho f_role, pr_newRole, f_title
+function _showRoleSuggest(inputId, ddId){
+  _filterRoleSuggest(inputId, ddId);
+}
+function _filterRoleSuggest(inputId, ddId){
+  const input = document.getElementById(inputId);
+  const dd = document.getElementById(ddId);
+  if(!input || !dd) return;
+  const q = (input.value||'').trim().toLowerCase();
+  const all = _getRoleSuggestions();
+  const filtered = q ? all.filter(r=>r.title.toLowerCase().includes(q) || r.dept.toLowerCase().includes(q)) : all;
+  if(!filtered.length && !q){ dd.style.display='none'; return; }
+  const byDept = {};
+  filtered.forEach(r=>{const dk=r.dept||'Khác';if(!byDept[dk])byDept[dk]=[];byDept[dk].push(r);});
+  let html = '';
+  Object.entries(byDept).forEach(([dName, roles])=>{
+    html += `<div style="padding:6px 12px;font-size:10px;color:var(--ink-muted);letter-spacing:.1em;text-transform:uppercase;font-weight:600;background:var(--bg-elev);border-bottom:1px solid var(--border)">${escapeHtml(dName)}</div>`;
+    roles.forEach(r=>{
+      const badge = r.hc > 0 ? `<span style="font-size:10px;background:rgba(212,165,116,.15);color:var(--accent);padding:1px 6px;border-radius:4px">${r.hc} HC</span>`
+        : r.hc === 0 ? `<span style="font-size:10px;background:rgba(229,115,115,.15);color:var(--danger);padding:1px 6px;border-radius:4px">0 HC</span>` : '';
+      html += `<div onmousedown="document.getElementById('${inputId}').value='${escapeHtml(r.title.replace(/'/g,"\\'"))}';document.getElementById('${ddId}').style.display='none'"
+        style="padding:8px 12px;cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:8px;border-bottom:1px solid var(--border)"
+        onmouseenter="this.style.background='rgba(212,165,116,.08)'" onmouseleave="this.style.background=''">
+        <span style="font-size:12.5px;color:var(--ink)">${escapeHtml(r.title)}</span>${badge}
+      </div>`;
+    });
+  });
+  if(q && !filtered.length){
+    html = `<div style="padding:12px;text-align:center;color:var(--ink-muted);font-size:12px">Không tìm thấy — nhập tự do: <b style="color:var(--accent)">"${escapeHtml(input.value)}"</b></div>`;
+  }
+  dd.innerHTML = html; dd.style.display = 'block';
+}
+
+// Backward compat cho form employee
+function _showRoleSuggestions(input){ _showRoleSuggest('f_role','_roleSuggest'); }
+function _filterRoleSuggestions(input){ _filterRoleSuggest('f_role','_roleSuggest'); }
+function _selectRole(title){
+  const inp = document.getElementById('f_role');
+  if(inp) inp.value = title;
+  const dd = document.getElementById('_roleSuggest');
+  if(dd) dd.style.display = 'none';
 }
 
 function _editDocChecklistItems(){
@@ -21149,7 +21265,14 @@ function editJob(id){
       <div class="modal-sub">${isNew?(_lang==="en"?"New job requisition":"Tạo yêu cầu tuyển mới"):escapeHtml(j.title)}</div>
     </div>
     <div class="form-grid">
-      <div class="field full"><label>Tên vị trí *</label><input id="f_title" value="${escapeHtml(j.title)}" placeholder="VD: Room Attendant, Front Desk Agent..."></div>
+      <div class="field full" style="position:relative"><label>Tên vị trí *</label>
+        <input id="f_title" value="${escapeHtml(j.title)}" placeholder="Tìm từ Manning hoặc tự nhập..."
+          autocomplete="off"
+          onfocus="_showRoleSuggest('f_title','_recRoleSuggest')"
+          oninput="_filterRoleSuggest('f_title','_recRoleSuggest')"
+          onblur="setTimeout(()=>{const d=document.getElementById('_recRoleSuggest');if(d)d.style.display='none'},200)">
+        <div id="_recRoleSuggest" style="display:none;position:absolute;top:100%;left:0;right:0;z-index:100;max-height:220px;overflow-y:auto;background:var(--bg-card);border:1px solid var(--border-strong);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.4);margin-top:2px"></div>
+      </div>
       <div class="field"><label>Phòng ban *</label><select id="f_dept">
         ${DB.departments.map(d=>`<option value="${d.id}" ${j.deptId===d.id?'selected':''}>${d.name}</option>`).join('')}
       </select></div>
@@ -24131,7 +24254,14 @@ function editPromotion(id, presetEmpId, isHistorical=false){
             <label style="font-size:11px;color:var(--accent);text-transform:uppercase;letter-spacing:.06em;margin:0">Sau thăng chức ↗</label>
             <div>
               <div style="font-size:10.5px;color:var(--ink-muted);margin-bottom:3px">Position mới (tiếng Anh) *</div>
-              <input id="pr_newRole" value="${escapeHtml(p.newRole||'')}" placeholder="VD: Chief Engineering">
+              <div style="position:relative">
+                <input id="pr_newRole" value="${escapeHtml(p.newRole||'')}" placeholder="Tìm từ Manning hoặc tự nhập..."
+                  autocomplete="off"
+                  onfocus="_showRoleSuggest('pr_newRole','_prRoleSuggest')"
+                  oninput="_filterRoleSuggest('pr_newRole','_prRoleSuggest')"
+                  onblur="setTimeout(()=>{const d=document.getElementById('_prRoleSuggest');if(d)d.style.display='none'},200)">
+                <div id="_prRoleSuggest" style="display:none;position:absolute;top:100%;left:0;right:0;z-index:100;max-height:220px;overflow-y:auto;background:var(--bg-card);border:1px solid var(--border-strong);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.4);margin-top:2px"></div>
+              </div>
             </div>
             <div>
               <div style="font-size:10.5px;color:var(--ink-muted);margin-bottom:3px">Vị trí công việc mới (tiếng Việt)</div>
@@ -26057,7 +26187,20 @@ const DEFAULT_REQUIRED_FIELDS = [
 ];
 
 function getRequiredFields(){
-  if(!DB.requiredFieldsConfig){ DB.requiredFieldsConfig = JSON.parse(JSON.stringify(DEFAULT_REQUIRED_FIELDS)); saveData(['requiredFieldsConfig']); } // 🚨 v49: chỉ ghi khi tạo default
+  if(!DB.requiredFieldsConfig){ DB.requiredFieldsConfig = JSON.parse(JSON.stringify(DEFAULT_REQUIRED_FIELDS)); saveData(['requiredFieldsConfig']); }
+  // Merge doc checklist items nếu chưa có
+  const docItems = DB.docChecklistItems||[];
+  docItems.forEach((doc,i)=>{
+    const dKey = 'doc_'+i;
+    if(!DB.requiredFieldsConfig.find(f=>f.key===dKey && f.source==='doc')){
+      DB.requiredFieldsConfig.push({key:dKey, label:'📋 '+doc, source:'doc', docIdx:i, critical:false});
+    }
+  });
+  // Cleanup: remove doc entries whose index no longer exists
+  DB.requiredFieldsConfig = DB.requiredFieldsConfig.filter(f=>{
+    if(f.source!=='doc') return true;
+    return f.docIdx!==undefined && f.docIdx < docItems.length && docItems[f.docIdx];
+  });
   return DB.requiredFieldsConfig;
 }
 
@@ -26134,10 +26277,10 @@ function renderTasks(main){
     const cd = DB.customData[emp.id] || {};
     const missing = [];
     REQUIRED_FIELDS.forEach(f => {
-      let val = f.source === 'emp' ? emp[f.key] : cd[f.key];
+      let val = f.source === 'emp' ? emp[f.key] : f.source === 'doc' ? ((cd.docChecklist||{})[f.docIdx]||false) : cd[f.key];
       // Bỏ qua check ảnh nhân viên
       if(f.key === 'avatarUrl') return;
-      const isEmpty = val === undefined || val === null || val === '' || val === 0;
+      const isEmpty = val === undefined || val === null || val === '' || val === 0 || val === false;
       if(isEmpty) missing.push(f);
     });
     return {emp, missing};
@@ -26314,7 +26457,7 @@ function openRequiredFieldsEditor(){
             <div style="font-size:18px;font-weight:600;color:var(--ink-muted);min-width:24px;text-align:center">${idx+1}</div>
             <div style="flex:1;min-width:0">
               <div style="font-weight:600;font-size:13px">${escapeHtml(f.label)}</div>
-              <div style="font-size:10.5px;color:var(--ink-muted);font-family:'JetBrains Mono',monospace">${escapeHtml(f.key)} · nguồn: ${f.source==='emp'?[_lang==="en"?"Employee":"Nhân viên"]:'Custom data'}</div>
+              <div style="font-size:10.5px;color:var(--ink-muted);font-family:'JetBrains Mono',monospace">${escapeHtml(f.key)} · nguồn: ${f.source==='emp'?(_lang==="en"?"Employee":"Nhân viên"):f.source==='doc'?'📋 Hồ sơ cứng':'Custom data'}</div>
             </div>
             <div style="display:flex;gap:4px">
               <button type="button" class="rf-btn ${f.critical?'on-critical':''}" onclick="setRfLevel('${escapeHtml(f.key)}', 'critical', this)" title="Bắt buộc" style="padding:5px 10px;font-size:11px;border:1px solid ${f.critical?'var(--danger)':'var(--border)'};background:${f.critical?'rgba(229,115,115,.12)':'var(--bg)'};color:${f.critical?'var(--danger)':'var(--ink-dim)'};border-radius:4px;cursor:pointer;font-weight:600">🔴 Bắt buộc</button>
