@@ -2334,7 +2334,7 @@ function updateBadges(){
     if(reqFields.length){
       const cd=DB.customData[e.id]||{};
       const hasMissing=reqFields.some(f=>{
-        const val=f.source==='emp'?e[f.key]:f.source==='doc'?((cd.docChecklist||{})[f.docIdx]||false):cd[f.key];
+        const val=f.source==='emp'?e[f.key]:f.source==='doc'?((cd.docChecklist||{})[f.docName]||false):cd[f.key];
         return val===undefined||val===null||val===''||val===0||val===false;
       });
       if(hasMissing) taskCount++;
@@ -8755,7 +8755,7 @@ function renderEmployeeProfile(main){
       const docItems = DB.docChecklistItems||[];
       if(!docItems.length) return '';
       const docChecked = (cd.docChecklist||{});
-      const checkedCount = docItems.filter((_,i)=>docChecked[i]).length;
+      const checkedCount = docItems.filter(doc=>docChecked[doc]).length;
       const pct = docItems.length ? Math.round(checkedCount/docItems.length*100) : 0;
       const barColor = pct===100?'var(--success)':pct>=60?'var(--accent)':'var(--danger)';
       return `<div class="card" style="margin-top:16px">
@@ -8773,7 +8773,7 @@ function renderEmployeeProfile(main){
         </div>
         <div style="padding:0 18px 16px;display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:4px 24px">
           ${docItems.map((doc,i)=>{
-            const ok = docChecked[i];
+            const ok = docChecked[doc];
             return '<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border)">'
               +'<span style="font-size:16px">'+(ok?'✅':'⬜')+'</span>'
               +'<span style="font-size:12px;color:'+(ok?'var(--ink)':'var(--ink-muted)')+';'+(ok?'':'opacity:.7')+'">'
@@ -10466,13 +10466,13 @@ function editEmployee(id, prefill = null){
       if(!DB.docChecklistItems) DB.docChecklistItems = [...DEFAULT_DOCS];
       const items = DB.docChecklistItems;
       const checked = (customData.docChecklist || {});
-      const checkedCount = items.filter((_,i)=>checked[i]).length;
+      const checkedCount = items.filter(doc=>checked[doc]).length;
 
       const checkboxes = items.map((doc,i)=>{
-        const ck = checked[i] ? 'checked' : '';
+        const ck = checked[doc] ? 'checked' : '';
         return `<label style="display:flex;align-items:flex-start;gap:8px;padding:7px 0;border-bottom:1px solid var(--border);cursor:pointer;user-select:none"
           onmouseenter="this.style.background='rgba(212,165,116,.04)'" onmouseleave="this.style.background=''">
-          <input type="checkbox" id="doc_${i}" ${ck}
+          <input type="checkbox" class="doc-chk" data-doc="${escapeHtml(doc)}" ${ck}
             style="margin-top:2px;width:16px;height:16px;accent-color:var(--accent);cursor:pointer;flex-shrink:0">
           <span style="font-size:12.5px;color:${ck?'var(--ink)':'var(--ink-dim)'};line-height:1.4">${escapeHtml(doc)}</span>
         </label>`;
@@ -11005,12 +11005,11 @@ function saveEmployee(id, isNew){
   }
   DB.customData = {...DB.customData, [id]: customValues}; // assign new obj → Proxy tracks 'customData'
 
-  // Save doc checklist
-  const docItems = DB.docChecklistItems||[];
+  // Save doc checklist (dùng tên giấy tờ làm key, không dùng index)
   const docChecklist = {};
-  docItems.forEach((_,i)=>{
-    const el = document.getElementById('doc_'+i);
-    if(el && el.checked) docChecklist[i] = true;
+  document.querySelectorAll('.doc-chk').forEach(el=>{
+    const docName = el.getAttribute('data-doc');
+    if(docName && el.checked) docChecklist[docName] = true;
   });
   customValues.docChecklist = docChecklist;
   DB.customData[id] = customValues;
@@ -26191,15 +26190,14 @@ function getRequiredFields(){
   // Merge doc checklist items nếu chưa có
   const docItems = DB.docChecklistItems||[];
   docItems.forEach((doc,i)=>{
-    const dKey = 'doc_'+i;
+    const dKey = 'doc_'+doc.replace(/[^a-zA-Z0-9]/g,'_');
     if(!DB.requiredFieldsConfig.find(f=>f.key===dKey && f.source==='doc')){
-      DB.requiredFieldsConfig.push({key:dKey, label:'📋 '+doc, source:'doc', docIdx:i, critical:false});
+      DB.requiredFieldsConfig.push({key:dKey, label:'📋 '+doc, source:'doc', docName:doc, critical:false});
     }
   });
-  // Cleanup: remove doc entries whose index no longer exists
   DB.requiredFieldsConfig = DB.requiredFieldsConfig.filter(f=>{
     if(f.source!=='doc') return true;
-    return f.docIdx!==undefined && f.docIdx < docItems.length && docItems[f.docIdx];
+    return f.docName && docItems.includes(f.docName);
   });
   return DB.requiredFieldsConfig;
 }
@@ -26277,7 +26275,7 @@ function renderTasks(main){
     const cd = DB.customData[emp.id] || {};
     const missing = [];
     REQUIRED_FIELDS.forEach(f => {
-      let val = f.source === 'emp' ? emp[f.key] : f.source === 'doc' ? ((cd.docChecklist||{})[f.docIdx]||false) : cd[f.key];
+      let val = f.source === 'emp' ? emp[f.key] : f.source === 'doc' ? ((cd.docChecklist||{})[f.docName]||false) : cd[f.key];
       // Bỏ qua check ảnh nhân viên
       if(f.key === 'avatarUrl') return;
       const isEmpty = val === undefined || val === null || val === '' || val === 0 || val === false;
