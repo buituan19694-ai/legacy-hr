@@ -6440,8 +6440,85 @@ function renderDashboard(main){
         +'</div>';
       })()}
 
-    </div>
+      <!-- CONTRACT EXPIRY ALERT WIDGET -->
+      ${(()=>{
+        const _today = new Date(); _today.setHours(0,0,0,0);
+        const working = DB.employees.filter(e=>getEffectiveStatus(e)!=='exit');
+        const alerts = [];
 
+        working.forEach(e=>{
+          const cd = DB.customData[e.id]||{};
+          const endRaw = cd.contractEnd || cd.currentContractEnd || '';
+          if(!endRaw) return;
+          const endDate = _parseAnyDate(endRaw);
+          if(!endDate || isNaN(endDate)) return;
+          const diff = Math.ceil((endDate - _today) / 86400000);
+          if(diff < 0 || diff > 30) return;
+
+          const cType = cd.currentContractType || cd.contractType || '';
+          const isProbation = cType.includes('Thử việc') || cType.includes('probation') || cType.includes('Học việc');
+          const threshold = isProbation ? 7 : 30;
+
+          if(diff <= threshold){
+            const dept = DB.departments.find(d=>d.id===e.deptId);
+            alerts.push({emp:e, days:diff, type:cType, dept:dept?dept.name:'', isProbation, endDate});
+          }
+        });
+
+        if(!alerts.length) return '';
+        alerts.sort((a,b)=>a.days-b.days);
+
+        const urgent = alerts.filter(a=>a.days<=3);
+        const soon = alerts.filter(a=>a.days>3&&a.days<=7);
+        const upcoming = alerts.filter(a=>a.days>7);
+
+        const renderRow = (a)=>{
+          const bgColor = a.days<=3?'rgba(229,115,115,.12)':a.days<=7?'rgba(232,185,116,.08)':'rgba(126,182,232,.05)';
+          const borderColor = a.days<=3?'rgba(229,115,115,.4)':a.days<=7?'rgba(232,185,116,.25)':'rgba(126,182,232,.15)';
+          const dayColor = a.days<=3?'var(--danger)':a.days<=7?'var(--warning)':'var(--info)';
+          const avatar = a.emp.photo ? '<img src="'+a.emp.photo+'" style="width:36px;height:36px;border-radius:50%;object-fit:cover">'
+            : '<div style="width:36px;height:36px;border-radius:50%;background:var(--gradient-amber);display:grid;place-items:center;color:var(--bg);font-weight:600;font-size:12px">'+(a.emp.name||'?').split(' ').map(w=>w[0]).slice(-2).join('')+'</div>';
+          return '<div style="background:'+bgColor+';border:1px solid '+borderColor+';border-radius:8px;padding:10px 14px;display:flex;align-items:center;gap:10px;cursor:pointer" onclick="navigateTo(\'contracts\')">'
+            +avatar
+            +'<div style="flex:1;min-width:0">'
+              +'<div style="font-size:12.5px;font-weight:600;color:var(--ink)">'+escapeHtml(a.emp.name)+'</div>'
+              +'<div style="font-size:11px;color:var(--ink-dim)">'+escapeHtml(a.emp.role||'')+' · '+escapeHtml(a.dept)+'</div>'
+            +'</div>'
+            +'<div style="text-align:right;flex-shrink:0">'
+              +'<div style="font-size:10px;padding:2px 8px;border-radius:4px;background:rgba(183,148,212,.12);color:var(--purple);font-weight:600;margin-bottom:3px">'+escapeHtml(a.type||'HĐ')+'</div>'
+              +'<div style="font-size:13px;font-weight:700;color:'+dayColor+'">'+(a.days===0?'HÔM NAY':a.days+' ngày')+'</div>'
+            +'</div>'
+          +'</div>';
+        };
+
+        // Trigger popup cho HĐ urgent (≤3 ngày)
+        if(urgent.length > 0){
+          const dateKey = 'contract_'+new Date().toISOString().slice(0,10);
+          if(!localStorage.getItem(dateKey)){
+            localStorage.setItem(dateKey, '1');
+            setTimeout(()=>_showContractNoti(urgent), 1200);
+          }
+        }
+
+        return '<div class="card" style="margin-top:16px">'
+          +'<div class="card-head"><div>'
+            +'<div class="card-title">📋 Hợp đồng <em>sắp hết hạn</em></div>'
+            +'<div class="card-sub">'+alerts.length+' HĐ cần xử lý · Thử việc: nhắc 7 ngày · HĐLĐ: nhắc 30 ngày</div>'
+          +'</div>'
+          +'<button class="btn" onclick="navigateTo(\'contracts\')" style="font-size:12px">Xem tất cả →</button>'
+          +'</div>'
+          +'<div style="padding:0 18px 18px;display:flex;flex-direction:column;gap:8px;max-height:400px;overflow-y:auto">'
+            +(urgent.length?'<div style="font-size:10px;text-transform:uppercase;letter-spacing:.15em;color:var(--danger);font-weight:700;padding:0 0 4px">🚨 Cấp bách (≤3 ngày)</div>':'')
+            +urgent.map(renderRow).join('')
+            +(soon.length?'<div style="font-size:10px;text-transform:uppercase;letter-spacing:.15em;color:var(--warning);font-weight:600;padding:'+(urgent.length?'8':'0')+'px 0 4px">⚠️ Sắp hết (4-7 ngày)</div>':'')
+            +soon.map(renderRow).join('')
+            +(upcoming.length?'<div style="font-size:10px;text-transform:uppercase;letter-spacing:.15em;color:var(--info);font-weight:600;padding:'+(urgent.length||soon.length?'8':'0')+'px 0 4px">📅 Sắp tới (8-30 ngày)</div>':'')
+            +upcoming.map(renderRow).join('')
+          +'</div>'
+        +'</div>';
+      })()}
+
+    </div>
     <div class="row row-2">
       <div class="card">
         <div class="card-head">
@@ -10590,29 +10667,82 @@ function _editDocChecklistItems(){
     'Cam kết bảo mật tiền lương','Nguyên tắc sử dụng truyền thông',
     'Đăng ký ở KTX, cam kết tuân thủ nội quy KTX'
   ];
-  if(!DB.docChecklistItems) DB.docChecklistItems = [...DEFAULT_DOCS];
+  if(!DB.docChecklistItems || DB.docChecklistItems.length === 0) DB.docChecklistItems = [...DEFAULT_DOCS];
   const items = DB.docChecklistItems;
 
+  // Dùng overlay riêng (không đè modal edit NV)
+  let overlay = document.getElementById('_docListOverlay');
+  if(overlay) overlay.remove();
+  overlay = document.createElement('div');
+  overlay.id = '_docListOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;z-index:500;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.7);backdrop-filter:blur(4px);padding:20px';
+
   const rows = items.map((doc,i)=>`
-    <div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border)" id="_dcRow${i}">
-      <span style="font-size:12px;flex:1;color:var(--ink)">${escapeHtml(doc)}</span>
-      <button type="button" onclick="_removeDocItem(${i})" style="background:transparent;border:1px solid rgba(229,115,115,.3);border-radius:4px;color:var(--danger);font-size:10px;padding:2px 8px;cursor:pointer">✕</button>
+    <div style="display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--border)">
+      <span style="font-size:12px;flex:1;color:var(--ink)">${i+1}. ${escapeHtml(doc)}</span>
+      <button type="button" onclick="_removeDocItem(${i})" style="background:transparent;border:1px solid rgba(229,115,115,.3);border-radius:4px;color:var(--danger);font-size:10px;padding:2px 8px;cursor:pointer;user-select:none">✕</button>
     </div>
   `).join('');
 
-  openModal('⚙️ Quản lý danh sách hồ sơ cứng', `
-    <div style="font-size:11px;color:var(--ink-muted);margin-bottom:12px">Thêm hoặc xóa loại giấy tờ. Thay đổi áp dụng cho tất cả nhân viên.</div>
-    <div id="_dcListWrap" style="max-height:400px;overflow-y:auto;margin-bottom:12px">${rows}</div>
-    <div style="display:flex;gap:8px;margin-bottom:16px">
-      <input id="_dcNewItem" placeholder="Tên giấy tờ mới..." style="flex:1;padding:8px 12px;background:var(--bg-elev);border:1px solid var(--border);border-radius:6px;color:var(--ink);font-size:12px"
-        onkeydown="if(event.key==='Enter')_addDocItem()">
-      <button type="button" class="btn btn-primary" onclick="_addDocItem()" style="font-size:12px;padding:6px 16px">+ Thêm</button>
-    </div>
-    <div style="display:flex;gap:8px;justify-content:flex-end">
-      <button type="button" class="btn" onclick="_resetDocItems()" style="font-size:12px">↺ Reset mặc định</button>
-      <button type="button" class="btn btn-primary" onclick="closeModal();render()" style="font-size:12px">✓ Xong</button>
-    </div>
-  `);
+  overlay.innerHTML = `
+    <div style="background:var(--bg-elev);border:1px solid var(--border-strong);border-radius:14px;padding:28px;max-width:560px;width:100%;max-height:85vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,.5)">
+      <div style="font-family:'Fraunces',serif;font-size:20px;font-weight:500;margin-bottom:4px">⚙️ Quản lý <em style="color:var(--accent);font-style:italic">hồ sơ cứng</em></div>
+      <div style="font-size:11px;color:var(--ink-muted);margin-bottom:16px">${items.length} giấy tờ · Thay đổi áp dụng cho tất cả nhân viên</div>
+      <div id="_dcListWrap" style="max-height:400px;overflow-y:auto;margin-bottom:12px;border:1px solid var(--border);border-radius:8px">${rows}</div>
+      <div style="display:flex;gap:8px;margin-bottom:16px">
+        <input id="_dcNewItem" placeholder="Tên giấy tờ mới..." style="flex:1;padding:8px 12px;background:var(--bg-card);border:1px solid var(--border);border-radius:6px;color:var(--ink);font-size:12px"
+          onkeydown="if(event.key==='Enter')_addDocItem()">
+        <button type="button" class="btn btn-primary" onclick="_addDocItem()" style="font-size:12px;padding:6px 16px">+ Thêm</button>
+      </div>
+      <div style="display:flex;gap:8px;justify-content:space-between">
+        <button type="button" class="btn" onclick="_resetDocItems()" style="font-size:12px">↺ Reset mặc định</button>
+        <button type="button" class="btn btn-primary" onclick="_closeDocListEditor()" style="font-size:12px">✓ Xong</button>
+      </div>
+    </div>`;
+
+  document.body.appendChild(overlay);
+  overlay.addEventListener('click', ev=>{ if(ev.target===overlay) _closeDocListEditor(); });
+}
+
+function _closeDocListEditor(){
+  const ol = document.getElementById('_docListOverlay');
+  if(ol) ol.remove();
+  // Refresh form docChecklist section nếu đang mở
+  const grp = document.querySelector('[data-group="docChecklist"]');
+  if(grp){
+    const items = DB.docChecklistItems||[];
+    const bodyEl = grp.querySelector('.form-group-body');
+    if(bodyEl){
+      // Re-read current checked state from existing checkboxes before refreshing
+      const currentChecked = {};
+      bodyEl.querySelectorAll('.doc-chk').forEach(el=>{
+        const name = el.getAttribute('data-doc');
+        if(name && el.checked) currentChecked[name] = true;
+      });
+      // Rebuild checkboxes
+      const checkboxes = items.map(doc=>{
+        const ck = currentChecked[doc] ? 'checked' : '';
+        return `<label style="display:flex;align-items:flex-start;gap:8px;padding:7px 0;border-bottom:1px solid var(--border);cursor:pointer;user-select:none"
+          onmouseenter="this.style.background='rgba(212,165,116,.04)'" onmouseleave="this.style.background=''">
+          <input type="checkbox" class="doc-chk" data-doc="${escapeHtml(doc)}" ${ck}
+            style="margin-top:2px;width:16px;height:16px;accent-color:var(--accent);cursor:pointer;flex-shrink:0">
+          <span style="font-size:12.5px;color:${ck?'var(--ink)':'var(--ink-dim)'};line-height:1.4">${escapeHtml(doc)}</span>
+        </label>`;
+      }).join('');
+      const checkedCount = items.filter(doc=>currentChecked[doc]).length;
+      bodyEl.innerHTML = `
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+          <div style="font-size:11px;color:var(--ink-muted)">Tích vào giấy tờ nhân viên đã nộp · ${checkedCount}/${items.length} hoàn tất</div>
+          <button type="button" class="btn" onclick="_editDocChecklistItems()" style="font-size:11px;padding:4px 10px">⚙️ Sửa danh sách</button>
+        </div>
+        <div style="display:flex;flex-direction:column;padding:0 4px">${checkboxes}</div>
+        ${checkedCount===items.length?'<div style="text-align:center;padding:12px;color:var(--success);font-weight:600;font-size:12px">✅ Hồ sơ đầy đủ!</div>':''}
+        ${checkedCount>0&&checkedCount<items.length?'<div style="text-align:center;padding:10px;color:var(--warning);font-size:11px">⚠️ Còn thiếu '+(items.length-checkedCount)+' giấy tờ</div>':''}`;
+      // Update badge count
+      const countEl = grp.querySelector('.form-group-count');
+      if(countEl) countEl.textContent = checkedCount+'/'+items.length;
+    }
+  }
 }
 function _addDocItem(){
   const inp=document.getElementById('_dcNewItem');
@@ -10623,17 +10753,19 @@ function _addDocItem(){
   DB.docChecklistItems.push(v);
   saveData(['config']);
   toast('✅ Đã thêm: '+v,'success');
-  _editDocChecklistItems(); // refresh modal
+  _editDocChecklistItems();
 }
 function _removeDocItem(idx){
   if(!DB.docChecklistItems) return;
   const name=DB.docChecklistItems[idx];
+  if(!confirm('Xóa "'+name+'" khỏi danh sách?')) return;
   DB.docChecklistItems.splice(idx,1);
   saveData(['config']);
   toast('Đã xóa: '+name,'info');
-  _editDocChecklistItems(); // refresh modal
+  _editDocChecklistItems();
 }
 function _resetDocItems(){
+  if(!confirm('Reset về 16 giấy tờ mặc định? Các mục tùy chỉnh sẽ bị xóa.')) return;
   DB.docChecklistItems = [
     'Đề nghị tuyển dụng','CV/ Đơn xin việc','Đánh giá phỏng vấn','Sơ yếu lý lịch',
     'Giấy xác nhận dân sự/ Lý lịch tư pháp','Bản sao công chứng CCCD','Giấy xác nhận cư trú',
@@ -37638,6 +37770,51 @@ function _showBirthdayNoti(emps){
   const escH = ev=>{ if(ev.key==='Escape'){ _closeBdNoti(); document.removeEventListener('keydown',escH); }};
   document.addEventListener('keydown', escH);
 }
+function _showContractNoti(alerts){
+  if(!alerts||!alerts.length) return;
+  const isEn = _lang === 'en';
+  const lines = alerts.map(a=>{
+    const dayTxt = a.days===0?'HÔM NAY':'còn '+a.days+' ngày';
+    return '<div style="display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid var(--border)">'
+      +'<span style="font-size:20px">⚠️</span>'
+      +'<div style="flex:1">'
+        +'<div style="font-size:14px;font-weight:600;color:var(--ink,#e6edf3)">'+escapeHtml(a.emp.name)+'</div>'
+        +'<div style="font-size:11px;color:var(--ink-muted,#6e7681)">'+escapeHtml(a.emp.role||'')+' · '+escapeHtml(a.dept)+'</div>'
+      +'</div>'
+      +'<div style="text-align:right">'
+        +'<div style="font-size:12px;font-weight:700;color:var(--danger,#e57373)">'+dayTxt+'</div>'
+        +'<div style="font-size:10px;color:var(--ink-muted,#6e7681)">'+escapeHtml(a.type||'')+'</div>'
+      +'</div></div>';
+  }).join('');
+
+  const catImg = typeof _CAT_IMGS!=='undefined'?(_CAT_IMGS.sad||_CAT_IMGS.concern||_CAT_IMGS.happy||''):'';
+
+  const overlay = document.createElement('div');
+  overlay.id = '_contractNotiOverlay';
+  overlay.innerHTML = '<style>'
+    +'#_contractNotiOverlay{position:fixed;inset:0;z-index:10000;display:flex;align-items:center;justify-content:center;'
+    +'background:rgba(0,0,0,.65);backdrop-filter:blur(8px);opacity:0;transition:opacity .4s;padding:20px}'
+    +'#_contractNotiOverlay.show{opacity:1}'
+    +'#_contractNotiBox{background:var(--bg-card,#1a2028);border:1px solid rgba(229,115,115,.3);border-radius:20px;'
+    +'padding:32px 28px 24px;max-width:440px;width:100%;text-align:center;transform:scale(.85) translateY(20px);'
+    +'transition:transform .5s cubic-bezier(.34,1.56,.64,1)}'
+    +'#_contractNotiOverlay.show #_contractNotiBox{transform:scale(1) translateY(0)}'
+    +'</style>'
+    +'<div id="_contractNotiBox">'
+      +(catImg?'<img style="width:80px;height:80px;object-fit:contain;filter:drop-shadow(0 4px 12px rgba(229,115,115,.3));margin:0 auto 12px;display:block" src="'+catImg+'" alt="Chít Chít">':'')
+      +'<div style="font-family:Fraunces,serif;font-size:20px;font-weight:600;color:var(--danger,#e57373);margin-bottom:4px">🚨 Hợp đồng sắp hết hạn!</div>'
+      +'<div style="font-size:12px;color:var(--ink-muted,#6e7681);margin-bottom:16px">'+alerts.length+' HĐ cần xử lý trong 3 ngày tới</div>'
+      +'<div style="text-align:left;padding:8px 12px;background:rgba(229,115,115,.06);border-radius:10px;margin-bottom:18px">'+lines+'</div>'
+      +'<div style="display:flex;gap:10px;justify-content:center">'
+        +'<button onclick="document.getElementById(\'_contractNotiOverlay\').classList.remove(\'show\');setTimeout(()=>document.getElementById(\'_contractNotiOverlay\')?.remove(),400);navigateTo(\'contracts\')" style="background:var(--danger,#e57373);color:#fff;border:none;padding:12px 24px;border-radius:10px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit">📋 Xem hợp đồng</button>'
+        +'<button onclick="document.getElementById(\'_contractNotiOverlay\').classList.remove(\'show\');setTimeout(()=>document.getElementById(\'_contractNotiOverlay\')?.remove(),400)" style="background:transparent;border:1px solid var(--border);color:var(--ink-muted);padding:12px 20px;border-radius:10px;font-size:13px;cursor:pointer;font-family:inherit">Đã biết</button>'
+      +'</div>'
+    +'</div>';
+  document.body.appendChild(overlay);
+  requestAnimationFrame(()=>{ requestAnimationFrame(()=>{ overlay.classList.add('show'); }); });
+  overlay.addEventListener('click', ev=>{ if(ev.target===overlay){ overlay.classList.remove('show'); setTimeout(()=>overlay.remove(),400); }});
+}
+
 function _closeBdNoti(){
   const el=document.getElementById('_bdNotiOverlay');
   if(!el) return;
