@@ -797,7 +797,7 @@ const DEFAULT_DATA = {
   blacklistReasons: null, // danh sách lý do blacklist
 
   customFields: [
-    {id:'cf_recruitSrc', key:'recruitSource', label:'Nguồn tuyển dụng', type:'select', group:(_lang==="en"?"Recruitment":"Tuyển dụng"), placeholder:'', showInTable:false, required:false, options:'In-House,LinkedIn,Hoteljob,Fanpage,TopCV,Vietnamworks,Headhunter,Referral,Website công ty,Khác'},
+    {id:'cf_recruitSrc', key:'recruitSource', label:'Nguồn tuyển dụng', type:'select', group:(_lang==="en"?"Recruitment":"Tuyển dụng"), placeholder:'', showInTable:false, required:false, options:'Hoteljob,LinkedIn,Vietnamworks,TopCV,Fanpage,Referral,Headhunter,Walk-in,In-House,Website công ty,'+(_lang==="en"?"Other":"Khác"), dynamicOptions:'recruitSources'},
 
     {id:'cf_levelNum', key:'levelNum', label:'Cấp bậc (1-9)', type:'number', group:(_lang==="en"?"Recruitment":"Tuyển dụng"), placeholder:'1 = cao nhất, 9 = thấp nhất', showInTable:false, required:false, options:''},
     {id:'cf_salary', key:'baseSalary', label:'${_lang==="en"?"Base salary":"Lương cơ bản"} (VNĐ)', type:'number', group:(_lang==="en"?"Recruitment":"Tuyển dụng"), placeholder:'', showInTable:false, required:false, options:''},
@@ -10540,7 +10540,7 @@ function editEmployee(id, prefill = null){
         'Nguyên tắc sử dụng truyền thông',
         'Đăng ký ở KTX, cam kết tuân thủ nội quy KTX'
       ];
-      if(!DB.docChecklistItems) DB.docChecklistItems = [...DEFAULT_DOCS];
+      _loadDocItems();
       const items = DB.docChecklistItems;
       const checked = (customData.docChecklist || {});
       const checkedCount = items.filter(doc=>checked[doc]).length;
@@ -10667,7 +10667,7 @@ function _editDocChecklistItems(){
     'Cam kết bảo mật tiền lương','Nguyên tắc sử dụng truyền thông',
     'Đăng ký ở KTX, cam kết tuân thủ nội quy KTX'
   ];
-  if(!DB.docChecklistItems || DB.docChecklistItems.length === 0) DB.docChecklistItems = [...DEFAULT_DOCS];
+  _loadDocItems();
   const items = DB.docChecklistItems;
 
   // Dùng overlay riêng (không đè modal edit NV)
@@ -10751,6 +10751,7 @@ function _addDocItem(){
   if(!DB.docChecklistItems) DB.docChecklistItems=[];
   if(DB.docChecklistItems.includes(v)){toast('Đã có trong danh sách','error');return;}
   DB.docChecklistItems.push(v);
+  _persistDocItems();
   saveData(['config']);
   toast('✅ Đã thêm: '+v,'success');
   _editDocChecklistItems();
@@ -10760,13 +10761,14 @@ function _removeDocItem(idx){
   const name=DB.docChecklistItems[idx];
   if(!confirm('Xóa "'+name+'" khỏi danh sách?')) return;
   DB.docChecklistItems.splice(idx,1);
+  _persistDocItems();
   saveData(['config']);
   toast('Đã xóa: '+name,'info');
   _editDocChecklistItems();
 }
 function _resetDocItems(){
   if(!confirm('Reset về 16 giấy tờ mặc định? Các mục tùy chỉnh sẽ bị xóa.')) return;
-  DB.docChecklistItems = [
+  const items = [
     'Đề nghị tuyển dụng','CV/ Đơn xin việc','Đánh giá phỏng vấn','Sơ yếu lý lịch',
     'Giấy xác nhận dân sự/ Lý lịch tư pháp','Bản sao công chứng CCCD','Giấy xác nhận cư trú',
     'Giấy khai sinh (Bản sao)','Bằng cấp các loại',
@@ -10775,9 +10777,43 @@ function _resetDocItems(){
     'Cam kết bảo mật tiền lương','Nguyên tắc sử dụng truyền thông',
     'Đăng ký ở KTX, cam kết tuân thủ nội quy KTX'
   ];
+  DB.docChecklistItems = items;
+  _persistDocItems();
   saveData(['config']);
-  toast('↺ Đã reset về mặc định','success');
+  toast('↺ Đã reset về mặc định ('+items.length+' giấy tờ)','success');
   _editDocChecklistItems();
+}
+function _persistDocItems(){
+  try{ localStorage.setItem('_docChecklistItems', JSON.stringify({items:DB.docChecklistItems, ts:Date.now()})); }catch(e){}
+}
+function _loadDocItems(){
+  const DEFAULT_DOCS = [
+    'Đề nghị tuyển dụng','CV/ Đơn xin việc','Đánh giá phỏng vấn','Sơ yếu lý lịch',
+    'Giấy xác nhận dân sự/ Lý lịch tư pháp','Bản sao công chứng CCCD','Giấy xác nhận cư trú',
+    'Giấy khai sinh (Bản sao)','Bằng cấp các loại',
+    'Giấy khám sức khỏe (Bếp, F&B, HK: HAV, HEV, BK, HIV)',
+    'Tờ khai đăng ký BHXH','Đơn xin Công đoàn','Cam kết bảo mật dữ liệu',
+    'Cam kết bảo mật tiền lương','Nguyên tắc sử dụng truyền thông',
+    'Đăng ký ở KTX, cam kết tuân thủ nội quy KTX'
+  ];
+  // Lấy từ localStorage (có timestamp)
+  let lsItems=[], lsTs=0;
+  try{
+    const raw=JSON.parse(localStorage.getItem('_docChecklistItems')||'{}');
+    if(Array.isArray(raw)){ lsItems=raw; lsTs=1; } // legacy format
+    else if(raw.items){ lsItems=raw.items; lsTs=raw.ts||1; }
+  }catch(e){}
+  const cloudItems = DB.docChecklistItems||[];
+  // Ưu tiên: localStorage > cloud > default (dùng bản nào nhiều items hơn, hoặc bản mới hơn)
+  if(lsItems.length >= 5 && lsItems.length >= cloudItems.length){
+    DB.docChecklistItems = lsItems;
+  } else if(cloudItems.length >= 5){
+    DB.docChecklistItems = cloudItems;
+  } else {
+    DB.docChecklistItems = [...DEFAULT_DOCS];
+  }
+  // Sync lại localStorage
+  _persistDocItems();
 }
 
 function removePhoto(){
@@ -11019,6 +11055,13 @@ function renderCustomFieldInput(cf, value){
       const houses = (DB.dormConfig?.houses||[]);
       opts = houses.map(h=>h.name).filter(Boolean);
       if(!opts.length) opts = ['(Chưa cấu hình ký túc xá)'];
+    } else if(cf.dynamicOptions === 'recruitSources'){
+      // Merge default options + custom sources từ Recruitment module
+      const defaultOpts = (cf.options||'').split(',').map(s=>s.trim()).filter(Boolean);
+      const customSrcs = (DB.customRecruitSources||[]).filter(s=>!defaultOpts.includes(s));
+      opts = [...defaultOpts, ...customSrcs];
+      // Thêm source của NV hiện tại nếu chưa có trong list
+      if(v && !opts.includes(v)) opts.push(v);
     } else {
       opts = (cf.options||'').split(',').map(s=>s.trim()).filter(Boolean);
     }
@@ -33240,6 +33283,8 @@ fbAuth.onAuthStateChanged(async user => {
         // Trước lúc này, mọi saveData sẽ bị SKIP để không wipe cloud bằng DB local chưa đầy đủ
         window._coldLoadDone = true;
         console.log('[Firestore] ✅ Cold-load complete — save operations enabled');
+        // Restore docChecklistItems từ localStorage nếu cloud bị thiếu
+        if(typeof _loadDocItems==='function') _loadDocItems();
 
         // 🚨 Auto-confirm resignations đã qua ngày làm việc cuối
         // PHẢI chạy SAU _coldLoadDone = true để saveEmpProfile + saveData không bị SKIP
