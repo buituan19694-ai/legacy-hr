@@ -11056,12 +11056,12 @@ function renderCustomFieldInput(cf, value){
       opts = houses.map(h=>h.name).filter(Boolean);
       if(!opts.length) opts = ['(Chưa cấu hình ký túc xá)'];
     } else if(cf.dynamicOptions === 'recruitSources' || cf.key === 'recruitSource'){
-      // Merge default options + custom sources từ Recruitment module
-      const defaultSrcs = ['Hoteljob','LinkedIn','Vietnamworks','TopCV','Fanpage','Referral','Headhunter','Walk-in','In-House','Website công ty',(_lang==="en"?"Other":"Khác")];
-      const customSrcs = (DB.customRecruitSources||[]).filter(s=>!defaultSrcs.includes(s));
-      opts = [...defaultSrcs, ...customSrcs];
-      // Thêm source của NV hiện tại nếu chưa có trong list
+      // Dùng CHÍNH XÁC danh sách nguồn từ Recruitment module
+      const SOURCES_DEFAULT = ['Hoteljob','LinkedIn','Vietnamworks','TopCV','Fanpage','Referral','Headhunter','Walk-in',(_lang==="en"?"Other":"Khác")];
+      const customSrcs = (DB.customRecruitSources||[]).filter(s=>!SOURCES_DEFAULT.includes(s));
+      opts = [...SOURCES_DEFAULT, ...customSrcs];
       if(v && !opts.includes(v)) opts.push(v);
+      console.log('[recruitSource] sources:', opts.length, 'custom:', customSrcs);
     } else {
       opts = (cf.options||'').split(',').map(s=>s.trim()).filter(Boolean);
     }
