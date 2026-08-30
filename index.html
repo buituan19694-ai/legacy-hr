@@ -152,6 +152,10 @@ if('serviceWorker' in navigator){
         <span>HR P&L Review</span>
         <span class="nav-badge" id="navAnalyticsCount" style="background:var(--danger);color:#fff;font-weight:700">0</span>
       </div>
+      <div class="nav-item" data-page="hrGarden">
+        <span class="nav-icon" style="font-size:16px">🌱</span>
+        <span>HR Action Plan</span>
+      </div>
     </div>
 
     <div class="nav-section">
@@ -2484,6 +2488,7 @@ function _doRender(){
       settings: renderSettings,
       accounts: renderAccounts,
       manning: (main)=>renderManning(main),
+      hrGarden: renderHRGarden,
     };
     (renderers[currentPage] || renderDashboard)(main);
     setTimeout(function(){ initDateInputs(main); }, 20);
@@ -34886,6 +34891,217 @@ function renderYoYTab(curYear, depts, allEmps, BH_RATE){
   </div>`;
 }
 
+/* ══════════════════════════════════════════════
+   HR GARDEN — Action Plan với metaphor Cây → Hoa
+   🌱 Planned → 🌿 In Progress → 🌸 Done → 🥀 Overdue
+   ══════════════════════════════════════════════ */
+function renderHRGarden(main){
+  const today = new Date();
+  if(!window._gardenF) window._gardenF = { year: today.getFullYear(), month: today.getMonth()+1 };
+  const F = window._gardenF;
+  const yr = F.year, mo = F.month;
+  const MN = ['T1','T2','T3','T4','T5','T6','T7','T8','T9','T10','T11','T12'];
+
+  if(!DB.plActionPlan) DB.plActionPlan = {};
+  if(!DB.plActionPlan[yr]) DB.plActionPlan[yr] = {};
+  if(!DB.plActionPlan[yr][mo]) DB.plActionPlan[yr][mo] = [];
+  const actions = DB.plActionPlan[yr][mo];
+
+  const doneCount = actions.filter(a=>a.status==='Done'||a.status==='done').length;
+  const totalCount = actions.length;
+  const pct = totalCount ? Math.round(doneCount/totalCount*100) : 0;
+
+  const getPlant = (a)=>{
+    const isDone = a.status==='Done'||a.status==='done';
+    const isProgress = a.status==='In Progress'||a.status==='in_progress';
+    const isOverdue = !isDone && a.deadline && _parseAnyDate(a.deadline) < today;
+    if(isDone) return {icon:'🌸',stage:'bloom',label:'Hoàn thành',color:'var(--success)',bg:'rgba(102,187,106,.08)',border:'rgba(102,187,106,.25)'};
+    if(isOverdue) return {icon:'🥀',stage:'wilt',label:'Quá hạn',color:'var(--danger)',bg:'rgba(229,115,115,.08)',border:'rgba(229,115,115,.25)'};
+    if(isProgress) return {icon:'🌿',stage:'grow',label:'Đang thực hiện',color:'var(--warning)',bg:'rgba(232,185,116,.08)',border:'rgba(232,185,116,.25)'};
+    return {icon:'🌱',stage:'seed',label:'Chưa bắt đầu',color:'var(--info)',bg:'rgba(126,182,232,.06)',border:'rgba(126,182,232,.15)'};
+  };
+
+  const monthBar = MN.map((m,i)=>{
+    const mi=i+1;
+    const hasData = (DB.plActionPlan[yr]||{})[mi]?.length>0;
+    return `<button onclick="window._gardenF.month=${mi};render()"
+      style="padding:5px 12px;border-radius:6px;border:1px solid ${mo===mi?'var(--accent)':'var(--border)'};background:${mo===mi?'var(--accent)':'transparent'};color:${mo===mi?'var(--bg)':'var(--ink-dim)'};font-size:12px;font-weight:${mo===mi?'700':'400'};cursor:pointer;user-select:none;position:relative">
+      ${m}${hasData?'<span style="position:absolute;top:-2px;right:-2px;width:6px;height:6px;background:var(--success);border-radius:50%"></span>':''}
+    </button>`;
+  }).join('');
+
+  const actionCards = actions.map((a,i)=>{
+    const p = getPlant(a);
+    const isDone = a.status==='Done'||a.status==='done';
+    return `<div style="background:${p.bg};border:1.5px solid ${p.border};border-radius:14px;padding:18px 20px;transition:all .3s;position:relative;overflow:hidden${isDone?';opacity:.85':''}">
+      <div style="display:flex;align-items:flex-start;gap:14px">
+        <div style="font-size:36px;line-height:1;cursor:pointer;transition:transform .3s;user-select:none"
+          onclick="(function(){const a=DB.plActionPlan['${yr}']['${mo}'][${i}];a.status=(a.status==='Done'||a.status==='done')?'Planned':'Done';saveData(['plActionPlan']);render();})()"
+          onmouseenter="this.style.transform='scale(1.2)'" onmouseleave="this.style.transform=''"
+          title="${isDone?'Ấn để bỏ hoàn thành':'Ấn để đánh dấu hoàn thành'}">
+          ${p.icon}
+        </div>
+        <div style="flex:1;min-width:0">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+            <span style="font-size:14px;font-weight:600;color:var(--ink);${isDone?'text-decoration:line-through;opacity:.7':''}">${escapeHtml(a.title||'Chưa đặt tên')}</span>
+            <span style="font-size:10px;padding:2px 8px;border-radius:4px;background:${p.bg};border:1px solid ${p.border};color:${p.color};font-weight:600">${p.label}</span>
+          </div>
+          <div style="display:flex;gap:16px;flex-wrap:wrap;font-size:11px;color:var(--ink-muted)">
+            ${a.deadline?'<span>📅 '+escapeHtml(a.deadline)+'</span>':''}
+            ${a.pic?'<span>👤 '+escapeHtml(a.pic)+'</span>':''}
+            ${a.saving?'<span>💰 '+parseInt(a.saving).toLocaleString('vi-VN')+'đ/tháng</span>':''}
+          </div>
+          ${a.detail?'<div style="font-size:12px;color:var(--ink-dim);margin-top:6px">'+escapeHtml(a.detail)+'</div>':''}
+        </div>
+        <div style="display:flex;gap:6px;flex-shrink:0">
+          <button onclick="_editGardenAction(${yr},${mo},${i})" style="background:transparent;border:1px solid var(--border);border-radius:6px;padding:4px 8px;color:var(--ink-muted);cursor:pointer;font-size:11px;user-select:none">✏️</button>
+          <button onclick="if(confirm('Xóa action này?')){DB.plActionPlan['${yr}']['${mo}'].splice(${i},1);saveData(['plActionPlan']);render();}" style="background:transparent;border:1px solid rgba(229,115,115,.2);border-radius:6px;padding:4px 8px;color:var(--danger);cursor:pointer;font-size:11px;user-select:none">✕</button>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+
+  // Garden summary visual
+  const gardenPots = actions.map((a,i)=>{
+    const p = getPlant(a);
+    return `<div style="display:flex;flex-direction:column;align-items:center;gap:2px;cursor:pointer;user-select:none"
+      onclick="_editGardenAction(${yr},${mo},${i})" title="${escapeHtml(a.title||'')}">
+      <span style="font-size:${totalCount>12?'20px':'28px'};transition:all .3s">${p.icon}</span>
+      <span style="font-size:8px;color:var(--ink-muted);max-width:50px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:center">${escapeHtml((a.title||'').slice(0,8))}</span>
+    </div>`;
+  }).join('');
+
+  main.innerHTML = `
+    <div class="topbar">
+      <div class="topbar-left">
+        <div class="page-breadcrumb">OVERVIEW · HR ACTION PLAN</div>
+        <h1 class="page-title">🌱 HR <em>Garden</em></h1>
+        <div class="page-sub">Kế hoạch hành động HR · Mỗi nhiệm vụ là một cây — hoàn thành để nở hoa 🌸</div>
+      </div>
+      <div class="topbar-right">
+        <select onchange="window._gardenF.year=parseInt(this.value);render()" style="background:var(--bg-card);border:1px solid var(--border);border-radius:7px;padding:7px 12px;color:var(--ink);font-family:inherit;font-size:13px">
+          ${[today.getFullYear()-1,today.getFullYear(),today.getFullYear()+1].map(y=>`<option value="${y}" ${y===yr?'selected':''}>${y}</option>`).join('')}
+        </select>
+      </div>
+    </div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:20px">${monthBar}</div>
+
+    <!-- Garden Overview -->
+    <div class="card" style="margin-bottom:20px;text-align:center">
+      <div style="font-size:13px;color:var(--ink-muted);margin-bottom:12px">🏡 Vườn HR tháng ${mo}/${yr}</div>
+      ${totalCount?`
+        <div style="display:flex;justify-content:center;gap:${totalCount>12?'8':'16'}px;flex-wrap:wrap;margin-bottom:16px;padding:12px;background:rgba(212,165,116,.03);border-radius:12px;border:1px dashed var(--border)">
+          ${gardenPots}
+        </div>
+        <div style="display:flex;align-items:center;justify-content:center;gap:12px;margin-bottom:8px">
+          <div style="width:200px;height:10px;background:var(--bg-elev);border-radius:5px;overflow:hidden">
+            <div style="width:${pct}%;height:100%;background:${pct===100?'var(--success)':pct>=50?'var(--accent)':'var(--warning)'};border-radius:5px;transition:width .5s"></div>
+          </div>
+          <span style="font-family:'JetBrains Mono',monospace;font-size:16px;font-weight:700;color:${pct===100?'var(--success)':'var(--accent)'}">${pct}%</span>
+        </div>
+        <div style="font-size:12px;color:var(--ink-dim)">${doneCount}/${totalCount} nhiệm vụ hoàn thành
+          ${pct===100?' · 🎉 Vườn nở roa đầy đủ!':''}
+        </div>
+        <div style="display:flex;justify-content:center;gap:20px;margin-top:10px;font-size:11px;color:var(--ink-muted)">
+          <span>🌱 Chưa bắt đầu: ${actions.filter(a=>!a.status||a.status==='Planned').length}</span>
+          <span>🌿 Đang thực hiện: ${actions.filter(a=>a.status==='In Progress'||a.status==='in_progress').length}</span>
+          <span>🌸 Hoàn thành: ${doneCount}</span>
+          <span>🥀 Quá hạn: ${actions.filter(a=>{const d=a.status!=='Done'&&a.status!=='done'&&a.deadline&&_parseAnyDate(a.deadline)<today;return d;}).length}</span>
+        </div>
+      `:`<div style="padding:30px;color:var(--ink-muted);font-size:13px">Chưa có action nào · Ấn "+ Thêm Action" để bắt đầu trồng 🌱</div>`}
+    </div>
+
+    <!-- Action Cards -->
+    <div style="display:flex;flex-direction:column;gap:12px;margin-bottom:20px">
+      ${actionCards}
+    </div>
+
+    <button class="btn btn-primary" onclick="_addGardenAction(${yr},${mo})" style="font-size:13px;padding:10px 20px">
+      🌱 + Thêm Action
+    </button>
+  `;
+}
+
+function _addGardenAction(yr,mo){
+  if(!DB.plActionPlan) DB.plActionPlan={};
+  if(!DB.plActionPlan[yr]) DB.plActionPlan[yr]={};
+  if(!DB.plActionPlan[yr][mo]) DB.plActionPlan[yr][mo]=[];
+  DB.plActionPlan[yr][mo].push({title:'',detail:'',deadline:'',pic:'',saving:0,status:'Planned'});
+  saveData(['plActionPlan']);
+  const idx = DB.plActionPlan[yr][mo].length-1;
+  render();
+  setTimeout(()=>_editGardenAction(yr,mo,idx),100);
+}
+
+function _editGardenAction(yr,mo,idx){
+  const a = DB.plActionPlan[yr][mo][idx];
+  if(!a) return;
+  const statuses = ['Planned','In Progress','Done'];
+  const statusOpts = statuses.map(s=>`<option value="${s}" ${a.status===s?'selected':''}>${s==='Planned'?'🌱 Chưa bắt đầu':s==='In Progress'?'🌿 Đang thực hiện':'🌸 Hoàn thành'}</option>`).join('');
+
+  let overlay = document.getElementById('_gardenEditOverlay');
+  if(overlay) overlay.remove();
+  overlay = document.createElement('div');
+  overlay.id = '_gardenEditOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;z-index:500;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.7);backdrop-filter:blur(4px);padding:20px';
+  overlay.innerHTML = `
+    <div style="background:var(--bg-elev);border:1px solid var(--border-strong);border-radius:14px;padding:28px;max-width:500px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,.5)">
+      <div style="font-family:'Fraunces',serif;font-size:18px;font-weight:500;margin-bottom:16px">✏️ Chỉnh sửa <em style="color:var(--accent)">Action</em></div>
+      <div style="display:flex;flex-direction:column;gap:12px">
+        <div>
+          <label style="font-size:11px;color:var(--ink-muted);letter-spacing:.1em;text-transform:uppercase;font-weight:600">Tên nhiệm vụ *</label>
+          <input id="_ga_title" value="${escapeHtml(a.title||'')}" placeholder="VD: Khảo sát Canteen..." style="width:100%;padding:10px 12px;background:var(--bg-card);border:1px solid var(--border);border-radius:8px;color:var(--ink);font-size:13px;margin-top:4px">
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+          <div>
+            <label style="font-size:11px;color:var(--ink-muted);letter-spacing:.1em;text-transform:uppercase;font-weight:600">Deadline</label>
+            <input id="_ga_deadline" value="${escapeHtml(a.deadline||'')}" placeholder="VD: 15/09, 10-11/09..." style="width:100%;padding:10px 12px;background:var(--bg-card);border:1px solid var(--border);border-radius:8px;color:var(--ink);font-size:13px;margin-top:4px">
+          </div>
+          <div>
+            <label style="font-size:11px;color:var(--ink-muted);letter-spacing:.1em;text-transform:uppercase;font-weight:600">Người phụ trách</label>
+            <input id="_ga_pic" value="${escapeHtml(a.pic||'')}" placeholder="VD: Ms. Thùy..." style="width:100%;padding:10px 12px;background:var(--bg-card);border:1px solid var(--border);border-radius:8px;color:var(--ink);font-size:13px;margin-top:4px">
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+          <div>
+            <label style="font-size:11px;color:var(--ink-muted);letter-spacing:.1em;text-transform:uppercase;font-weight:600">Expected saving (đ/tháng)</label>
+            <input id="_ga_saving" type="number" value="${a.saving||0}" style="width:100%;padding:10px 12px;background:var(--bg-card);border:1px solid var(--border);border-radius:8px;color:var(--ink);font-size:13px;margin-top:4px">
+          </div>
+          <div>
+            <label style="font-size:11px;color:var(--ink-muted);letter-spacing:.1em;text-transform:uppercase;font-weight:600">Trạng thái</label>
+            <select id="_ga_status" style="width:100%;padding:10px 12px;background:var(--bg-card);border:1px solid var(--border);border-radius:8px;color:var(--ink);font-size:13px;margin-top:4px">${statusOpts}</select>
+          </div>
+        </div>
+        <div>
+          <label style="font-size:11px;color:var(--ink-muted);letter-spacing:.1em;text-transform:uppercase;font-weight:600">Chi tiết / Ghi chú</label>
+          <textarea id="_ga_detail" placeholder="Mô tả thêm..." style="width:100%;padding:10px 12px;background:var(--bg-card);border:1px solid var(--border);border-radius:8px;color:var(--ink);font-size:13px;margin-top:4px;min-height:60px;resize:vertical">${escapeHtml(a.detail||'')}</textarea>
+        </div>
+      </div>
+      <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:18px">
+        <button onclick="document.getElementById('_gardenEditOverlay').remove()" class="btn" style="font-size:12px">Hủy</button>
+        <button onclick="_saveGardenAction(${yr},${mo},${idx})" class="btn btn-primary" style="font-size:12px">💾 Lưu</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  overlay.addEventListener('click', ev=>{ if(ev.target===overlay) overlay.remove(); });
+  document.getElementById('_ga_title')?.focus();
+}
+
+function _saveGardenAction(yr,mo,idx){
+  const a = DB.plActionPlan[yr][mo][idx];
+  if(!a) return;
+  a.title = (document.getElementById('_ga_title')?.value||'').trim();
+  a.deadline = (document.getElementById('_ga_deadline')?.value||'').trim();
+  a.pic = (document.getElementById('_ga_pic')?.value||'').trim();
+  a.saving = parseInt(document.getElementById('_ga_saving')?.value)||0;
+  a.status = document.getElementById('_ga_status')?.value||'Planned';
+  a.detail = (document.getElementById('_ga_detail')?.value||'').trim();
+  saveData(['plActionPlan']);
+  document.getElementById('_gardenEditOverlay')?.remove();
+  toast(a.status==='Done'?'🌸 Nở hoa rồi!':'💾 Đã lưu','success');
+  render();
+}
+
 function renderManning(main){
   if(!window.canDo('manning')){
     main.innerHTML='<div class="topbar"><div class="topbar-left"><h1 class="page-title">🔒 Không có quyền</h1><div class="page-sub">Bạn không được cấp quyền truy cập module Manning & Budget</div></div></div>';
@@ -34896,6 +35112,10 @@ function renderManning(main){
   window._manningYear = curYear;
   const tab = window._manningTab || 'budget';
   window._manningTab = tab;
+  // Restore lock state từ localStorage
+  if(window._manningLocked === undefined){
+    try{ window._manningLocked = localStorage.getItem('_manningLocked')==='1'; }catch(e){ window._manningLocked=false; }
+  }
   const curMonth = window._manningMonth || (today.getFullYear()===curYear ? today.getMonth() : 0); // 0-indexed
   window._manningMonth = curMonth;
 
@@ -35904,7 +36124,7 @@ function renderManning(main){
         <button class="btn" style="font-size:12px" onclick="window._manningShowSalary=!window._manningShowSalary;render()">
           ${window._manningShowSalary?'🔓 Ẩn lương':'🔒 Hiện lương'}
         </button>
-        <button class="btn" style="font-size:12px;${window._manningLocked?'background:var(--danger);color:#fff;border-color:var(--danger)':''}" onclick="window._manningLocked=!window._manningLocked;render()">
+        <button class="btn" style="font-size:12px;${window._manningLocked?'background:var(--danger);color:#fff;border-color:var(--danger)':''}" onclick="window._manningLocked=!window._manningLocked;try{localStorage.setItem('_manningLocked',window._manningLocked?'1':'0');}catch(e){}render()">
           ${window._manningLocked?'🔒 Đang khóa':'🔓 Khóa chỉnh sửa'}
         </button>
         <button class="btn" style="font-size:12px" onclick="window._budgetCollapsed={};render()">▼ Mở tất cả</button>
@@ -35913,7 +36133,7 @@ function renderManning(main){
         <button class="btn" style="font-size:12px" onclick="window._manningShowSalary=!window._manningShowSalary;render()">
           ${window._manningShowSalary?'🔓 Ẩn lương':'🔒 Hiện lương'}
         </button>
-        <button class="btn" style="font-size:12px;${window._manningLocked?'background:var(--danger);color:#fff;border-color:var(--danger)':''}" onclick="window._manningLocked=!window._manningLocked;render()">
+        <button class="btn" style="font-size:12px;${window._manningLocked?'background:var(--danger);color:#fff;border-color:var(--danger)':''}" onclick="window._manningLocked=!window._manningLocked;try{localStorage.setItem('_manningLocked',window._manningLocked?'1':'0');}catch(e){}render()">
           ${window._manningLocked?'🔒 Đang khóa':'🔓 Khóa chỉnh sửa'}
         </button>
         `}
