@@ -3232,7 +3232,7 @@ window._plOnInputNum = function(input){
 function _plGetPayrollBudgetMonth(year, month){
   // Returns {salary, bonus, bh, meal, other, total, byDept:{deptId:total}} — ALL MONTHLY
   const plan = ((DB.manningPlan||{})[year]||{}).depts || {};
-  const bhRate = parseFloat((DB.manningConfig||{}).bhRate) || 0.225;
+  const bhRate = parseFloat((DB.manningConfig||{}).bhRate) || 0.235;
   const result = {salary:0, bonus:0, bh:0, meal:0, other:0, total:0, byDept:{}};
   const deptFilter = window._plDept || null; // null = all
   Object.entries(plan).forEach(([deptId, dp])=>{
@@ -3276,7 +3276,7 @@ function _plGetPayrollActualMonth(year, month){
   const monthStart = new Date(year, month, 1);
   const monthEnd = new Date(year, month+1, 0);
   const cd = DB.customData||{};
-  const bhRate = parseFloat((DB.manningConfig||{}).bhRate) || 0.225;
+  const bhRate = parseFloat((DB.manningConfig||{}).bhRate) || 0.235;
 
   let total = 0, salary = 0, bonus = 0, bh = 0, hc = 0;
   const byDept = {};
@@ -3504,7 +3504,6 @@ function renderAnalytics(main){
 
   const tabs = [
     {k:'intel',     icon:'🧠', label:'HR Intelligence', sub:'Executive Summary'},
-    {k:'labor',     icon:'💰', label:'Labor Cost',       sub:'Budget vs Actual'},
     {k:'manpower',  icon:'👥', label:'Manpower',         sub:'HC by Dept'},
     {k:'productivity',icon:'📈',label:'Productivity',    sub:'Revenue/Employee'},
     {k:'liability', icon:'🏖️', label:'AL/CL Liability',  sub:'Quy ra tiền'},
@@ -3588,7 +3587,6 @@ function renderAnalytics(main){
 
   const content = document.getElementById('plContent');
   if(currentTab === 'intel')         _plRenderIntelligence(content, curYear, curMonth);
-  else if(currentTab === 'labor')    _plRenderLaborCost(content, curYear, curMonth);
   else if(currentTab === 'manpower') _plRenderManpower(content, curYear, curMonth);
   else if(currentTab === 'productivity') _plRenderProductivity(content, curYear, curMonth);
   else if(currentTab === 'liability')_plRenderLiability(content, curYear, curMonth);
@@ -4387,7 +4385,7 @@ function _plRenderManpower(el, year, month){
 
   const rows = [];
   let totBudget = 0, totActual = 0, totSalaryBudget = 0, totSalaryActual = 0;
-  const bhRate = parseFloat((DB.manningConfig||{}).bhRate) || 0.225;
+  const bhRate = parseFloat((DB.manningConfig||{}).bhRate) || 0.235;
 
   (DB.departments||[]).forEach(d=>{
     if(deptFilter && d.id !== deptFilter) return;
@@ -28237,7 +28235,7 @@ function renderPayrollTab(){
   if(!DB.payrollData) DB.payrollData={};
   if(!DB.payrollData[pY]) DB.payrollData[pY]={};
 
-  const INS_RATE = 0.225; // 21.5% + 1%
+  const INS_RATE = 0.235; // 21.5% + 1%
   const fmtV = v=>v?Math.round(v).toLocaleString('vi-VN'):'0';
   const fmtM = v=>v?(Math.round(v/1e6*10)/10).toLocaleString('vi')+'M':'0';
 
@@ -28264,9 +28262,8 @@ function renderPayrollTab(){
     const act=parseFloat(pd.actualSalary)||0;
     const allow=parseFloat(pd.allowance)||0;
     const actSum=act+allow;
-    const ins=Math.round(act*INS_RATE);
+    const ins=parseFloat(pd.insurance)||0; // BHXH+CĐ do user nhập tay
     const cluster=parseFloat(pd.cluster)||100;
-    // Casual tự lấy từ module Casual theo dept
     return {base,biz,sum,act,allow,actSum,ins,cluster};
   };
 
@@ -28299,42 +28296,65 @@ function renderPayrollTab(){
     totGrand = allPool.reduce((s,e)=>{const d=calcEmp(e,pM);return s+Math.round((d.actSum+d.ins)*d.cluster/100);},0) + totCasual;
     const actHC=allPool.filter(e=>{const pd=(mData[e.id]||{});return(parseFloat(pd.actualSalary)||0)>0;}).length;
 
-    // Forecast từ Manning
+    // ── 1. Budget (Manning Budget tab - kế hoạch năm) ──
     const planDepts=((DB.manningPlan||{})[pY]||{}).depts||{};
-    let fcHC=0,fcSal=0,fcBH=0;
-    Object.values(planDepts).forEach(dp=>{(dp.positions||[]).forEach(p=>{const hc=parseInt(p.planned)||0;fcHC+=hc;fcSal+=(parseFloat(p.budgetSalary)||0)*hc+(parseFloat(p.budgetBonus)||0)*hc;fcBH+=(parseFloat(p.budgetBH)||Math.round((parseFloat(p.budgetSalary)||0)*INS_RATE))*hc;});});
-    const fcCasual=_plGetCasualCost(pY,pM-1).total;
+    let bgHC=0,bgSal=0,bgBH=0;
+    Object.values(planDepts).forEach(dp=>{(dp.positions||[]).forEach(p=>{const hc=parseInt(p.planned)||0;bgHC+=hc;bgSal+=(parseFloat(p.budgetSalary)||0)*hc+(parseFloat(p.budgetBonus)||0)*hc;bgBH+=(parseFloat(p.budgetBH)||0)*hc;});});
+    const bgCasual=_plGetCasualCost(pY,pM-1).total;
+    const bgTotal=bgSal+bgBH+bgCasual;
 
-    // Cùng kỳ năm trước
+    // ── 2. Forecast (Manning Forecast tab - lương tháng đó) ──
+    const actDepts=((DB.manningActual||{})[pY]||{});
+    let fhHC=0,fhSal=0,fhBH=0;
+    Object.values(planDepts).forEach(dp=>{(dp.positions||[]).forEach(p=>{
+      const hc=parseInt(p.planned)||0; fhHC+=hc;
+      fhSal+=(parseFloat(p.budgetSalary)||0)*hc+(parseFloat(p.budgetBonus)||0)*hc;
+      fhBH+=(parseFloat(p.budgetBH)||0)*hc;
+    });});
+    const fhCasual=bgCasual;
+    const fhTotal=fhSal+fhBH+fhCasual;
+
+    // ── 3. Actual (bảng lương bên dưới) ──
+    // totActSum, totIns, totCasual, totGrand đã tính ở trên
+
+    // ── 4. Cùng kỳ năm trước ──
     const prevY=pY-1;const prevMData=(DB.payrollData||{})[prevY]?.[pM]||{};
     let pvHC=0,pvActSum=0,pvIns=0,pvCasual=0;
-    DB.employees.forEach(e=>{const pd=prevMData[e.id]||{};const act=parseFloat(pd.actualSalary)||0;const allow=parseFloat(pd.allowance)||0;if(act>0)pvHC++;pvActSum+=act+allow;pvIns+=Math.round(act*INS_RATE);pvCasual+=parseFloat(pd.casual)||0;});
+    DB.employees.forEach(e=>{const pd=prevMData[e.id]||{};const act=parseFloat(pd.actualSalary)||0;const allow=parseFloat(pd.allowance)||0;const ins=parseFloat(pd.insurance)||0;if(act>0)pvHC++;pvActSum+=act+allow;pvIns+=ins;pvCasual+=parseFloat(pd.casual)||0;});
     const pvCasualMod=_plGetCasualCost(prevY,pM-1).total;if(!pvCasual&&pvCasualMod)pvCasual=pvCasualMod;
+    const pvTotal=pvActSum+pvIns+pvCasual;
 
-    // Bảng so sánh Overview
+    // Helpers
     const diffBg=(a,f)=>{if(!f)return'';const d=Math.round((a-f)/f*100);return d>5?'color:var(--danger)':d<-5?'color:var(--success)':'';};
     const diffTxt=(a,f)=>{if(!f)return'—';const d=Math.round((a-f)/f*100);return(d>0?'+':'')+d+'%';};
     const ct=`padding:10px 12px;font-family:'JetBrains Mono',monospace;font-size:12px;text-align:right`;
     const ch=`padding:10px 12px;font-size:10px;font-weight:700;letter-spacing:.1em;text-align:right;white-space:nowrap`;
+
     const overviewTable=`
     <div class="card" style="padding:0;overflow:hidden;margin-bottom:16px">
-      <div style="padding:14px 18px 8px"><div style="font-size:14px;font-weight:700;color:var(--ink)">📊 So sánh tổng quan <em style="color:var(--accent)">T${pM}/${pY}</em></div></div>
+      <div style="padding:14px 18px 8px"><div style="font-size:14px;font-weight:700;color:var(--ink)">📊 So sánh tổng quan <em style="color:var(--accent)">T${pM}/${pY}</em></div>
+      <div style="font-size:11px;color:var(--ink-muted);margin-top:2px">Budget (kế hoạch) · Forecast (Manning) · Actual (bảng lương) · Cùng kỳ năm trước</div></div>
       <div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%">
         <thead><tr style="background:var(--bg-elev);border-bottom:2px solid var(--border-strong)">
-          <th style="${ch};text-align:left;min-width:180px"></th>
+          <th style="${ch};text-align:left;min-width:200px"></th>
           <th style="${ch};color:var(--accent)">HC</th>
           <th style="${ch};color:var(--warning)">TỔNG LƯƠNG TT</th>
-          <th style="${ch};color:var(--purple)">BHXH + TU</th>
+          <th style="${ch};color:var(--purple)">BHXH + CĐ</th>
           <th style="${ch};color:var(--accent)">CASUAL</th>
           <th style="${ch};color:#FFCC00">TỔNG CHI</th>
         </tr></thead><tbody>
           <tr style="border-bottom:1px solid var(--border)">
-            <td style="padding:10px 12px;font-size:12px;font-weight:600;color:var(--ink-dim)">📋 Forecast (Manning Budget)</td>
-            <td style="${ct}">${fmtV(fcHC)}</td><td style="${ct}">${fmtV(fcSal)}</td><td style="${ct}">${fmtV(fcBH)}</td><td style="${ct}">${fmtV(fcCasual)}</td>
-            <td style="${ct};font-weight:700">${fmtV(fcSal+fcBH+fcCasual)}</td>
+            <td style="padding:10px 12px;font-size:12px;font-weight:600;color:var(--info)">📋 Budget — Kế hoạch năm</td>
+            <td style="${ct}">${fmtV(bgHC)}</td><td style="${ct}">${fmtV(bgSal)}</td><td style="${ct}">${fmtV(bgBH)}</td><td style="${ct}">${fmtV(bgCasual)}</td>
+            <td style="${ct};font-weight:700">${fmtV(bgTotal)}</td>
+          </tr>
+          <tr style="border-bottom:1px solid var(--border)">
+            <td style="padding:10px 12px;font-size:12px;font-weight:600;color:var(--teal)">📊 Forecast — Manning tháng</td>
+            <td style="${ct}">${fmtV(fhHC)}</td><td style="${ct}">${fmtV(fhSal)}</td><td style="${ct}">${fmtV(fhBH)}</td><td style="${ct}">${fmtV(fhCasual)}</td>
+            <td style="${ct};font-weight:700">${fmtV(fhTotal)}</td>
           </tr>
           <tr style="border-bottom:1px solid var(--border);background:rgba(212,165,116,.06)">
-            <td style="padding:10px 12px;font-size:13px;font-weight:700;color:var(--accent)">✅ Actual T${pM}/${pY}</td>
+            <td style="padding:10px 12px;font-size:13px;font-weight:700;color:var(--accent)">✅ Actual — Lương thực tế</td>
             <td style="${ct};font-weight:700;color:var(--accent);font-size:14px">${fmtV(actHC)}</td>
             <td style="${ct};font-weight:700;color:var(--warning);font-size:14px">${fmtV(totActSum)}</td>
             <td style="${ct};font-weight:700;color:var(--purple);font-size:14px">${fmtV(totIns)}</td>
@@ -28342,27 +28362,57 @@ function renderPayrollTab(){
             <td style="${ct};font-weight:800;color:#FFCC00;font-size:14px">${fmtV(totGrand)}</td>
           </tr>
           <tr style="border-bottom:1px solid var(--border);background:rgba(255,255,255,.02)">
-            <td style="padding:8px 12px;font-size:11px;color:var(--ink-muted)">↕ Chênh lệch vs Forecast</td>
-            <td style="${ct};font-size:11px;font-weight:600;${diffBg(actHC,fcHC)}">${diffTxt(actHC,fcHC)}</td>
-            <td style="${ct};font-size:11px;font-weight:600;${diffBg(totActSum,fcSal)}">${diffTxt(totActSum,fcSal)}</td>
-            <td style="${ct};font-size:11px;font-weight:600;${diffBg(totIns,fcBH)}">${diffTxt(totIns,fcBH)}</td>
-            <td style="${ct};font-size:11px;font-weight:600;${diffBg(totCasual,fcCasual)}">${diffTxt(totCasual,fcCasual)}</td>
-            <td style="${ct};font-size:11px;font-weight:600;${diffBg(totGrand,fcSal+fcBH+fcCasual)}">${diffTxt(totGrand,fcSal+fcBH+fcCasual)}</td>
+            <td style="padding:8px 12px;font-size:11px;color:var(--ink-muted)">↕ Actual vs Budget</td>
+            <td style="${ct};font-size:11px;font-weight:600;${diffBg(actHC,bgHC)}">${diffTxt(actHC,bgHC)}</td>
+            <td style="${ct};font-size:11px;font-weight:600;${diffBg(totActSum,bgSal)}">${diffTxt(totActSum,bgSal)}</td>
+            <td style="${ct};font-size:11px;font-weight:600;${diffBg(totIns,bgBH)}">${diffTxt(totIns,bgBH)}</td>
+            <td style="${ct};font-size:11px;font-weight:600;${diffBg(totCasual,bgCasual)}">${diffTxt(totCasual,bgCasual)}</td>
+            <td style="${ct};font-size:11px;font-weight:600;${diffBg(totGrand,bgTotal)}">${diffTxt(totGrand,bgTotal)}</td>
           </tr>
           <tr style="border-bottom:1px solid var(--border)">
             <td style="padding:10px 12px;font-size:12px;font-weight:600;color:var(--ink-dim)">📅 Cùng kỳ T${pM}/${prevY}</td>
             <td style="${ct}">${fmtV(pvHC)}</td><td style="${ct}">${fmtV(pvActSum)}</td><td style="${ct}">${fmtV(pvIns)}</td><td style="${ct}">${fmtV(pvCasual)}</td>
-            <td style="${ct};font-weight:700">${fmtV(pvActSum+pvIns+pvCasual)}</td>
+            <td style="${ct};font-weight:700">${fmtV(pvTotal)}</td>
           </tr>
           <tr>
-            <td style="padding:8px 12px;font-size:11px;color:var(--ink-muted)">↕ Chênh lệch vs cùng kỳ</td>
+            <td style="padding:8px 12px;font-size:11px;color:var(--ink-muted)">↕ Actual vs cùng kỳ</td>
             <td style="${ct};font-size:11px;font-weight:600;${diffBg(actHC,pvHC)}">${diffTxt(actHC,pvHC)}</td>
             <td style="${ct};font-size:11px;font-weight:600;${diffBg(totActSum,pvActSum)}">${diffTxt(totActSum,pvActSum)}</td>
             <td style="${ct};font-size:11px;font-weight:600;${diffBg(totIns,pvIns)}">${diffTxt(totIns,pvIns)}</td>
             <td style="${ct};font-size:11px;font-weight:600;${diffBg(totCasual,pvCasual)}">${diffTxt(totCasual,pvCasual)}</td>
-            <td style="${ct};font-size:11px;font-weight:600;${diffBg(totGrand,pvActSum+pvIns+pvCasual)}">${diffTxt(totGrand,pvActSum+pvIns+pvCasual)}</td>
+            <td style="${ct};font-size:11px;font-weight:600;${diffBg(totGrand,pvTotal)}">${diffTxt(totGrand,pvTotal)}</td>
           </tr>
-        </tbody></table></div></div>`;
+        </tbody></table></div>
+    </div>
+    <div class="card" style="margin-bottom:16px">
+      <div style="font-size:14px;font-weight:700;color:var(--ink);margin-bottom:12px">📈 Biểu đồ so sánh <em style="color:var(--accent)">T${pM}/${pY}</em></div>
+      <div style="height:280px"><canvas id="payrollCompareChart"></canvas></div>
+    </div>`;
+    // Render chart sau khi DOM ready
+    setTimeout(()=>{
+      const ctx=document.getElementById('payrollCompareChart');
+      if(!ctx||typeof Chart==='undefined') return;
+      new Chart(ctx,{
+        type:'bar',
+        data:{
+          labels:['HC','Tổng lương TT','BHXH+CĐ','Casual','Tổng chi'],
+          datasets:[
+            {label:'Budget',data:[bgHC,bgSal,bgBH,bgCasual,bgTotal],backgroundColor:'rgba(126,182,232,.6)',borderColor:'rgba(126,182,232,1)',borderWidth:1},
+            {label:'Forecast',data:[fhHC,fhSal,fhBH,fhCasual,fhTotal],backgroundColor:'rgba(126,198,153,.6)',borderColor:'rgba(126,198,153,1)',borderWidth:1},
+            {label:'Actual',data:[actHC,totActSum,totIns,totCasual,totGrand],backgroundColor:'rgba(212,165,116,.7)',borderColor:'rgba(212,165,116,1)',borderWidth:1},
+            {label:'Cùng kỳ '+prevY,data:[pvHC,pvActSum,pvIns,pvCasual,pvTotal],backgroundColor:'rgba(183,148,212,.5)',borderColor:'rgba(183,148,212,1)',borderWidth:1},
+          ]
+        },
+        options:{
+          responsive:true,maintainAspectRatio:false,
+          plugins:{legend:{labels:{color:'#9ca3af',font:{size:11}}}},
+          scales:{
+            x:{ticks:{color:'#9ca3af',font:{size:10}},grid:{color:'rgba(255,255,255,.05)'}},
+            y:{ticks:{color:'#9ca3af',font:{size:10},callback:function(v){return v>=1e6?(v/1e6).toFixed(0)+'M':v>=1e3?(v/1e3).toFixed(0)+'K':v;}},grid:{color:'rgba(255,255,255,.05)'}}
+          }
+        }
+      });
+    }, 400);
 
     // Detail rows chia theo bộ phận
     const thS=`padding:8px 5px;font-size:9.5px;font-weight:700;white-space:nowrap;text-align:right;letter-spacing:.05em`;
@@ -28381,7 +28431,7 @@ function renderPayrollTab(){
         <td style="padding:2px 3px;text-align:right">${inp(e.id,'actualSalary',d.act,'var(--warning)')}</td>
         <td style="padding:2px 3px;text-align:right">${inp(e.id,'allowance',d.allow,'var(--teal)')}</td>
         <td style="padding:5px 4px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:600;color:var(--warning)">${fmtV(d.actSum)}</td>
-        <td style="padding:5px 4px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--purple)">${fmtV(d.ins)}</td>
+        <td style="padding:2px 3px;text-align:right">${inp(e.id,'insurance',d.ins,'var(--purple)')}</td>
         <td style="padding:5px 4px;text-align:center;font-size:10px;color:var(--ink-muted)">—</td>
         <td style="padding:2px 3px;text-align:center">${inpPct(e.id,'cluster',d.cluster,'var(--info)')}</td>
         <td style="padding:5px 5px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:700;color:#FFCC00">${fmtV(Math.round((d.actSum+d.ins)*d.cluster/100))}</td>
@@ -28428,7 +28478,7 @@ function renderPayrollTab(){
         </div>
       </div>
       <div style="font-size:11px;color:var(--ink-muted);margin-bottom:12px">
-        📋 T${pM}/${pY} · ${allPool.length} CBNV (${poolRegular.length} NV + ${poolTrainee.length} Trainee) · ${actHC} có lương · BHXH+TU: <b style="color:var(--purple)">${(INS_RATE*100).toFixed(1)}%</b>
+        📋 T${pM}/${pY} · ${allPool.length} CBNV (${poolRegular.length} NV + ${poolTrainee.length} Trainee) · ${actHC} có lương
       </div>
       ${overviewTable}
       <div class="card" style="padding:0;overflow:hidden"><div style="overflow-x:auto">
@@ -28441,7 +28491,7 @@ function renderPayrollTab(){
             <th style="${thS};color:var(--success)">TỔNG LƯƠNG<br><span style="font-size:8px;opacity:.6">CB+KD</span></th>
             <th style="${thS};color:var(--warning)">LƯƠNG TT</th><th style="${thS};color:var(--teal)">PHỤ CẤP</th>
             <th style="${thS};color:var(--warning)">TỔNG LTT<br><span style="font-size:8px;opacity:.6">TT+PC</span></th>
-            <th style="${thS};color:var(--purple)">BHXH+TU<br><span style="font-size:8px;opacity:.6">22.5%</span></th>
+            <th style="${thS};color:var(--purple)">BHXH+CĐ</th>
             <th style="${thS};color:var(--accent)">CASUAL</th>
             <th style="${thS};color:var(--info);text-align:center">CLUSTER<br><span style="font-size:8px;opacity:.6">%</span></th>
             <th style="${thS};color:#FFCC00">TỔNG CHI<br><span style="font-size:8px;opacity:.6">×Cluster</span></th>
@@ -28508,7 +28558,7 @@ function renderPayrollTab(){
       <button class="btn" onclick="exportPayrollFullYear(${pY})" style="font-size:12px">📊 Xuất Full Year Excel</button>
     </div>
     <div style="font-size:11px;color:var(--ink-muted);margin-bottom:10px">
-      Tổng quan chi phí nhân sự 12 tháng năm ${pY} · Click vào tháng để xem chi tiết · Công thức: (Tổng LTT + BHXH+TU + Casual) × Cluster%
+      Tổng quan chi phí nhân sự 12 tháng năm ${pY} · Click vào tháng để xem chi tiết · Công thức: (Tổng LTT + BHXH+CĐ + Casual) × Cluster%
     </div>
     <div class="card" style="padding:0;overflow:hidden"><div style="overflow-x:auto">
       <table style="border-collapse:collapse;font-size:12px;width:100%">
@@ -28521,7 +28571,7 @@ function renderPayrollTab(){
           <th style="${thS2};color:var(--warning)">LƯƠNG TT</th>
           <th style="${thS2};color:var(--teal)">PHỤ CẤP</th>
           <th style="${thS2};color:var(--warning)">TỔNG LTT</th>
-          <th style="${thS2};color:var(--purple)">BHXH+TU</th>
+          <th style="${thS2};color:var(--purple)">BHXH+CĐ</th>
           <th style="${thS2};color:var(--accent)">CASUAL</th>
           <th style="${thS2};color:#FFCC00">TỔNG CHI</th>
         </tr></thead>
@@ -28545,11 +28595,11 @@ function renderPayrollTab(){
 
 function exportPayrollTemplate(year,month){
   const pool=DB.employees.filter(e=>{const eff=getEffectiveStatus(e);if(eff==='exit')return false;if(e.joined){const j=_parseAnyDate(e.joined);if(j>new Date(year,month,0))return false;}return true;}).sort((a,b)=>{const da=(DB.departments||[]).findIndex(d=>d.id===a.deptId);const db=(DB.departments||[]).findIndex(d=>d.id===b.deptId);return da-db||(a.name||'').localeCompare(b.name||'');});
-  const INS=0.225;const mData=(DB.payrollData||{})[year]?.[month]||{};
-  const header=['Mã NV','Họ tên','Bộ phận','Chức danh','Lương cơ bản','Lương kinh doanh','Tổng lương (auto)','Lương thực tế','Phụ cấp','Tổng lương TT (auto)','BHXH+TU (22.5%)','Casual','Cluster (%)','Tổng phải chi (auto)'];
-  const rows=pool.map(e=>{const cd=DB.customData[e.id]||{};const pd=mData[e.id]||{};const base=parseFloat(pd.baseSalary)||0;const biz=parseFloat(pd.bizSalary)||0;const act=parseFloat(pd.actualSalary)||0;const allow=parseFloat(pd.allowance)||0;const casual=parseFloat(pd.casual)||0;const cluster=parseFloat(pd.cluster)||100;return[e.empId||'',e.name||'',deptName(e.deptId),e.role||'',base,biz,null,act,allow,null,null,casual,cluster,null];});
+  const INS=0.235;const mData=(DB.payrollData||{})[year]?.[month]||{};
+  const header=['Mã NV','Họ tên','Bộ phận','Chức danh','Lương cơ bản','Lương kinh doanh','Tổng lương (auto)','Lương thực tế','Phụ cấp','Tổng lương TT (auto)','BHXH+CĐ','Casual','Cluster (%)','Tổng phải chi (auto)'];
+  const rows=pool.map(e=>{const cd=DB.customData[e.id]||{};const pd=mData[e.id]||{};const base=parseFloat(pd.baseSalary)||0;const biz=parseFloat(pd.bizSalary)||0;const act=parseFloat(pd.actualSalary)||0;const allow=parseFloat(pd.allowance)||0;const ins=parseFloat(pd.insurance)||0;const casual=parseFloat(pd.casual)||0;const cluster=parseFloat(pd.cluster)||100;return[e.empId||'',e.name||'',deptName(e.deptId),e.role||'',base,biz,null,act,allow,null,ins,casual,cluster,null];});
   const wb=XLSX.utils.book_new();const ws=XLSX.utils.aoa_to_sheet([header,...rows]);
-  for(let r=1;r<=rows.length;r++){const row=r+1;ws[XLSX.utils.encode_cell({c:6,r:r})]={t:'n',f:`E${row}+F${row}`};ws[XLSX.utils.encode_cell({c:9,r:r})]={t:'n',f:`H${row}+I${row}`};ws[XLSX.utils.encode_cell({c:10,r:r})]={t:'n',f:`ROUND(H${row}*${INS},0)`};ws[XLSX.utils.encode_cell({c:13,r:r})]={t:'n',f:`ROUND((J${row}+K${row}+L${row})*M${row}/100,0)`};}
+  for(let r=1;r<=rows.length;r++){const row=r+1;ws[XLSX.utils.encode_cell({c:6,r:r})]={t:'n',f:`E${row}+F${row}`};ws[XLSX.utils.encode_cell({c:9,r:r})]={t:'n',f:`H${row}+I${row}`};ws[XLSX.utils.encode_cell({c:13,r:r})]={t:'n',f:`ROUND((J${row}+K${row}+L${row})*M${row}/100,0)`};}
   ws['!cols']=[{wch:10},{wch:22},{wch:18},{wch:18},{wch:15},{wch:15},{wch:15},{wch:15},{wch:12},{wch:15},{wch:15},{wch:12},{wch:10},{wch:18}];
   XLSX.utils.book_append_sheet(wb,ws,`T${month}_${year}`);XLSX.writeFile(wb,`BangLuong_T${month}_${year}_Template.xlsx`);toast('📥 Đã xuất Excel mẫu T'+month+'/'+year,'success');
 }
@@ -28558,24 +28608,24 @@ function importPayrollExcel(input,year,month){
   const file=input.files[0];if(!file)return;const reader=new FileReader();
   reader.onload=function(ev){try{const wb=XLSX.read(ev.target.result,{type:'array'});const ws=wb.Sheets[wb.SheetNames[0]];const data=XLSX.utils.sheet_to_json(ws,{header:1});if(data.length<2){toast('File rỗng','error');return;}
   if(!DB.payrollData)DB.payrollData={};if(!DB.payrollData[year])DB.payrollData[year]={};if(!DB.payrollData[year][month])DB.payrollData[year][month]={};
-  let imported=0;for(let i=1;i<data.length;i++){const row=data[i];if(!row||!row[0])continue;const empId=String(row[0]).trim();const emp=DB.employees.find(e=>(e.empId||'').trim()===empId);if(!emp)continue;DB.payrollData[year][month][emp.id]={baseSalary:parseFloat(row[4])||0,bizSalary:parseFloat(row[5])||0,actualSalary:parseFloat(row[7])||0,allowance:parseFloat(row[8])||0,casual:parseFloat(row[11])||0,cluster:parseFloat(row[12])||100};imported++;}
+  let imported=0;for(let i=1;i<data.length;i++){const row=data[i];if(!row||!row[0])continue;const empId=String(row[0]).trim();const emp=DB.employees.find(e=>(e.empId||'').trim()===empId);if(!emp)continue;DB.payrollData[year][month][emp.id]={baseSalary:parseFloat(row[4])||0,bizSalary:parseFloat(row[5])||0,actualSalary:parseFloat(row[7])||0,allowance:parseFloat(row[8])||0,insurance:parseFloat(row[10])||0,casual:parseFloat(row[11])||0,cluster:parseFloat(row[12])||100};imported++;}
   saveData(['payrollData']);toast(`✅ Đã nhập ${imported} dòng T${month}/${year}`,'success');render();}catch(err){toast('Lỗi: '+err.message,'error');}};reader.readAsArrayBuffer(file);input.value='';
 }
 
 function exportPayrollFull(year,month){
   const pool=DB.employees.filter(e=>{const eff=getEffectiveStatus(e);if(eff==='exit')return false;if(e.joined){const j=_parseAnyDate(e.joined);if(j>new Date(year,month,0))return false;}return true;}).sort((a,b)=>{const da=(DB.departments||[]).findIndex(d=>d.id===a.deptId);const db=(DB.departments||[]).findIndex(d=>d.id===b.deptId);return da-db||(a.name||'').localeCompare(b.name||'');});
-  const INS=0.225;const mData=(DB.payrollData||{})[year]?.[month]||{};
-  const header=['Mã NV','Họ tên','Bộ phận','Chức danh','Lương cơ bản','Lương KD','Tổng lương','Lương thực tế','Phụ cấp','Tổng LTT','BHXH+TU','Casual','Cluster (%)','Tổng phải chi'];
-  const rows=pool.map(e=>{const cd=DB.customData[e.id]||{};const pd=mData[e.id]||{};const base=parseFloat(pd.baseSalary)||0;const biz=parseFloat(pd.bizSalary)||0;const sum=base+biz;const act=parseFloat(pd.actualSalary)||0;const allow=parseFloat(pd.allowance)||0;const actSum=act+allow;const ins=Math.round(act*INS);const casual=parseFloat(pd.casual)||0;const cluster=parseFloat(pd.cluster)||100;const grand=Math.round((actSum+ins+casual)*cluster/100);return[e.empId||'',e.name||'',deptName(e.deptId),e.role||'',base,biz,sum,act,allow,actSum,ins,casual,cluster,grand];});
+  const INS=0.235;const mData=(DB.payrollData||{})[year]?.[month]||{};
+  const header=['Mã NV','Họ tên','Bộ phận','Chức danh','Lương cơ bản','Lương KD','Tổng lương','Lương thực tế','Phụ cấp','Tổng LTT','BHXH+CĐ','Casual','Cluster (%)','Tổng phải chi'];
+  const rows=pool.map(e=>{const cd=DB.customData[e.id]||{};const pd=mData[e.id]||{};const base=parseFloat(pd.baseSalary)||0;const biz=parseFloat(pd.bizSalary)||0;const sum=base+biz;const act=parseFloat(pd.actualSalary)||0;const allow=parseFloat(pd.allowance)||0;const actSum=act+allow;const ins=parseFloat(pd.insurance)||0;const casual=parseFloat(pd.casual)||0;const cluster=parseFloat(pd.cluster)||100;const grand=Math.round((actSum+ins+casual)*cluster/100);return[e.empId||'',e.name||'',deptName(e.deptId),e.role||'',base,biz,sum,act,allow,actSum,ins,casual,cluster,grand];});
   const wb=XLSX.utils.book_new();const ws=XLSX.utils.aoa_to_sheet([header,...rows]);ws['!cols']=[{wch:10},{wch:22},{wch:18},{wch:18},{wch:15},{wch:15},{wch:15},{wch:15},{wch:12},{wch:15},{wch:15},{wch:12},{wch:10},{wch:18}];
   XLSX.utils.book_append_sheet(wb,ws,`BangLuong_T${month}`);XLSX.writeFile(wb,`BangLuong_T${month}_${year}.xlsx`);toast('📊 Đã xuất bảng lương T'+month+'/'+year,'success');
 }
 
 function exportPayrollFullYear(year){
   const MN_FULL=['Tháng 1','Tháng 2','Tháng 3','Tháng 4','Tháng 5','Tháng 6','Tháng 7','Tháng 8','Tháng 9','Tháng 10','Tháng 11','Tháng 12'];
-  const INS=0.225;const wb=XLSX.utils.book_new();
+  const INS=0.235;const wb=XLSX.utils.book_new();
   // Sheet tổng hợp
-  const sumHeader=['Tháng','HC','Lương CB','Lương KD','Tổng lương','Lương TT','Phụ cấp','Tổng LTT','BHXH+TU','Casual','Tổng phải chi'];
+  const sumHeader=['Tháng','HC','Lương CB','Lương KD','Tổng lương','Lương TT','Phụ cấp','Tổng LTT','BHXH+CĐ','Casual','Tổng phải chi'];
   const sumRows=[];let yTot={base:0,biz:0,sum:0,act:0,allow:0,actSum:0,ins:0,casual:0,grand:0};
   for(let mi=1;mi<=12;mi++){
     const pool=DB.employees.filter(e=>{const eff=getEffectiveStatus(e);if(eff==='exit')return false;if(e.joined){const j=_parseAnyDate(e.joined);if(j>new Date(year,mi,0))return false;}return true;});
@@ -28592,7 +28642,7 @@ function exportPayrollFullYear(year){
   for(let mi=1;mi<=12;mi++){
     const pool=DB.employees.filter(e=>{const eff=getEffectiveStatus(e);if(eff==='exit')return false;if(e.joined){const j=_parseAnyDate(e.joined);if(j>new Date(year,mi,0))return false;}return true;}).sort((a,b)=>{const da=(DB.departments||[]).findIndex(d=>d.id===a.deptId);const db=(DB.departments||[]).findIndex(d=>d.id===b.deptId);return da-db||(a.name||'').localeCompare(b.name||'');});
     const mData=(DB.payrollData||{})[year]?.[mi]||{};
-    const header=['Mã NV','Họ tên','Bộ phận','Chức danh','Lương CB','Lương KD','Tổng lương','Lương TT','Phụ cấp','Tổng LTT','BHXH+TU','Casual','Cluster (%)','Tổng chi'];
+    const header=['Mã NV','Họ tên','Bộ phận','Chức danh','Lương CB','Lương KD','Tổng lương','Lương TT','Phụ cấp','Tổng LTT','BHXH+CĐ','Casual','Cluster (%)','Tổng chi'];
     const rows=pool.map(e=>{const cd=DB.customData[e.id]||{};const pd=mData[e.id]||{};const base=parseFloat(pd.baseSalary)||0;const biz=parseFloat(pd.bizSalary)||0;const sum=base+biz;const act=parseFloat(pd.actualSalary)||0;const allow=parseFloat(pd.allowance)||0;const actSum=act+allow;const ins=Math.round(act*INS);const casual=parseFloat(pd.casual)||0;const cluster=parseFloat(pd.cluster)||100;const grand=Math.round((actSum+ins+casual)*cluster/100);return[e.empId||'',e.name||'',deptName(e.deptId),e.role||'',base,biz,sum,act,allow,actSum,ins,casual,cluster,grand];});
     const ws=XLSX.utils.aoa_to_sheet([header,...rows]);ws['!cols']=header.map(()=>({wch:15}));
     XLSX.utils.book_append_sheet(wb,ws,`T${mi}`);
@@ -32497,7 +32547,7 @@ render();
 // getBH: global helper - phân biệt budgetBH=0 (explicit) vs undefined (auto-calc)
 function getBH(p, salCB, rate) {
   if(p.budgetBH !== undefined && p.budgetBH !== null && p.budgetBH !== '') return parseFloat(p.budgetBH)||0;
-  return Math.round((parseFloat(salCB)||0) * (rate||0.225));
+  return Math.round((parseFloat(salCB)||0) * (rate||0.235));
 }
 window.addEventListener('load', function() {
 const ADMIN_EMAIL = window.ADMIN_EMAIL || 'buituan19694@gmail.com';
@@ -34547,7 +34597,7 @@ function _saveExtraActual(el, dIdEnc, tempIdEnc, yr, mo, field){
     const salEl=tr.querySelector('[data-sal]'), bonEl=tr.querySelector('[data-bon]');
     const bhEl=tr.querySelector('[data-bh]');
     const sal=(parseFloat(salEl?.value)||0)+(parseFloat(bonEl?.value)||0);
-    const bh=parseFloat(bhEl?.value)||Math.round(sal*0.225);
+    const bh=parseFloat(bhEl?.value)||Math.round(sal*0.235);
     const oth=field==='other'?val:(parseFloat(tr.querySelector('[data-oth]')?.value)||0);
     const tot=sal+bh+oth;
     const totEl=tr.querySelector('[data-tot]');
@@ -34690,7 +34740,7 @@ function renderYoYTab(curYear, depts, allEmps, BH_RATE){
   const fmtM = v => !v ? '—' : (Math.round((v||0)/1e6*10)/10).toLocaleString('vi-VN')+'M';
   const calcDeptTotal = (plan, deptId) => {
     const dp = plan[deptId]||{positions:[]};
-    const rate = parseFloat((DB.manningConfig||{}).bhRate)||0.225;
+    const rate = parseFloat((DB.manningConfig||{}).bhRate)||0.235;
     return (dp.positions||[]).reduce((s,p)=>{
       const bs=parseFloat(p.budgetSalary)||0; const bon=parseFloat(p.budgetBonus)||0; if(!bs&&!bon) return s;
       const bb=getBH(p,bs,rate);
@@ -34703,7 +34753,7 @@ function renderYoYTab(curYear, depts, allEmps, BH_RATE){
   const calcPosTotal = (plan, deptId, title) => {
     const p = ((plan[deptId]||{}).positions||[]).find(x=>x.title===title)||{};
     const bs=parseFloat(p.budgetSalary)||0; const bon=parseFloat(p.budgetBonus)||0; if(!bs&&!bon) return 0;
-    const rate = parseFloat((DB.manningConfig||{}).bhRate)||0.225;
+    const rate = parseFloat((DB.manningConfig||{}).bhRate)||0.235;
     const bb=getBH(p,bs,rate);
     const bm=parseFloat(p.mealRate)||0, bo=parseFloat(p.budgetOther)||0;
     return (bs+bon+bb+bm+bo)*(parseInt(p.planned)||0);
@@ -35135,7 +35185,7 @@ function renderManning(main){
   const depts = DB.departments||[];
   const allEmps = (DB.employees||[]).filter(e=>getEffectiveStatus(e)!=='exit');
   if(!DB.manningConfig) DB.manningConfig={};
-  const BH_RATE_LOCAL = parseFloat(DB.manningConfig.bhRate)||0.225;
+  const BH_RATE_LOCAL = parseFloat(DB.manningConfig.bhRate)||0.235;
   const BH_RATE = BH_RATE_LOCAL;
   const BH_PCT  = Math.round(BH_RATE_LOCAL*1000)/10;
 
@@ -35365,7 +35415,7 @@ function renderManning(main){
   /* ══════════════════════════════════════════════
      TAB: ACTUAL
      Chọn tháng → hiện từng NV đang làm
-     Cột: Dept | Vị trí | Mã | Tên | Lương CB | Phụ cấp | Tổng lương | BHXH(22.5%) | Ngày công | Meal | Khác | Tổng
+     Cột: Dept | Vị trí | Mã | Tên | Lương CB | Phụ cấp | Tổng lương | BHXH(23.5%) | Ngày công | Meal | Khác | Tổng
      ══════════════════════════════════════════════ */
   const renderActualTab = ()=>{
     // Multi-month select
@@ -36185,7 +36235,7 @@ function exportManningXLSX(){
 
 
   // Sheet 1: BUDGET — cột khớp hệt web
-  const budRows = [['Bộ phận','Vị trí','HC Planned','Lương CB (VNĐ)','Phụ cấp (VNĐ)','Tổng lương (VNĐ)','BHXH+CĐ (22.5%)','Meal/ngày (VNĐ)','Chi phí khác (VNĐ)','Tổng × HC (VNĐ)']];
+  const budRows = [['Bộ phận','Vị trí','HC Planned','Lương CB (VNĐ)','Phụ cấp (VNĐ)','Tổng lương (VNĐ)','BHXH+CĐ (23.5%)','Meal/ngày (VNĐ)','Chi phí khác (VNĐ)','Tổng × HC (VNĐ)']];
   depts.forEach(dept=>{
     const dp = (DB.manningPlan[year]||{}).depts?.[dept.id]||{positions:[]};
     // Thứ tự theo dp.positions (giống web), active roles không trong plan thêm cuối
