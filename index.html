@@ -1041,7 +1041,7 @@ const FS_DOC_MAP = {
 // manningPlan + manningActual được shard theo năm qua _pushDynamicKey → KHÔNG để trong FS_DOC_MAP
 const FS_DYNAMIC_KEYS = ['leaves','kpiReviews','rewardRecords','casuals','candidates',
                           'promotions','disciplineRecords','leaveSheet','leaveOpening','leavePlan','leavePlanLocked',
-                          'manningPlan','manningActual','plRevenue','plActionPlan','payrollData'];
+                          'manningPlan','manningActual','plRevenue','plActionPlan','payrollData','hrGardenPlan'];
 
 function _recYear(r){
   const d = r.startDate||r.date||r.effectiveDate||r.period||r.appliedDate||r.createdAt||'';
@@ -1327,7 +1327,19 @@ function _pushDynamicKey(key, meta){
     return;
   }
 
-  if(key === 'manningPlan' || key === 'manningActual' || key === 'payrollData'){
+  if(key === 'hrGardenPlan'){
+    window._selfSaveAt = Date.now();
+    const obj = DB.hrGardenPlan||{};
+    const allYears = new Set([new Date().getFullYear()]);
+    Object.keys(obj).forEach(y=>{ const yi=parseInt(y); if(!isNaN(yi)) allYears.add(yi); });
+    allYears.forEach(yr=>{
+      const docId = `garden_plan_${yr}`;
+      const ref = window.fbDb.collection('hrdata').doc(docId);
+      const payload = {...meta, hrGardenPlan: {[yr]: obj[yr]||{}}, _shard: yr};
+      ref.set(payload, {merge:false}).catch(err=>console.error(`[saveData] ❌ ${docId}`, err.message));
+    });
+    return;
+  }
     window._selfSaveAt = Date.now(); // 🚨 v38: chặn echo/stale revert cho MỌI thao tác manning
     if(key === 'payrollData'){
       // Shard theo năm: payroll_data_2026
@@ -1867,6 +1879,7 @@ if(!DB.promoTypes   || Array.isArray(DB.promoTypes))   DB.promoTypes   = {};
 // P&L Review storage
 if(!DB.plRevenue    || Array.isArray(DB.plRevenue))    DB.plRevenue    = {};
 if(!DB.plActionPlan || Array.isArray(DB.plActionPlan)) DB.plActionPlan = {};
+if(!DB.hrGardenPlan || Array.isArray(DB.hrGardenPlan)) DB.hrGardenPlan = {};
 if(!DB.plConfig     || Array.isArray(DB.plConfig))     DB.plConfig     = {};
 // Training KPI config — {monthlyHoursTarget: 1} mặc định 1h/tháng/NV
 if(!DB.trainingKpi  || Array.isArray(DB.trainingKpi))  DB.trainingKpi  = {monthlyHoursTarget: 1};
@@ -3688,7 +3701,7 @@ function _plRenderIntelligence(el, year, month){
     // Kiểm tra customData: nếu không còn exitDate hoặc status đã thay đổi
     const cd = DB.customData[r.empId]||{};
     if(cd.exitDate) return true; // vẫn có exitDate → vẫn đang trong quá trình nghỉ
-    return empStatus(emp) !== 'active'; // nếu về active hoàn toàn thì bỏ qua
+    return getEffectiveStatus(emp) !== 'active'; // nếu về active hoàn toàn thì bỏ qua
   });
 
   // Vacancy data
@@ -32762,7 +32775,8 @@ fbAuth.onAuthStateChanged(async user => {
             leaveSheet:{}, leaveOpening:{}, leavePlan:{}, leavePlanLocked:{},
             manningPlan:{}, manningActual:{},
             plRevenue:{}, plActionPlan:{}, // 🚨 v24: P&L Review data (bị mất vì cold-load thiếu nhánh pldata_)
-            payrollData:{}
+            payrollData:{},
+            hrGardenPlan:{}
           };
           // Precompute: valid jobIds (từ DB.jobs đã load) + tombstone Set
           // Dùng để: (1) filter candidates đã tombstone, (2) detect orphan cand_ shards
@@ -32885,8 +32899,16 @@ fbAuth.onAuthStateChanged(async user => {
                 }
               });
             }
-            // payrollData shards: payroll_data_YYYY
-            else if(id.startsWith('payroll_data_')&&d.payrollData){
+            else if(id.startsWith('garden_plan_')&&d.hrGardenPlan){
+              Object.entries(d.hrGardenPlan).forEach(([yr,yrData])=>{
+                if(!dynamicAccum.hrGardenPlan) dynamicAccum.hrGardenPlan={};
+                if(!dynamicAccum.hrGardenPlan[yr]) dynamicAccum.hrGardenPlan[yr]={};
+                Object.entries(yrData||{}).forEach(([mo,moData])=>{
+                  if(!dynamicAccum.hrGardenPlan[yr][mo]) dynamicAccum.hrGardenPlan[yr][mo]=[];
+                  if(Array.isArray(moData)) dynamicAccum.hrGardenPlan[yr][mo]=moData;
+                });
+              });
+            }
               Object.entries(d.payrollData).forEach(([yr,yrData])=>{
                 if(!dynamicAccum.payrollData[yr]) dynamicAccum.payrollData[yr]={};
                 Object.entries(yrData||{}).forEach(([mo,moData])=>{
@@ -32910,6 +32932,7 @@ fbAuth.onAuthStateChanged(async user => {
           if(Object.keys(dynamicAccum.manningActual).length){ DB.manningActual=dynamicAccum.manningActual; hasCloud=true; }
           // Payroll data
           if(Object.keys(dynamicAccum.payrollData).length){ DB.payrollData=dynamicAccum.payrollData; hasCloud=true; }
+          if(Object.keys(dynamicAccum.hrGardenPlan||{}).length){ DB.hrGardenPlan=dynamicAccum.hrGardenPlan; hasCloud=true; }
           // 🚨 v24: P&L Review data — merge từ pldata_YYYY shards
           if(Object.keys(dynamicAccum.plRevenue).length){ DB.plRevenue=dynamicAccum.plRevenue; hasCloud=true; }
           if(Object.keys(dynamicAccum.plActionPlan).length){ DB.plActionPlan=dynamicAccum.plActionPlan; hasCloud=true; }
@@ -34841,10 +34864,10 @@ function renderHRGarden(main){
   const yr = F.year, mo = F.month;
   const MN = ['T1','T2','T3','T4','T5','T6','T7','T8','T9','T10','T11','T12'];
 
-  if(!DB.plActionPlan) DB.plActionPlan={};
-  if(!DB.plActionPlan[yr]) DB.plActionPlan[yr]={};
-  if(!DB.plActionPlan[yr][mo]) DB.plActionPlan[yr][mo]=[];
-  const actions = DB.plActionPlan[yr][mo];
+  if(!DB.hrGardenPlan) DB.hrGardenPlan={};
+  if(!DB.hrGardenPlan[yr]) DB.hrGardenPlan[yr]={};
+  if(!DB.hrGardenPlan[yr][mo]) DB.hrGardenPlan[yr][mo]=[];
+  const actions = DB.hrGardenPlan[yr][mo];
 
   const doneCount = actions.filter(a=>a.done).length;
   const totalCount = actions.length;
@@ -34862,7 +34885,7 @@ function renderHRGarden(main){
 
   const monthBar = MN.map((m,i)=>{
     const mi=i+1;
-    const hasData=(DB.plActionPlan[yr]||{})[mi]?.length>0;
+    const hasData=(DB.hrGardenPlan[yr]||{})[mi]?.length>0;
     return `<button onclick="window._gardenF.month=${mi};render()"
       style="padding:5px 12px;border-radius:6px;border:1px solid ${mo===mi?'var(--accent)':'var(--border)'};background:${mo===mi?'var(--accent)':'transparent'};color:${mo===mi?'var(--bg)':'var(--ink-dim)'};font-size:12px;font-weight:${mo===mi?'700':'400'};cursor:pointer;user-select:none;position:relative">
       ${m}${hasData?'<span style="position:absolute;top:-2px;right:-2px;width:6px;height:6px;background:var(--success);border-radius:50%"></span>':''}
@@ -34887,7 +34910,7 @@ function renderHRGarden(main){
     })() : '';
     return `<div style="background:${p.bg};border:1.5px solid ${p.border};border-radius:14px;padding:16px 20px;display:flex;align-items:center;gap:14px">
       <span style="font-size:38px;cursor:pointer;transition:transform .2s;user-select:none;flex-shrink:0"
-        onclick="(function(){var a=DB.plActionPlan['${yr}']['${mo}'][${i}];a.done=!a.done;a.doneAt=a.done?Date.now():null;a.doneBy=a.done?(window.currentUserData?.displayName||window.currentUser?.email||'?'):null;saveData(['plActionPlan']);render();})()"
+        onclick="(function(){var a=DB.hrGardenPlan['${yr}']['${mo}'][${i}];a.done=!a.done;a.doneAt=a.done?Date.now():null;a.doneBy=a.done?(window.currentUserData?.displayName||window.currentUser?.email||'?'):null;saveData(['hrGardenPlan']);render();})()"
         onmouseenter="this.style.transform='scale(1.15)'" onmouseleave="this.style.transform=''"
         title="${a.done?'Bỏ hoàn thành':'Đánh dấu hoàn thành'}">
         ${p.icon}
@@ -34907,7 +34930,7 @@ function renderHRGarden(main){
       </div>
       ${canEdit?`<div style="display:flex;gap:6px;flex-shrink:0">
         <button onclick="_editGardenAction(${yr},${mo},${i})" style="background:transparent;border:1px solid var(--border);border-radius:6px;padding:4px 8px;color:var(--ink-muted);cursor:pointer;font-size:11px;user-select:none">✏️</button>
-        <button onclick="if(confirm('Xóa?')){DB.plActionPlan['${yr}']['${mo}'].splice(${i},1);saveData(['plActionPlan']);render();}" style="background:transparent;border:1px solid rgba(229,115,115,.2);border-radius:6px;padding:4px 8px;color:var(--danger);cursor:pointer;font-size:11px;user-select:none">✕</button>
+        <button onclick="if(confirm('Xóa?')){DB.hrGardenPlan['${yr}']['${mo}'].splice(${i},1);saveData(['hrGardenPlan']);render();}" style="background:transparent;border:1px solid rgba(229,115,115,.2);border-radius:6px;padding:4px 8px;color:var(--danger);cursor:pointer;font-size:11px;user-select:none">✕</button>
       </div>`:''}
     </div>`;
   }).join('');
@@ -34959,19 +34982,19 @@ function renderHRGarden(main){
 }
 
 function _addGardenAction(yr,mo){
-  if(!DB.plActionPlan) DB.plActionPlan={};
-  if(!DB.plActionPlan[yr]) DB.plActionPlan[yr]={};
-  if(!DB.plActionPlan[yr][mo]) DB.plActionPlan[yr][mo]=[];
-  DB.plActionPlan[yr][mo].push({title:'',detail:'',deadline:'',pic:'',saving:0,done:false});
-  saveData(['plActionPlan']);
-  const idx=DB.plActionPlan[yr][mo].length-1;
+  if(!DB.hrGardenPlan) DB.hrGardenPlan={};
+  if(!DB.hrGardenPlan[yr]) DB.hrGardenPlan[yr]={};
+  if(!DB.hrGardenPlan[yr][mo]) DB.hrGardenPlan[yr][mo]=[];
+  DB.hrGardenPlan[yr][mo].push({title:'',detail:'',deadline:'',pic:'',saving:0,done:false});
+  saveData(['hrGardenPlan']);
+  const idx=DB.hrGardenPlan[yr][mo].length-1;
   render();
   setTimeout(()=>_editGardenAction(yr,mo,idx),120);
 }
 
 function _editGardenAction(yr,mo,idx){
   if(!window.canDo('hrGarden','edit')){ toast('Bạn chỉ có thể tích hoàn thành','info'); return; }
-  const a=DB.plActionPlan[yr][mo][idx];
+  const a=DB.hrGardenPlan[yr][mo][idx];
   if(!a) return;
   const accs=window._gardenAccs||[];
   const accOpts=accs.map(u=>`<option value="${escapeHtml(u.name)}" ${a.pic===u.name?'selected':''}>${escapeHtml(u.name)}</option>`).join('');
@@ -35022,7 +35045,7 @@ function _editGardenAction(yr,mo,idx){
 }
 
 function _saveGardenAction(yr,mo,idx){
-  const a=DB.plActionPlan[yr][mo][idx];
+  const a=DB.hrGardenPlan[yr][mo][idx];
   if(!a) return;
   a.title=(document.getElementById('_ga_title')?.value||'').trim();
   a.deadline=document.getElementById('_ga_deadline')?.value||'';
@@ -35030,7 +35053,7 @@ function _saveGardenAction(yr,mo,idx){
   a.saving=parseInt(document.getElementById('_ga_saving')?.value)||0;
   a.detail=(document.getElementById('_ga_detail')?.value||'').trim();
   if(!a.done) a.done=false;
-  saveData(['plActionPlan']);
+  saveData(['hrGardenPlan']);
   document.getElementById('_gardenEditOverlay')?.remove();
   toast('💾 Đã lưu','success');
   render();
@@ -35040,7 +35063,7 @@ function _saveGardenAction(yr,mo,idx){
 function _checkGardenDeadlines(){
   const today=new Date(); today.setHours(0,0,0,0);
   const yr=today.getFullYear(), mo=today.getMonth()+1;
-  const actions=((DB.plActionPlan||{})[yr]||{})[mo]||[];
+  const actions=((DB.hrGardenPlan||{})[yr]||{})[mo]||[];
   const myName=window.currentUserData?.displayName||window.currentUser?.email||'';
   const myActions=actions.filter(a=>{
     if(a.done||!a.deadline||!a.pic) return false;
