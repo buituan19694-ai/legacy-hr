@@ -1094,6 +1094,10 @@ function saveEmpProfile(empId){
                _syncBy: window.currentUser.uid, _syncAt};
   // Sanitize trước khi push Firebase
   Object.keys(doc).forEach(k=>{ if(doc[k]===undefined) doc[k]=''; });
+  // Nếu exitDate/exitReason đã bị xóa khỏi customData → dùng FieldValue.delete() để xóa trên Firestore
+  const fvDel = firebase.firestore.FieldValue.delete();
+  if(!cd.exitDate)   doc.exitDate   = fvDel;
+  if(!cd.exitReason) doc.exitReason = fvDel;
   if(photo && photo.startsWith('http')){
     // Có Cloudinary URL → lưu photoUrl
     doc.photoUrl = photo;
@@ -3493,7 +3497,6 @@ function renderAnalytics(main){
     {k:'turnover',  icon:'📉', label:'Turnover',         sub:'Nghỉ việc'},
     {k:'performance',icon:'⭐',label:'Performance',      sub:'KPI & Thăng chức'},
     {k:'report',    icon:'📑', label:'Report',           sub:'Manning tổng hợp'},
-    {k:'action',    icon:'📋', label:'HR Action Plan',   sub:'Update hàng tháng'},
   ];
 
   main.innerHTML = `
@@ -3578,7 +3581,7 @@ function renderAnalytics(main){
   else if(currentTab === 'turnover') _plRenderTurnover(content, curYear, curMonth);
   else if(currentTab === 'performance') _plRenderPerformance(content, curYear, curMonth);
   else if(currentTab === 'report')   _plRenderReport(content, curYear, curMonth);
-  else if(currentTab === 'action')   _plRenderActionPlan(content, curYear, curMonth);
+  else content.innerHTML = '';
 }
 
 // ===== TAB 0: HR INTELLIGENCE — Executive Summary =====
@@ -3676,7 +3679,16 @@ function _plRenderIntelligence(el, year, month){
   const pendingResign = (DB.resignations||[]).filter(r => {
     if(r.status !== 'pending') return false;
     const d = _parseExitDate(r.endDate);
-    return d && d > today;
+    if(!d || d <= today) return false;
+    // Bỏ qua nếu NV đã được chuyển về active (không còn status exit/resign nữa)
+    const emp = DB.employees.find(e => e.id === r.empId);
+    if(!emp) return false;
+    const effStatus = getEffectiveStatus(emp);
+    if(effStatus === 'exit') return false; // đã nghỉ hẳn rồi, không phải "sắp nghỉ"
+    // Kiểm tra customData: nếu không còn exitDate hoặc status đã thay đổi
+    const cd = DB.customData[r.empId]||{};
+    if(cd.exitDate) return true; // vẫn có exitDate → vẫn đang trong quá trình nghỉ
+    return empStatus(emp) !== 'active'; // nếu về active hoàn toàn thì bỏ qua
   });
 
   // Vacancy data
@@ -5366,10 +5378,15 @@ function _plRenderTurnover(el, year, month){
   const pendingResign = (DB.resignations||[]).filter(r => r.status === 'pending').map(r => {
     const emp = empById(r.empId);
     if(!emp) return null;
+    // Bỏ qua NV đã chuyển về active (không còn exitDate)
+    const empCd = cd[emp.id]||{};
+    const effStatus = getEffectiveStatus(emp);
+    if(effStatus === 'exit') return null; // đã nghỉ hẳn
+    if(!empCd.exitDate && effStatus === 'active') return null; // đã rút đơn/chuyển về
     const dept = (DB.departments||[]).find(d => d.id === emp.deptId);
     const endDate = _parseExitDate(r.endDate || r.submitDate);
     if(!endDate) return null;
-    const reason = r.reason || cd[emp.id]?.exitReason || 'Không rõ';
+    const reason = r.reason || empCd?.exitReason || 'Không rõ';
     const joined = emp.joined ? _parseExitDate(emp.joined) : null;
     const tenureMonths = joined ? _plMonthsBetween(joined, endDate) : null;
     return {
@@ -6060,113 +6077,6 @@ window._plExportManningPNG = function(){
     toast('✅ Đã xuất ảnh Manning','success');
   }).catch(err => toast('Lỗi xuất ảnh: '+err.message,'error'));
 };
-
-function _plRenderActionPlan(el, year, month){
-  if(!DB.plActionPlan) DB.plActionPlan = {};
-  if(!DB.plActionPlan[year]) DB.plActionPlan[year] = {};
-  if(!DB.plActionPlan[year][month]) DB.plActionPlan[year][month] = [];
-  const items = DB.plActionPlan[year][month] || [];
-  const totalSaving = items.reduce((s,i)=>s+(parseFloat(i.expectedSaving)||0), 0);
-
-  el.innerHTML = `
-    <div class="pl-card">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:10px">
-        <div>
-          <div style="font-weight:700;font-size:15px;color:var(--accent)">📋 HR Action Plan — Tháng ${month+1}/${year}</div>
-          <div style="font-size:11px;color:var(--ink-muted);margin-top:2px">Các initiative HRM commit cho cuộc họp P&L · update hàng tháng</div>
-        </div>
-        <div style="background:rgba(126,198,153,.1);border:1px solid rgba(126,198,153,.3);padding:8px 14px;border-radius:10px">
-          <div style="font-size:10px;color:var(--ink-muted)">EXPECTED SAVING TỔNG</div>
-          <div style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:18px;color:var(--success)">${_plFmtMoney(totalSaving)}đ/tháng</div>
-        </div>
-      </div>
-
-      ${items.length === 0 ? '<div style="color:var(--ink-dim);text-align:center;padding:30px;font-size:12.5px;font-style:italic">Chưa có action plan nào cho tháng này — nhấn "Thêm action" để bắt đầu</div>' : `
-        <div style="display:grid;gap:10px;margin-bottom:14px">
-          ${items.map((it,idx)=>{
-            const statusColors = {planned:'var(--info)', in_progress:'var(--warning)', completed:'var(--success)', dropped:'var(--ink-muted)'};
-            const statusLabels = {planned:'📅 Planned', in_progress:'⚙️ In Progress', completed:'✅ Completed', dropped:'⏸ Dropped'};
-            const st = it.status || 'planned';
-            return `<div style="background:var(--bg-elev);border-left:3px solid ${statusColors[st]};border-radius:8px;padding:12px 14px">
-              <div style="display:flex;align-items:flex-start;gap:10px">
-                <div style="font-family:'JetBrains Mono',monospace;color:var(--ink-muted);font-size:11px;min-width:24px">#${idx+1}</div>
-                <div style="flex:1">
-                  <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;flex-wrap:wrap">
-                    <input type="text" value="${escapeHtml(it.title||'')}" placeholder="Tiêu đề action..."
-                      onchange="DB.plActionPlan[${year}][${month}][${idx}].title=this.value;DB.plActionPlan[${year}][${month}][${idx}]._savedAt=Date.now();saveData(['plActionPlan'])"
-                      style="flex:1;min-width:200px;background:transparent;border:0;color:var(--ink);font-weight:600;font-size:13px;padding:2px 0">
-                    <select onchange="DB.plActionPlan[${year}][${month}][${idx}].status=this.value;DB.plActionPlan[${year}][${month}][${idx}]._savedAt=Date.now();saveData(['plActionPlan']);render()"
-                      style="background:var(--bg-card);border:1px solid var(--border);color:${statusColors[st]};padding:3px 8px;border-radius:5px;font-size:11px;font-weight:600">
-                      <option value="planned" ${st==='planned'?'selected':''}>📅 Planned</option>
-                      <option value="in_progress" ${st==='in_progress'?'selected':''}>⚙️ In Progress</option>
-                      <option value="completed" ${st==='completed'?'selected':''}>✅ Completed</option>
-                      <option value="dropped" ${st==='dropped'?'selected':''}>⏸ Dropped</option>
-                    </select>
-                  </div>
-                  <div style="display:grid;grid-template-columns:1fr 1fr 1fr 24px;gap:8px;align-items:center;margin-top:6px">
-                    <input type="text" value="${escapeHtml(it.target||'')}" placeholder="Target (vd: -40 ngày AL)..."
-                      onchange="DB.plActionPlan[${year}][${month}][${idx}].target=this.value;DB.plActionPlan[${year}][${month}][${idx}]._savedAt=Date.now();saveData(['plActionPlan'])"
-                      style="background:var(--bg-card);border:1px solid var(--border);color:var(--ink-dim);padding:5px 8px;border-radius:5px;font-size:11.5px">
-                    <input type="text" inputmode="numeric" value="${it.expectedSaving?Number(it.expectedSaving).toLocaleString('vi-VN'):''}" placeholder="Expected saving (đ)"
-                      oninput="this.value=this.value.replace(/[^\\d]/g,'').replace(/\\B(?=(\\d{3})+(?!\\d))/g,'.')"
-                      onchange="DB.plActionPlan[${year}][${month}][${idx}].expectedSaving=parseFloat(this.value.replace(/\\./g,''))||0;DB.plActionPlan[${year}][${month}][${idx}]._savedAt=Date.now();saveData(['plActionPlan']);render()"
-                      style="background:var(--bg-card);border:1px solid var(--border);color:var(--success);padding:5px 8px;border-radius:5px;font-size:11.5px;font-family:'JetBrains Mono',monospace;text-align:right">
-                    <input type="text" value="${escapeHtml(it.owner||'')}" placeholder="Owner..."
-                      onchange="DB.plActionPlan[${year}][${month}][${idx}].owner=this.value;DB.plActionPlan[${year}][${month}][${idx}]._savedAt=Date.now();saveData(['plActionPlan'])"
-                      style="background:var(--bg-card);border:1px solid var(--border);color:var(--ink-dim);padding:5px 8px;border-radius:5px;font-size:11.5px">
-                    <button onclick="if(confirm('Xóa action này?')){const _it=DB.plActionPlan[${year}][${month}][${idx}];if(_it&&_it.id)_gTombAdd('plActionPlan',_it.id);DB.plActionPlan[${year}][${month}].splice(${idx},1);window._selfSaveAt=Date.now();saveData(['plActionPlan']);render()}" title="Xóa"
-                      style="background:transparent;border:0;color:var(--ink-muted);cursor:pointer;font-size:14px;padding:2px">×</button>
-                  </div>
-                </div>
-              </div>
-            </div>`;
-          }).join('')}
-        </div>
-      `}
-
-      <button onclick="if(!DB.plActionPlan)DB.plActionPlan={};if(!DB.plActionPlan[${year}])DB.plActionPlan[${year}]={};if(!DB.plActionPlan[${year}][${month}])DB.plActionPlan[${year}][${month}]=[];DB.plActionPlan[${year}][${month}].push({id:(Date.now()+Math.random()).toString(36),title:'',target:'',expectedSaving:0,owner:'',status:'planned',createdAt:Date.now(),_savedAt:Date.now()});saveData(['plActionPlan']);render()"
-        style="background:var(--accent);color:#000;border:0;padding:9px 18px;border-radius:7px;font-weight:600;font-size:12.5px;cursor:pointer">+ Thêm Action</button>
-    </div>
-
-    ${items.length>0 ? `
-    <div class="pl-card">
-      <div style="font-weight:700;font-size:14px;color:var(--accent);margin-bottom:14px">Tổng kết</div>
-      <table class="pl-table">
-        <thead>
-          <tr>
-            <th class="pl-num">#</th>
-            <th>Action</th>
-            <th>Target</th>
-            <th>Owner</th>
-            <th>Status</th>
-            <th class="pl-num">Expected Saving/tháng</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${items.map((it,idx)=>{
-            const statusLabels = {planned:'📅 Planned', in_progress:'⚙️ In Progress', completed:'✅ Completed', dropped:'⏸ Dropped'};
-            return `<tr>
-              <td class="pl-num">${idx+1}</td>
-              <td><b>${escapeHtml(it.title||'(chưa đặt tên)')}</b></td>
-              <td>${escapeHtml(it.target||'—')}</td>
-              <td>${escapeHtml(it.owner||'—')}</td>
-              <td>${statusLabels[it.status||'planned']}</td>
-              <td class="pl-num pl-good"><b>${(parseFloat(it.expectedSaving)||0)>0?_plFmtMoney(it.expectedSaving)+'đ':'—'}</b></td>
-            </tr>`;
-          }).join('')}
-        </tbody>
-        <tfoot>
-          <tr>
-            <td colspan="5"><b>TỔNG EXPECTED SAVING</b></td>
-            <td class="pl-num pl-good"><b>${_plFmtMoney(totalSaving)}đ/tháng</b></td>
-          </tr>
-        </tfoot>
-      </table>
-    </div>
-    ` : ''}
-  `;
-}
-
 
 function renderDashboard(main){
   const today = new Date();
@@ -19370,10 +19280,28 @@ function resignAction(rid, action){
     render();
     toast(`✅ Đã duyệt nghỉ việc: ${empById(r.empId)?.name||''}`,'success');
   } else if(action==='cancel'){
-    // Xoá đơn khỏi list, NV về bình thường
+    // Dùng status='cancelled' thay vì splice — tránh cloud restore sau refresh
     const empName = empById(r.empId)?.name||r.empId;
-    DB.resignations = DB.resignations.filter((_,i)=>i!==idx);
-    saveData(['resignations']);
+    const _r2 = [...DB.resignations];
+    _r2[idx] = {..._r2[idx], status:'cancelled', cancelledAt:new Date().toISOString()};
+    DB.resignations = _r2;
+    // Cập nhật cả workforce doc cũ để tránh migration restore lại
+    if(window.fbDb && window.currentUser){
+      const meta = { _syncBy: window.currentUser.uid, _syncAt: Date.now(), _lastSaved: Date.now() };
+      window.fbDb.collection('hrdata').doc('resign')
+        .set({...meta, resignations: DB.resignations.map(rec=>_sanitizeForFirebase(rec))}, {merge:false})
+        .then(()=>console.log('[resignAction] ✅ cancel saved to resign doc'))
+        .catch(err=>console.error('[resignAction] ❌ cancel save failed:', err.message));
+      // Xóa luôn trong workforce doc cũ nếu có
+      window.fbDb.collection('hrdata').doc('workforce').get().then(snap=>{
+        if(snap.exists && (snap.data().resignations||[]).length){
+          const wfResigns = (snap.data().resignations||[]).filter(r2=>r2.id!==rid);
+          snap.ref.set({...snap.data(), resignations: wfResigns}, {merge:false}).catch(()=>{});
+        }
+      }).catch(()=>{});
+    } else {
+      saveData(['resignations']);
+    }
     render();
     toast(`Đã huỷ đơn — ${empName} về trạng thái bình thường`,'success');
   }
@@ -33040,7 +32968,8 @@ fbAuth.onAuthStateChanged(async user => {
               // resign doc chưa có → thử đọc từ workforce cũ
               const oldWf = await window.fbDb.collection('hrdata').doc('workforce').get();
               if(oldWf.exists && (oldWf.data().resignations||[]).length){
-                DB.resignations = oldWf.data().resignations;
+                // Chỉ restore non-cancelled records
+                DB.resignations = (oldWf.data().resignations||[]).filter(r=>r.status!=='cancelled');
                 hasCloud = true;
                 console.log('[MIGRATE] resignations from workforce:', DB.resignations.length);
                 // Lưu sang resign doc mới
