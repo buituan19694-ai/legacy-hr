@@ -1340,6 +1340,8 @@ function _pushDynamicKey(key, meta){
     });
     return;
   }
+
+  if(key === 'manningPlan' || key === 'manningActual' || key === 'payrollData'){
     window._selfSaveAt = Date.now(); // 🚨 v38: chặn echo/stale revert cho MỌI thao tác manning
     if(key === 'payrollData'){
       // Shard theo năm: payroll_data_2026
@@ -32909,6 +32911,8 @@ fbAuth.onAuthStateChanged(async user => {
                 });
               });
             }
+            // payrollData shards: payroll_data_YYYY
+            else if(id.startsWith('payroll_data_')&&d.payrollData){
               Object.entries(d.payrollData).forEach(([yr,yrData])=>{
                 if(!dynamicAccum.payrollData[yr]) dynamicAccum.payrollData[yr]={};
                 Object.entries(yrData||{}).forEach(([mo,moData])=>{
