@@ -19903,7 +19903,7 @@ function renderRecruitment(main){
                 <td><span style="color:${prioColor};font-size:12px;font-weight:600">${prioIcon} ${j.priority==='high'?(_lang==="en"?"High":"Cao"):j.priority==='medium'?'TB':(_lang==="en"?"Low":"Thấp")}</span></td>
                 <td>${(()=>{
                   const _h=getJobHired(j.id), _p=parseInt(j.positions||j.qty||1);
-                  if(j.status==='filled' && _h < _p) return '<span class="badge open">'+JOB_STATUS.open+'</span><span style="font-size:9px;color:var(--warning);margin-left:4px">⚠️ chưa đủ</span>';
+                  if(j.status==='filled' && _h < _p) return '<span class="badge open">'+JOB_STATUS.open+'</span>';
                   return '<span class="badge '+j.status+'">'+JOB_STATUS[j.status]+'</span>';
                 })()}</td>
                 <td onclick="event.stopPropagation()"><div class="row-actions">
@@ -20125,7 +20125,7 @@ function renderJobDetail(main){
         <div class="dept-hero-big-num" style="color:${deptColor}">${hired}<span style="font-size:24px;color:var(--ink-muted)">/${j.positions}</span></div>
         <div class="dept-hero-big-label">Đã tuyển / Cần tuyển</div>
         <div style="font-size:11px;color:var(--accent);margin-top:4px;font-family:'JetBrains Mono',monospace;font-weight:600">${pct}%</div>
-        <div style="margin-top:8px"><span class="badge ${hired>=j.positions&&j.status==='filled'?'filled':j.status==='filled'?'open':j.status}" style="font-size:11px">${hired>=j.positions&&j.status==='filled'?JOB_STATUS.filled:j.status==='filled'?JOB_STATUS.open+' <span style="font-size:9px;opacity:.7">(chưa đủ HC)</span>':JOB_STATUS[j.status]}</span></div>
+        <div style="margin-top:8px"><span class="badge ${hired>=j.positions&&j.status==='filled'?'filled':j.status==='filled'?'open':j.status}" style="font-size:11px">${hired>=j.positions&&j.status==='filled'?JOB_STATUS.filled:j.status==='filled'?JOB_STATUS.open:JOB_STATUS[j.status]}</span></div>
       </div>
     </div>
 
