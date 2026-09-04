@@ -17420,14 +17420,8 @@ function deleteLeave(id, fromModal=false){
    RECRUITMENT — CRUD
    ========================================================= */
 function getJobHired(jobId){
-  // Đếm candidates có status='hired'
-  const fromCandidates = (DB.candidates||[]).filter(a => a.jobId === jobId && a.status === 'hired').length;
-  const job = (DB.jobs||[]).find(j=>j.id===jobId);
-  const fromJob = parseInt(job?.hired)||0;
-  // v13: LUÔN LUÔN dùng MAX của 2 nguồn — respect user manual override
-  // Trước: if(fromCandidates > 0) return fromCandidates → bỏ qua j.hired dù user đã set
-  // Giờ: nếu Meoz sửa "Đã tuyển được = 2" mà chỉ có 1 candidate hired → vẫn hiện 2 (theo ý user)
-  return Math.max(fromCandidates, fromJob);
+  // Chỉ đếm candidates có status='hired' (đã nhận việc thực sự)
+  return (DB.candidates||[]).filter(a => a.jobId === jobId && a.status === 'hired').length;
 }
 
 // Pipeline % cho từng stage (6 bước tuyển dụng)
@@ -19907,7 +19901,11 @@ function renderRecruitment(main){
                   ${daysToDeadline !== null && j.status==='open' ? `<div style="font-size:10px;font-family:'JetBrains Mono',monospace">${daysToDeadline < 0 ? 'Trễ '+Math.abs(daysToDeadline)+'d' : daysToDeadline+' ngày'}</div>` : ''}
                 </td>
                 <td><span style="color:${prioColor};font-size:12px;font-weight:600">${prioIcon} ${j.priority==='high'?(_lang==="en"?"High":"Cao"):j.priority==='medium'?'TB':(_lang==="en"?"Low":"Thấp")}</span></td>
-                <td><span class="badge ${j.status}">${JOB_STATUS[j.status]}</span></td>
+                <td>${(()=>{
+                  const _h=getJobHired(j.id), _p=parseInt(j.positions||j.qty||1);
+                  if(j.status==='filled' && _h < _p) return '<span class="badge open">'+JOB_STATUS.open+'</span><span style="font-size:9px;color:var(--warning);margin-left:4px">⚠️ chưa đủ</span>';
+                  return '<span class="badge '+j.status+'">'+JOB_STATUS[j.status]+'</span>';
+                })()}</td>
                 <td onclick="event.stopPropagation()"><div class="row-actions">
                   <button class="btn btn-icon" onclick="viewJob('${j.id}')" title="Xem ứng viên" style="color:var(--accent)">${ICONS.eye}</button>
                   ${j.status==='open' ? `<button class="btn btn-icon" onclick="markJobHired('${j.id}')" title="+1 đã tuyển" style="color:var(--success)">✓</button>` : ''}
