@@ -156,6 +156,10 @@ if('serviceWorker' in navigator){
         <span class="nav-icon" style="font-size:16px">🌱</span>
         <span>HR Action Plan</span>
       </div>
+      <div class="nav-item" data-page="cbPackage">
+        <span class="nav-icon" style="font-size:16px">🎁</span>
+        <span>C&B Package</span>
+      </div>
     </div>
 
     <div class="nav-section">
@@ -1032,7 +1036,7 @@ const FS_DOC_MAP = {
   jobs:       ['jobs'],
   blacklist:  ['manualBlacklist','blacklistConfig','blacklistReasons','candRequiredFields'],
   config:     ['customFields','rewardTypes','perfReviewTypes','promoTypes','company',
-               'dashboardConfig','brandConfig','customRecruitSources','docChecklistItems',
+               'dashboardConfig','brandConfig','customRecruitSources','docChecklistItems','cbPackageDocs',
                'disciplineSeverityConfig','requiredFieldsConfig',
                'contractTemplates','quickFilterPrefs','recReportConfig','perfReportConfig','plConfig','trainingKpi',
                'salaryStructure',
@@ -2508,6 +2512,7 @@ function _doRender(){
       accounts: renderAccounts,
       manning: (main)=>renderManning(main),
       hrGarden: renderHRGarden,
+      cbPackage: renderCBPackage,
     };
     (renderers[currentPage] || renderDashboard)(main);
     setTimeout(function(){ initDateInputs(main); }, 20);
@@ -20122,7 +20127,7 @@ function renderJobDetail(main){
         <div class="dept-hero-big-num" style="color:${deptColor}">${hired}<span style="font-size:24px;color:var(--ink-muted)">/${j.positions}</span></div>
         <div class="dept-hero-big-label">Đã tuyển / Cần tuyển</div>
         <div style="font-size:11px;color:var(--accent);margin-top:4px;font-family:'JetBrains Mono',monospace;font-weight:600">${pct}%</div>
-        <div style="margin-top:8px"><span class="badge ${j.status}" style="font-size:11px">${JOB_STATUS[j.status]}</span></div>
+        <div style="margin-top:8px"><span class="badge ${hired>=j.positions&&j.status==='filled'?'filled':j.status==='filled'?'open':j.status}" style="font-size:11px">${hired>=j.positions&&j.status==='filled'?JOB_STATUS.filled:j.status==='filled'?JOB_STATUS.open+' <span style="font-size:9px;opacity:.7">(chưa đủ HC)</span>':JOB_STATUS[j.status]}</span></div>
       </div>
     </div>
 
@@ -26751,6 +26756,7 @@ const MODULE_LIST = [
   {key:'manning',      label:'Manning & Budget'},
   {key:'plreview',     label:'HR P&L Review'},
   {key:'hrGarden',     label:'🌱 HR Action Plan'},
+  {key:'cbPackage',    label:'🎁 C&B Package'},
 ];
 const PERM_LEVELS = ['none','view','edit','full'];
 const PERM_LABELS = {none:(_lang==="en"?"🚫 No access":"🚫 Không xem"), view:(_lang==="en"?"👁 View only":"👁 Chỉ xem"), edit:(_lang==="en"?"✏️ View & Edit":"✏️ Xem & Sửa"), full:(_lang==="en"?"⭐ Full access":"⭐ Toàn quyền")};
@@ -28303,14 +28309,17 @@ function renderPayrollTab(){
     const bgCasual=_plGetCasualCost(pY,pM-1).total;
     const bgTotal=bgSal+bgBH+bgCasual;
 
-    // ── 2. Forecast (Manning Forecast tab - lương tháng đó) ──
-    const actDepts=((DB.manningActual||{})[pY]||{});
+    // ── 2. Forecast (Lương theo hồ sơ NV × HC thực tế đang làm) ──
     let fhHC=0,fhSal=0,fhBH=0;
-    Object.values(planDepts).forEach(dp=>{(dp.positions||[]).forEach(p=>{
-      const hc=parseInt(p.planned)||0; fhHC+=hc;
-      fhSal+=(parseFloat(p.budgetSalary)||0)*hc+(parseFloat(p.budgetBonus)||0)*hc;
-      fhBH+=(parseFloat(p.budgetBH)||0)*hc;
-    });});
+    allPool.forEach(e=>{
+      const cd=DB.customData[e.id]||{};
+      const baseSal=parseFloat(cd.baseSalary)||0;
+      const perfBonus=parseFloat(cd.perfBonus)||0;
+      const totalSal=baseSal+perfBonus;
+      if(totalSal>0||baseSal>0) fhHC++;
+      fhSal+=totalSal;
+      fhBH+=Math.round(baseSal*0.235); // BHXH 23.5% × lương cơ bản
+    });
     const fhCasual=bgCasual;
     const fhTotal=fhSal+fhBH+fhCasual;
 
@@ -28349,7 +28358,7 @@ function renderPayrollTab(){
             <td style="${ct};font-weight:700">${fmtV(bgTotal)}</td>
           </tr>
           <tr style="border-bottom:1px solid var(--border)">
-            <td style="padding:10px 12px;font-size:12px;font-weight:600;color:var(--teal)">📊 Forecast — Manning tháng</td>
+            <td style="padding:10px 12px;font-size:12px;font-weight:600;color:var(--teal)">📊 Forecast — Lương hồ sơ NV</td>
             <td style="${ct}">${fmtV(fhHC)}</td><td style="${ct}">${fmtV(fhSal)}</td><td style="${ct}">${fmtV(fhBH)}</td><td style="${ct}">${fmtV(fhCasual)}</td>
             <td style="${ct};font-weight:700">${fmtV(fhTotal)}</td>
           </tr>
@@ -35159,6 +35168,204 @@ function _checkGardenDeadlines(){
 }
 
 
+/* ══════════════════════════════════════════════
+   C&B PACKAGE — Tài liệu phúc lợi & chính sách
+   Google Drive embed preview
+   ══════════════════════════════════════════════ */
+function renderCBPackage(main){
+  if(!window.canDo('cbPackage')){
+    main.innerHTML='<div class="topbar"><div class="topbar-left"><h1 class="page-title">🔒 Không có quyền</h1></div></div>';
+    return;
+  }
+  const canEdit = window.canDo('cbPackage','edit');
+  if(!DB.cbPackageDocs) DB.cbPackageDocs = [];
+  const docs = DB.cbPackageDocs;
+
+  const CATEGORIES = ['Chính sách','Quy định','Form mẫu','Phúc lợi','Đào tạo','Khác'];
+  const CAT_ICONS = {'Chính sách':'📜','Quy định':'📋','Form mẫu':'📝','Phúc lợi':'🎁','Đào tạo':'🎓','Khác':'📎'};
+  const CAT_COLORS = {'Chính sách':'var(--accent)','Quy định':'var(--info)','Form mẫu':'var(--teal)','Phúc lợi':'var(--success)','Đào tạo':'var(--purple)','Khác':'var(--ink-muted)'};
+
+  // Filter
+  if(!window._cbFilter) window._cbFilter = {cat:'all', search:''};
+  const F = window._cbFilter;
+  let filtered = docs.filter(d=>{
+    if(F.cat!=='all' && d.category!==F.cat) return false;
+    if(F.search && !d.name.toLowerCase().includes(F.search.toLowerCase())) return false;
+    return true;
+  });
+
+  const catTabs = ['all',...CATEGORIES].map(c=>{
+    const count = c==='all' ? docs.length : docs.filter(d=>d.category===c).length;
+    const active = F.cat===c;
+    return `<button onclick="window._cbFilter.cat='${c}';render()"
+      style="padding:5px 14px;border-radius:6px;border:1px solid ${active?'var(--accent)':'var(--border)'};background:${active?'var(--accent)':'transparent'};color:${active?'var(--bg)':'var(--ink-dim)'};font-size:12px;font-weight:${active?'700':'400'};cursor:pointer;user-select:none">
+      ${c==='all'?'Tất cả':((CAT_ICONS[c]||'')+' '+c)} <span style="opacity:.6">${count}</span>
+    </button>`;
+  }).join('');
+
+  const docCards = filtered.length ? filtered.map((d,idx)=>{
+    const realIdx = docs.indexOf(d);
+    const icon = CAT_ICONS[d.category]||'📎';
+    const color = CAT_COLORS[d.category]||'var(--ink-muted)';
+    return `<div style="background:var(--bg-card);border:1px solid var(--border);border-radius:12px;padding:16px 20px;display:flex;align-items:center;gap:14px;transition:border-color .2s;cursor:pointer"
+      onmouseenter="this.style.borderColor='var(--accent)'" onmouseleave="this.style.borderColor='var(--border)'"
+      onclick="_cbPreview(${realIdx})">
+      <div style="width:44px;height:44px;border-radius:10px;background:${color}15;border:1px solid ${color}30;display:grid;place-items:center;font-size:22px;flex-shrink:0">${icon}</div>
+      <div style="flex:1;min-width:0">
+        <div style="font-size:13px;font-weight:600;color:var(--ink);margin-bottom:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(d.name)}</div>
+        <div style="display:flex;gap:10px;font-size:11px;color:var(--ink-muted)">
+          <span style="padding:1px 7px;border-radius:4px;background:${color}12;color:${color};font-weight:600;font-size:10px">${escapeHtml(d.category||'Khác')}</span>
+          ${d.desc?'<span>'+escapeHtml(d.desc.slice(0,50))+'</span>':''}
+        </div>
+      </div>
+      ${canEdit?`<div style="display:flex;gap:6px;flex-shrink:0" onclick="event.stopPropagation()">
+        <button onclick="_cbEdit(${realIdx})" style="background:transparent;border:1px solid var(--border);border-radius:6px;padding:5px 8px;color:var(--ink-muted);cursor:pointer;font-size:11px">✏️</button>
+        <button onclick="_cbDelete(${realIdx})" style="background:transparent;border:1px solid rgba(229,115,115,.2);border-radius:6px;padding:5px 8px;color:var(--danger);cursor:pointer;font-size:11px">✕</button>
+      </div>`:''}
+    </div>`;
+  }).join('') : '<div style="text-align:center;padding:40px;color:var(--ink-muted);font-size:13px">Chưa có tài liệu nào'+(F.cat!=='all'||F.search?' phù hợp bộ lọc':'')+'</div>';
+
+  main.innerHTML = `
+    <div class="topbar">
+      <div class="topbar-left">
+        <div class="page-breadcrumb">OVERVIEW · C&B PACKAGE</div>
+        <h1 class="page-title">🎁 C&B <em>Package</em></h1>
+        <div class="page-sub">Tài liệu phúc lợi & chính sách công ty · ${docs.length} tài liệu · Click để xem trực tiếp</div>
+      </div>
+      <div class="topbar-right">
+        ${canEdit?'<button class="btn btn-primary" onclick="_cbAdd()" style="font-size:13px">+ Thêm tài liệu</button>':''}
+      </div>
+    </div>
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:16px">
+      <div style="display:flex;gap:4px;flex-wrap:wrap">${catTabs}</div>
+      <input placeholder="🔍 Tìm tài liệu..." value="${escapeHtml(F.search||'')}"
+        oninput="window._cbFilter.search=this.value;render()"
+        style="padding:7px 14px;background:var(--bg-card);border:1px solid var(--border);border-radius:8px;color:var(--ink);font-size:12px;min-width:200px">
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(360px,1fr));gap:12px">
+      ${docCards}
+    </div>`;
+}
+
+function _cbGetEmbedUrl(url){
+  if(!url) return '';
+  // Google Drive file link → preview
+  let m = url.match(/drive\.google\.com\/file\/d\/([^/]+)/);
+  if(m) return 'https://drive.google.com/file/d/'+m[1]+'/preview';
+  // Google Docs/Sheets/Slides
+  m = url.match(/docs\.google\.com\/(document|spreadsheets|presentation)\/d\/([^/]+)/);
+  if(m) return 'https://docs.google.com/'+m[1]+'/d/'+m[2]+'/preview';
+  // Already a preview link
+  if(url.includes('/preview')) return url;
+  // Fallback: open in iframe directly
+  return url;
+}
+
+function _cbPreview(idx){
+  const d = DB.cbPackageDocs[idx];
+  if(!d) return;
+  const embedUrl = _cbGetEmbedUrl(d.link);
+  let ov = document.getElementById('_cbPreviewOv');
+  if(ov) ov.remove();
+  ov = document.createElement('div');
+  ov.id = '_cbPreviewOv';
+  ov.style.cssText = 'position:fixed;inset:0;z-index:600;display:flex;flex-direction:column;background:rgba(0,0,0,.85);backdrop-filter:blur(6px);padding:0';
+  ov.innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 20px;background:var(--bg-elev);border-bottom:1px solid var(--border)">
+      <div>
+        <div style="font-size:15px;font-weight:600;color:var(--ink)">${escapeHtml(d.name)}</div>
+        <div style="font-size:11px;color:var(--ink-muted)">${escapeHtml(d.category||'')}${d.desc?' · '+escapeHtml(d.desc):''}</div>
+      </div>
+      <div style="display:flex;gap:10px">
+        <a href="${escapeHtml(d.link)}" target="_blank" style="padding:7px 14px;background:var(--accent);color:var(--bg);border-radius:8px;font-size:12px;font-weight:600;text-decoration:none">↗ Mở trong Drive</a>
+        <button onclick="document.getElementById('_cbPreviewOv').remove()" style="padding:7px 14px;background:transparent;border:1px solid var(--border);border-radius:8px;color:var(--ink-muted);cursor:pointer;font-size:12px">✕ Đóng</button>
+      </div>
+    </div>
+    <iframe src="${embedUrl}" style="flex:1;border:none;width:100%" allow="autoplay"></iframe>`;
+  document.body.appendChild(ov);
+}
+
+function _cbAdd(){
+  _cbOpenForm(-1);
+}
+function _cbEdit(idx){
+  _cbOpenForm(idx);
+}
+function _cbOpenForm(idx){
+  const isNew = idx < 0;
+  const d = isNew ? {name:'',link:'',category:'Chính sách',desc:''} : DB.cbPackageDocs[idx];
+  const CATEGORIES = ['Chính sách','Quy định','Form mẫu','Phúc lợi','Đào tạo','Khác'];
+  const catOpts = CATEGORIES.map(c=>`<option value="${c}" ${d.category===c?'selected':''}>${c}</option>`).join('');
+
+  let ov = document.getElementById('_cbFormOv');
+  if(ov) ov.remove();
+  ov = document.createElement('div');
+  ov.id = '_cbFormOv';
+  ov.style.cssText = 'position:fixed;inset:0;z-index:500;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.7);backdrop-filter:blur(4px);padding:20px';
+  ov.innerHTML = `
+    <div style="background:var(--bg-elev);border:1px solid var(--border-strong);border-radius:14px;padding:28px;max-width:520px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,.5)">
+      <div style="font-family:'Fraunces',serif;font-size:18px;font-weight:500;margin-bottom:16px">${isNew?'➕ Thêm':'✏️ Sửa'} <em style="color:var(--accent)">tài liệu</em></div>
+      <div style="display:flex;flex-direction:column;gap:12px">
+        <div>
+          <label style="font-size:11px;color:var(--ink-muted);letter-spacing:.1em;text-transform:uppercase;font-weight:600">Tên tài liệu *</label>
+          <input id="_cb_name" value="${escapeHtml(d.name)}" placeholder="VD: Chính sách nghỉ phép..." style="width:100%;padding:10px 12px;background:var(--bg-card);border:1px solid var(--border);border-radius:8px;color:var(--ink);font-size:13px;margin-top:4px">
+        </div>
+        <div>
+          <label style="font-size:11px;color:var(--ink-muted);letter-spacing:.1em;text-transform:uppercase;font-weight:600">Link Google Drive *</label>
+          <input id="_cb_link" value="${escapeHtml(d.link||'')}" placeholder="https://drive.google.com/file/d/..." style="width:100%;padding:10px 12px;background:var(--bg-card);border:1px solid var(--border);border-radius:8px;color:var(--ink);font-size:13px;margin-top:4px">
+          <div style="font-size:10px;color:var(--ink-muted);margin-top:3px">💡 File phải được share "Bất kỳ ai có link" để xem được</div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+          <div>
+            <label style="font-size:11px;color:var(--ink-muted);letter-spacing:.1em;text-transform:uppercase;font-weight:600">Danh mục</label>
+            <select id="_cb_cat" style="width:100%;padding:10px 12px;background:var(--bg-card);border:1px solid var(--border);border-radius:8px;color:var(--ink);font-size:13px;margin-top:4px">${catOpts}</select>
+          </div>
+          <div>
+            <label style="font-size:11px;color:var(--ink-muted);letter-spacing:.1em;text-transform:uppercase;font-weight:600">Mô tả ngắn</label>
+            <input id="_cb_desc" value="${escapeHtml(d.desc||'')}" placeholder="Mô tả..." style="width:100%;padding:10px 12px;background:var(--bg-card);border:1px solid var(--border);border-radius:8px;color:var(--ink);font-size:13px;margin-top:4px">
+          </div>
+        </div>
+      </div>
+      <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:18px">
+        <button onclick="document.getElementById('_cbFormOv').remove()" class="btn" style="font-size:12px">Hủy</button>
+        <button onclick="_cbSave(${idx})" class="btn btn-primary" style="font-size:12px">💾 Lưu</button>
+      </div>
+    </div>`;
+  document.body.appendChild(ov);
+  ov.addEventListener('click',ev=>{if(ev.target===ov)ov.remove();});
+  document.getElementById('_cb_name')?.focus();
+}
+
+function _cbSave(idx){
+  const name = (document.getElementById('_cb_name')?.value||'').trim();
+  const link = (document.getElementById('_cb_link')?.value||'').trim();
+  const cat = document.getElementById('_cb_cat')?.value||'Khác';
+  const desc = (document.getElementById('_cb_desc')?.value||'').trim();
+  if(!name){ toast('Nhập tên tài liệu','error'); return; }
+  if(!link){ toast('Nhập link Google Drive','error'); return; }
+  if(!DB.cbPackageDocs) DB.cbPackageDocs = [];
+  const doc = {name, link, category:cat, desc, updatedAt:Date.now()};
+  if(idx < 0){
+    doc.createdAt = Date.now();
+    DB.cbPackageDocs.push(doc);
+  } else {
+    doc.createdAt = DB.cbPackageDocs[idx].createdAt||Date.now();
+    DB.cbPackageDocs[idx] = doc;
+  }
+  saveData(['config']);
+  document.getElementById('_cbFormOv')?.remove();
+  toast(idx<0?'✅ Đã thêm tài liệu':'💾 Đã cập nhật','success');
+  render();
+}
+
+function _cbDelete(idx){
+  if(!confirm('Xóa "'+DB.cbPackageDocs[idx]?.name+'"?')) return;
+  DB.cbPackageDocs.splice(idx,1);
+  saveData(['config']);
+  toast('Đã xóa','info');
+  render();
+}
+
 function renderManning(main){
   if(!window.canDo('manning')){
     main.innerHTML='<div class="topbar"><div class="topbar-left"><h1 class="page-title">🔒 Không có quyền</h1><div class="page-sub">Bạn không được cấp quyền truy cập module Manning & Budget</div></div></div>';
@@ -35278,7 +35485,8 @@ function renderManning(main){
         const bh     = getBH(p, salCB, BH_RATE);              // ưu tiên budgetBH, fallback auto
         const meal   = parseFloat(p.mealRate)||0;
         const oth    = parseFloat(p.budgetOther)||0;
-        const totHC  = (sal||bh) ? (sal+bh+meal+oth)*hc : 0;
+        const cluster= parseFloat(p.budgetCluster)||100;
+        const totHC  = (sal||bh) ? Math.round((sal+bh+meal+oth)*hc*cluster/100) : 0;
         dHC+=hc;dSalCB+=salCB*hc;dBon+=salBon*hc;dSal+=sal*hc;dBH+=bh*hc;dMeal+=meal*hc;dOth+=oth*hc;dTotHC+=totHC;
         gHC+=hc;gSalCB+=salCB*hc;gBon+=salBon*hc;gSal+=sal*hc;gBH+=bh*hc;gMeal+=meal*hc;gOth+=oth*hc;gTotHC+=totHC;
         const actHC  = allEmps.filter(e=>e.deptId===dept.id&&(e.role||'').trim()===title.trim()).length;
@@ -35320,6 +35528,9 @@ function renderManning(main){
           <td style="padding:3px 8px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--purple)">${salCB?fmtVND(bh):'—'}</td>
           <td style="padding:3px 6px;text-align:right">${inpNum(savePos('mealRate'),p.mealRate,83,'var(--teal)')}</td>
           <td style="padding:3px 6px;text-align:right">${inpNum(savePos('budgetOther'),p.budgetOther,83,'var(--warning)')}</td>
+          <td style="padding:3px 6px;text-align:center"><input type="number" min="0" max="200" step="1" value="${p.budgetCluster||100}" placeholder="100"
+            onchange="_saveBudgetPos(this,'${dIdEnc}','${titEnc}','budgetCluster',${curYear},${BH_RATE})"
+            style="width:50px;padding:3px 3px;background:var(--bg-elev);border:1px solid var(--info);border-radius:4px;color:var(--info);font-family:'JetBrains Mono',monospace;font-size:11px;text-align:right"></td>
           <td style="padding:5px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:#FFCC00">${fmtVND(totHC)}</td>
           <td style="padding:3px 6px"><input type="text" value="${escapeHtml(p.notes||'')}" placeholder="Ghi chú..."
             onchange="_saveBudgetPos(this,'${dIdEnc}','${titEnc}','notes',${curYear},${BH_RATE})"
@@ -35358,6 +35569,7 @@ function renderManning(main){
         <td style="padding:6px 8px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--purple)">${fmtM(dBH)}</td>
         <td style="padding:6px 8px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--teal)">${fmtM(dMeal)}</td>
         <td style="padding:6px 8px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--warning)">${fmtM(dOth)}</td>
+        <td></td>
         <td style="padding:6px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:#FFCC00">${fmtM(dTotHC)}</td>
       </tr>
       ${posRows.replace(/<tr data-dept-pos=/g, `<tr ${dCollapsed?'style="display:none" ':''}data-dept-pos=`)}
@@ -35391,7 +35603,8 @@ function renderManning(main){
             </th>
             <th style="${thS};color:var(--teal)">Meal/người<br><span style="font-size:9px;opacity:.6">rate/ngày</span></th>
             <th style="${thS};color:var(--warning)">Chi phí khác<br><span style="font-size:9px;opacity:.6">VNĐ/tháng</span></th>
-            <th style="${thS};color:#FFCC00">Tổng × HC<br><span style="font-size:9px;opacity:.6">auto</span></th>
+            <th style="${thS};color:var(--info);text-align:center">Cluster<br><span style="font-size:9px;opacity:.6">%</span></th>
+            <th style="${thS};color:#FFCC00">Tổng × HC<br><span style="font-size:9px;opacity:.6">×Cluster</span></th>
             <th style="padding:10px 8px;text-align:left;font-size:10px;font-weight:700;color:var(--ink-muted)">Ghi chú</th>
           </tr></thead>
           <tbody>${deptBlocks}</tbody>
@@ -35404,6 +35617,7 @@ function renderManning(main){
             <td style="padding:8px;text-align:right;font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--purple)">${fmtM(gBH)}</td>
             <td style="padding:8px;text-align:right;font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--teal)">${fmtM(gMeal)}</td>
             <td style="padding:8px;text-align:right;font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--warning)">${fmtM(gOth)}</td>
+            <td></td>
             <td style="padding:8px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:800;color:#FFCC00">${fmtM(gTotHC)}</td>
             <td></td>
           </tr></tfoot>
