@@ -28309,16 +28309,16 @@ function renderPayrollTab(){
     const bgCasual=_plGetCasualCost(pY,pM-1).total;
     const bgTotal=bgSal+bgBH+bgCasual;
 
-    // ── 2. Forecast (Lương theo hồ sơ NV × HC thực tế đang làm) ──
+    // ── 2. Forecast (Total Salary theo hồ sơ NV × HC thực tế đang làm) ──
     let fhHC=0,fhSal=0,fhBH=0;
     allPool.forEach(e=>{
       const cd=DB.customData[e.id]||{};
-      const baseSal=parseFloat(cd.baseSalary)||0;
-      const perfBonus=parseFloat(cd.perfBonus)||0;
-      const totalSal=baseSal+perfBonus;
-      if(totalSal>0||baseSal>0) fhHC++;
+      const baseSal=parseInt(cd.baseSalary)||0;
+      const bonusSal=parseInt(cd.bonusSalary)||0;
+      const totalSal=baseSal+bonusSal;
+      if(totalSal>0) fhHC++;
       fhSal+=totalSal;
-      fhBH+=Math.round(baseSal*0.235); // BHXH 23.5% × lương cơ bản
+      fhBH+=Math.round(baseSal*0.235); // BHXH+CĐ 23.5% × lương cơ bản
     });
     const fhCasual=bgCasual;
     const fhTotal=fhSal+fhBH+fhCasual;
