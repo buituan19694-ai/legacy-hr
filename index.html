@@ -1036,7 +1036,7 @@ const FS_DOC_MAP = {
   jobs:       ['jobs'],
   blacklist:  ['manualBlacklist','blacklistConfig','blacklistReasons','candRequiredFields'],
   config:     ['customFields','rewardTypes','perfReviewTypes','promoTypes','company',
-               'dashboardConfig','brandConfig','customRecruitSources','docChecklistItems','cbPackageDocs',
+               'dashboardConfig','brandConfig','customRecruitSources','docChecklistItems',
                'disciplineSeverityConfig','requiredFieldsConfig',
                'contractTemplates','quickFilterPrefs','recReportConfig','perfReportConfig','plConfig','trainingKpi',
                'salaryStructure',
@@ -33306,6 +33306,14 @@ fbAuth.onAuthStateChanged(async user => {
         // Restore docChecklistItems từ localStorage nếu cloud bị thiếu
         if(typeof _loadDocItems==='function') _loadDocItems();
         if(typeof _checkGardenDeadlines==='function') setTimeout(_checkGardenDeadlines, 2000);
+        // Load C&B Package docs
+        window.fbDb.collection('hrdata').doc('cb_package').get().then(snap=>{
+          if(snap.exists && snap.data().cbPackageDocs){
+            DB.cbPackageDocs = snap.data().cbPackageDocs;
+            console.log('[CB] ✅ Loaded', DB.cbPackageDocs.length, 'docs');
+            if(currentPage==='cbPackage') render();
+          }
+        }).catch(()=>{});
 
         // 🚨 Auto-confirm resignations đã qua ngày làm việc cuối
         // PHẢI chạy SAU _coldLoadDone = true để saveEmpProfile + saveData không bị SKIP
@@ -35350,7 +35358,7 @@ function _cbSave(idx){
     doc.createdAt = DB.cbPackageDocs[idx].createdAt||Date.now();
     DB.cbPackageDocs[idx] = doc;
   }
-  saveData(['config']);
+  _saveCBDocs();
   document.getElementById('_cbFormOv')?.remove();
   toast(idx<0?'✅ Đã thêm tài liệu':'💾 Đã cập nhật','success');
   render();
@@ -35359,9 +35367,18 @@ function _cbSave(idx){
 function _cbDelete(idx){
   if(!confirm('Xóa "'+DB.cbPackageDocs[idx]?.name+'"?')) return;
   DB.cbPackageDocs.splice(idx,1);
-  saveData(['config']);
+  _saveCBDocs();
   toast('Đã xóa','info');
   render();
+}
+
+function _saveCBDocs(){
+  if(!window.fbDb||!window.currentUser) return;
+  const meta = {_syncBy:window.currentUser.uid, _syncAt:Date.now(), _lastSaved:Date.now()};
+  window.fbDb.collection('hrdata').doc('cb_package')
+    .set({...meta, cbPackageDocs: DB.cbPackageDocs||[]}, {merge:false})
+    .then(()=>console.log('[CB] ✅ Saved cb_package doc'))
+    .catch(err=>console.error('[CB] ❌ Save failed:', err.message));
 }
 
 function renderManning(main){
