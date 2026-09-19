@@ -12072,19 +12072,34 @@ function exportRecruitmentPDF(pdfMode){
   const totalCands2 = (DB.candidates||[]).filter(c=>filteredJobs.some(j=>j.id===c.jobId)).length;
   const conv2 = totalCands2>0?(hiredTotal2/totalCands2*100).toFixed(1):0;
 
+  let _pdfLastStatus='', _pdfLastDept='';
   const jobTableRows = filteredJobs.map(j=>{
     const dept = DB.departments.find(d=>d.id===j.deptId);
     const cands = (DB.candidates||[]).filter(c=>c.jobId===j.id);
     const hiredJ = getJobHired(j.id);
     const pct = (j.positions||1) > 0 ? Math.round(hiredJ/(j.positions||1)*100) : 0;
-    const actualStatus = (j.status==='filled'&&hiredJ<(j.positions||1)) ? 'open' : j.status;
+    const actualStatus = _pdfGetStatus(j);
     const statusColor = actualStatus==='open'?'#4caf50':actualStatus==='paused'?'#ff9800':actualStatus==='closed'?'#9e9e9e':'#2196f3';
     const prioColor = j.priority==='high'?'#f44336':j.priority==='medium'?'#ff9800':'#4caf50';
     const base = j.baseSalary||j.salary||0;
     const bonus = j.bonusSalary||0;
-    return `<tr>
-      <td style="font-weight:600">${j.title||''}</td>
-      <td>${dept?.name||'—'}</td>
+    const dn = dept?.name||'—';
+    // Group headers
+    let headers = '';
+    if(actualStatus !== _pdfLastStatus){
+      _pdfLastStatus = actualStatus; _pdfLastDept = '';
+      const stLabel = actualStatus==='open'?'🟡 Đang tuyển':actualStatus==='paused'?'⏸ Tạm hoãn':actualStatus==='filled'?'✅ Đã đủ':'⊗ Đã đóng';
+      const stCount = filteredJobs.filter(x=>_pdfGetStatus(x)===actualStatus).length;
+      headers += `<tr><td colspan="9" style="padding:10px 8px;font-size:13px;font-weight:700;background:#e8f0fe;border-bottom:2px solid #1a73e8">${stLabel} — ${stCount} vị trí</td></tr>`;
+    }
+    if(dn !== _pdfLastDept){
+      _pdfLastDept = dn;
+      const deptCount = filteredJobs.filter(x=>_pdfGetStatus(x)===actualStatus && (DB.departments.find(d=>d.id===x.deptId)?.name||'—')===dn).length;
+      headers += `<tr><td colspan="9" style="padding:6px 8px 6px 20px;font-size:11px;font-weight:600;background:#f5f5f5;color:#333;border-bottom:1px solid #ddd">${dn} · ${deptCount} vị trí</td></tr>`;
+    }
+    return `${headers}<tr>
+      <td style="font-weight:600;padding-left:24px">${j.title||''}</td>
+      <td>${dn}</td>
       <td style="text-align:center">${hiredJ}/${j.positions||1}</td>
       <td style="text-align:center">${cands.length}</td>
       <td style="text-align:center">
@@ -12094,8 +12109,8 @@ function exportRecruitmentPDF(pdfMode){
         <span style="margin-left:4px;font-size:10px">${pct}%</span>
       </td>
       <td>${j.deadline ? fmtDate(j.deadline) : '—'}</td>
-      <td style="text-align:center"><span style="color:${prioColor};font-weight:600">${j.priority==='high'?(_lang==="en"?"High":"Cao"):j.priority==='medium'?'TB':(_lang==="en"?"Low":"Thấp")}</span></td>
-      <td><span style="color:${statusColor};font-weight:600">${j.status==='filled'&&hiredJ<(j.positions||1)?JOB_STATUS.open:JOB_STATUS[j.status]||j.status||''}</span></td>
+      <td style="text-align:center"><span style="color:${prioColor};font-weight:600">${j.priority==='high'?'Cao':j.priority==='medium'?'TB':'Thấp'}</span></td>
+      <td><span style="color:${statusColor};font-weight:600">${JOB_STATUS[actualStatus]||actualStatus}</span></td>
       <td style="font-family:monospace;font-size:10px">${base+bonus>0?fmtMoney(base+bonus)+' đ':'—'}</td>
     </tr>`;
   }).join('');
