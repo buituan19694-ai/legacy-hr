@@ -28691,28 +28691,23 @@ function renderPayrollTab(){
 }
 
 function exportPayrollTemplate(year,month){
-  // Template: chỉ Mã NV + cột lương (không có tên, bộ phận, chức danh)
-  const header=['Mã NV','Lương cơ bản','Lương kinh doanh','Lương thực tế','Phụ cấp','BHXH+CĐ','Casual','Cluster (%)'];
+  const header=['Mã NV','Lương thực tế','Phụ cấp','BHXH+CĐ','Casual','Cluster (%)'];
   const mData=(DB.payrollData||{})[year]?.[month]||{};
-  // Nếu đã có data tháng này → export data hiện tại, nếu không → để trống
-  const existingIds = Object.keys(mData);
-  let rows = [];
+  const existingIds=Object.keys(mData);
+  let rows=[];
   if(existingIds.length){
     existingIds.forEach(empId=>{
-      const emp=DB.employees.find(e=>e.id===empId);
-      if(!emp) return;
+      const emp=DB.employees.find(e=>e.id===empId);if(!emp)return;
       const pd=mData[empId]||{};
-      rows.push([emp.empId||'',parseFloat(pd.baseSalary)||0,parseFloat(pd.bizSalary)||0,parseFloat(pd.actualSalary)||0,parseFloat(pd.allowance)||0,parseFloat(pd.insurance)||0,parseFloat(pd.casual)||0,parseFloat(pd.cluster)||100]);
+      rows.push([emp.empId||'',parseFloat(pd.actualSalary)||0,parseFloat(pd.allowance)||0,parseFloat(pd.insurance)||0,parseFloat(pd.casual)||0,parseFloat(pd.cluster)||100]);
     });
   }
-  // Thêm 20 dòng trống để user điền thêm
-  for(let i=0;i<20;i++) rows.push(['','','','','','','','']);
+  for(let i=0;i<20;i++)rows.push(['','','','','','']);
   const wb=XLSX.utils.book_new();const ws=XLSX.utils.aoa_to_sheet([header,...rows]);
-  // Cột widths
-  ws['!cols']=[{wch:12},{wch:15},{wch:15},{wch:15},{wch:12},{wch:15},{wch:12},{wch:10}];
+  ws['!cols']=[{wch:14},{wch:16},{wch:12},{wch:16},{wch:12},{wch:10}];
   XLSX.utils.book_append_sheet(wb,ws,`T${month}_${year}`);
   XLSX.writeFile(wb,`BangLuong_T${month}_${year}_Template.xlsx`);
-  toast('📥 Đã xuất Excel mẫu — chỉ cần điền Mã NV + số tiền','success');
+  toast('📥 Excel: Mã NV + số tiền (Lương CB/KD tự lấy từ hồ sơ)','success');
 }
 
 function importPayrollExcel(input,year,month){
@@ -28722,54 +28717,36 @@ function importPayrollExcel(input,year,month){
     const ws=wb.Sheets[wb.SheetNames[0]];
     const data=XLSX.utils.sheet_to_json(ws,{header:1});
     if(data.length<2){toast('File rỗng','error');return;}
-    if(!DB.payrollData)DB.payrollData={};
-    if(!DB.payrollData[year])DB.payrollData[year]={};
-    if(!DB.payrollData[year][month])DB.payrollData[year][month]={};
-
-    // Detect format: new (8 cols) or old (14 cols)
-    const hdr = data[0]||[];
-    const isNewFormat = hdr.length <= 10; // New format: 8 cols (Mã NV + 7 salary cols)
-
-    let imported=0, notFound=[];
+    if(!DB.payrollData)DB.payrollData={};if(!DB.payrollData[year])DB.payrollData[year]={};if(!DB.payrollData[year][month])DB.payrollData[year][month]={};
+    const hdr=(data[0]||[]).map(h=>String(h||'').trim().toLowerCase());
+    const colCount=hdr.filter(h=>h).length;
+    const findEmp=(rawId)=>{
+      const id=String(rawId||'').trim();if(!id)return null;
+      let emp=DB.employees.find(e=>(e.empId||'').trim()===id);if(emp)return emp;
+      emp=DB.employees.find(e=>(e.empId||'').toUpperCase()===id.toUpperCase());if(emp)return emp;
+      emp=DB.employees.find(e=>(e.name||'').trim()===id);return emp||null;
+    };
+    let imported=0,notFound=[];
     for(let i=1;i<data.length;i++){
       const row=data[i];if(!row||!row[0])continue;
-      const empId=String(row[0]).trim();
-      if(!empId) continue;
-      const emp=DB.employees.find(e=>(e.empId||'').trim()===empId);
-      if(!emp){ notFound.push(empId); continue; }
-
-      if(isNewFormat){
-        // New format: Mã NV | Lương CB | Lương KD | Lương TT | Phụ cấp | BHXH+CĐ | Casual | Cluster
-        DB.payrollData[year][month][emp.id]={
-          baseSalary:parseFloat(row[1])||0,
-          bizSalary:parseFloat(row[2])||0,
-          actualSalary:parseFloat(row[3])||0,
-          allowance:parseFloat(row[4])||0,
-          insurance:parseFloat(row[5])||0,
-          casual:parseFloat(row[6])||0,
-          cluster:parseFloat(row[7])||100
-        };
-      } else {
-        // Old format (14 cols): Mã NV | Tên | BP | CD | LCB | LKD | auto | LTT | PC | auto | BHXH | Casual | Cluster | auto
-        DB.payrollData[year][month][emp.id]={
-          baseSalary:parseFloat(row[4])||0,
-          bizSalary:parseFloat(row[5])||0,
-          actualSalary:parseFloat(row[7])||0,
-          allowance:parseFloat(row[8])||0,
-          insurance:parseFloat(row[10])||0,
-          casual:parseFloat(row[11])||0,
-          cluster:parseFloat(row[12])||100
-        };
+      const emp=findEmp(row[0]);if(!emp){notFound.push(String(row[0]).trim());continue;}
+      const cd=DB.customData[emp.id]||{};
+      const autoBase=parseInt(cd.baseSalary)||0;
+      const autoBiz=parseInt(cd.bonusSalary)||0;
+      if(colCount<=7){
+        DB.payrollData[year][month][emp.id]={baseSalary:autoBase,bizSalary:autoBiz,actualSalary:parseFloat(row[1])||0,allowance:parseFloat(row[2])||0,insurance:parseFloat(row[3])||0,casual:parseFloat(row[4])||0,cluster:parseFloat(row[5])||100};
+      }else if(colCount<=9){
+        DB.payrollData[year][month][emp.id]={baseSalary:parseFloat(row[1])||autoBase,bizSalary:parseFloat(row[2])||autoBiz,actualSalary:parseFloat(row[3])||0,allowance:parseFloat(row[4])||0,insurance:parseFloat(row[5])||0,casual:parseFloat(row[6])||0,cluster:parseFloat(row[7])||100};
+      }else{
+        DB.payrollData[year][month][emp.id]={baseSalary:parseFloat(row[4])||autoBase,bizSalary:parseFloat(row[5])||autoBiz,actualSalary:parseFloat(row[7])||0,allowance:parseFloat(row[8])||0,insurance:parseFloat(row[10])||0,casual:parseFloat(row[11])||0,cluster:parseFloat(row[12])||100};
       }
       imported++;
     }
     saveData(['payrollData']);
-    let msg = `✅ Đã nhập ${imported} dòng T${month}/${year}`;
-    if(notFound.length) msg += ` · ⚠️ ${notFound.length} mã NV không tìm thấy: ${notFound.slice(0,5).join(', ')}${notFound.length>5?'...':''}`;
-    toast(msg, imported?'success':'error');
-    render();
-  }catch(err){toast('Lỗi: '+err.message,'error');}};
-  reader.readAsArrayBuffer(file);input.value='';
+    let msg=`✅ Đã nhập ${imported} dòng T${month}/${year}`;
+    if(notFound.length)msg+=` · ⚠️ ${notFound.length} mã không thấy: ${notFound.slice(0,5).join(', ')}${notFound.length>5?'...':''}`;
+    toast(msg,imported?'success':'error');render();
+  }catch(err){toast('Lỗi: '+err.message,'error');}};reader.readAsArrayBuffer(file);input.value='';
 }
 
 function exportPayrollFull(year,month){
