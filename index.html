@@ -1885,7 +1885,10 @@ if(!DB.promoTypes   || Array.isArray(DB.promoTypes))   DB.promoTypes   = {};
 // P&L Review storage
 if(!DB.plRevenue    || Array.isArray(DB.plRevenue))    DB.plRevenue    = {};
 if(!DB.plActionPlan || Array.isArray(DB.plActionPlan)) DB.plActionPlan = {};
-if(!DB.hrGardenPlan || Array.isArray(DB.hrGardenPlan)) DB.hrGardenPlan = {};
+if(!DB.hrGardenPlan || Array.isArray(DB.hrGardenPlan)){
+  try{ DB.hrGardenPlan = JSON.parse(localStorage.getItem('_hrGardenPlan')||'{}'); }catch(e){ DB.hrGardenPlan={}; }
+  if(Array.isArray(DB.hrGardenPlan)) DB.hrGardenPlan = {};
+}
 if(!DB.cbPackageDocs || !Array.isArray(DB.cbPackageDocs)){
   try{ DB.cbPackageDocs = JSON.parse(localStorage.getItem('_cbPackageDocs')||'[]'); }catch(e){ DB.cbPackageDocs=[]; }
 }
@@ -28364,13 +28367,19 @@ function renderPayrollTab(){
       </button>`;
     }).join('');
 
-    // Pool: NV chính thức + Trainee
-    const poolRegular=pool.filter(e=>getEffectiveStatus(e)!=='trainee');
-    const poolTrainee=DB.employees.filter(e=>getEffectiveStatus(e)==='trainee').sort((a,b)=>(a.name||'').localeCompare(b.name||''));
-    const allPool=[...poolRegular,...poolTrainee];
+    // Pool: CHỈ hiện NV đã có data trong payrollData tháng này
+    const mDataKeys = Object.keys(mData);
+    const allPool = mDataKeys.map(empId=>{
+      const emp = DB.employees.find(e=>e.id===empId);
+      if(!emp) return null;
+      return emp;
+    }).filter(Boolean).sort((a,b)=>{
+      const da=(DB.departments||[]).findIndex(d=>d.id===a.deptId);
+      const db2=(DB.departments||[]).findIndex(d=>d.id===b.deptId);
+      return da-db2 || (a.name||'').localeCompare(b.name||'');
+    });
 
     allPool.forEach(e=>{const d=calcEmp(e,pM);totBase+=d.base;totBiz+=d.biz;totSum+=d.sum;totAct+=d.act;totAllow+=d.allow;totActSum+=d.actSum;totIns+=d.ins;});
-    // Grand = sum of all dept (actSum+ins)*cluster + casual auto
     totGrand = allPool.reduce((s,e)=>{const d=calcEmp(e,pM);return s+Math.round((d.actSum+d.ins)*d.cluster/100);},0) + totCasual;
     const actHC=allPool.filter(e=>{const pd=(mData[e.id]||{});return(parseFloat(pd.actualSalary)||0)>0;}).length;
 
@@ -28502,10 +28511,15 @@ function renderPayrollTab(){
     const inpPct=(eId,field,val,color)=>`<input type="number" min="0" max="200" step="1" value="${val||100}" onchange="${sf(eId,field)}" style="width:50px;padding:3px 3px;background:var(--bg-elev);border:1px solid ${color};border-radius:4px;color:${color};font-family:'JetBrains Mono',monospace;font-size:11px;text-align:right">`;
 
     const renderEmpRow=(e)=>{const d=calcEmp(e,pM);
-      return `<tr style="border-bottom:1px solid var(--border)">
+      const eff=getEffectiveStatus(e);
+      const stBadge=eff==='exit'?'<span style="font-size:9px;padding:2px 5px;border-radius:3px;background:rgba(229,115,115,.15);color:var(--danger);font-weight:600">Đã nghỉ</span>'
+        :eff==='trainee'?'<span style="font-size:9px;padding:2px 5px;border-radius:3px;background:rgba(183,148,212,.15);color:var(--purple);font-weight:600">Trainee</span>'
+        :'<span style="font-size:9px;padding:2px 5px;border-radius:3px;background:rgba(102,187,106,.12);color:var(--success);font-weight:600">Đang làm</span>';
+      return `<tr style="border-bottom:1px solid var(--border);${eff==='exit'?'opacity:.7':''}">
         <td style="padding:5px 8px;font-size:11px;color:var(--ink-muted);font-family:'JetBrains Mono',monospace">${escapeHtml(e.empId||'—')}</td>
         <td style="padding:5px 8px;font-size:12px;font-weight:500">${escapeHtml(e.name)}</td>
         <td style="padding:5px 5px;font-size:11px;color:var(--ink-dim)">${escapeHtml(e.role||'—')}</td>
+        <td style="padding:4px 4px;text-align:center">${stBadge}</td>
         <td style="padding:2px 3px;text-align:right">${inp(e.id,'baseSalary',d.base,'var(--success)')}</td>
         <td style="padding:2px 3px;text-align:right">${inp(e.id,'bizSalary',d.biz,'var(--info)')}</td>
         <td style="padding:5px 4px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:600;color:var(--success)">${fmtV(d.sum)}</td>
@@ -28524,7 +28538,7 @@ function renderPayrollTab(){
       const deptCasual = deptId ? (casualByDept[deptId]||0) : 0;
       const deptGrandWithCasual = dt.grand + deptCasual;
       return `<tr style="background:rgba(212,165,116,.07);border-bottom:1px solid var(--border-strong)">
-        <td colspan="3" style="padding:8px 10px;font-weight:700;font-size:12px;color:var(--accent)">${escapeHtml(label)} <span style="font-weight:400;font-size:11px;color:var(--ink-muted)">${emps.length} NV</span></td>
+        <td colspan="4" style="padding:8px 10px;font-weight:700;font-size:12px;color:var(--accent)">${escapeHtml(label)} <span style="font-weight:400;font-size:11px;color:var(--ink-muted)">${emps.length} NV</span></td>
         <td style="padding:6px 3px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--success)">${fmtV(dt.base)}</td>
         <td style="padding:6px 3px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--info)">${fmtV(dt.biz)}</td>
         <td style="padding:6px 3px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:600;color:var(--success)">${fmtV(dt.sum)}</td>
@@ -28568,6 +28582,7 @@ function renderPayrollTab(){
             <th style="${thS};text-align:left;min-width:60px">MÃ NV</th>
             <th style="${thS};text-align:left;min-width:110px">HỌ TÊN</th>
             <th style="${thS};text-align:left;min-width:80px">CHỨC DANH</th>
+            <th style="${thS};text-align:center;min-width:55px">T.THÁI</th>
             <th style="${thS};color:var(--success)">LƯƠNG CB</th><th style="${thS};color:var(--info)">LƯƠNG KD</th>
             <th style="${thS};color:var(--success)">TỔNG LƯƠNG<br><span style="font-size:8px;opacity:.6">CB+KD</span></th>
             <th style="${thS};color:var(--warning)">LƯƠNG TT</th><th style="${thS};color:var(--teal)">PHỤ CẤP</th>
@@ -28579,7 +28594,7 @@ function renderPayrollTab(){
           </tr></thead>
           <tbody>${detailRows}</tbody>
           <tfoot><tr style="background:#0f1a28;border-top:2px solid var(--border-strong)">
-            <td colspan="3" style="padding:8px 10px;font-weight:800;color:#FFCC00">∑ TỔNG · ${allPool.length}</td>
+            <td colspan="4" style="padding:8px 10px;font-weight:800;color:#FFCC00">∑ TỔNG · ${allPool.length}</td>
             <td style="padding:8px 3px;text-align:right;font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--success);font-size:11px">${fmtV(totBase)}</td>
             <td style="padding:8px 3px;text-align:right;font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--info);font-size:11px">${fmtV(totBiz)}</td>
             <td style="padding:8px 3px;text-align:right;font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--success);font-size:11px">${fmtV(totSum)}</td>
@@ -28675,22 +28690,85 @@ function renderPayrollTab(){
 }
 
 function exportPayrollTemplate(year,month){
-  const pool=DB.employees.filter(e=>{const eff=getEffectiveStatus(e);if(eff==='exit')return false;if(e.joined){const j=_parseAnyDate(e.joined);if(j>new Date(year,month,0))return false;}return true;}).sort((a,b)=>{const da=(DB.departments||[]).findIndex(d=>d.id===a.deptId);const db=(DB.departments||[]).findIndex(d=>d.id===b.deptId);return da-db||(a.name||'').localeCompare(b.name||'');});
-  const INS=0.235;const mData=(DB.payrollData||{})[year]?.[month]||{};
-  const header=['Mã NV','Họ tên','Bộ phận','Chức danh','Lương cơ bản','Lương kinh doanh','Tổng lương (auto)','Lương thực tế','Phụ cấp','Tổng lương TT (auto)','BHXH+CĐ','Casual','Cluster (%)','Tổng phải chi (auto)'];
-  const rows=pool.map(e=>{const cd=DB.customData[e.id]||{};const pd=mData[e.id]||{};const base=parseFloat(pd.baseSalary)||0;const biz=parseFloat(pd.bizSalary)||0;const act=parseFloat(pd.actualSalary)||0;const allow=parseFloat(pd.allowance)||0;const ins=parseFloat(pd.insurance)||0;const casual=parseFloat(pd.casual)||0;const cluster=parseFloat(pd.cluster)||100;return[e.empId||'',e.name||'',deptName(e.deptId),e.role||'',base,biz,null,act,allow,null,ins,casual,cluster,null];});
+  // Template: chỉ Mã NV + cột lương (không có tên, bộ phận, chức danh)
+  const header=['Mã NV','Lương cơ bản','Lương kinh doanh','Lương thực tế','Phụ cấp','BHXH+CĐ','Casual','Cluster (%)'];
+  const mData=(DB.payrollData||{})[year]?.[month]||{};
+  // Nếu đã có data tháng này → export data hiện tại, nếu không → để trống
+  const existingIds = Object.keys(mData);
+  let rows = [];
+  if(existingIds.length){
+    existingIds.forEach(empId=>{
+      const emp=DB.employees.find(e=>e.id===empId);
+      if(!emp) return;
+      const pd=mData[empId]||{};
+      rows.push([emp.empId||'',parseFloat(pd.baseSalary)||0,parseFloat(pd.bizSalary)||0,parseFloat(pd.actualSalary)||0,parseFloat(pd.allowance)||0,parseFloat(pd.insurance)||0,parseFloat(pd.casual)||0,parseFloat(pd.cluster)||100]);
+    });
+  }
+  // Thêm 20 dòng trống để user điền thêm
+  for(let i=0;i<20;i++) rows.push(['','','','','','','','']);
   const wb=XLSX.utils.book_new();const ws=XLSX.utils.aoa_to_sheet([header,...rows]);
-  for(let r=1;r<=rows.length;r++){const row=r+1;ws[XLSX.utils.encode_cell({c:6,r:r})]={t:'n',f:`E${row}+F${row}`};ws[XLSX.utils.encode_cell({c:9,r:r})]={t:'n',f:`H${row}+I${row}`};ws[XLSX.utils.encode_cell({c:13,r:r})]={t:'n',f:`ROUND((J${row}+K${row}+L${row})*M${row}/100,0)`};}
-  ws['!cols']=[{wch:10},{wch:22},{wch:18},{wch:18},{wch:15},{wch:15},{wch:15},{wch:15},{wch:12},{wch:15},{wch:15},{wch:12},{wch:10},{wch:18}];
-  XLSX.utils.book_append_sheet(wb,ws,`T${month}_${year}`);XLSX.writeFile(wb,`BangLuong_T${month}_${year}_Template.xlsx`);toast('📥 Đã xuất Excel mẫu T'+month+'/'+year,'success');
+  // Cột widths
+  ws['!cols']=[{wch:12},{wch:15},{wch:15},{wch:15},{wch:12},{wch:15},{wch:12},{wch:10}];
+  XLSX.utils.book_append_sheet(wb,ws,`T${month}_${year}`);
+  XLSX.writeFile(wb,`BangLuong_T${month}_${year}_Template.xlsx`);
+  toast('📥 Đã xuất Excel mẫu — chỉ cần điền Mã NV + số tiền','success');
 }
 
 function importPayrollExcel(input,year,month){
   const file=input.files[0];if(!file)return;const reader=new FileReader();
-  reader.onload=function(ev){try{const wb=XLSX.read(ev.target.result,{type:'array'});const ws=wb.Sheets[wb.SheetNames[0]];const data=XLSX.utils.sheet_to_json(ws,{header:1});if(data.length<2){toast('File rỗng','error');return;}
-  if(!DB.payrollData)DB.payrollData={};if(!DB.payrollData[year])DB.payrollData[year]={};if(!DB.payrollData[year][month])DB.payrollData[year][month]={};
-  let imported=0;for(let i=1;i<data.length;i++){const row=data[i];if(!row||!row[0])continue;const empId=String(row[0]).trim();const emp=DB.employees.find(e=>(e.empId||'').trim()===empId);if(!emp)continue;DB.payrollData[year][month][emp.id]={baseSalary:parseFloat(row[4])||0,bizSalary:parseFloat(row[5])||0,actualSalary:parseFloat(row[7])||0,allowance:parseFloat(row[8])||0,insurance:parseFloat(row[10])||0,casual:parseFloat(row[11])||0,cluster:parseFloat(row[12])||100};imported++;}
-  saveData(['payrollData']);toast(`✅ Đã nhập ${imported} dòng T${month}/${year}`,'success');render();}catch(err){toast('Lỗi: '+err.message,'error');}};reader.readAsArrayBuffer(file);input.value='';
+  reader.onload=function(ev){try{
+    const wb=XLSX.read(ev.target.result,{type:'array'});
+    const ws=wb.Sheets[wb.SheetNames[0]];
+    const data=XLSX.utils.sheet_to_json(ws,{header:1});
+    if(data.length<2){toast('File rỗng','error');return;}
+    if(!DB.payrollData)DB.payrollData={};
+    if(!DB.payrollData[year])DB.payrollData[year]={};
+    if(!DB.payrollData[year][month])DB.payrollData[year][month]={};
+
+    // Detect format: new (8 cols) or old (14 cols)
+    const hdr = data[0]||[];
+    const isNewFormat = hdr.length <= 10; // New format: 8 cols (Mã NV + 7 salary cols)
+
+    let imported=0, notFound=[];
+    for(let i=1;i<data.length;i++){
+      const row=data[i];if(!row||!row[0])continue;
+      const empId=String(row[0]).trim();
+      if(!empId) continue;
+      const emp=DB.employees.find(e=>(e.empId||'').trim()===empId);
+      if(!emp){ notFound.push(empId); continue; }
+
+      if(isNewFormat){
+        // New format: Mã NV | Lương CB | Lương KD | Lương TT | Phụ cấp | BHXH+CĐ | Casual | Cluster
+        DB.payrollData[year][month][emp.id]={
+          baseSalary:parseFloat(row[1])||0,
+          bizSalary:parseFloat(row[2])||0,
+          actualSalary:parseFloat(row[3])||0,
+          allowance:parseFloat(row[4])||0,
+          insurance:parseFloat(row[5])||0,
+          casual:parseFloat(row[6])||0,
+          cluster:parseFloat(row[7])||100
+        };
+      } else {
+        // Old format (14 cols): Mã NV | Tên | BP | CD | LCB | LKD | auto | LTT | PC | auto | BHXH | Casual | Cluster | auto
+        DB.payrollData[year][month][emp.id]={
+          baseSalary:parseFloat(row[4])||0,
+          bizSalary:parseFloat(row[5])||0,
+          actualSalary:parseFloat(row[7])||0,
+          allowance:parseFloat(row[8])||0,
+          insurance:parseFloat(row[10])||0,
+          casual:parseFloat(row[11])||0,
+          cluster:parseFloat(row[12])||100
+        };
+      }
+      imported++;
+    }
+    saveData(['payrollData']);
+    let msg = `✅ Đã nhập ${imported} dòng T${month}/${year}`;
+    if(notFound.length) msg += ` · ⚠️ ${notFound.length} mã NV không tìm thấy: ${notFound.slice(0,5).join(', ')}${notFound.length>5?'...':''}`;
+    toast(msg, imported?'success':'error');
+    render();
+  }catch(err){toast('Lỗi: '+err.message,'error');}};
+  reader.readAsArrayBuffer(file);input.value='';
 }
 
 function exportPayrollFull(year,month){
@@ -33380,6 +33458,19 @@ fbAuth.onAuthStateChanged(async user => {
         // Restore docChecklistItems từ localStorage nếu cloud bị thiếu
         if(typeof _loadDocItems==='function') _loadDocItems();
         if(typeof _checkGardenDeadlines==='function') setTimeout(_checkGardenDeadlines, 2000);
+        // Restore Garden from localStorage if cloud is empty
+        try{
+          const lsGarden = JSON.parse(localStorage.getItem('_hrGardenPlan')||'{}');
+          const lsCount = Object.values(lsGarden).reduce((s,yr)=>s+Object.values(yr||{}).reduce((s2,mo)=>s2+(Array.isArray(mo)?mo.length:0),0),0);
+          const dbCount = Object.values(DB.hrGardenPlan||{}).reduce((s,yr)=>s+Object.values(yr||{}).reduce((s2,mo)=>s2+(Array.isArray(mo)?mo.length:0),0),0);
+          if(lsCount > dbCount){
+            DB.hrGardenPlan = lsGarden;
+            console.log('[Garden] ⚠ Restored from localStorage:', lsCount, 'tasks (cloud had', dbCount, ')');
+            if(typeof _saveGardenData==='function') _saveGardenData();
+          } else if(dbCount > 0){
+            localStorage.setItem('_hrGardenPlan', JSON.stringify(DB.hrGardenPlan));
+          }
+        }catch(e){}
         // Load C&B Package docs
         (async()=>{
           try{
@@ -35081,7 +35172,7 @@ function renderHRGarden(main){
     })() : '';
     return `<div style="background:${p.bg};border:1.5px solid ${p.border};border-radius:14px;padding:14px 18px;display:flex;align-items:center;gap:14px;${a.done?'opacity:.7':''}">
       <span style="font-size:36px;cursor:pointer;transition:transform .2s;user-select:none;flex-shrink:0"
-        onclick="(function(){var a=DB.hrGardenPlan['${yr}']['${a._mo}'][${a._idx}];a.done=!a.done;a.doneAt=a.done?Date.now():null;a.doneBy=a.done?(window.currentUserData?.displayName||window.currentUser?.email||'?'):null;saveData(['hrGardenPlan']);render();})()"
+        onclick="(function(){var a=DB.hrGardenPlan['${yr}']['${a._mo}'][${a._idx}];a.done=!a.done;a.doneAt=a.done?Date.now():null;a.doneBy=a.done?(window.currentUserData?.displayName||window.currentUser?.email||'?'):null;_saveGardenData();render();})()"
         onmouseenter="this.style.transform='scale(1.15)'" onmouseleave="this.style.transform=''"
         title="${a.done?'Bỏ hoàn thành':'Đánh dấu hoàn thành'}">${p.icon}</span>
       <div style="flex:1;min-width:0">
@@ -35100,7 +35191,7 @@ function renderHRGarden(main){
       </div>
       ${canEdit?`<div style="display:flex;gap:6px;flex-shrink:0" onclick="event.stopPropagation()">
         <button onclick="_editGardenAction(${yr},${a._mo},${a._idx})" style="background:transparent;border:1px solid var(--border);border-radius:6px;padding:4px 8px;color:var(--ink-muted);cursor:pointer;font-size:11px;user-select:none">✏️</button>
-        <button onclick="if(confirm('Xóa?')){DB.hrGardenPlan['${yr}']['${a._mo}'].splice(${a._idx},1);saveData(['hrGardenPlan']);render();}" style="background:transparent;border:1px solid rgba(229,115,115,.2);border-radius:6px;padding:4px 8px;color:var(--danger);cursor:pointer;font-size:11px;user-select:none">✕</button>
+        <button onclick="if(confirm('Xóa?')){DB.hrGardenPlan['${yr}']['${a._mo}'].splice(${a._idx},1);_saveGardenData();render();}" style="background:transparent;border:1px solid rgba(229,115,115,.2);border-radius:6px;padding:4px 8px;color:var(--danger);cursor:pointer;font-size:11px;user-select:none">✕</button>
       </div>`:''}
     </div>`;
   };
@@ -35178,12 +35269,26 @@ function renderHRGarden(main){
   }
 }
 
+function _saveGardenData(){
+  // localStorage backup (instant)
+  try{ localStorage.setItem('_hrGardenPlan', JSON.stringify(DB.hrGardenPlan||{})); }catch(e){}
+  // Firestore
+  if(!window.fbDb||!window.currentUser) return;
+  const yr = window._gardenF?.year || new Date().getFullYear();
+  const meta = {_syncBy:window.currentUser.uid, _syncAt:Date.now(), _lastSaved:Date.now()};
+  const docId = 'garden_plan_'+yr;
+  window.fbDb.collection('hrdata').doc(docId)
+    .set({...meta, hrGardenPlan:{[yr]:DB.hrGardenPlan[yr]||{}}, _shard:yr}, {merge:false})
+    .then(()=>console.log('[Garden] ✅ Saved', docId))
+    .catch(err=>console.error('[Garden] ❌ Save failed:', err.message));
+}
+
 function _addGardenAction(yr,mo){
   if(!DB.hrGardenPlan) DB.hrGardenPlan={};
   if(!DB.hrGardenPlan[yr]) DB.hrGardenPlan[yr]={};
   if(!DB.hrGardenPlan[yr][mo]) DB.hrGardenPlan[yr][mo]=[];
   DB.hrGardenPlan[yr][mo].push({title:'',detail:'',deadline:'',pic:'',saving:0,done:false});
-  saveData(['hrGardenPlan']);
+  _saveGardenData();
   const idx=DB.hrGardenPlan[yr][mo].length-1;
   render();
   setTimeout(()=>_editGardenAction(yr,mo,idx),120);
@@ -35250,7 +35355,7 @@ function _saveGardenAction(yr,mo,idx){
   a.saving=parseInt(document.getElementById('_ga_saving')?.value)||0;
   a.detail=(document.getElementById('_ga_detail')?.value||'').trim();
   if(!a.done) a.done=false;
-  saveData(['hrGardenPlan']);
+  _saveGardenData();
   document.getElementById('_gardenEditOverlay')?.remove();
   toast('💾 Đã lưu','success');
   render();
