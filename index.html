@@ -28552,10 +28552,11 @@ function renderPayrollTab(){
 
     const depts=DB.departments||[];
     let detailRows='';
-    depts.forEach(dept=>{const emps=poolRegular.filter(e=>e.deptId===dept.id).sort((a,b)=>(a.name||'').localeCompare(b.name||''));detailRows+=renderDeptBlock(dept.name,emps,dept.id);});
-    const noDept=poolRegular.filter(e=>!e.deptId||!depts.find(d=>d.id===e.deptId));
+    depts.forEach(dept=>{const emps=allPool.filter(e=>e.deptId===dept.id).sort((a,b)=>(a.name||'').localeCompare(b.name||''));detailRows+=renderDeptBlock(dept.name,emps,dept.id);});
+    const noDept=allPool.filter(e=>!e.deptId||!depts.find(d=>d.id===e.deptId));
     if(noDept.length) detailRows+=renderDeptBlock('Chưa phân bổ',noDept,null);
-    if(poolTrainee.length) detailRows+=renderDeptBlock('🎓 Trainee / Thực tập',poolTrainee,null);
+    const traineeEmps=allPool.filter(e=>getEffectiveStatus(e)==='trainee');
+    if(traineeEmps.length) detailRows+=renderDeptBlock('🎓 Trainee / Thực tập',traineeEmps,null);
 
     return `
       <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:14px">
@@ -28573,7 +28574,7 @@ function renderPayrollTab(){
         </div>
       </div>
       <div style="font-size:11px;color:var(--ink-muted);margin-bottom:12px">
-        📋 T${pM}/${pY} · ${allPool.length} CBNV (${poolRegular.length} NV + ${poolTrainee.length} Trainee) · ${actHC} có lương
+        📋 T${pM}/${pY} · ${allPool.length} CBNV · ${actHC} có lương
       </div>
       ${overviewTable}
       <div class="card" style="padding:0;overflow:hidden"><div style="overflow-x:auto">
