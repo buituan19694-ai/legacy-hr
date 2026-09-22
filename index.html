@@ -28699,7 +28699,7 @@ function exportPayrollTemplate(year,month){
     existingIds.forEach(empId=>{
       const emp=DB.employees.find(e=>e.id===empId);if(!emp)return;
       const pd=mData[empId]||{};
-      rows.push([emp.empId||'',parseFloat(pd.actualSalary)||0,parseFloat(pd.allowance)||0,parseFloat(pd.insurance)||0,parseFloat(pd.casual)||0,parseFloat(pd.cluster)||100]);
+      rows.push([emp.code||emp.empId||'',parseFloat(pd.actualSalary)||0,parseFloat(pd.allowance)||0,parseFloat(pd.insurance)||0,parseFloat(pd.casual)||0,parseFloat(pd.cluster)||100]);
     });
   }
   for(let i=0;i<20;i++)rows.push(['','','','','','']);
@@ -28711,19 +28711,34 @@ function exportPayrollTemplate(year,month){
 }
 
 function importPayrollExcel(input,year,month){
-  const file=input.files[0];if(!file)return;const reader=new FileReader();
+  console.log('[PayrollImport] Called! year=',year,'month=',month,'files=',input?.files?.length);
+  const file=input.files[0];
+  if(!file){console.log('[PayrollImport] No file selected');return;}
+  console.log('[PayrollImport] File:', file.name, file.size, 'bytes');
+  const reader=new FileReader();
   reader.onload=function(ev){try{
     const wb=XLSX.read(ev.target.result,{type:'array'});
     const ws=wb.Sheets[wb.SheetNames[0]];
     const data=XLSX.utils.sheet_to_json(ws,{header:1});
     if(data.length<2){toast('File rỗng','error');return;}
     if(!DB.payrollData)DB.payrollData={};if(!DB.payrollData[year])DB.payrollData[year]={};if(!DB.payrollData[year][month])DB.payrollData[year][month]={};
+    if(!DB.employees||!DB.employees.length){toast('⚠️ DB chưa load xong, vui lòng đợi vài giây rồi thử lại','error');return;}
     const hdr=(data[0]||[]).map(h=>String(h||'').trim().toLowerCase());
     const colCount=hdr.filter(h=>h).length;
+    console.log('[PayrollImport] rows:', data.length, 'cols:', colCount, 'employees in DB:', DB.employees.length);
+    console.log('[PayrollImport] Sample empIds in DB:', DB.employees.slice(0,5).map(e=>e.code||e.empId));
+    console.log('[PayrollImport] Sample IDs in Excel:', data.slice(1,6).map(r=>r[0]));
     const findEmp=(rawId)=>{
       const id=String(rawId||'').trim();if(!id)return null;
-      let emp=DB.employees.find(e=>(e.empId||'').trim()===id);if(emp)return emp;
-      emp=DB.employees.find(e=>(e.empId||'').toUpperCase()===id.toUpperCase());if(emp)return emp;
+      // 1. Match theo code (Mã NV chính — MG00732)
+      let emp=DB.employees.find(e=>(e.code||'').trim()===id);if(emp)return emp;
+      // 2. Case-insensitive code
+      emp=DB.employees.find(e=>(e.code||'').toUpperCase()===id.toUpperCase());if(emp)return emp;
+      // 3. Match theo empId (legacy)
+      emp=DB.employees.find(e=>(e.empId||'').trim()===id);if(emp)return emp;
+      // 4. Match theo internal id
+      emp=DB.employees.find(e=>e.id===id);if(emp)return emp;
+      // 5. Match theo tên
       emp=DB.employees.find(e=>(e.name||'').trim()===id);return emp||null;
     };
     let imported=0,notFound=[];
@@ -28753,7 +28768,7 @@ function exportPayrollFull(year,month){
   const pool=DB.employees.filter(e=>{const eff=getEffectiveStatus(e);if(eff==='exit')return false;if(e.joined){const j=_parseAnyDate(e.joined);if(j>new Date(year,month,0))return false;}return true;}).sort((a,b)=>{const da=(DB.departments||[]).findIndex(d=>d.id===a.deptId);const db=(DB.departments||[]).findIndex(d=>d.id===b.deptId);return da-db||(a.name||'').localeCompare(b.name||'');});
   const INS=0.235;const mData=(DB.payrollData||{})[year]?.[month]||{};
   const header=['Mã NV','Họ tên','Bộ phận','Chức danh','Lương cơ bản','Lương KD','Tổng lương','Lương thực tế','Phụ cấp','Tổng LTT','BHXH+CĐ','Casual','Cluster (%)','Tổng phải chi'];
-  const rows=pool.map(e=>{const cd=DB.customData[e.id]||{};const pd=mData[e.id]||{};const base=parseFloat(pd.baseSalary)||0;const biz=parseFloat(pd.bizSalary)||0;const sum=base+biz;const act=parseFloat(pd.actualSalary)||0;const allow=parseFloat(pd.allowance)||0;const actSum=act+allow;const ins=parseFloat(pd.insurance)||0;const casual=parseFloat(pd.casual)||0;const cluster=parseFloat(pd.cluster)||100;const grand=Math.round((actSum+ins+casual)*cluster/100);return[e.empId||'',e.name||'',deptName(e.deptId),e.role||'',base,biz,sum,act,allow,actSum,ins,casual,cluster,grand];});
+  const rows=pool.map(e=>{const cd=DB.customData[e.id]||{};const pd=mData[e.id]||{};const base=parseFloat(pd.baseSalary)||0;const biz=parseFloat(pd.bizSalary)||0;const sum=base+biz;const act=parseFloat(pd.actualSalary)||0;const allow=parseFloat(pd.allowance)||0;const actSum=act+allow;const ins=parseFloat(pd.insurance)||0;const casual=parseFloat(pd.casual)||0;const cluster=parseFloat(pd.cluster)||100;const grand=Math.round((actSum+ins+casual)*cluster/100);return[e.code||e.empId||'',e.name||'',deptName(e.deptId),e.role||'',base,biz,sum,act,allow,actSum,ins,casual,cluster,grand];});
   const wb=XLSX.utils.book_new();const ws=XLSX.utils.aoa_to_sheet([header,...rows]);ws['!cols']=[{wch:10},{wch:22},{wch:18},{wch:18},{wch:15},{wch:15},{wch:15},{wch:15},{wch:12},{wch:15},{wch:15},{wch:12},{wch:10},{wch:18}];
   XLSX.utils.book_append_sheet(wb,ws,`BangLuong_T${month}`);XLSX.writeFile(wb,`BangLuong_T${month}_${year}.xlsx`);toast('📊 Đã xuất bảng lương T'+month+'/'+year,'success');
 }
@@ -28780,7 +28795,7 @@ function exportPayrollFullYear(year){
     const pool=DB.employees.filter(e=>{const eff=getEffectiveStatus(e);if(eff==='exit')return false;if(e.joined){const j=_parseAnyDate(e.joined);if(j>new Date(year,mi,0))return false;}return true;}).sort((a,b)=>{const da=(DB.departments||[]).findIndex(d=>d.id===a.deptId);const db=(DB.departments||[]).findIndex(d=>d.id===b.deptId);return da-db||(a.name||'').localeCompare(b.name||'');});
     const mData=(DB.payrollData||{})[year]?.[mi]||{};
     const header=['Mã NV','Họ tên','Bộ phận','Chức danh','Lương CB','Lương KD','Tổng lương','Lương TT','Phụ cấp','Tổng LTT','BHXH+CĐ','Casual','Cluster (%)','Tổng chi'];
-    const rows=pool.map(e=>{const cd=DB.customData[e.id]||{};const pd=mData[e.id]||{};const base=parseFloat(pd.baseSalary)||0;const biz=parseFloat(pd.bizSalary)||0;const sum=base+biz;const act=parseFloat(pd.actualSalary)||0;const allow=parseFloat(pd.allowance)||0;const actSum=act+allow;const ins=Math.round(act*INS);const casual=parseFloat(pd.casual)||0;const cluster=parseFloat(pd.cluster)||100;const grand=Math.round((actSum+ins+casual)*cluster/100);return[e.empId||'',e.name||'',deptName(e.deptId),e.role||'',base,biz,sum,act,allow,actSum,ins,casual,cluster,grand];});
+    const rows=pool.map(e=>{const cd=DB.customData[e.id]||{};const pd=mData[e.id]||{};const base=parseFloat(pd.baseSalary)||0;const biz=parseFloat(pd.bizSalary)||0;const sum=base+biz;const act=parseFloat(pd.actualSalary)||0;const allow=parseFloat(pd.allowance)||0;const actSum=act+allow;const ins=Math.round(act*INS);const casual=parseFloat(pd.casual)||0;const cluster=parseFloat(pd.cluster)||100;const grand=Math.round((actSum+ins+casual)*cluster/100);return[e.code||e.empId||'',e.name||'',deptName(e.deptId),e.role||'',base,biz,sum,act,allow,actSum,ins,casual,cluster,grand];});
     const ws=XLSX.utils.aoa_to_sheet([header,...rows]);ws['!cols']=header.map(()=>({wch:15}));
     XLSX.utils.book_append_sheet(wb,ws,`T${mi}`);
   }
