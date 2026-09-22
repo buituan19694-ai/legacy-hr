@@ -28748,12 +28748,14 @@ function importPayrollExcel(input,year,month){
       const cd=DB.customData[emp.id]||{};
       const autoBase=parseInt(cd.baseSalary)||0;
       const autoBiz=parseInt(cd.bonusSalary)||0;
+      const rawCluster=parseFloat(row[colCount<=7?5:colCount<=9?7:12]);
+      const cluster = (!rawCluster||rawCluster===0) ? 100 : (rawCluster<=2 ? Math.round(rawCluster*100) : rawCluster);
       if(colCount<=7){
-        DB.payrollData[year][month][emp.id]={baseSalary:autoBase,bizSalary:autoBiz,actualSalary:parseFloat(row[1])||0,allowance:parseFloat(row[2])||0,insurance:parseFloat(row[3])||0,casual:parseFloat(row[4])||0,cluster:parseFloat(row[5])||100};
+        DB.payrollData[year][month][emp.id]={baseSalary:autoBase,bizSalary:autoBiz,actualSalary:parseFloat(row[1])||0,allowance:parseFloat(row[2])||0,insurance:parseFloat(row[3])||0,casual:parseFloat(row[4])||0,cluster:cluster};
       }else if(colCount<=9){
-        DB.payrollData[year][month][emp.id]={baseSalary:parseFloat(row[1])||autoBase,bizSalary:parseFloat(row[2])||autoBiz,actualSalary:parseFloat(row[3])||0,allowance:parseFloat(row[4])||0,insurance:parseFloat(row[5])||0,casual:parseFloat(row[6])||0,cluster:parseFloat(row[7])||100};
+        DB.payrollData[year][month][emp.id]={baseSalary:parseFloat(row[1])||autoBase,bizSalary:parseFloat(row[2])||autoBiz,actualSalary:parseFloat(row[3])||0,allowance:parseFloat(row[4])||0,insurance:parseFloat(row[5])||0,casual:parseFloat(row[6])||0,cluster:cluster};
       }else{
-        DB.payrollData[year][month][emp.id]={baseSalary:parseFloat(row[4])||autoBase,bizSalary:parseFloat(row[5])||autoBiz,actualSalary:parseFloat(row[7])||0,allowance:parseFloat(row[8])||0,insurance:parseFloat(row[10])||0,casual:parseFloat(row[11])||0,cluster:parseFloat(row[12])||100};
+        DB.payrollData[year][month][emp.id]={baseSalary:parseFloat(row[4])||autoBase,bizSalary:parseFloat(row[5])||autoBiz,actualSalary:parseFloat(row[7])||0,allowance:parseFloat(row[8])||0,insurance:parseFloat(row[10])||0,casual:parseFloat(row[11])||0,cluster:cluster};
       }
       imported++;
     }
