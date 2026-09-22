@@ -28344,7 +28344,8 @@ function renderPayrollTab(){
     const allow=parseFloat(pd.allowance)||0;
     const actSum=act+allow;
     const ins=parseFloat(pd.insurance)||0; // BHXH+CĐ do user nhập tay
-    const cluster=parseFloat(pd.cluster)||100;
+    const rawCluster=parseFloat(pd.cluster);
+    const cluster = (!rawCluster||rawCluster===0) ? 100 : (rawCluster<=2 ? Math.round(rawCluster*100) : rawCluster);
     return {base,biz,sum,act,allow,actSum,ins,cluster};
   };
 
