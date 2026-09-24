@@ -1881,6 +1881,7 @@ if(!DB.manningPlan  || Array.isArray(DB.manningPlan))  DB.manningPlan  = {};
 if(!DB.hrBudget     || Array.isArray(DB.hrBudget))     DB.hrBudget     = {};
 if(!DB.manningActual|| Array.isArray(DB.manningActual))DB.manningActual= {};
 if(!DB.payrollData  || Array.isArray(DB.payrollData))  DB.payrollData  = {};
+if(!DB.payrollLocked){try{DB.payrollLocked=JSON.parse(localStorage.getItem('_payrollLocked')||'{}')}catch(e){DB.payrollLocked={}}}
 if(!DB.promoTypes   || Array.isArray(DB.promoTypes))   DB.promoTypes   = {};
 // P&L Review storage
 if(!DB.plRevenue    || Array.isArray(DB.plRevenue))    DB.plRevenue    = {};
@@ -4593,17 +4594,29 @@ function _plRenderProductivity(el, year, month){
         // Compute 12 months data for both years
         const computeMonth = (y, m) => {
           const r = _plGetRevenueMonth(y, m);
-          const a = _plGetPayrollActualMonth(y, m);
+          const a = _plGetPayrollActualMonth(y, m); // Forecast
           const cas = _plGetCasualCost(y, m);
           const intern = _plGetInternCost(y, m);
-          const totalLab = a.total + cas.total + intern.totalCost;
+          // Actual từ bảng lương (payrollData)
+          const pd = (DB.payrollData||{})[y]?.[m+1]||{}; // payrollData dùng month 1-indexed
+          let actualTotal = 0;
+          Object.values(pd).forEach(emp=>{
+            const actSum = (parseFloat(emp.actualSalary)||0) + (parseFloat(emp.allowance)||0);
+            const ins = parseFloat(emp.insurance)||0;
+            const rawCluster = parseFloat(emp.cluster);
+            const cluster = (!rawCluster||rawCluster===0)?100:(rawCluster<=2?Math.round(rawCluster*100):rawCluster);
+            actualTotal += Math.round((actSum + ins) * cluster / 100);
+          });
+          const totalLabActual = actualTotal + cas.total + intern.totalCost;
+          const totalLabForecast = a.total + cas.total + intern.totalCost;
           return {
             revenue: r.actual,
             revenueBudget: r.budget,
-            payroll: a.total,
+            payroll: a.total, // Forecast
+            payrollActual: actualTotal, // Actual từ bảng lương
             hc: a.hc,
-            totalLabor: totalLab,
-            laborPct: r.actual > 0 ? (totalLab/r.actual*100) : null,
+            totalLabor: actualTotal > 0 ? totalLabActual : totalLabForecast, // Ưu tiên actual nếu có
+            laborPct: r.actual > 0 ? ((actualTotal>0?totalLabActual:totalLabForecast)/r.actual*100) : null,
             revPerEmp: a.hc > 0 ? r.actual/a.hc : null,
           };
         };
@@ -4661,7 +4674,7 @@ function _plRenderProductivity(el, year, month){
           const cur = valuesCurArr;
           const prev = valuesPrevArr;
           // Determine "lower is better" for Labor Cost & Payroll
-          const lowerIsBetter = label === 'Labor Cost %' || label === 'Payroll' || label === 'Total Labor';
+          const lowerIsBetter = label === 'Labor Cost %' || label.includes('Payroll') || label.includes('Total Labor');
 
           return `
             <tr style="background:rgba(212,165,116,.05)">
@@ -4710,14 +4723,22 @@ function _plRenderProductivity(el, year, month){
                 _plFmtMoney, 'đ', false
               )}
               ${renderMetricRow(
-                'Payroll',
+                'Payroll Forecast',
                 curYearData.map(d=>d.payroll),
                 prevYearData.map(d=>d.payroll),
                 ytdCur.payroll, ytdPrev.payroll,
                 _plFmtMoney, 'đ', false
               )}
               ${renderMetricRow(
-                'Total Labor (Payroll + Casual + Intern)',
+                'Payroll Actual',
+                curYearData.map(d=>d.payrollActual),
+                prevYearData.map(d=>d.payrollActual),
+                curYearData.slice(0,month+1).reduce((s,d)=>s+(d.payrollActual||0),0),
+                prevYearData.slice(0,month+1).reduce((s,d)=>s+(d.payrollActual||0),0),
+                _plFmtMoney, 'đ', false
+              )}
+              ${renderMetricRow(
+                'Total Labor (Actual + Casual + Intern)',
                 curYearData.map(d=>d.totalLabor),
                 prevYearData.map(d=>d.totalLabor),
                 ytdCur.totalLabor, ytdPrev.totalLabor,
@@ -17490,6 +17511,18 @@ function calcJobProgressPct(jobId, positions){
 }
 
 /* ---------- View + period state ---------- */
+function _addHoteljobLink(jobId){
+  const link = prompt('Paste link Hoteljob cho vị trí này:');
+  if(!link) return;
+  const j = DB.jobs.find(x=>x.id===jobId);
+  if(!j) return;
+  j.hoteljobLink = link.trim();
+  j._savedAt = Date.now();
+  saveData();
+  toast('🔗 Đã thêm link Hoteljob','success');
+  render();
+}
+
 function setRecView(view){
   window._recView = view;
   sessionStorage.setItem('_recView', view);
@@ -19959,6 +19992,8 @@ function renderRecruitment(main){
                 <td>
                   <div class="cell-emp-name">${escapeHtml(j.title)}</div>
                   <div class="cell-emp-meta" style="text-transform:capitalize">${j.level||'mid'} · ${(()=>{ const b=j.baseSalary||j.salary||0; const x=j.bonusSalary||0; if(!b&&!x) return '—'; if(!x) return fmtMoney(b)+' đ'; return fmtMoney(b)+' + '+fmtMoney(x)+' = <b>'+fmtMoney(b+x)+'</b> đ'; })()}</div>
+                  ${j.hoteljobLink?`<div onclick="event.stopPropagation()"><a href="${escapeHtml(j.hoteljobLink)}" target="_blank" style="font-size:10px;color:var(--info);text-decoration:none;display:inline-flex;align-items:center;gap:3px" title="Xem trên Hoteljob">🔗 Hoteljob</a></div>`
+                  :`<div onclick="event.stopPropagation()" style="font-size:10px;color:var(--ink-muted);cursor:pointer;opacity:.5" onclick="event.stopPropagation();_addHoteljobLink('${j.id}')" title="Thêm link Hoteljob">+ Link Hoteljob</div>`}
                 </td>
                 <td>${deptName(j.deptId)}</td>
                 <td style="font-family:'JetBrains Mono',monospace;font-weight:600;text-align:center" title="Đã tuyển / Cần tuyển">
@@ -21522,6 +21557,7 @@ function editJob(id){
       </select></div>
 
       <div class="field full"><label>Hiring Manager</label><input id="f_manager" value="${escapeHtml(j.hiringManager||'')}" placeholder="Người phụ trách tuyển vị trí này"></div>
+      <div class="field full"><label>🔗 Link đăng tuyển Hoteljob</label><input id="f_hoteljobLink" value="${escapeHtml(j.hoteljobLink||'')}" placeholder="https://www.hoteljob.vn/... (paste link đăng tuyển)"></div>
       <div class="field full"><label>Yêu cầu / Ghi chú</label><textarea id="f_notes" placeholder="Mô tả yêu cầu công việc, kỹ năng cần thiết...">${escapeHtml(j.notes||'')}</textarea></div>
     </div>
     <div class="modal-actions">
@@ -21553,6 +21589,7 @@ function saveJob(id, isNew){
     priority: $s('f_priority'),
     status: $s('f_status'),
     hiringManager: $('#f_manager').value.trim(),
+    hoteljobLink: ($('#f_hoteljobLink')?.value||'').trim(),
     notes: $('#f_notes').value.trim(),
   };
   if((data.status === 'filled' || data.status === 'closed') && !data.closedDate){
@@ -28569,16 +28606,32 @@ function renderPayrollTab(){
           <button onclick="window._salF.payrollView='year';render()" class="btn" style="font-size:12px;margin-left:6px">📅 Full Year</button>
         </div>
         <div style="display:flex;gap:8px">
+          ${(()=>{
+            if(!DB.payrollLocked) DB.payrollLocked={};
+            const isLocked = DB.payrollLocked[pY+'_'+pM];
+            return `<button class="btn" style="font-size:12px;${isLocked?'background:var(--danger);color:#fff;border-color:var(--danger)':''}" onclick="if(!DB.payrollLocked)DB.payrollLocked={};DB.payrollLocked['${pY}_${pM}']=!DB.payrollLocked['${pY}_${pM}'];try{localStorage.setItem('_payrollLocked',JSON.stringify(DB.payrollLocked))}catch(e){}render()">
+              ${isLocked?'🔒 T'+pM+' đang khóa':'🔓 Khóa T'+pM}
+            </button>`;
+          })()}
           <button class="btn" onclick="exportPayrollTemplate(${pY},${pM})" style="font-size:12px">📥 Xuất Excel mẫu</button>
           <label class="btn" style="cursor:pointer;font-size:12px">📤 Nhập Excel<input type="file" accept=".xlsx,.xls" style="display:none" onchange="importPayrollExcel(this,${pY},${pM})"></label>
           <button class="btn" onclick="exportPayrollFull(${pY},${pM})" style="font-size:12px">📊 Xuất bảng lương</button>
         </div>
       </div>
+      ${(()=>{
+        if(!DB.payrollLocked) DB.payrollLocked={};
+        const isLocked = DB.payrollLocked[pY+'_'+pM];
+        if(!isLocked) return '';
+        return `<div style="text-align:center;padding:8px;background:rgba(229,115,115,.1);border:1px solid rgba(229,115,115,.3);border-radius:8px;margin-bottom:12px;font-size:12px;color:var(--danger);font-weight:600">
+          🔒 Bảng lương T${pM}/${pY} đã khóa — ấn "🔒 T${pM} đang khóa" để mở lại
+        </div>
+        <style>.payroll-detail input,.payroll-detail select{pointer-events:none !important;opacity:.6 !important;background:transparent !important;border-color:transparent !important}</style>`;
+      })()}
       <div style="font-size:11px;color:var(--ink-muted);margin-bottom:12px">
         📋 T${pM}/${pY} · ${allPool.length} CBNV · ${actHC} có lương
       </div>
       ${overviewTable}
-      <div class="card" style="padding:0;overflow:hidden"><div style="overflow-x:auto">
+      <div class="card payroll-detail" style="padding:0;overflow:hidden"><div style="overflow-x:auto">
         <table style="border-collapse:collapse;font-size:12px;width:100%">
           <thead><tr style="background:var(--bg-elev);border-bottom:2px solid var(--border-strong)">
             <th style="${thS};text-align:left;min-width:60px">MÃ NV</th>
@@ -28712,6 +28765,11 @@ function exportPayrollTemplate(year,month){
 }
 
 function importPayrollExcel(input,year,month){
+  // Check lock
+  if(DB.payrollLocked && DB.payrollLocked[year+'_'+month]){
+    toast('🔒 Bảng lương T'+month+'/'+year+' đã khóa — mở khóa trước khi nhập','error');
+    input.value=''; return;
+  }
   console.log('[PayrollImport] Called! year=',year,'month=',month,'files=',input?.files?.length);
   const file=input.files[0];
   if(!file){console.log('[PayrollImport] No file selected');return;}
