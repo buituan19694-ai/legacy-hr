@@ -1265,6 +1265,8 @@ function _pushDynamicKey(key, meta){
   }
 
   if(key === 'casuals'){
+    // localStorage backup
+    try{localStorage.setItem('_casualsData',JSON.stringify(DB.casuals||[]));}catch(e){}
     const arr = DB.casuals || [];
     const byMonth = {};
     arr.forEach(r=>{ const m=_recMonth(r); (byMonth[m]=byMonth[m]||[]).push(r); });
@@ -1842,6 +1844,13 @@ if(!Array.isArray(DB.leaves))             DB.leaves             = [];
 if(!Array.isArray(DB.kpiReviews))         DB.kpiReviews         = [];
 if(!Array.isArray(DB.rewardRecords))      DB.rewardRecords      = [];
 if(!Array.isArray(DB.casuals))            DB.casuals            = [];
+// Restore casuals workers từ localStorage nếu cloud thiếu
+try{
+  const lsC=JSON.parse(localStorage.getItem('_casualsData')||'[]');
+  const lsW=lsC.reduce((s,r)=>s+((r.workers||[]).length),0);
+  const dbW=(DB.casuals||[]).reduce((s,r)=>s+((r.workers||[]).length),0);
+  if(lsW>dbW&&lsW>0) DB.casuals=lsC;
+}catch(e){}
 if(!Array.isArray(DB.candidates))         DB.candidates         = [];
 if(!Array.isArray(DB.promotions))         DB.promotions         = [];
 if(!Array.isArray(DB.disciplineRecords))  DB.disciplineRecords  = [];
@@ -1893,6 +1902,7 @@ if(!DB.hrGardenPlan || Array.isArray(DB.hrGardenPlan)){
 if(!DB.cbPackageDocs || !Array.isArray(DB.cbPackageDocs)){
   try{ DB.cbPackageDocs = JSON.parse(localStorage.getItem('_cbPackageDocs')||'[]'); }catch(e){ DB.cbPackageDocs=[]; }
 }
+if(!DB.casualDirectory){try{DB.casualDirectory=JSON.parse(localStorage.getItem('_casualDirectory')||'{}');}catch(e){DB.casualDirectory={};}}
 if(!DB.plConfig     || Array.isArray(DB.plConfig))     DB.plConfig     = {};
 // Training KPI config — {monthlyHoursTarget: 1} mặc định 1h/tháng/NV
 if(!DB.trainingKpi  || Array.isArray(DB.trainingKpi))  DB.trainingKpi  = {monthlyHoursTarget: 1};
@@ -30552,44 +30562,99 @@ function renderCasual(main){
       </div>
     </div>
 
-    <!-- Detail table -->
+    <!-- Detail table: theo tháng → bộ phận → NV casual -->
     <div class="card">
       <div class="card-head"><div>
-        <div class="card-title">📋 Chi tiết <em>bản ghi Casual</em></div>
-        <div class="card-sub">${recs.length} bản ghi${cf.month?' · T'+cf.month:''}${cf.dept?' · '+deptName(cf.dept):''}</div>
-      </div></div>
-      ${recs.length===0
-        ? `<div class="empty-state"><h3>👷 Chưa có bản ghi nào</h3><p>Bấm "+ Thêm bản ghi" để ghi nhận lao động casual</p><button class="btn btn-primary" onclick="editCasual()">${ICONS.plus} Thêm bản ghi</button></div>`
-        : `<div style="overflow-x:auto"><table class="tbl">
-            <thead><tr>
-              <th>Tháng</th><th>Phòng ban</th><th>Mô tả công việc</th>
-              <th style="text-align:center">${_lang==="en"?"Qty":"Số lượng"}</th>
-              <th style="text-align:center">${_lang==="en"?"Hours":"Số giờ"}</th>
-              <th style="text-align:center">Tổng tiền (VNĐ)</th>
-              <th>${_lang==="en"?"Notes":"Ghi chú"}</th><th></th>
-            </tr></thead>
-            <tbody>
-              ${[...recs].sort((a,b)=>b.year*100+b.month - (a.year*100+a.month)).map(r=>{
-                const cost=r.total||((r.qty||0)*(r.hours||0)*(r.rate||0));
-                return `<tr>
-                  <td style="font-family:'JetBrains Mono',monospace;white-space:nowrap">T${r.month}/${r.year}</td>
-                  <td><span class="badge" style="background:var(--bg-elev)">${escapeHtml(deptName(r.deptId))}</span></td>
-                  <td>${escapeHtml(r.desc||'')}</td>
-                  <td style="text-align:center;font-family:'JetBrains Mono',monospace;font-weight:600">${r.qty||0}</td>
-                  <td style="text-align:center;font-family:'JetBrains Mono',monospace">${r.hours||0}</td>
-                  <td style="text-align:center;font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--accent)">${fmtNum(cost)}</td>
-                  <td style="font-size:12px;color:var(--ink-muted)">${escapeHtml(r.notes||'')}</td>
-                  <td><div class="row-actions">
-                    <button class="btn btn-icon" onclick="editCasual('${r.id}')">${ICONS.edit}</button>
-                    <button class="btn btn-icon btn-danger" onclick="deleteCasual('${r.id}')">${ICONS.trash}</button>
-                  </div></td>
-                </tr>`;
-              }).join('')}
-            </tbody>
-          </table></div>`
-      }
+        <div class="card-title">📋 Chi tiết <em>Casual</em> theo tháng</div>
+        <div class="card-sub">${recs.length} bản ghi · Click tháng để xem chi tiết NV</div>
+      </div>
+      <div style="display:flex;gap:8px">
+        <button class="btn" onclick="_casualExportMonth(${cf.year},${cf.month||new Date().getMonth()+1})" style="font-size:12px">📊 Xuất tháng</button>
+        <button class="btn" onclick="_casualExportFullYear(${cf.year})" style="font-size:12px">📅 Xuất cả năm</button>
+        <label class="btn" style="cursor:pointer;font-size:12px">📤 Nhập Excel<input type="file" accept=".xlsx,.xls" style="display:none" onchange="_casualImportExcel(this,${cf.year})"></label>
+      </div>
+      </div>
+      ${(()=>{
+        // Group by month → dept → workers
+        const MN=['T1','T2','T3','T4','T5','T6','T7','T8','T9','T10','T11','T12'];
+        const months = {};
+        recs.forEach(r=>{
+          const mk=r.month;
+          if(!months[mk]) months[mk]={total:0,depts:{}};
+          const dk=r.deptId||'other';
+          if(!months[mk].depts[dk]) months[mk].depts[dk]={name:deptName(dk),qty:0,hours:0,total:0,workers:[]};
+          const cost=r.total||0;
+          months[mk].depts[dk].qty+=(r.qty||0);
+          months[mk].depts[dk].hours+=(r.hours||0);
+          months[mk].depts[dk].total+=cost;
+          months[mk].total+=cost;
+          // Workers từ casualWorkers array (nếu có)
+          if(r.workers && Array.isArray(r.workers)){
+            r.workers.forEach(w=>months[mk].depts[dk].workers.push({...w, _recId:r.id}));
+          }
+        });
+
+        const selMonth = cf._detailMonth || Object.keys(months).sort((a,b)=>b-a)[0] || (new Date().getMonth()+1);
+
+        // Month tabs
+        const monthTabs = MN.map((_,i)=>{
+          const mi=i+1;
+          const hasData=months[mi];
+          return `<button onclick="window._casualFilter._detailMonth=${mi};render()"
+            style="padding:5px 10px;border-radius:6px;border:1px solid ${selMonth==mi?'var(--accent)':'var(--border)'};background:${selMonth==mi?'var(--accent)':'transparent'};color:${selMonth==mi?'var(--bg)':'var(--ink-dim)'};font-size:12px;font-weight:${selMonth==mi?'700':'400'};cursor:pointer;user-select:none;position:relative">
+            ${MN[i]}${hasData?'<span style="position:absolute;top:-2px;right:-2px;width:6px;height:6px;background:var(--success);border-radius:50%"></span>':''}
+          </button>`;
+        }).join('');
+
+        const md = months[selMonth];
+        if(!md) return `<div style="padding:10px 18px 14px"><div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:14px">${monthTabs}</div><div style="text-align:center;padding:30px;color:var(--ink-muted)">Chưa có dữ liệu casual tháng ${selMonth}</div></div>`;
+
+        // Dept blocks
+        const deptBlocks = Object.entries(md.depts).map(([dk,dd])=>{
+          const workerRows = dd.workers.length ? dd.workers.map((w,wi)=>`
+            <tr style="border-bottom:1px solid var(--border)">
+              <td style="padding:5px 8px;font-family:'JetBrains Mono',monospace;font-size:11px">${escapeHtml(w.cccd||'—')}</td>
+              <td style="padding:5px 8px;font-size:12px;font-weight:500">${escapeHtml(w.name||'—')}</td>
+              <td style="padding:5px 8px;font-size:11px;color:var(--ink-dim)">${escapeHtml(w.dob||'—')}</td>
+              <td style="padding:5px 8px;font-size:11px;color:var(--ink-dim)">${escapeHtml(w.taxCode||'—')}</td>
+              <td style="padding:5px 8px;font-size:11px">${escapeHtml(w.workDate||'—')}</td>
+              <td style="padding:5px 8px;text-align:right;font-family:'JetBrains Mono',monospace;font-weight:600;color:var(--accent)">${fmtNum(w.amount||0)}</td>
+              <td style="padding:5px 4px"><button onclick="_casualDelWorker('${w._recId}',${wi})" style="background:transparent;border:1px solid rgba(229,115,115,.2);border-radius:4px;color:var(--danger);font-size:10px;padding:2px 6px;cursor:pointer">✕</button></td>
+            </tr>`).join('') : '<tr><td colspan="7" style="padding:12px;text-align:center;color:var(--ink-muted);font-size:12px">Chưa có NV casual · Ấn "+ Thêm NV" bên dưới</td></tr>';
+
+          return `<div style="margin-bottom:16px">
+            <div style="padding:8px 12px;background:rgba(212,165,116,.06);border-radius:8px 8px 0 0;display:flex;justify-content:space-between;align-items:center">
+              <div>
+                <span style="font-weight:700;font-size:12px;color:var(--accent)">${escapeHtml(dd.name)}</span>
+                <span style="font-size:11px;color:var(--ink-muted);margin-left:8px">${dd.workers.length} NV · ${fmtNum(dd.total)} đ</span>
+              </div>
+              <button onclick="_casualAddWorker('${dk}',${cf.year},${selMonth})" class="btn" style="font-size:11px;padding:4px 12px">+ Thêm NV</button>
+            </div>
+            <div style="overflow-x:auto;border:1px solid var(--border);border-top:0;border-radius:0 0 8px 8px">
+              <table style="border-collapse:collapse;width:100%;font-size:12px">
+                <thead><tr style="background:var(--bg-elev)">
+                  <th style="padding:6px 8px;text-align:left;font-size:10px;font-weight:700;color:var(--ink-muted)">SỐ CCCD</th>
+                  <th style="padding:6px 8px;text-align:left;font-size:10px;font-weight:700;color:var(--ink-muted)">HỌ TÊN</th>
+                  <th style="padding:6px 8px;text-align:left;font-size:10px;font-weight:700;color:var(--ink-muted)">NGÀY SINH</th>
+                  <th style="padding:6px 8px;text-align:left;font-size:10px;font-weight:700;color:var(--ink-muted)">MÃ SỐ THUẾ</th>
+                  <th style="padding:6px 8px;text-align:left;font-size:10px;font-weight:700;color:var(--ink-muted)">NGÀY LÀM</th>
+                  <th style="padding:6px 8px;text-align:right;font-size:10px;font-weight:700;color:var(--accent)">SỐ TIỀN</th>
+                  <th style="width:30px"></th>
+                </tr></thead>
+                <tbody>${workerRows}</tbody>
+              </table>
+            </div>
+          </div>`;
+        }).join('');
+
+        return `<div style="padding:10px 18px 18px">
+          <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:14px">${monthTabs}</div>
+          <div style="font-size:12px;color:var(--ink-dim);margin-bottom:12px">T${selMonth}/${cf.year} · Tổng: <b style="color:var(--accent)">${fmtNum(md.total)} đ</b> · ${Object.keys(md.depts).length} bộ phận</div>
+          ${deptBlocks}
+        </div>`;
+      })()}
     </div>
-    `}
+        `}
   `;
 
   if(cf.tab!=='analysis'){
@@ -30846,6 +30911,197 @@ function renderCasualAnalysis(){
       </div>
     </div>
   `;
+}
+
+// ── Casual Worker Management ──
+function _casualAddWorker(deptId, year, month){
+  // CCCD lookup overlay
+  if(!DB.casualDirectory) DB.casualDirectory = {};
+  let ov=document.getElementById('_casualWorkerOv');
+  if(ov)ov.remove();
+  ov=document.createElement('div');
+  ov.id='_casualWorkerOv';
+  ov.style.cssText='position:fixed;inset:0;z-index:500;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.7);backdrop-filter:blur(4px);padding:20px';
+  ov.innerHTML=`
+    <div style="background:var(--bg-elev);border:1px solid var(--border-strong);border-radius:14px;padding:28px;max-width:520px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,.5)">
+      <div style="font-family:'Fraunces',serif;font-size:18px;font-weight:500;margin-bottom:16px">👷 Thêm <em style="color:var(--accent)">NV Casual</em></div>
+      <div style="display:flex;flex-direction:column;gap:12px">
+        <div>
+          <label style="font-size:11px;color:var(--ink-muted);letter-spacing:.1em;text-transform:uppercase;font-weight:600">Số CCCD *</label>
+          <input id="_cw_cccd" placeholder="Nhập CCCD để tìm..." autocomplete="off"
+            oninput="_casualLookupCCCD(this.value)"
+            style="width:100%;padding:10px 12px;background:var(--bg-card);border:1px solid var(--border);border-radius:8px;color:var(--ink);font-size:13px;margin-top:4px">
+          <div id="_cw_lookup" style="font-size:11px;color:var(--success);margin-top:4px"></div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+          <div><label style="font-size:11px;color:var(--ink-muted);letter-spacing:.1em;text-transform:uppercase;font-weight:600">Họ tên *</label>
+            <input id="_cw_name" style="width:100%;padding:10px 12px;background:var(--bg-card);border:1px solid var(--border);border-radius:8px;color:var(--ink);font-size:13px;margin-top:4px"></div>
+          <div><label style="font-size:11px;color:var(--ink-muted);letter-spacing:.1em;text-transform:uppercase;font-weight:600">Ngày sinh</label>
+            <input id="_cw_dob" type="date" style="width:100%;padding:10px 12px;background:var(--bg-card);border:1px solid var(--border);border-radius:8px;color:var(--ink);font-size:13px;margin-top:4px"></div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+          <div><label style="font-size:11px;color:var(--ink-muted);letter-spacing:.1em;text-transform:uppercase;font-weight:600">Mã số thuế</label>
+            <input id="_cw_tax" style="width:100%;padding:10px 12px;background:var(--bg-card);border:1px solid var(--border);border-radius:8px;color:var(--ink);font-size:13px;margin-top:4px"></div>
+          <div><label style="font-size:11px;color:var(--ink-muted);letter-spacing:.1em;text-transform:uppercase;font-weight:600">Ngày làm</label>
+            <input id="_cw_date" type="date" style="width:100%;padding:10px 12px;background:var(--bg-card);border:1px solid var(--border);border-radius:8px;color:var(--ink);font-size:13px;margin-top:4px"></div>
+        </div>
+        <div><label style="font-size:11px;color:var(--ink-muted);letter-spacing:.1em;text-transform:uppercase;font-weight:600">Số tiền (VNĐ) *</label>
+          <input id="_cw_amount" type="number" placeholder="0" style="width:100%;padding:10px 12px;background:var(--bg-card);border:1px solid var(--border);border-radius:8px;color:var(--accent);font-size:13px;font-family:'JetBrains Mono',monospace;margin-top:4px"></div>
+      </div>
+      <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:18px">
+        <button onclick="document.getElementById('_casualWorkerOv').remove()" class="btn" style="font-size:12px">Hủy</button>
+        <button onclick="_casualSaveWorker('${deptId}',${year},${month})" class="btn btn-primary" style="font-size:12px">💾 Lưu</button>
+      </div>
+    </div>`;
+  document.body.appendChild(ov);
+  ov.addEventListener('click',ev=>{if(ev.target===ov)ov.remove();});
+  document.getElementById('_cw_cccd')?.focus();
+}
+
+function _casualLookupCCCD(cccd){
+  if(!cccd||cccd.length<5) { document.getElementById('_cw_lookup').innerHTML=''; return; }
+  if(!DB.casualDirectory) DB.casualDirectory={};
+  const found = DB.casualDirectory[cccd];
+  if(found){
+    document.getElementById('_cw_name').value = found.name||'';
+    document.getElementById('_cw_dob').value = found.dob||'';
+    document.getElementById('_cw_tax').value = found.taxCode||'';
+    document.getElementById('_cw_lookup').innerHTML = '✅ Đã tìm thấy: '+escapeHtml(found.name);
+  } else {
+    document.getElementById('_cw_lookup').innerHTML = '🔍 CCCD mới — nhập thông tin bên dưới';
+  }
+}
+
+function _casualSaveWorker(deptId,year,month){
+  const cccd=document.getElementById('_cw_cccd')?.value?.trim();
+  const name=document.getElementById('_cw_name')?.value?.trim();
+  const amount=parseFloat(document.getElementById('_cw_amount')?.value)||0;
+  if(!name){toast('Nhập họ tên','error');return;}
+  if(!amount){toast('Nhập số tiền','error');return;}
+  const dob=document.getElementById('_cw_dob')?.value||'';
+  const taxCode=document.getElementById('_cw_tax')?.value?.trim()||'';
+  const workDate=document.getElementById('_cw_date')?.value||'';
+
+  // Save to directory for future lookup
+  if(cccd){
+    if(!DB.casualDirectory) DB.casualDirectory={};
+    DB.casualDirectory[cccd]={name,dob,taxCode};
+    try{localStorage.setItem('_casualDirectory',JSON.stringify(DB.casualDirectory));}catch(e){}
+  }
+
+  // Find or create casual record for this dept+month
+  let rec = DB.casuals.find(r=>r.deptId===deptId && r.year===year && r.month===month);
+  if(!rec){
+    rec={id:Date.now().toString(36)+Math.random().toString(36).slice(2,6), year, month, deptId, desc:'NV thời vụ', qty:0, hours:0, total:0, workers:[]};
+    DB.casuals.push(rec);
+  }
+  if(!rec.workers) rec.workers=[];
+  rec.workers.push({cccd,name,dob,taxCode,workDate,amount});
+  // Update totals
+  rec.qty = rec.workers.length;
+  rec.total = rec.workers.reduce((s,w)=>s+(w.amount||0),0);
+
+  saveData(['casuals']);
+  document.getElementById('_casualWorkerOv')?.remove();
+  console.log('[Casual] ✅ Saved worker:', name, 'amount:', amount, 'total workers:', rec.workers.length);
+  toast('✅ Đã thêm '+name,'success');
+  render();
+}
+
+function _casualDelWorker(recId,workerIdx){
+  if(!confirm('Xóa NV casual này?'))return;
+  const rec=DB.casuals.find(r=>r.id===recId);
+  if(!rec||!rec.workers)return;
+  rec.workers.splice(workerIdx,1);
+  rec.qty=rec.workers.length;
+  rec.total=rec.workers.reduce((s,w)=>s+(w.amount||0),0);
+  saveData(['casuals']);
+  toast('Đã xóa','info');
+  render();
+}
+
+function _casualExportMonth(year,month){
+  const recs=DB.casuals.filter(r=>r.year===year&&r.month===month);
+  const header=['Số CCCD','Họ tên','Ngày sinh','Mã số thuế','Bộ phận','Ngày làm','Số tiền (VNĐ)'];
+  const rows=[];
+  recs.forEach(r=>{
+    (r.workers||[]).forEach(w=>{
+      rows.push([w.cccd||'',w.name||'',w.dob||'',w.taxCode||'',deptName(r.deptId),w.workDate||'',w.amount||0]);
+    });
+  });
+  if(!rows.length){toast('Không có dữ liệu tháng '+month,'error');return;}
+  const wb=XLSX.utils.book_new();const ws=XLSX.utils.aoa_to_sheet([header,...rows]);
+  ws['!cols']=[{wch:16},{wch:22},{wch:12},{wch:16},{wch:18},{wch:12},{wch:16}];
+  XLSX.utils.book_append_sheet(wb,ws,'T'+month);
+  XLSX.writeFile(wb,'Casual_T'+month+'_'+year+'.xlsx');
+  toast('📊 Đã xuất Casual T'+month+'/'+year,'success');
+}
+
+function _casualExportFullYear(year){
+  const wb=XLSX.utils.book_new();
+  const header=['Số CCCD','Họ tên','Ngày sinh','Mã số thuế','Bộ phận','Ngày làm','Số tiền (VNĐ)'];
+  for(let m=1;m<=12;m++){
+    const recs=DB.casuals.filter(r=>r.year===year&&r.month===m);
+    const rows=[];
+    recs.forEach(r=>{(r.workers||[]).forEach(w=>{rows.push([w.cccd||'',w.name||'',w.dob||'',w.taxCode||'',deptName(r.deptId),w.workDate||'',w.amount||0]);});});
+    const ws=XLSX.utils.aoa_to_sheet([header,...rows]);
+    ws['!cols']=[{wch:16},{wch:22},{wch:12},{wch:16},{wch:18},{wch:12},{wch:16}];
+    XLSX.utils.book_append_sheet(wb,ws,'T'+m);
+  }
+  XLSX.writeFile(wb,'Casual_FullYear_'+year+'.xlsx');
+  toast('📅 Đã xuất Casual cả năm '+year,'success');
+}
+
+function _casualImportExcel(input,year){
+  const file=input.files[0];if(!file)return;const reader=new FileReader();
+  reader.onload=function(ev){try{
+    const wb=XLSX.read(ev.target.result,{type:'array'});
+    let totalImported=0;
+    if(!DB.casualDirectory) DB.casualDirectory={};
+
+    wb.SheetNames.forEach(sn=>{
+      const moMatch=sn.match(/T?(\d+)/i);
+      if(!moMatch) return;
+      const month=parseInt(moMatch[1]);
+      if(month<1||month>12) return;
+      const ws=wb.Sheets[sn];
+      const data=XLSX.utils.sheet_to_json(ws,{header:1});
+      if(data.length<2) return;
+
+      // Group by dept
+      const byDept={};
+      for(let i=1;i<data.length;i++){
+        const row=data[i]; if(!row||!row[1]) continue;
+        const deptStr=String(row[4]||'').trim();
+        const dept=DB.departments.find(d=>d.name===deptStr);
+        const deptId=dept?dept.id:deptStr;
+        if(!byDept[deptId]) byDept[deptId]=[];
+        const w={cccd:String(row[0]||'').trim(),name:String(row[1]||'').trim(),dob:String(row[2]||''),taxCode:String(row[3]||'').trim(),workDate:String(row[5]||''),amount:parseFloat(row[6])||0};
+        byDept[deptId].push(w);
+        // Save to directory
+        if(w.cccd) DB.casualDirectory[w.cccd]={name:w.name,dob:w.dob,taxCode:w.taxCode};
+      }
+
+      Object.entries(byDept).forEach(([deptId,workers])=>{
+        let rec=DB.casuals.find(r=>r.deptId===deptId&&r.year===year&&r.month===month);
+        if(!rec){
+          rec={id:Date.now().toString(36)+Math.random().toString(36).slice(2,6),year,month,deptId,desc:'NV thời vụ',qty:0,hours:0,total:0,workers:[]};
+          DB.casuals.push(rec);
+        }
+        if(!rec.workers) rec.workers=[];
+        rec.workers.push(...workers);
+        rec.qty=rec.workers.length;
+        rec.total=rec.workers.reduce((s,w2)=>s+(w2.amount||0),0);
+        totalImported+=workers.length;
+      });
+    });
+
+    try{localStorage.setItem('_casualDirectory',JSON.stringify(DB.casualDirectory));}catch(e){}
+    saveData(['casuals']);
+    toast(`✅ Đã nhập ${totalImported} NV casual`,'success');
+    render();
+  }catch(err){toast('Lỗi: '+err.message,'error');}};
+  reader.readAsArrayBuffer(file);input.value='';
 }
 
 function editCasual(id){
@@ -33523,6 +33779,19 @@ fbAuth.onAuthStateChanged(async user => {
             if(typeof _saveGardenData==='function') _saveGardenData();
           } else if(dbCount > 0){
             localStorage.setItem('_hrGardenPlan', JSON.stringify(DB.hrGardenPlan));
+          }
+        }catch(e){}
+        // Restore casuals workers from localStorage if cloud lost workers
+        try{
+          const lsCasuals = JSON.parse(localStorage.getItem('_casualsData')||'[]');
+          const lsWorkerCount = lsCasuals.reduce((s,r)=>s+((r.workers||[]).length),0);
+          const dbWorkerCount = (DB.casuals||[]).reduce((s,r)=>s+((r.workers||[]).length),0);
+          if(lsWorkerCount > dbWorkerCount && lsWorkerCount > 0){
+            DB.casuals = lsCasuals;
+            console.log('[Casual] ⚠ Restored from localStorage:', lsWorkerCount, 'workers (cloud had', dbWorkerCount, ')');
+            saveData(['casuals']);
+          } else if(dbWorkerCount > 0){
+            localStorage.setItem('_casualsData', JSON.stringify(DB.casuals));
           }
         }catch(e){}
         // Load C&B Package docs
