@@ -30568,13 +30568,18 @@ function renderCasual(main){
         <div class="card-title">📋 Chi tiết <em>Casual</em></div>
         <div class="card-sub">${recs.length} bản ghi</div>
       </div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
         <button class="btn btn-primary" onclick="_casualAddWorker('',${cf.year},${cf._detailMonth||new Date().getMonth()+1})" style="font-size:12px">+ Thêm NV</button>
         <button class="btn" onclick="_casualExportTemplate(${cf.year})" style="font-size:12px">📥 Xuất mẫu</button>
         <button class="btn" onclick="_casualExportMonth(${cf.year},${cf._detailMonth||new Date().getMonth()+1})" style="font-size:12px">📊 Xuất tháng</button>
         <button class="btn" onclick="_casualExportFullYear(${cf.year})" style="font-size:12px">📅 Xuất cả năm</button>
         <button class="btn" onclick="_casualExportPDF(${cf.year},${cf._detailMonth||new Date().getMonth()+1})" style="font-size:12px">📄 Xuất PDF</button>
         <label class="btn" style="cursor:pointer;font-size:12px">📤 Nhập Excel<input type="file" accept=".xlsx,.xls" style="display:none" onchange="_casualImportExcel(this,${cf.year})"></label>
+      </div>
+      <div style="margin-top:8px">
+        <input id="_casualSearch" placeholder="🔍 Tìm NV casual theo tên, CCCD..." value="${cf._search||''}"
+          oninput="window._casualFilter._search=this.value;render()"
+          style="padding:8px 14px;background:var(--bg-card);border:1px solid var(--border);border-radius:8px;color:var(--ink);font-size:12px;width:300px">
       </div>
       </div>
       ${(()=>{
@@ -30591,9 +30596,13 @@ function renderCasual(main){
           months[mk].depts[dk].hours+=(r.hours||0);
           months[mk].depts[dk].total+=cost;
           months[mk].total+=cost;
-          // Workers từ casualWorkers array (nếu có)
+          // Workers từ casualWorkers array (nếu có) + search filter
+          const searchQ = (cf._search||'').toLowerCase();
           if(r.workers && Array.isArray(r.workers)){
-            r.workers.forEach(w=>months[mk].depts[dk].workers.push({...w, _recId:r.id}));
+            r.workers.forEach((w,wi)=>{
+              if(searchQ && !(w.name||'').toLowerCase().includes(searchQ) && !(w.cccd||'').includes(searchQ)) return;
+              months[mk].depts[dk].workers.push({...w, _recId:r.id, _wi:wi});
+            });
           }
         });
 
@@ -30659,7 +30668,7 @@ function renderCasual(main){
               <td style="padding:5px 8px;font-size:11px;color:var(--ink-dim)">${escapeHtml(w.taxCode||'—')}</td>
               <td style="padding:5px 8px;font-size:11px">${escapeHtml(w.workDate||'—')}</td>
               <td style="padding:5px 8px;text-align:right;font-family:'JetBrains Mono',monospace;font-weight:600;color:var(--accent)">${fmtNum(w.amount||0)}</td>
-              <td style="padding:5px 4px"><button onclick="_casualDelWorker('${w._recId}',${wi})" style="background:transparent;border:1px solid rgba(229,115,115,.2);border-radius:4px;color:var(--danger);font-size:10px;padding:2px 6px;cursor:pointer">✕</button></td>
+              <td style="padding:5px 4px"><button onclick="_casualDelWorker('${w._recId}',${w._wi})" style="background:transparent;border:1px solid rgba(229,115,115,.2);border-radius:4px;color:var(--danger);font-size:10px;padding:2px 6px;cursor:pointer">✕</button></td>
             </tr>`).join('') : '<tr><td colspan="7" style="padding:12px;text-align:center;color:var(--ink-muted);font-size:12px">Chưa có NV casual · Ấn "+ Thêm NV" bên dưới</td></tr>';
 
           return `<div style="margin-bottom:16px">
