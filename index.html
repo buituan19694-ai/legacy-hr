@@ -30570,6 +30570,7 @@ function renderCasual(main){
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <button class="btn btn-primary" onclick="_casualAddWorker('',${cf.year},${cf._detailMonth||new Date().getMonth()+1})" style="font-size:12px">+ Thêm NV</button>
+        <button class="btn" onclick="_casualExportTemplate(${cf.year})" style="font-size:12px">📥 Xuất mẫu</button>
         <button class="btn" onclick="_casualExportMonth(${cf.year},${cf._detailMonth||new Date().getMonth()+1})" style="font-size:12px">📊 Xuất tháng</button>
         <button class="btn" onclick="_casualExportFullYear(${cf.year})" style="font-size:12px">📅 Xuất cả năm</button>
         <button class="btn" onclick="_casualExportPDF(${cf.year},${cf._detailMonth||new Date().getMonth()+1})" style="font-size:12px">📄 Xuất PDF</button>
@@ -31073,6 +31074,23 @@ function _casualDelWorker(recId,workerIdx){
   saveData(['casuals']);
   toast('Đã xóa','info');
   render();
+}
+
+function _casualExportTemplate(year){
+  const header=['Số CCCD','Họ tên','Ngày sinh (dd/mm/yyyy)','Mã số thuế','Bộ phận','Ngày làm (dd/mm/yyyy)','Số tiền (VNĐ)'];
+  // Thêm 30 dòng trống
+  const rows=[];
+  for(let i=0;i<30;i++) rows.push(['','','','','','','']);
+  const wb=XLSX.utils.book_new();
+  const ws=XLSX.utils.aoa_to_sheet([header,...rows]);
+  ws['!cols']=[{wch:16},{wch:24},{wch:16},{wch:16},{wch:20},{wch:16},{wch:16}];
+  // Thêm dropdown bộ phận vào cột E (validation note)
+  const deptNames=(DB.departments||[]).map(d=>d.name).join(', ');
+  if(!ws['E1'].c) ws['E1'].c=[];
+  ws['E1'].c.push({a:'System',t:'Bộ phận: '+deptNames});
+  XLSX.utils.book_append_sheet(wb,ws,'Template');
+  XLSX.writeFile(wb,'Casual_Template_'+year+'.xlsx');
+  toast('📥 File mẫu — điền CCCD + thông tin + số tiền, rồi Nhập Excel','success');
 }
 
 function _casualExportPDF(year,month){
