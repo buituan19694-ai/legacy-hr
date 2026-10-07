@@ -30580,7 +30580,7 @@ function renderCasual(main){
       </div>
       <div style="margin-top:8px">
         <input id="_casualSearch" placeholder="🔍 Tìm NV casual theo tên, CCCD..." value="${cf._search||''}"
-          oninput="window._casualFilter._search=this.value;render()"
+          oninput="window._casualFilter._search=this.value;clearTimeout(window._casualSearchTO);window._casualSearchTO=setTimeout(()=>{const pos=this.selectionStart;render();setTimeout(()=>{const el=document.getElementById('_casualSearch');if(el){el.focus();el.setSelectionRange(pos,pos);}},20);},250)"
           style="padding:8px 14px;background:var(--bg-card);border:1px solid var(--border);border-radius:8px;color:var(--ink);font-size:12px;width:300px">
       </div>
       </div>
@@ -30662,6 +30662,8 @@ function renderCasual(main){
 
         // Dept blocks
         const deptBlocks = Object.entries(md.depts).map(([dk,dd])=>{
+          // Tìm record IDs cho dept này để xóa
+          const deptRecIds = recs.filter(r=>r.deptId===dk && r.month==selMonth).map(r=>r.id);
           const workerRows = dd.workers.length ? dd.workers.map((w,wi)=>`
             <tr style="border-bottom:1px solid var(--border)">
               <td style="padding:5px 8px;font-family:'JetBrains Mono',monospace;font-size:11px">${escapeHtml(w.cccd||'—')}</td>
@@ -30671,7 +30673,7 @@ function renderCasual(main){
               <td style="padding:5px 8px;font-size:11px">${escapeHtml(w.workDate||'—')}</td>
               <td style="padding:5px 8px;text-align:right;font-family:'JetBrains Mono',monospace;font-weight:600;color:var(--accent)">${fmtNum(w.amount||0)}</td>
               <td style="padding:5px 4px"><button onclick="_casualDelWorker('${w._recId}',${w._wi})" style="background:transparent;border:1px solid rgba(229,115,115,.2);border-radius:4px;color:var(--danger);font-size:10px;padding:2px 6px;cursor:pointer">✕</button></td>
-            </tr>`).join('') : '<tr><td colspan="7" style="padding:12px;text-align:center;color:var(--ink-muted);font-size:12px">Chưa có NV casual · Ấn "+ Thêm NV" bên dưới</td></tr>';
+            </tr>`).join('') : `<tr><td colspan="7" style="padding:12px;text-align:center;color:var(--ink-muted);font-size:12px">${dd.total>0?'⚠️ '+fmtNum(dd.total)+'đ từ bản ghi cũ · <button onclick="'+deptRecIds.map(id=>"_casualDeleteOldRec(\'"+id+"\')").join(';')+'" style=\'background:transparent;border:1px solid rgba(229,115,115,.3);border-radius:4px;color:var(--danger);font-size:11px;padding:2px 10px;cursor:pointer\'>🗑 Xóa</button>':'Chưa có NV casual'}</td></tr>`;
 
           return `<div style="margin-bottom:16px">
             <div style="padding:8px 12px;background:rgba(212,165,116,.06);border-radius:8px 8px 0 0;display:flex;justify-content:space-between;align-items:center">
@@ -31072,6 +31074,15 @@ function _casualSaveWorker(deptId,year,month){
   document.getElementById('_casualWorkerOv')?.remove();
   console.log('[Casual] ✅ Saved worker:', name, 'amount:', amount, 'total workers:', rec.workers.length);
   toast('✅ Đã thêm '+name,'success');
+  render();
+}
+
+function _casualDeleteOldRec(recId){
+  const idx=DB.casuals.findIndex(r=>r.id===recId);
+  if(idx<0) return;
+  DB.casuals.splice(idx,1);
+  saveData(['casuals']);
+  toast('🗑 Đã xóa bản ghi cũ','info');
   render();
 }
 
