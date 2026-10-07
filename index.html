@@ -1270,16 +1270,24 @@ function _pushDynamicKey(key, meta){
     const arr = DB.casuals || [];
     const byMonth = {};
     arr.forEach(r=>{ const m=_recMonth(r); (byMonth[m]=byMonth[m]||[]).push(r); });
-    // ⚠️ KHÔNG force write empty shard tháng hiện tại nữa
-    // Bug cũ: nếu DB.casuals chưa load xong (= []) mà saveData() trigger → ghi shard tháng hiện tại = []
-    // → realtime listener filter records ra → MẤT toàn bộ data
-    // Giờ: chỉ ghi shards CÓ data thực sự → không bao giờ ghi đè empty trừ khi user xoá hết
+    // Ghi shards có data
     Object.entries(byMonth).forEach(([mo,records])=>{
       const totalWorkers = records.reduce((s,r)=>s+((r.workers||[]).length),0);
       window.fbDb.collection('hrdata').doc(`casuals_${mo}`)
         .set({...meta, casuals:records, _shard:mo}, {merge:false})
         .then(()=>console.log(`[saveData] ✅ casuals_${mo}: ${records.length} recs, ${totalWorkers} workers`))
         .catch(err=>console.error(`[saveData] ❌ casuals_${mo}`, err.message));
+    });
+    // Xóa shards đã biết nhưng giờ rỗng (user xóa hết records trong tháng)
+    if(!window._casualsKnownShards) window._casualsKnownShards=new Set();
+    Object.keys(byMonth).forEach(mo=>window._casualsKnownShards.add(mo));
+    window._casualsKnownShards.forEach(mo=>{
+      if(!byMonth[mo]){
+        window.fbDb.collection('hrdata').doc(`casuals_${mo}`).delete()
+          .then(()=>console.log(`[saveData] 🗑 Deleted empty shard casuals_${mo}`))
+          .catch(()=>{});
+        window._casualsKnownShards.delete(mo);
+      }
     });
     return;
   }
@@ -33493,7 +33501,7 @@ fbAuth.onAuthStateChanged(async user => {
             if(id.startsWith('leaves_')      && d.leaves)           { dynamicAccum.leaves.push(...d.leaves); const _y=id.slice(7); if(!window._leavesKnownYears)window._leavesKnownYears=new Set(); window._leavesKnownYears.add(_y); }
             else if(id.startsWith('kpi_')    && d.kpiReviews)       { dynamicAccum.kpiReviews.push(...d.kpiReviews); const _y=id.slice(4); if(!window._kpiReviewsKnownYears)window._kpiReviewsKnownYears=new Set(); window._kpiReviewsKnownYears.add(_y); }
             else if(id.startsWith('rewards_')&& d.rewardRecords)    { dynamicAccum.rewardRecords.push(...d.rewardRecords); const _y=id.slice(8); if(!window._rewardRecordsKnownYears)window._rewardRecordsKnownYears=new Set(); window._rewardRecordsKnownYears.add(_y); }
-            else if(id.startsWith('casuals_')&& d.casuals)          dynamicAccum.casuals.push(...d.casuals);
+            else if(id.startsWith('casuals_')&& d.casuals)          { dynamicAccum.casuals.push(...d.casuals); if(!window._casualsKnownShards)window._casualsKnownShards=new Set(); window._casualsKnownShards.add(id.slice(8)); }
             else if(id.startsWith('cand_')   && d.candidates){
               // Bỏ qua shard sai format (cand_2026 theo năm — từ bug cũ)
               // Chỉ chấp nhận shard theo jobId (cand_j1, cand_abc...)
