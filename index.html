@@ -30681,6 +30681,7 @@ function renderCasual(main){
                 <span style="font-weight:700;font-size:12px;color:var(--accent)">${escapeHtml(dd.name)}</span>
                 <span style="font-size:11px;color:var(--ink-muted);margin-left:8px">${dd.workers.length} NV · ${fmtNum(dd.total)} đ</span>
               </div>
+              ${dd.workers.length?`<button onclick="if(confirm('Xóa tất cả ${dd.workers.length} NV casual của ${escapeHtml(dd.name)} tháng ${selMonth}?')){_casualDeleteDeptWorkers('${dk}',${cf.year},${selMonth})}" style="background:transparent;border:1px solid rgba(229,115,115,.3);border-radius:6px;color:var(--danger);font-size:10px;padding:3px 10px;cursor:pointer;user-select:none">🗑 Xóa tất cả</button>`:''}
             </div>
             <div style="overflow-x:auto;border:1px solid var(--border);border-top:0;border-radius:0 0 8px 8px">
               <table style="border-collapse:collapse;width:100%;font-size:12px">
@@ -31074,6 +31075,19 @@ function _casualSaveWorker(deptId,year,month){
   document.getElementById('_casualWorkerOv')?.remove();
   console.log('[Casual] ✅ Saved worker:', name, 'amount:', amount, 'total workers:', rec.workers.length);
   toast('✅ Đã thêm '+name,'success');
+  render();
+}
+
+function _casualDeleteDeptWorkers(deptId,year,month){
+  const recs=DB.casuals.filter(r=>r.deptId===deptId&&r.year===year&&r.month===month);
+  recs.forEach(r=>{
+    if(r.workers) r.workers=[];
+    r.qty=0; r.total=0;
+  });
+  // Xóa luôn records rỗng
+  DB.casuals=DB.casuals.filter(r=>!(r.deptId===deptId&&r.year===year&&r.month===month&&(!r.workers||!r.workers.length)));
+  saveData(['casuals']);
+  toast('🗑 Đã xóa tất cả NV casual','info');
   render();
 }
 
