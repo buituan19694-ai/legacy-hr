@@ -1275,8 +1275,10 @@ function _pushDynamicKey(key, meta){
     // → realtime listener filter records ra → MẤT toàn bộ data
     // Giờ: chỉ ghi shards CÓ data thực sự → không bao giờ ghi đè empty trừ khi user xoá hết
     Object.entries(byMonth).forEach(([mo,records])=>{
+      const totalWorkers = records.reduce((s,r)=>s+((r.workers||[]).length),0);
       window.fbDb.collection('hrdata').doc(`casuals_${mo}`)
         .set({...meta, casuals:records, _shard:mo}, {merge:false})
+        .then(()=>console.log(`[saveData] ✅ casuals_${mo}: ${records.length} recs, ${totalWorkers} workers`))
         .catch(err=>console.error(`[saveData] ❌ casuals_${mo}`, err.message));
     });
     return;
@@ -31061,7 +31063,7 @@ function _casualSaveWorker(deptId,year,month){
     DB.casuals.push(rec);
   }
   if(!rec.workers) rec.workers=[];
-  rec.workers.push({cccd,name,dob,taxCode,workDate,amount});
+  rec.workers.push({cccd:cccd||'',name:name||'',dob:dob||'',taxCode:taxCode||'',workDate:workDate||'',amount:amount||0});
   // Update totals
   rec.qty = rec.workers.length;
   rec.total = rec.workers.reduce((s,w)=>s+(w.amount||0),0);
@@ -31203,11 +31205,22 @@ function _casualImportExcel(input,year){
     let totalImported=0;
     if(!DB.casualDirectory) DB.casualDirectory={};
 
-    wb.SheetNames.forEach(sn=>{
-      const moMatch=sn.match(/T?(\d+)/i);
-      if(!moMatch) return;
-      const month=parseInt(moMatch[1]);
-      if(month<1||month>12) return;
+    wb.SheetNames.forEach((sn,snIdx)=>{
+      let month;
+      const moMatch=sn.match(/T(\d+)/i);
+      if(moMatch && parseInt(moMatch[1])>=1 && parseInt(moMatch[1])<=12){
+        month=parseInt(moMatch[1]);
+      } else {
+        // Sheet không rõ tháng → dùng tháng đang chọn hoặc hỏi
+        const curMo=window._casualFilter?._detailMonth;
+        if(curMo && curMo!=='all'){ month=parseInt(curMo); }
+        else {
+          const asked=prompt('Sheet "'+sn+'" thuộc tháng mấy? (1-12)',''+(new Date().getMonth()+1));
+          if(!asked) return;
+          month=parseInt(asked);
+        }
+      }
+      if(!month||month<1||month>12) return;
       const ws=wb.Sheets[sn];
       const data=XLSX.utils.sheet_to_json(ws,{header:1});
       if(data.length<2) return;
@@ -33931,11 +33944,39 @@ fbAuth.onAuthStateChanged(async user => {
           const lsWorkerCount = lsCasuals.reduce((s,r)=>s+((r.workers||[]).length),0);
           const dbWorkerCount = (DB.casuals||[]).reduce((s,r)=>s+((r.workers||[]).length),0);
           if(lsWorkerCount > dbWorkerCount && lsWorkerCount > 0){
+            // localStorage có nhiều workers hơn → dùng localStorage
             DB.casuals = lsCasuals;
             console.log('[Casual] ⚠ Restored from localStorage:', lsWorkerCount, 'workers (cloud had', dbWorkerCount, ')');
             saveData(['casuals']);
-          } else if(dbWorkerCount > 0){
+          } else if(dbWorkerCount > 0 && lsWorkerCount < dbWorkerCount){
+            // Cloud có nhiều hơn → sync xuống localStorage
             localStorage.setItem('_casualsData', JSON.stringify(DB.casuals));
+          } else if(dbWorkerCount > 0 && lsWorkerCount > 0){
+            // Cả 2 đều có → merge workers từ localStorage vào records cloud bị thiếu
+            let merged=false;
+            DB.casuals.forEach(cloudRec=>{
+              if(cloudRec.workers && cloudRec.workers.length > 0) return; // cloud đã có workers
+              const lsRec = lsCasuals.find(lr=>lr.id===cloudRec.id || (lr.deptId===cloudRec.deptId && lr.year===cloudRec.year && lr.month===cloudRec.month));
+              if(lsRec && lsRec.workers && lsRec.workers.length > 0){
+                cloudRec.workers = lsRec.workers;
+                cloudRec.qty = lsRec.workers.length;
+                cloudRec.total = lsRec.workers.reduce((s,w)=>s+(w.amount||0),0);
+                merged = true;
+                console.log('[Casual] ⚠ Merged', lsRec.workers.length, 'workers into', cloudRec.deptId, 'T'+cloudRec.month);
+              }
+            });
+            if(merged){ saveData(['casuals']); }
+            localStorage.setItem('_casualsData', JSON.stringify(DB.casuals));
+          }
+        }catch(e){console.error('[Casual] restore error:', e);}
+        // Restore casualDirectory
+        try{
+          const lsDir=JSON.parse(localStorage.getItem('_casualDirectory')||'{}');
+          if(!DB.casualDirectory) DB.casualDirectory={};
+          const cloudDirCount=Object.keys(DB.casualDirectory).length;
+          const lsDirCount=Object.keys(lsDir).length;
+          if(lsDirCount > cloudDirCount){
+            DB.casualDirectory = {...DB.casualDirectory, ...lsDir};
           }
         }catch(e){}
         // Load C&B Package docs
