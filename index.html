@@ -1283,8 +1283,10 @@ function _pushDynamicKey(key, meta){
     Object.keys(byMonth).forEach(mo=>window._casualsKnownShards.add(mo));
     window._casualsKnownShards.forEach(mo=>{
       if(!byMonth[mo]){
-        window.fbDb.collection('hrdata').doc(`casuals_${mo}`).delete()
-          .then(()=>console.log(`[saveData] 🗑 Deleted empty shard casuals_${mo}`))
+        // Ghi empty array thay vì delete — đảm bảo cold-load trên máy khác sẽ thấy []
+        window.fbDb.collection('hrdata').doc(`casuals_${mo}`)
+          .set({...meta, casuals:[], _shard:mo, _deleted:true}, {merge:false})
+          .then(()=>console.log(`[saveData] 🗑 Cleared shard casuals_${mo}`))
           .catch(()=>{});
         window._casualsKnownShards.delete(mo);
       }
@@ -1854,11 +1856,11 @@ if(!Array.isArray(DB.leaves))             DB.leaves             = [];
 if(!Array.isArray(DB.kpiReviews))         DB.kpiReviews         = [];
 if(!Array.isArray(DB.rewardRecords))      DB.rewardRecords      = [];
 if(!Array.isArray(DB.casuals))            DB.casuals            = [];
-// Restore casuals từ localStorage (luôn ưu tiên vì có timestamp)
+// Tạm restore casuals từ localStorage (hiện data ngay trước cold-load, cloud sẽ override sau)
 try{
   const raw=JSON.parse(localStorage.getItem('_casualsData')||'{}');
   const lsC=Array.isArray(raw)?raw:(raw.data||[]);
-  if(lsC.length>0) DB.casuals=lsC;
+  if(lsC.length>0 && DB.casuals.length===0) DB.casuals=lsC;
 }catch(e){}
 if(!Array.isArray(DB.candidates))         DB.candidates         = [];
 if(!Array.isArray(DB.promotions))         DB.promotions         = [];
@@ -33500,7 +33502,7 @@ fbAuth.onAuthStateChanged(async user => {
             if(id.startsWith('leaves_')      && d.leaves)           { dynamicAccum.leaves.push(...d.leaves); const _y=id.slice(7); if(!window._leavesKnownYears)window._leavesKnownYears=new Set(); window._leavesKnownYears.add(_y); }
             else if(id.startsWith('kpi_')    && d.kpiReviews)       { dynamicAccum.kpiReviews.push(...d.kpiReviews); const _y=id.slice(4); if(!window._kpiReviewsKnownYears)window._kpiReviewsKnownYears=new Set(); window._kpiReviewsKnownYears.add(_y); }
             else if(id.startsWith('rewards_')&& d.rewardRecords)    { dynamicAccum.rewardRecords.push(...d.rewardRecords); const _y=id.slice(8); if(!window._rewardRecordsKnownYears)window._rewardRecordsKnownYears=new Set(); window._rewardRecordsKnownYears.add(_y); }
-            else if(id.startsWith('casuals_')&& d.casuals)          { dynamicAccum.casuals.push(...d.casuals); if(!window._casualsKnownShards)window._casualsKnownShards=new Set(); window._casualsKnownShards.add(id.slice(8)); }
+            else if(id.startsWith('casuals_')&& d.casuals && !d._deleted) { dynamicAccum.casuals.push(...d.casuals); if(!window._casualsKnownShards)window._casualsKnownShards=new Set(); window._casualsKnownShards.add(id.slice(8)); }
             else if(id.startsWith('cand_')   && d.candidates){
               // Bỏ qua shard sai format (cand_2026 theo năm — từ bug cũ)
               // Chỉ chấp nhận shard theo jobId (cand_j1, cand_abc...)
@@ -33970,29 +33972,32 @@ fbAuth.onAuthStateChanged(async user => {
             localStorage.setItem('_hrGardenPlan', JSON.stringify(DB.hrGardenPlan));
           }
         }catch(e){}
-        // Restore casuals: localStorage luôn ưu tiên vì nó phản ánh action cuối cùng của user
+        // Sau cold-load: Firestore là source of truth (shared giữa mọi máy)
+        // Chỉ merge workers từ localStorage vào records cloud BỊ THIẾU workers (cloud có record nhưng mất workers)
+        // KHÔNG restore records đã bị xóa trên cloud
         try{
           const raw=JSON.parse(localStorage.getItem('_casualsData')||'{}');
           const lsCasuals=Array.isArray(raw)?raw:(raw.data||[]);
-          const lsTs=raw.ts||0;
-          const lsWorkerCount=lsCasuals.reduce((s,r)=>s+((r.workers||[]).length),0);
           const dbWorkerCount=(DB.casuals||[]).reduce((s,r)=>s+((r.workers||[]).length),0);
-          const lsRecCount=lsCasuals.length;
-          const dbRecCount=(DB.casuals||[]).length;
-
-          // Nếu localStorage được save gần đây (< 5 phút) → luôn ưu tiên (user vừa thao tác)
-          const isRecent = lsTs && (Date.now()-lsTs) < 300000;
-          if(isRecent){
-            DB.casuals = lsCasuals;
-            console.log('[Casual] ✅ Using localStorage (recent save, ts='+new Date(lsTs).toLocaleTimeString()+'):', lsRecCount, 'recs,', lsWorkerCount, 'workers');
-          } else if(lsWorkerCount > dbWorkerCount){
-            DB.casuals = lsCasuals;
-            console.log('[Casual] ⚠ Restored from localStorage:', lsWorkerCount, 'workers (cloud had', dbWorkerCount, ')');
-          } else if(dbRecCount > 0){
-            // Cloud có nhiều hơn hoặc bằng → sync xuống localStorage
-            localStorage.setItem('_casualsData', JSON.stringify({ts:Date.now(),data:DB.casuals}));
-            console.log('[Casual] ✅ Synced cloud→localStorage:', dbRecCount, 'recs,', dbWorkerCount, 'workers');
-          }
+          
+          // Merge: chỉ bổ sung workers cho records cloud đã có nhưng mất workers
+          let merged=false;
+          (DB.casuals||[]).forEach(cloudRec=>{
+            if(cloudRec.workers && cloudRec.workers.length > 0) return;
+            if(!cloudRec.total || cloudRec.total <= 0) return; // record rỗng, không cần merge
+            const lsRec=lsCasuals.find(lr=>lr.id===cloudRec.id||(lr.deptId===cloudRec.deptId&&lr.year===cloudRec.year&&lr.month===cloudRec.month));
+            if(lsRec && lsRec.workers && lsRec.workers.length > 0){
+              cloudRec.workers=lsRec.workers;
+              cloudRec.qty=lsRec.workers.length;
+              cloudRec.total=lsRec.workers.reduce((s,w)=>s+(w.amount||0),0);
+              merged=true;
+              console.log('[Casual] ⚠ Merged', lsRec.workers.length, 'workers into', cloudRec.deptId, 'T'+cloudRec.month);
+            }
+          });
+          if(merged) saveData(['casuals']);
+          // Sync localStorage = Firestore (source of truth)
+          localStorage.setItem('_casualsData', JSON.stringify({ts:Date.now(),data:DB.casuals}));
+          console.log('[Casual] ✅ Cloud→localStorage synced:', (DB.casuals||[]).length, 'recs,', (DB.casuals||[]).reduce((s,r)=>s+((r.workers||[]).length),0), 'workers');
         }catch(e){console.error('[Casual] restore error:', e);}
         // Restore casualDirectory
         try{
