@@ -36060,168 +36060,190 @@ function renderCBPackage(main){
       </div>`;
 
   } else {
-    // ═══ Voucher section – Bảng 2 phần: KS & Đổi ═══
+    // ═══ Voucher section – Chia đôi KS ↔ Đổi, dòng tương xứng ═══
     const now = new Date();
     const twoMonthsFromNow = new Date(now.getFullYear(), now.getMonth()+2, now.getDate());
     const fmtDate = (d)=>{ if(!d) return '—'; const dt=new Date(d); return dt.toLocaleDateString('vi-VN',{day:'2-digit',month:'2-digit',year:'numeric'}); };
-    const empName = (id)=>{ const e=(DB.employees||[]).find(x=>x.id===id); return e ? (e.name+' · '+(e.code||'')) : (id||'—'); };
+    const empName = (id)=>{ const e=(DB.employees||[]).find(x=>x.id===id); return e ? e.name : (id||'—'); };
 
-    // Split by type
-    const hotelVouchers = vouchers.filter(v=>v.vtype!=='exchange');
-    const exchangeVouchers = vouchers.filter(v=>v.vtype==='exchange');
+    // Split & sort: chưa dùng lên trên, đã dùng xuống dưới
+    const vSort = (a,b)=>{ if(a.used && !b.used) return 1; if(!a.used && b.used) return -1; return (b.createdAt||0)-(a.createdAt||0); };
+    const hotelV = vouchers.filter(v=>v.vtype!=='exchange').sort(vSort);
+    const exchV  = vouchers.filter(v=>v.vtype==='exchange').sort(vSort);
 
-    // Helper: build table rows for a voucher list
-    const buildRows = (list, vtype) => {
-      if(!list.length) return `<tr><td colspan="9" style="text-align:center;padding:28px;color:var(--ink-muted);font-size:12px">Chưa có voucher nào</td></tr>`;
-      return list.map(v=>{
-        const realIdx = vouchers.indexOf(v);
-        const endDt = new Date(v.endDate);
-        const isExpired = endDt < now;
-        const isExpiringSoon = !isExpired && !v.used && endDt <= twoMonthsFromNow;
-        const isUsed = !!v.used;
+    // Build paired rows: hotel ↔ exchange aligned by linkedId
+    // 1) Linked pairs first (unused on top, used on bottom)
+    // 2) Then unlinked hotel vouchers
+    // 3) Then unlinked exchange vouchers
+    const pairedRows = [];
+    const usedHotelIds = new Set();
+    const usedExchIds = new Set();
 
-        // Linked voucher info
-        let linkedInfo = '—';
-        if(v.linkedId){
-          const linked = vouchers.find(x=>x.vid===v.linkedId);
-          if(linked) linkedInfo = `<span style="font-size:11px" title="${escapeHtml(linked.hotelName)}">${escapeHtml(linked.code||'?')} · ${escapeHtml(linked.hotelName).slice(0,20)}</span>`;
-        }
+    // Linked pairs
+    const linkedPairsUnused = [];
+    const linkedPairsUsed = [];
+    hotelV.forEach(hv=>{
+      if(!hv.linkedId) return;
+      const ev = exchV.find(x=>x.vid===hv.linkedId);
+      if(!ev) return;
+      usedHotelIds.add(hv.vid);
+      usedExchIds.add(ev.vid);
+      const bothUsed = hv.used && ev.used;
+      const eitherUsed = hv.used || ev.used;
+      (eitherUsed ? linkedPairsUsed : linkedPairsUnused).push({hotel:hv, exchange:ev});
+    });
 
-        // Row style
-        let rowStyle = '';
-        let textDeco = '';
-        if(isUsed){ rowStyle = 'opacity:.55;'; textDeco = 'text-decoration:line-through;'; }
-        else if(isExpiringSoon){ rowStyle = 'background:rgba(229,115,115,.06);'; }
-        else if(isExpired){ rowStyle = 'opacity:.4;'; }
+    // Unlinked
+    const unlinkedH_unused = hotelV.filter(v=>!usedHotelIds.has(v.vid) && !v.used);
+    const unlinkedH_used   = hotelV.filter(v=>!usedHotelIds.has(v.vid) && v.used);
+    const unlinkedE_unused = exchV.filter(v=>!usedExchIds.has(v.vid) && !v.used);
+    const unlinkedE_used   = exchV.filter(v=>!usedExchIds.has(v.vid) && v.used);
 
-        // Status badge
-        let badge = '';
-        if(isUsed) badge = `<span style="padding:2px 7px;border-radius:4px;background:var(--ink-muted);color:#fff;font-size:9px;font-weight:600">Đã dùng</span>`;
-        else if(isExpired) badge = `<span style="padding:2px 7px;border-radius:4px;background:var(--danger);color:#fff;font-size:9px;font-weight:600">Hết hạn</span>`;
-        else if(isExpiringSoon){
-          const daysLeft = Math.ceil((endDt - now)/(1000*60*60*24));
-          badge = `<span style="padding:2px 7px;border-radius:4px;background:var(--danger);color:#fff;font-size:9px;font-weight:600;animation:pulse 2s infinite">⚠ ${daysLeft}d</span>`;
-        } else badge = `<span style="padding:2px 7px;border-radius:4px;background:var(--success);color:#fff;font-size:9px;font-weight:600">OK</span>`;
+    // Merge into unified row list: [{hotel, exchange}] — one side can be null
+    // Order: unused linked → unused unlinked → used linked → used unlinked
+    const allRows = [];
+    linkedPairsUnused.forEach(p=> allRows.push(p));
+    const maxUnusedUnlinked = Math.max(unlinkedH_unused.length, unlinkedE_unused.length);
+    for(let i=0;i<maxUnusedUnlinked;i++) allRows.push({hotel:unlinkedH_unused[i]||null, exchange:unlinkedE_unused[i]||null});
+    linkedPairsUsed.forEach(p=> allRows.push(p));
+    const maxUsedUnlinked = Math.max(unlinkedH_used.length, unlinkedE_used.length);
+    for(let i=0;i<maxUsedUnlinked;i++) allRows.push({hotel:unlinkedH_used[i]||null, exchange:unlinkedE_used[i]||null});
 
-        return `<tr style="border-bottom:1px solid var(--border);cursor:pointer;transition:background .15s;${rowStyle}"
-          onmouseenter="this.style.background='var(--bg-elev)'" onmouseleave="this.style.background=''"
-          onclick="_vToggleUsed(${realIdx})" title="${isUsed?'Nhấn để bỏ đánh dấu':'Nhấn để đánh dấu đã dùng'}">
-          <td style="padding:10px 8px;font-size:12px;font-family:'JetBrains Mono',monospace;color:var(--accent);${textDeco}">${escapeHtml(v.code||'—')}</td>
-          <td style="padding:10px 8px;font-size:12px;font-weight:600;${textDeco};color:${isExpiringSoon?'var(--danger)':'var(--ink)'}">${escapeHtml(v.hotelName)}</td>
-          <td style="padding:10px 8px;font-size:12px;text-align:center;${textDeco}">${v.nights||0}</td>
-          <td style="padding:10px 8px;font-size:12px;${textDeco}">${escapeHtml(v.roomType||'—')}</td>
-          <td style="padding:10px 8px;font-size:11px;${textDeco}">${fmtDate(v.startDate)}</td>
-          <td style="padding:10px 8px;font-size:11px;${textDeco};color:${isExpiringSoon?'var(--danger);font-weight:700':'var(--ink)'}">${fmtDate(v.endDate)}</td>
-          <td style="padding:10px 8px;font-size:11px;${textDeco}">${empName(v.assignedTo)}</td>
-          <td style="padding:10px 8px;text-align:center">${badge}</td>
-          <td style="padding:10px 6px;text-align:center" onclick="event.stopPropagation()">
-            ${canEdit?`
-              <button onclick="_vEditVoucher(${realIdx})" style="background:transparent;border:none;cursor:pointer;font-size:12px;padding:2px 4px" title="Sửa">✏️</button>
-              <button onclick="_vLinkVoucher(${realIdx})" style="background:transparent;border:none;cursor:pointer;font-size:12px;padding:2px 4px" title="Liên kết voucher đổi">🔗</button>
-              <button onclick="_vDeleteVoucher(${realIdx})" style="background:transparent;border:none;cursor:pointer;font-size:12px;padding:2px 4px;color:var(--danger)" title="Xóa">✕</button>
-            `:''}
-          </td>
-        </tr>`;
-      }).join('');
+    // Search filter
+    const sq = (window._vSearchQ||'').toLowerCase();
+    const filteredRows = sq ? allRows.filter(r=>{
+      const hMatch = r.hotel && ((r.hotel.code||'').toLowerCase().includes(sq) || (r.hotel.hotelName||'').toLowerCase().includes(sq));
+      const eMatch = r.exchange && ((r.exchange.code||'').toLowerCase().includes(sq) || (r.exchange.hotelName||'').toLowerCase().includes(sq));
+      return hMatch || eMatch;
+    }) : allRows;
+
+    // Build one side cell for a voucher
+    const buildCell = (v, side) => {
+      if(!v) return `<td colspan="7" style="padding:12px;text-align:center;color:var(--border);font-size:20px;border-right:${side==='hotel'?'3px solid var(--border)':'none'}">—</td>`;
+      const realIdx = vouchers.indexOf(v);
+      const endDt = new Date(v.endDate);
+      const isExpired = endDt < now;
+      const isExpiringSoon = !isExpired && !v.used && endDt <= twoMonthsFromNow;
+      const isUsed = !!v.used;
+      const dec = isUsed ? 'text-decoration:line-through;opacity:.55;' : '';
+      const dangerCol = isExpiringSoon ? 'color:var(--danger);font-weight:700;' : '';
+      const rowBg = isExpiringSoon && !isUsed ? 'background:rgba(229,115,115,.05);' : '';
+
+      let badge = '';
+      if(isUsed) badge = `<span style="padding:1px 6px;border-radius:3px;background:var(--ink-muted);color:#fff;font-size:9px;font-weight:600">Đã dùng</span>`;
+      else if(isExpired) badge = `<span style="padding:1px 6px;border-radius:3px;background:var(--danger);color:#fff;font-size:9px">Hết hạn</span>`;
+      else if(isExpiringSoon){
+        const dl = Math.ceil((endDt-now)/(86400000));
+        badge = `<span style="padding:1px 6px;border-radius:3px;background:var(--danger);color:#fff;font-size:9px;font-weight:600">⚠ ${dl}d</span>`;
+      } else badge = `<span style="padding:1px 6px;border-radius:3px;background:var(--success);color:#fff;font-size:9px">OK</span>`;
+
+      const br = side==='hotel' ? 'border-right:3px solid var(--border);' : '';
+
+      return `
+        <td style="padding:8px 6px;font-size:11px;font-family:'JetBrains Mono',monospace;color:var(--accent);${dec}">${escapeHtml(v.code||'—')}</td>
+        <td style="padding:8px 6px;font-size:11px;font-weight:600;${dec}${dangerCol};max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHtml(v.hotelName)}">${escapeHtml(v.hotelName)}</td>
+        <td style="padding:8px 4px;font-size:11px;text-align:center;${dec}">${v.nights||0}</td>
+        <td style="padding:8px 6px;font-size:11px;${dec}">${escapeHtml(v.roomType||'—')}</td>
+        <td style="padding:8px 4px;font-size:10px;${dec}">${fmtDate(v.endDate)}</td>
+        <td style="padding:8px 6px;font-size:11px;${dec}">${empName(v.assignedTo)}</td>
+        <td style="padding:8px 4px;text-align:center;white-space:nowrap;${br}" onclick="event.stopPropagation()">
+          ${badge}
+          ${canEdit?` <button onclick="_vEditVoucher(${realIdx})" style="background:transparent;border:none;cursor:pointer;font-size:11px;padding:1px 2px" title="Sửa">✏️</button><button onclick="_vDeleteVoucher(${realIdx})" style="background:transparent;border:none;cursor:pointer;font-size:11px;padding:1px 2px;color:var(--danger)" title="Xóa">✕</button>`:''}
+        </td>`;
     };
 
-    const thStyle = 'padding:10px 8px;font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--ink-muted);font-weight:600;border-bottom:2px solid var(--border);white-space:nowrap;text-align:left';
+    // Separator row between unused and used
+    const hasUnused = filteredRows.some(r=>(r.hotel&&!r.hotel.used)||(r.exchange&&!r.exchange.used));
+    const hasUsed = filteredRows.some(r=>(r.hotel&&r.hotel.used)||(r.exchange&&r.exchange.used));
 
-    const tableHeader = `
-      <tr>
-        <th style="${thStyle}">Mã Code</th>
-        <th style="${thStyle}">Khách sạn</th>
-        <th style="${thStyle};text-align:center">Đêm</th>
-        <th style="${thStyle}">Hạng phòng</th>
-        <th style="${thStyle}">Bắt đầu</th>
-        <th style="${thStyle}">Kết thúc</th>
-        <th style="${thStyle}">Phát cho</th>
-        <th style="${thStyle};text-align:center">TT</th>
-        <th style="${thStyle};text-align:center;width:80px"></th>
+    let tableRows = '';
+    let addedSeparator = false;
+    filteredRows.forEach(r=>{
+      const bothUsed = (r.hotel?r.hotel.used:true) && (r.exchange?r.exchange.used:true);
+      const eitherExists = r.hotel || r.exchange;
+      if(hasUnused && hasUsed && bothUsed && !addedSeparator && eitherExists){
+        addedSeparator = true;
+        tableRows += `<tr><td colspan="14" style="padding:4px 0;background:var(--bg)">
+          <div style="display:flex;align-items:center;gap:10px;padding:2px 12px">
+            <div style="flex:1;height:1px;background:var(--border)"></div>
+            <span style="font-size:10px;color:var(--ink-muted);font-weight:600;text-transform:uppercase;letter-spacing:.1em">Đã sử dụng</span>
+            <div style="flex:1;height:1px;background:var(--border)"></div>
+          </div>
+        </td></tr>`;
+      }
+      const hIdx = r.hotel ? vouchers.indexOf(r.hotel) : -1;
+      const eIdx = r.exchange ? vouchers.indexOf(r.exchange) : -1;
+      const clickH = hIdx>=0 ? `onclick="_vToggleUsed(${hIdx})"` : '';
+      const clickE = eIdx>=0 ? `onclick="_vToggleUsed(${eIdx})"` : '';
+      const linked = r.hotel && r.exchange && r.hotel.linkedId === r.exchange?.vid;
+      const linkIcon = linked ? `<td style="padding:0 2px;text-align:center;font-size:14px;color:var(--teal);border-right:3px solid var(--border)" title="Đã liên kết">🔗</td>` : `<td style="padding:0 2px;border-right:3px solid var(--border)"></td>`;
+      // We won't use linkIcon as a separate column now — the border between sides handles it
+
+      tableRows += `<tr style="border-bottom:1px solid var(--border);cursor:pointer;transition:background .15s"
+        onmouseenter="this.style.background='var(--bg-elev)'" onmouseleave="this.style.background=''">
+        ${buildCell(r.hotel, 'hotel')}
+        ${buildCell(r.exchange, 'exchange')}
       </tr>`;
+    });
+
+    if(!filteredRows.length){
+      tableRows = `<tr><td colspan="14" style="text-align:center;padding:30px;color:var(--ink-muted);font-size:12px">Chưa có voucher nào</td></tr>`;
+    }
+
+    const thS = 'padding:8px 6px;font-size:9px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-muted);font-weight:600;border-bottom:2px solid var(--border);white-space:nowrap;text-align:left';
 
     // Stats
-    const totalH = hotelVouchers.length, totalE = exchangeVouchers.length;
-    const linkedCount = hotelVouchers.filter(v=>v.linkedId && vouchers.find(x=>x.vid===v.linkedId)).length;
-    const expiringH = hotelVouchers.filter(v=>!v.used && new Date(v.endDate)>=now && new Date(v.endDate)<=twoMonthsFromNow).length;
-    const expiringE = exchangeVouchers.filter(v=>!v.used && new Date(v.endDate)>=now && new Date(v.endDate)<=twoMonthsFromNow).length;
+    const totalH = hotelV.length, totalE = exchV.length;
+    const linkedCount = hotelV.filter(v=>v.linkedId && vouchers.find(x=>x.vid===v.linkedId)).length;
+    const expiringAll = vouchers.filter(v=>!v.used && new Date(v.endDate)>=now && new Date(v.endDate)<=twoMonthsFromNow).length;
 
     sectionContent = `
-      <!-- Stats -->
-      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-bottom:20px">
-        <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:10px;padding:14px 16px;text-align:center">
-          <div style="font-size:22px;font-weight:700;color:var(--accent)">${totalH}</div>
-          <div style="font-size:10px;color:var(--ink-muted);margin-top:2px">Voucher KS</div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px;margin-bottom:18px">
+        <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:10px;padding:12px 14px;text-align:center">
+          <div style="font-size:20px;font-weight:700;color:var(--accent)">${totalH}</div>
+          <div style="font-size:10px;color:var(--ink-muted)">Voucher Gửi</div>
         </div>
-        <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:10px;padding:14px 16px;text-align:center">
-          <div style="font-size:22px;font-weight:700;color:var(--purple)">${totalE}</div>
-          <div style="font-size:10px;color:var(--ink-muted);margin-top:2px">Voucher Đổi</div>
+        <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:10px;padding:12px 14px;text-align:center">
+          <div style="font-size:20px;font-weight:700;color:var(--purple)">${totalE}</div>
+          <div style="font-size:10px;color:var(--ink-muted)">Voucher Nhận</div>
         </div>
-        <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:10px;padding:14px 16px;text-align:center">
-          <div style="font-size:22px;font-weight:700;color:var(--teal)">${linkedCount}</div>
-          <div style="font-size:10px;color:var(--ink-muted);margin-top:2px">Đã đổi</div>
+        <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:10px;padding:12px 14px;text-align:center">
+          <div style="font-size:20px;font-weight:700;color:var(--teal)">${linkedCount}</div>
+          <div style="font-size:10px;color:var(--ink-muted)">Đã đổi</div>
         </div>
-        <div style="background:var(--bg-card);border:1px solid ${(expiringH+expiringE)?'var(--danger)':'var(--border)'};border-radius:10px;padding:14px 16px;text-align:center;${(expiringH+expiringE)?'background:rgba(229,115,115,.05)':''}">
-          <div style="font-size:22px;font-weight:700;color:var(--danger)">${expiringH+expiringE}</div>
-          <div style="font-size:10px;color:var(--ink-muted);margin-top:2px">Sắp hết hạn</div>
+        <div style="background:var(--bg-card);border:1px solid ${expiringAll?'var(--danger)':'var(--border)'};border-radius:10px;padding:12px 14px;text-align:center;${expiringAll?'background:rgba(229,115,115,.05)':''}">
+          <div style="font-size:20px;font-weight:700;color:var(--danger)">${expiringAll}</div>
+          <div style="font-size:10px;color:var(--ink-muted)">Sắp hết hạn</div>
         </div>
       </div>
 
-      <!-- Search -->
-      <div style="display:flex;gap:10px;align-items:center;margin-bottom:18px;flex-wrap:wrap">
-        <input placeholder="🔍 Tìm theo mã code hoặc tên KS..." id="_vSearchInput"
+      <div style="display:flex;gap:10px;align-items:center;margin-bottom:14px;flex-wrap:wrap">
+        <input placeholder="🔍 Tìm mã code / tên KS..." id="_vSearchInput"
           oninput="window._vSearchQ=this.value;render()"
           value="${escapeHtml(window._vSearchQ||'')}"
-          style="padding:7px 14px;background:var(--bg-card);border:1px solid var(--border);border-radius:8px;color:var(--ink);font-size:12px;min-width:240px;flex:1;max-width:360px">
+          style="padding:7px 14px;background:var(--bg-card);border:1px solid var(--border);border-radius:8px;color:var(--ink);font-size:12px;min-width:220px;flex:1;max-width:320px">
+        ${canEdit?`
+          <button class="btn btn-primary" onclick="_vAddVoucher('hotel')" style="font-size:12px;padding:6px 14px">+ Voucher Gửi</button>
+          <button class="btn" onclick="_vAddVoucher('exchange')" style="font-size:12px;padding:6px 14px;border-color:var(--purple);color:var(--purple)">+ Voucher Nhận</button>
+        `:''}
       </div>
 
-      <!-- TABLE 1: Voucher của Khách sạn -->
-      <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:12px;overflow:hidden;margin-bottom:20px">
-        <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid var(--border);background:rgba(38,166,154,.04)">
-          <div style="display:flex;align-items:center;gap:10px">
-            <span style="font-size:18px">🏨</span>
-            <div>
-              <div style="font-size:14px;font-weight:600;color:var(--ink)">Voucher của Khách sạn</div>
-              <div style="font-size:11px;color:var(--ink-muted)">Voucher do khách sạn mình phát hành · ${totalH} voucher</div>
-            </div>
-          </div>
-          ${canEdit?`<button class="btn btn-primary" onclick="_vAddVoucher('hotel')" style="font-size:12px;padding:6px 14px">+ Thêm</button>`:''}
-        </div>
-        <div style="overflow-x:auto">
-          <table style="width:100%;border-collapse:collapse;min-width:800px">
-            ${tableHeader}
-            ${buildRows(hotelVouchers.filter(v=>{
-              if(!window._vSearchQ) return true;
-              const q = window._vSearchQ.toLowerCase();
-              return (v.code||'').toLowerCase().includes(q) || (v.hotelName||'').toLowerCase().includes(q);
-            }), 'hotel')}
-          </table>
-        </div>
-      </div>
-
-      <!-- TABLE 2: Voucher Đổi -->
       <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:12px;overflow:hidden">
-        <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid var(--border);background:rgba(149,117,205,.04)">
-          <div style="display:flex;align-items:center;gap:10px">
-            <span style="font-size:18px">🔄</span>
-            <div>
-              <div style="font-size:14px;font-weight:600;color:var(--ink)">Voucher Đổi</div>
-              <div style="font-size:11px;color:var(--ink-muted)">Voucher nhận từ khách sạn khác qua trao đổi · ${totalE} voucher</div>
-            </div>
-          </div>
-          ${canEdit?`<button class="btn" onclick="_vAddVoucher('exchange')" style="font-size:12px;padding:6px 14px;border-color:var(--purple);color:var(--purple)">+ Thêm Voucher Đổi</button>`:''}
-        </div>
         <div style="overflow-x:auto">
-          <table style="width:100%;border-collapse:collapse;min-width:800px">
-            ${tableHeader}
-            ${buildRows(exchangeVouchers.filter(v=>{
-              if(!window._vSearchQ) return true;
-              const q = window._vSearchQ.toLowerCase();
-              return (v.code||'').toLowerCase().includes(q) || (v.hotelName||'').toLowerCase().includes(q);
-            }), 'exchange')}
+          <table style="width:100%;border-collapse:collapse;min-width:1100px">
+            <tr>
+              <th colspan="7" style="padding:10px 12px;font-size:12px;font-weight:700;color:var(--accent);border-bottom:2px solid var(--border);border-right:3px solid var(--border);background:rgba(38,166,154,.04);text-align:center">🏨 Voucher Gửi</th>
+              <th colspan="7" style="padding:10px 12px;font-size:12px;font-weight:700;color:var(--purple);border-bottom:2px solid var(--border);background:rgba(149,117,205,.04);text-align:center">🔄 Voucher Nhận</th>
+            </tr>
+            <tr>
+              <th style="${thS}">Code</th><th style="${thS}">Khách sạn</th><th style="${thS};text-align:center">Đêm</th><th style="${thS}">Phòng</th><th style="${thS}">Hết hạn</th><th style="${thS}">Phát cho</th><th style="${thS};text-align:center;border-right:3px solid var(--border)">TT</th>
+              <th style="${thS}">Code</th><th style="${thS}">Khách sạn</th><th style="${thS};text-align:center">Đêm</th><th style="${thS}">Phòng</th><th style="${thS}">Hết hạn</th><th style="${thS}">Phát cho</th><th style="${thS};text-align:center">TT</th>
+            </tr>
+            ${tableRows}
           </table>
         </div>
-      </div>`;
+      </div>
+      <div style="margin-top:8px;font-size:10px;color:var(--ink-muted);font-style:italic">💡 Nhấn vào dòng voucher để đánh dấu đã dùng / bỏ đánh dấu · Voucher liên kết sẽ hiện cùng dòng</div>`;
   }
 
   main.innerHTML = `
@@ -36229,7 +36251,7 @@ function renderCBPackage(main){
       <div class="topbar-left">
         <div class="page-breadcrumb">OVERVIEW · C&B PACKAGE</div>
         <h1 class="page-title">🎁 C&B <em>Package</em></h1>
-        <div class="page-sub">${section==='docs'?'Tài liệu phúc lợi & chính sách công ty · '+docs.length+' tài liệu · Click để xem trực tiếp':'Quản lý Voucher · '+vouchers.length+' voucher · Nhấn vào voucher để đánh dấu đã dùng'}</div>
+        <div class="page-sub">${section==='docs'?'Tài liệu phúc lợi & chính sách công ty · '+docs.length+' tài liệu · Click để xem trực tiếp':'Quản lý Voucher · '+vouchers.length+' voucher'}</div>
       </div>
       <div class="topbar-right">
         ${section==='docs' && canEdit?'<button class="btn btn-primary" onclick="_cbAdd()" style="font-size:13px">+ Thêm tài liệu</button>':''}
@@ -36395,10 +36417,23 @@ function _vOpenForm(idx, vtype){
   const ROOM_TYPES = ['Standard','Superior','Deluxe','Suite','Villa','Premium','Khác'];
   const roomOpts = ROOM_TYPES.map(r=>`<option value="${r}" ${v.roomType===r?'selected':''}>${r}</option>`).join('');
 
-  // Employee picker field HTML (reuse existing system)
-  const empPickerHtml = (typeof renderEmpPickerField === 'function')
-    ? renderEmpPickerField('_v_assignedTo', v.assignedTo||'', 'Click để chọn nhân viên...')
-    : `<input id="_v_assignedTo" value="${escapeHtml(v.assignedTo||'')}" placeholder="Nhập tên NV..." style="width:100%;padding:10px 12px;background:var(--bg-card);border:1px solid var(--border);border-radius:8px;color:var(--ink);font-size:13px;margin-top:4px">`;
+  // Inline autocomplete employee search (not popup overlay)
+  const _empVal = v.assignedTo||'';
+  const _empDisp = _empVal ? (((DB.employees||[]).find(x=>x.id===_empVal)||{}).name || _empVal) : '';
+  const empPickerHtml = `
+    <div style="position:relative">
+      <div style="display:flex;align-items:center;gap:4px">
+        <input id="_v_empSearch" value="${escapeHtml(_empDisp)}" placeholder="Gõ tên nhân viên..."
+               oninput="_vFilterEmp(this.value)" onfocus="_vFilterEmp(this.value)"
+               onblur="setTimeout(()=>{const d=document.getElementById('_v_empDropdown');if(d)d.style.display='none'},180)"
+               autocomplete="off"
+               style="flex:1;padding:10px 12px;background:var(--bg-card);border:1px solid var(--border);border-radius:8px;color:var(--ink);font-size:13px">
+        <button type="button" id="_v_empClearBtn" onclick="_vClearEmp()" title="Xoá"
+                style="display:${_empVal?'inline-flex':'none'};align-items:center;justify-content:center;background:transparent;border:1px solid var(--border);border-radius:8px;padding:0 10px;height:38px;color:var(--ink-muted);cursor:pointer;font-size:13px">✕</button>
+      </div>
+      <input type="hidden" id="_v_assignedTo" value="${escapeHtml(_empVal)}">
+      <div id="_v_empDropdown" style="display:none;position:absolute;top:calc(100% + 2px);left:0;right:0;max-height:180px;overflow-y:auto;background:var(--bg-elev);border:1px solid var(--border-strong);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.4);z-index:10"></div>
+    </div>`;
 
   let ov = document.getElementById('_vFormOv');
   if(ov) ov.remove();
@@ -36408,7 +36443,7 @@ function _vOpenForm(idx, vtype){
   ov.innerHTML = `
     <div style="background:var(--bg-elev);border:1px solid var(--border-strong);border-radius:14px;padding:28px;max-width:560px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,.5);max-height:90vh;overflow-y:auto">
       <div style="font-family:'Fraunces',serif;font-size:18px;font-weight:500;margin-bottom:16px">
-        ${isNew?'➕ Thêm':'✏️ Sửa'} <em style="color:${isExchange?'var(--purple)':'var(--accent)'}">${isExchange?'Voucher Đổi':'Voucher KS'}</em>
+        ${isNew?'➕ Thêm':'✏️ Sửa'} <em style="color:${isExchange?'var(--purple)':'var(--accent)'}">${isExchange?'Voucher Nhận':'Voucher Gửi'}</em>
       </div>
       <div style="display:flex;flex-direction:column;gap:12px">
         <div>
@@ -36455,6 +36490,42 @@ function _vOpenForm(idx, vtype){
   document.body.appendChild(ov);
   ov.addEventListener('click',ev=>{if(ev.target===ov)ov.remove();});
   document.getElementById('_v_code')?.focus();
+}
+
+/* ── Inline employee autocomplete helpers ── */
+function _vFilterEmp(q){
+  const dd=document.getElementById('_v_empDropdown'); if(!dd) return;
+  q=(q||'').toLowerCase().trim();
+  // Clear hidden value when user edits text — force re-selection
+  const hi=document.getElementById('_v_assignedTo'); if(hi) hi.value='';
+  const cb=document.getElementById('_v_empClearBtn'); if(cb) cb.style.display='none';
+  const emps=(DB.employees||[]).filter(e=>e.status!=='exit');
+  const matches=q ? emps.filter(e=>(e.name||'').toLowerCase().includes(q)||(e.code||'').toLowerCase().includes(q)).slice(0,8) : emps.slice(0,8);
+  if(!matches.length){
+    dd.innerHTML='<div style="padding:10px;color:var(--ink-muted);font-size:12px;text-align:center">Không tìm thấy</div>';
+    dd.style.display='block'; return;
+  }
+  dd.innerHTML=matches.map(e=>`<div onmousedown="_vSelectEmp('${e.id}')"
+    style="padding:8px 12px;cursor:pointer;font-size:13px;border-bottom:1px solid rgba(255,255,255,.05)"
+    onmouseenter="this.style.background='var(--accent-dim)'" onmouseleave="this.style.background=''">
+    <span style="font-weight:500">${escapeHtml(e.name)}</span>
+    <span style="color:var(--ink-muted);font-size:11px;margin-left:6px">${escapeHtml(e.code||'')}</span>
+    <span style="color:var(--ink-muted);font-size:10px;float:right">${escapeHtml(deptName(e.deptId)||'')}</span>
+  </div>`).join('');
+  dd.style.display='block';
+}
+function _vSelectEmp(empId){
+  const emp=(DB.employees||[]).find(e=>e.id===empId); if(!emp) return;
+  const si=document.getElementById('_v_assignedTo'); if(si) si.value=empId;
+  const vi=document.getElementById('_v_empSearch'); if(vi) vi.value=emp.name;
+  const dd=document.getElementById('_v_empDropdown'); if(dd) dd.style.display='none';
+  const cb=document.getElementById('_v_empClearBtn'); if(cb) cb.style.display='inline-flex';
+}
+function _vClearEmp(){
+  const si=document.getElementById('_v_assignedTo'); if(si) si.value='';
+  const vi=document.getElementById('_v_empSearch'); if(vi){ vi.value=''; vi.focus(); }
+  const dd=document.getElementById('_v_empDropdown'); if(dd) dd.style.display='none';
+  const cb=document.getElementById('_v_empClearBtn'); if(cb) cb.style.display='none';
 }
 
 function _vSaveVoucher(idx, vtype){
