@@ -1913,6 +1913,9 @@ if(!DB.hrGardenPlan || Array.isArray(DB.hrGardenPlan)){
 if(!DB.cbPackageDocs || !Array.isArray(DB.cbPackageDocs)){
   try{ DB.cbPackageDocs = JSON.parse(localStorage.getItem('_cbPackageDocs')||'[]'); }catch(e){ DB.cbPackageDocs=[]; }
 }
+if(!DB.cbVouchers || !Array.isArray(DB.cbVouchers)){
+  try{ DB.cbVouchers = JSON.parse(localStorage.getItem('_cbVouchers')||'[]'); }catch(e){ DB.cbVouchers=[]; }
+}
 if(!DB.casualDirectory){try{DB.casualDirectory=JSON.parse(localStorage.getItem('_casualDirectory')||'{}');}catch(e){DB.casualDirectory={};}}
 if(!DB.plConfig     || Array.isArray(DB.plConfig))     DB.plConfig     = {};
 // Training KPI config — {monthlyHoursTarget: 1} mặc định 1h/tháng/NV
@@ -34033,6 +34036,29 @@ fbAuth.onAuthStateChanged(async user => {
           }
         })();
 
+        // Load C&B Vouchers
+        (async()=>{
+          try{
+            const snap = await window.fbDb.collection('hrdata').doc('cb_vouchers').get();
+            const cloudV = snap.exists ? (snap.data().cbVouchers||[]) : [];
+            let lsV = [];
+            try{ lsV = JSON.parse(localStorage.getItem('_cbVouchers')||'[]'); }catch(e){}
+            if(cloudV.length >= lsV.length){
+              DB.cbVouchers = cloudV;
+              if(cloudV.length) try{ localStorage.setItem('_cbVouchers', JSON.stringify(cloudV)); }catch(e){}
+            } else {
+              DB.cbVouchers = lsV;
+              console.log('[CB-V] ⚠ Restored', lsV.length, 'vouchers from localStorage (cloud had', cloudV.length, ')');
+              _saveCBVouchers();
+            }
+            console.log('[CB-V] ✅ Loaded', DB.cbVouchers.length, 'vouchers');
+            if(currentPage==='cbPackage') render();
+          }catch(e){
+            try{ DB.cbVouchers = JSON.parse(localStorage.getItem('_cbVouchers')||'[]'); }catch(e2){}
+            if(currentPage==='cbPackage') render();
+          }
+        })();
+
         // 🚨 Auto-confirm resignations đã qua ngày làm việc cuối
         // PHẢI chạy SAU _coldLoadDone = true để saveEmpProfile + saveData không bị SKIP
         try { if(typeof _autoConfirmExpiredResignations === 'function') _autoConfirmExpiredResignations(); } catch(e){ console.warn('autoExit warn:', e.message); }
@@ -35954,72 +35980,245 @@ function renderCBPackage(main){
   }
   const canEdit = window.canDo('cbPackage','edit');
   if(!DB.cbPackageDocs) DB.cbPackageDocs = [];
+  if(!DB.cbVouchers) DB.cbVouchers = [];
   const docs = DB.cbPackageDocs;
+  const vouchers = DB.cbVouchers;
+
+  // Section toggle: 'docs' or 'vouchers'
+  if(!window._cbSection) window._cbSection = 'docs';
+  const section = window._cbSection;
 
   const CATEGORIES = ['Chính sách','Quy định','Form mẫu','Phúc lợi','Đào tạo','Khác'];
   const CAT_ICONS = {'Chính sách':'📜','Quy định':'📋','Form mẫu':'📝','Phúc lợi':'🎁','Đào tạo':'🎓','Khác':'📎'};
   const CAT_COLORS = {'Chính sách':'var(--accent)','Quy định':'var(--info)','Form mẫu':'var(--teal)','Phúc lợi':'var(--success)','Đào tạo':'var(--purple)','Khác':'var(--ink-muted)'};
 
-  // Filter
-  if(!window._cbFilter) window._cbFilter = {cat:'all', search:''};
-  const F = window._cbFilter;
-  let filtered = docs.filter(d=>{
-    if(F.cat!=='all' && d.category!==F.cat) return false;
-    if(F.search && !d.name.toLowerCase().includes(F.search.toLowerCase())) return false;
-    return true;
-  });
-
-  const catTabs = ['all',...CATEGORIES].map(c=>{
-    const count = c==='all' ? docs.length : docs.filter(d=>d.category===c).length;
-    const active = F.cat===c;
-    return `<button onclick="window._cbFilter.cat='${c}';render()"
-      style="padding:5px 14px;border-radius:6px;border:1px solid ${active?'var(--accent)':'var(--border)'};background:${active?'var(--accent)':'transparent'};color:${active?'var(--bg)':'var(--ink-dim)'};font-size:12px;font-weight:${active?'700':'400'};cursor:pointer;user-select:none">
-      ${c==='all'?'Tất cả':((CAT_ICONS[c]||'')+' '+c)} <span style="opacity:.6">${count}</span>
-    </button>`;
-  }).join('');
-
-  const docCards = filtered.length ? filtered.map((d,idx)=>{
-    const realIdx = docs.indexOf(d);
-    const icon = CAT_ICONS[d.category]||'📎';
-    const color = CAT_COLORS[d.category]||'var(--ink-muted)';
-    return `<div style="background:var(--bg-card);border:1px solid var(--border);border-radius:12px;padding:16px 20px;display:flex;align-items:center;gap:14px;transition:border-color .2s;cursor:pointer"
-      onmouseenter="this.style.borderColor='var(--accent)'" onmouseleave="this.style.borderColor='var(--border)'"
-      onclick="_cbPreview(${realIdx})">
-      <div style="width:44px;height:44px;border-radius:10px;background:${color}15;border:1px solid ${color}30;display:grid;place-items:center;font-size:22px;flex-shrink:0">${icon}</div>
-      <div style="flex:1;min-width:0">
-        <div style="font-size:13px;font-weight:600;color:var(--ink);margin-bottom:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(d.name)}</div>
-        <div style="display:flex;gap:10px;font-size:11px;color:var(--ink-muted)">
-          <span style="padding:1px 7px;border-radius:4px;background:${color}12;color:${color};font-weight:600;font-size:10px">${escapeHtml(d.category||'Khác')}</span>
-          ${d.desc?'<span>'+escapeHtml(d.desc.slice(0,50))+'</span>':''}
-        </div>
-      </div>
-      ${canEdit?`<div style="display:flex;gap:6px;flex-shrink:0" onclick="event.stopPropagation()">
-        <button onclick="_cbEdit(${realIdx})" style="background:transparent;border:1px solid var(--border);border-radius:6px;padding:5px 8px;color:var(--ink-muted);cursor:pointer;font-size:11px">✏️</button>
-        <button onclick="_cbDelete(${realIdx})" style="background:transparent;border:1px solid rgba(229,115,115,.2);border-radius:6px;padding:5px 8px;color:var(--danger);cursor:pointer;font-size:11px">✕</button>
-      </div>`:''}
+  // Section tabs
+  const sectionTabs = `
+    <div style="display:flex;gap:4px;margin-bottom:18px;border-bottom:2px solid var(--border);padding-bottom:0">
+      <button onclick="window._cbSection='docs';render()"
+        style="padding:10px 22px;border:none;background:transparent;font-size:13px;font-weight:${section==='docs'?'700':'400'};color:${section==='docs'?'var(--accent)':'var(--ink-muted)'};cursor:pointer;border-bottom:2px solid ${section==='docs'?'var(--accent)':'transparent'};margin-bottom:-2px;transition:all .2s">
+        📄 Tài liệu <span style="opacity:.5;font-size:11px">${docs.length}</span>
+      </button>
+      <button onclick="window._cbSection='vouchers';render()"
+        style="padding:10px 22px;border:none;background:transparent;font-size:13px;font-weight:${section==='vouchers'?'700':'400'};color:${section==='vouchers'?'var(--accent)':'var(--ink-muted)'};cursor:pointer;border-bottom:2px solid ${section==='vouchers'?'var(--accent)':'transparent'};margin-bottom:-2px;transition:all .2s">
+        🎫 Voucher <span style="opacity:.5;font-size:11px">${vouchers.length}</span>
+      </button>
     </div>`;
-  }).join('') : '<div style="text-align:center;padding:40px;color:var(--ink-muted);font-size:13px">Chưa có tài liệu nào'+(F.cat!=='all'||F.search?' phù hợp bộ lọc':'')+'</div>';
+
+  let sectionContent = '';
+
+  if(section === 'docs'){
+    // ═══ Tài liệu section (existing) ═══
+    if(!window._cbFilter) window._cbFilter = {cat:'all', search:''};
+    const F = window._cbFilter;
+    let filtered = docs.filter(d=>{
+      if(F.cat!=='all' && d.category!==F.cat) return false;
+      if(F.search && !d.name.toLowerCase().includes(F.search.toLowerCase())) return false;
+      return true;
+    });
+
+    const catTabs = ['all',...CATEGORIES].map(c=>{
+      const count = c==='all' ? docs.length : docs.filter(d=>d.category===c).length;
+      const active = F.cat===c;
+      return `<button onclick="window._cbFilter.cat='${c}';render()"
+        style="padding:5px 14px;border-radius:6px;border:1px solid ${active?'var(--accent)':'var(--border)'};background:${active?'var(--accent)':'transparent'};color:${active?'var(--bg)':'var(--ink-dim)'};font-size:12px;font-weight:${active?'700':'400'};cursor:pointer;user-select:none">
+        ${c==='all'?'Tất cả':((CAT_ICONS[c]||'')+' '+c)} <span style="opacity:.6">${count}</span>
+      </button>`;
+    }).join('');
+
+    const docCards = filtered.length ? filtered.map((d,idx)=>{
+      const realIdx = docs.indexOf(d);
+      const icon = CAT_ICONS[d.category]||'📎';
+      const color = CAT_COLORS[d.category]||'var(--ink-muted)';
+      return `<div style="background:var(--bg-card);border:1px solid var(--border);border-radius:12px;padding:16px 20px;display:flex;align-items:center;gap:14px;transition:border-color .2s;cursor:pointer"
+        onmouseenter="this.style.borderColor='var(--accent)'" onmouseleave="this.style.borderColor='var(--border)'"
+        onclick="_cbPreview(${realIdx})">
+        <div style="width:44px;height:44px;border-radius:10px;background:${color}15;border:1px solid ${color}30;display:grid;place-items:center;font-size:22px;flex-shrink:0">${icon}</div>
+        <div style="flex:1;min-width:0">
+          <div style="font-size:13px;font-weight:600;color:var(--ink);margin-bottom:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(d.name)}</div>
+          <div style="display:flex;gap:10px;font-size:11px;color:var(--ink-muted)">
+            <span style="padding:1px 7px;border-radius:4px;background:${color}12;color:${color};font-weight:600;font-size:10px">${escapeHtml(d.category||'Khác')}</span>
+            ${d.desc?'<span>'+escapeHtml(d.desc.slice(0,50))+'</span>':''}
+          </div>
+        </div>
+        ${canEdit?`<div style="display:flex;gap:6px;flex-shrink:0" onclick="event.stopPropagation()">
+          <button onclick="_cbEdit(${realIdx})" style="background:transparent;border:1px solid var(--border);border-radius:6px;padding:5px 8px;color:var(--ink-muted);cursor:pointer;font-size:11px">✏️</button>
+          <button onclick="_cbDelete(${realIdx})" style="background:transparent;border:1px solid rgba(229,115,115,.2);border-radius:6px;padding:5px 8px;color:var(--danger);cursor:pointer;font-size:11px">✕</button>
+        </div>`:''}
+      </div>`;
+    }).join('') : '<div style="text-align:center;padding:40px;color:var(--ink-muted);font-size:13px">Chưa có tài liệu nào'+(F.cat!=='all'||F.search?' phù hợp bộ lọc':'')+'</div>';
+
+    sectionContent = `
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:16px">
+        <div style="display:flex;gap:4px;flex-wrap:wrap">${catTabs}</div>
+        <input placeholder="🔍 Tìm tài liệu..." value="${escapeHtml(F.search||'')}"
+          oninput="window._cbFilter.search=this.value;render()"
+          style="padding:7px 14px;background:var(--bg-card);border:1px solid var(--border);border-radius:8px;color:var(--ink);font-size:12px;min-width:200px">
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(360px,1fr));gap:12px">
+        ${docCards}
+      </div>`;
+
+  } else {
+    // ═══ Voucher section (NEW) ═══
+    const now = new Date();
+    const twoMonthsFromNow = new Date(now.getFullYear(), now.getMonth()+2, now.getDate());
+
+    if(!window._vFilter) window._vFilter = {status:'all', search:''};
+    const VF = window._vFilter;
+    let filteredV = vouchers.filter((v,i)=>{
+      if(VF.status==='active' && v.used) return false;
+      if(VF.status==='used' && !v.used) return false;
+      if(VF.status==='expiring'){
+        if(v.used) return false;
+        const end = new Date(v.endDate);
+        if(end < now || end > twoMonthsFromNow) return false;
+      }
+      if(VF.search && !v.hotelName.toLowerCase().includes(VF.search.toLowerCase())) return false;
+      return true;
+    });
+
+    const statusTabs = [
+      {key:'all',label:'Tất cả',count:vouchers.length},
+      {key:'active',label:'Còn hạn',count:vouchers.filter(v=>!v.used && new Date(v.endDate)>=now).length},
+      {key:'expiring',label:'⚠ Sắp hết hạn',count:vouchers.filter(v=>!v.used && new Date(v.endDate)>=now && new Date(v.endDate)<=twoMonthsFromNow).length},
+      {key:'used',label:'Đã dùng',count:vouchers.filter(v=>v.used).length}
+    ].map(t=>{
+      const active = VF.status===t.key;
+      return `<button onclick="window._vFilter.status='${t.key}';render()"
+        style="padding:5px 14px;border-radius:6px;border:1px solid ${active?'var(--accent)':'var(--border)'};background:${active?'var(--accent)':'transparent'};color:${active?'var(--bg)':'var(--ink-dim)'};font-size:12px;font-weight:${active?'700':'400'};cursor:pointer;user-select:none">
+        ${t.label} <span style="opacity:.6">${t.count}</span>
+      </button>`;
+    }).join('');
+
+    const vCards = filteredV.length ? filteredV.map((v,idx)=>{
+      const realIdx = vouchers.indexOf(v);
+      const endDt = new Date(v.endDate);
+      const startDt = new Date(v.startDate);
+      const isExpired = endDt < now;
+      const isExpiringSoon = !isExpired && endDt <= twoMonthsFromNow;
+      const isUsed = !!v.used;
+
+      // Format dates
+      const fmtDate = (d)=> { const dt=new Date(d); return dt.toLocaleDateString('vi-VN',{day:'2-digit',month:'2-digit',year:'numeric'}); };
+
+      // Determine card style
+      let borderColor = 'var(--border)';
+      let badgeBg = 'var(--success)';
+      let badgeText = 'Còn hạn';
+      let textDeco = 'none';
+      let cardOpacity = '1';
+
+      if(isUsed){
+        borderColor = 'var(--border)';
+        badgeBg = 'var(--ink-muted)';
+        badgeText = '✓ Đã dùng';
+        textDeco = 'line-through';
+        cardOpacity = '0.6';
+      } else if(isExpired){
+        borderColor = 'var(--danger)';
+        badgeBg = 'var(--danger)';
+        badgeText = 'Hết hạn';
+      } else if(isExpiringSoon){
+        borderColor = 'var(--danger)';
+        badgeBg = 'var(--danger)';
+        const daysLeft = Math.ceil((endDt - now)/(1000*60*60*24));
+        badgeText = '⚠ Còn ' + daysLeft + ' ngày';
+      }
+
+      return `<div style="background:var(--bg-card);border:1px solid ${borderColor};border-radius:12px;padding:18px 20px;transition:all .2s;cursor:pointer;opacity:${cardOpacity};position:relative;${isExpiringSoon&&!isUsed?'box-shadow:0 0 0 1px var(--danger), 0 2px 8px rgba(229,115,115,.15);':''}"
+        onmouseenter="this.style.transform='translateY(-1px)';this.style.boxShadow='0 4px 12px rgba(0,0,0,.12)'"
+        onmouseleave="this.style.transform='';this.style.boxShadow='${isExpiringSoon&&!isUsed?'0 0 0 1px var(--danger), 0 2px 8px rgba(229,115,115,.15)':''}'"
+        onclick="_vToggleUsed(${realIdx})">
+
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px">
+          <div style="width:40px;height:40px;border-radius:10px;background:${isExpiringSoon&&!isUsed?'rgba(229,115,115,.12)':'rgba(38,166,154,.1)'};display:grid;place-items:center;font-size:20px;flex-shrink:0">${isUsed?'✅':'🏨'}</div>
+          <div style="flex:1;min-width:0">
+            <div style="font-size:14px;font-weight:600;color:${isExpiringSoon&&!isUsed?'var(--danger)':'var(--ink)'};text-decoration:${textDeco};overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(v.hotelName)}</div>
+            <span style="display:inline-block;padding:2px 8px;border-radius:4px;background:${badgeBg};color:#fff;font-size:10px;font-weight:600;margin-top:3px">${badgeText}</span>
+          </div>
+          ${canEdit?`<div style="display:flex;gap:6px;flex-shrink:0" onclick="event.stopPropagation()">
+            <button onclick="_vEditVoucher(${realIdx})" style="background:transparent;border:1px solid var(--border);border-radius:6px;padding:5px 8px;color:var(--ink-muted);cursor:pointer;font-size:11px" title="Sửa">✏️</button>
+            <button onclick="_vDeleteVoucher(${realIdx})" style="background:transparent;border:1px solid rgba(229,115,115,.2);border-radius:6px;padding:5px 8px;color:var(--danger);cursor:pointer;font-size:11px" title="Xóa">✕</button>
+          </div>`:''}
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:12px;color:var(--ink-dim);text-decoration:${textDeco}">
+          <div style="display:flex;align-items:center;gap:6px">
+            <span style="color:var(--ink-muted);font-size:11px">🌙 Số đêm:</span>
+            <span style="font-weight:600;color:var(--ink)">${escapeHtml(String(v.nights||0))}</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:6px">
+            <span style="color:var(--ink-muted);font-size:11px">🛏️ Hạng phòng:</span>
+            <span style="font-weight:600;color:var(--ink)">${escapeHtml(v.roomType||'')}</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:6px">
+            <span style="color:var(--ink-muted);font-size:11px">📅 Bắt đầu:</span>
+            <span style="font-weight:600;color:var(--ink)">${fmtDate(v.startDate)}</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:6px">
+            <span style="color:var(--ink-muted);font-size:11px">📅 Kết thúc:</span>
+            <span style="font-weight:600;color:${isExpiringSoon&&!isUsed?'var(--danger)':'var(--ink)'}">${fmtDate(v.endDate)}</span>
+          </div>
+        </div>
+        <div style="margin-top:10px;font-size:10px;color:var(--ink-muted);text-align:right;font-style:italic">
+          ${isUsed?'Nhấn để bỏ đánh dấu đã dùng':'💡 Nhấn để đánh dấu đã dùng'}
+        </div>
+      </div>`;
+    }).join('') : '<div style="text-align:center;padding:40px;color:var(--ink-muted);font-size:13px">Chưa có voucher nào'+(VF.status!=='all'||VF.search?' phù hợp bộ lọc':'')+'</div>';
+
+    // Summary stats
+    const activeCount = vouchers.filter(v=>!v.used && new Date(v.endDate)>=now).length;
+    const expiringCount = vouchers.filter(v=>!v.used && new Date(v.endDate)>=now && new Date(v.endDate)<=twoMonthsFromNow).length;
+    const usedCount = vouchers.filter(v=>v.used).length;
+
+    const statCards = `
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:18px">
+        <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:10px;padding:14px 16px;text-align:center">
+          <div style="font-size:22px;font-weight:700;color:var(--accent)">${vouchers.length}</div>
+          <div style="font-size:11px;color:var(--ink-muted);margin-top:2px">Tổng voucher</div>
+        </div>
+        <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:10px;padding:14px 16px;text-align:center">
+          <div style="font-size:22px;font-weight:700;color:var(--success)">${activeCount}</div>
+          <div style="font-size:11px;color:var(--ink-muted);margin-top:2px">Còn hạn</div>
+        </div>
+        <div style="background:var(--bg-card);border:1px solid ${expiringCount?'var(--danger)':'var(--border)'};border-radius:10px;padding:14px 16px;text-align:center;${expiringCount?'background:rgba(229,115,115,.05);':''}">
+          <div style="font-size:22px;font-weight:700;color:var(--danger)">${expiringCount}</div>
+          <div style="font-size:11px;color:var(--ink-muted);margin-top:2px">⚠ Sắp hết hạn</div>
+        </div>
+        <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:10px;padding:14px 16px;text-align:center">
+          <div style="font-size:22px;font-weight:700;color:var(--ink-muted)">${usedCount}</div>
+          <div style="font-size:11px;color:var(--ink-muted);margin-top:2px">Đã dùng</div>
+        </div>
+      </div>`;
+
+    sectionContent = `
+      ${statCards}
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:16px">
+        <div style="display:flex;gap:4px;flex-wrap:wrap">${statusTabs}</div>
+        <input placeholder="🔍 Tìm theo tên khách sạn..." value="${escapeHtml(VF.search||'')}"
+          oninput="window._vFilter.search=this.value;render()"
+          style="padding:7px 14px;background:var(--bg-card);border:1px solid var(--border);border-radius:8px;color:var(--ink);font-size:12px;min-width:200px">
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:12px">
+        ${vCards}
+      </div>`;
+  }
 
   main.innerHTML = `
     <div class="topbar">
       <div class="topbar-left">
         <div class="page-breadcrumb">OVERVIEW · C&B PACKAGE</div>
         <h1 class="page-title">🎁 C&B <em>Package</em></h1>
-        <div class="page-sub">Tài liệu phúc lợi & chính sách công ty · ${docs.length} tài liệu · Click để xem trực tiếp</div>
+        <div class="page-sub">${section==='docs'?'Tài liệu phúc lợi & chính sách công ty · '+docs.length+' tài liệu · Click để xem trực tiếp':'Quản lý Voucher khách sạn · '+vouchers.length+' voucher'}</div>
       </div>
       <div class="topbar-right">
-        ${canEdit?'<button class="btn btn-primary" onclick="_cbAdd()" style="font-size:13px">+ Thêm tài liệu</button>':''}
+        ${section==='docs' && canEdit?'<button class="btn btn-primary" onclick="_cbAdd()" style="font-size:13px">+ Thêm tài liệu</button>':''}
+        ${section==='vouchers' && canEdit?'<button class="btn btn-primary" onclick="_vAddVoucher()" style="font-size:13px">+ Thêm Voucher</button>':''}
       </div>
     </div>
-    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:16px">
-      <div style="display:flex;gap:4px;flex-wrap:wrap">${catTabs}</div>
-      <input placeholder="🔍 Tìm tài liệu..." value="${escapeHtml(F.search||'')}"
-        oninput="window._cbFilter.search=this.value;render()"
-        style="padding:7px 14px;background:var(--bg-card);border:1px solid var(--border);border-radius:8px;color:var(--ink);font-size:12px;min-width:200px">
-    </div>
-    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(360px,1fr));gap:12px">
-      ${docCards}
-    </div>`;
+    ${sectionTabs}
+    ${sectionContent}`;
 }
 
 function _cbGetEmbedUrl(url){
@@ -36150,6 +36349,126 @@ function _saveCBDocs(){
     .set({...meta, cbPackageDocs: DB.cbPackageDocs||[]}, {merge:false})
     .then(()=>console.log('[CB] ✅ Saved', (DB.cbPackageDocs||[]).length, 'docs'))
     .catch(err=>console.error('[CB] ❌ Save failed:', err.message));
+}
+
+/* ═══════════════════════════════════════════
+   VOUCHER – CRUD & Persistence
+   ═══════════════════════════════════════════ */
+function _vToggleUsed(idx){
+  if(!DB.cbVouchers || !DB.cbVouchers[idx]) return;
+  DB.cbVouchers[idx].used = !DB.cbVouchers[idx].used;
+  DB.cbVouchers[idx].updatedAt = Date.now();
+  _saveCBVouchers();
+  render();
+}
+
+function _vAddVoucher(){
+  _vOpenForm(-1);
+}
+function _vEditVoucher(idx){
+  _vOpenForm(idx);
+}
+function _vOpenForm(idx){
+  const isNew = idx < 0;
+  const v = isNew ? {hotelName:'',nights:1,roomType:'',startDate:'',endDate:'',used:false} : DB.cbVouchers[idx];
+
+  const ROOM_TYPES = ['Standard','Superior','Deluxe','Suite','Villa','Premium','Khác'];
+  const roomOpts = ROOM_TYPES.map(r=>`<option value="${r}" ${v.roomType===r?'selected':''}>${r}</option>`).join('');
+
+  let ov = document.getElementById('_vFormOv');
+  if(ov) ov.remove();
+  ov = document.createElement('div');
+  ov.id = '_vFormOv';
+  ov.style.cssText = 'position:fixed;inset:0;z-index:500;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.7);backdrop-filter:blur(4px);padding:20px';
+  ov.innerHTML = `
+    <div style="background:var(--bg-elev);border:1px solid var(--border-strong);border-radius:14px;padding:28px;max-width:520px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,.5)">
+      <div style="font-family:'Fraunces',serif;font-size:18px;font-weight:500;margin-bottom:16px">${isNew?'➕ Thêm':'✏️ Sửa'} <em style="color:var(--accent)">Voucher</em></div>
+      <div style="display:flex;flex-direction:column;gap:12px">
+        <div>
+          <label style="font-size:11px;color:var(--ink-muted);letter-spacing:.1em;text-transform:uppercase;font-weight:600">Tên khách sạn *</label>
+          <input id="_v_hotel" value="${escapeHtml(v.hotelName)}" placeholder="VD: Yên Tử MGallery..." style="width:100%;padding:10px 12px;background:var(--bg-card);border:1px solid var(--border);border-radius:8px;color:var(--ink);font-size:13px;margin-top:4px">
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+          <div>
+            <label style="font-size:11px;color:var(--ink-muted);letter-spacing:.1em;text-transform:uppercase;font-weight:600">Số đêm *</label>
+            <input id="_v_nights" type="number" min="1" value="${v.nights||1}" style="width:100%;padding:10px 12px;background:var(--bg-card);border:1px solid var(--border);border-radius:8px;color:var(--ink);font-size:13px;margin-top:4px">
+          </div>
+          <div>
+            <label style="font-size:11px;color:var(--ink-muted);letter-spacing:.1em;text-transform:uppercase;font-weight:600">Hạng phòng *</label>
+            <select id="_v_room" style="width:100%;padding:10px 12px;background:var(--bg-card);border:1px solid var(--border);border-radius:8px;color:var(--ink);font-size:13px;margin-top:4px">
+              <option value="">-- Chọn --</option>
+              ${roomOpts}
+            </select>
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+          <div>
+            <label style="font-size:11px;color:var(--ink-muted);letter-spacing:.1em;text-transform:uppercase;font-weight:600">Ngày bắt đầu *</label>
+            <input id="_v_start" type="date" value="${v.startDate||''}" style="width:100%;padding:10px 12px;background:var(--bg-card);border:1px solid var(--border);border-radius:8px;color:var(--ink);font-size:13px;margin-top:4px">
+          </div>
+          <div>
+            <label style="font-size:11px;color:var(--ink-muted);letter-spacing:.1em;text-transform:uppercase;font-weight:600">Ngày kết thúc *</label>
+            <input id="_v_end" type="date" value="${v.endDate||''}" style="width:100%;padding:10px 12px;background:var(--bg-card);border:1px solid var(--border);border-radius:8px;color:var(--ink);font-size:13px;margin-top:4px">
+          </div>
+        </div>
+      </div>
+      <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:18px">
+        <button onclick="document.getElementById('_vFormOv').remove()" class="btn" style="font-size:12px">Hủy</button>
+        <button onclick="_vSaveVoucher(${idx})" class="btn btn-primary" style="font-size:12px">💾 Lưu</button>
+      </div>
+    </div>`;
+  document.body.appendChild(ov);
+  ov.addEventListener('click',ev=>{if(ev.target===ov)ov.remove();});
+  document.getElementById('_v_hotel')?.focus();
+}
+
+function _vSaveVoucher(idx){
+  const hotelName = (document.getElementById('_v_hotel')?.value||'').trim();
+  const nights = parseInt(document.getElementById('_v_nights')?.value)||1;
+  const roomType = (document.getElementById('_v_room')?.value||'').trim();
+  const startDate = document.getElementById('_v_start')?.value||'';
+  const endDate = document.getElementById('_v_end')?.value||'';
+
+  if(!hotelName){ toast('Nhập tên khách sạn','error'); return; }
+  if(!roomType){ toast('Chọn hạng phòng','error'); return; }
+  if(!startDate){ toast('Chọn ngày bắt đầu','error'); return; }
+  if(!endDate){ toast('Chọn ngày kết thúc','error'); return; }
+  if(new Date(endDate) <= new Date(startDate)){ toast('Ngày kết thúc phải sau ngày bắt đầu','error'); return; }
+
+  if(!DB.cbVouchers) DB.cbVouchers = [];
+  const voucher = {hotelName, nights, roomType, startDate, endDate, updatedAt:Date.now()};
+  if(idx < 0){
+    voucher.createdAt = Date.now();
+    voucher.used = false;
+    DB.cbVouchers.push(voucher);
+  } else {
+    voucher.createdAt = DB.cbVouchers[idx].createdAt||Date.now();
+    voucher.used = DB.cbVouchers[idx].used||false;
+    DB.cbVouchers[idx] = voucher;
+  }
+  _saveCBVouchers();
+  document.getElementById('_vFormOv')?.remove();
+  toast(idx<0?'✅ Đã thêm voucher':'💾 Đã cập nhật voucher','success');
+  render();
+}
+
+function _vDeleteVoucher(idx){
+  if(!confirm('Xóa voucher "'+DB.cbVouchers[idx]?.hotelName+'"?')) return;
+  DB.cbVouchers.splice(idx,1);
+  _saveCBVouchers();
+  toast('Đã xóa voucher','info');
+  render();
+}
+
+function _saveCBVouchers(){
+  // Save localStorage backup trước (instant)
+  try{ localStorage.setItem('_cbVouchers', JSON.stringify(DB.cbVouchers||[])); }catch(e){}
+  if(!window.fbDb||!window.currentUser) return;
+  const meta = {_syncBy:window.currentUser.uid, _syncAt:Date.now(), _lastSaved:Date.now()};
+  window.fbDb.collection('hrdata').doc('cb_vouchers')
+    .set({...meta, cbVouchers: DB.cbVouchers||[]}, {merge:false})
+    .then(()=>console.log('[CB-V] ✅ Saved', (DB.cbVouchers||[]).length, 'vouchers'))
+    .catch(err=>console.error('[CB-V] ❌ Save failed:', err.message));
 }
 
 function renderManning(main){
