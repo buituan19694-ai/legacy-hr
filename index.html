@@ -36119,7 +36119,7 @@ function renderCBPackage(main){
 
     // Build one side cell for a voucher
     const buildCell = (v, side) => {
-      if(!v) return `<td colspan="7" style="padding:12px;text-align:center;color:var(--border);font-size:20px;border-right:${side==='hotel'?'3px solid var(--border)':'none'}">—</td>`;
+      if(!v) return `<td colspan="${side==='hotel'?6:7}" style="padding:12px;text-align:center;color:var(--border);font-size:20px;border-right:${side==='hotel'?'3px solid var(--border)':'none'}">—</td>`;
       const realIdx = vouchers.indexOf(v);
       const endDt = new Date(v.endDate);
       const isExpired = endDt < now;
@@ -36128,6 +36128,7 @@ function renderCBPackage(main){
       const dec = isUsed ? 'text-decoration:line-through;opacity:.55;' : '';
       const dangerCol = isExpiringSoon ? 'color:var(--danger);font-weight:700;' : '';
       const rowBg = isExpiringSoon && !isUsed ? 'background:rgba(229,115,115,.05);' : '';
+      const clk = `onclick="_vShowDetail(${realIdx})"`;
 
       let badge = '';
       if(isUsed) badge = `<span style="padding:1px 6px;border-radius:3px;background:var(--ink-muted);color:#fff;font-size:9px;font-weight:600">Đã dùng</span>`;
@@ -36140,12 +36141,12 @@ function renderCBPackage(main){
       const br = side==='hotel' ? 'border-right:3px solid var(--border);' : '';
 
       return `
-        <td style="padding:8px 6px;font-size:11px;font-family:'JetBrains Mono',monospace;color:var(--accent);${dec}">${escapeHtml(v.code||'—')}</td>
-        <td style="padding:8px 6px;font-size:11px;font-weight:600;${dec}${dangerCol};max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHtml(v.hotelName)}">${escapeHtml(v.hotelName)}</td>
-        <td style="padding:8px 4px;font-size:11px;text-align:center;${dec}">${v.nights||0}</td>
-        <td style="padding:8px 6px;font-size:11px;${dec}">${escapeHtml(v.roomType||'—')}</td>
-        <td style="padding:8px 4px;font-size:10px;${dec}">${fmtDate(v.endDate)}</td>
-        <td style="padding:8px 6px;font-size:11px;${dec}">${empName(v.assignedTo)}</td>
+        <td ${clk} style="padding:8px 6px;font-size:11px;font-family:'JetBrains Mono',monospace;color:var(--accent);${dec}cursor:pointer">${escapeHtml(v.code||'—')}</td>
+        <td ${clk} style="padding:8px 6px;font-size:11px;font-weight:600;${dec}${dangerCol}max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer" title="${escapeHtml(v.hotelName)}">${escapeHtml(v.hotelName)}</td>
+        <td ${clk} style="padding:8px 4px;font-size:11px;text-align:center;${dec}cursor:pointer">${v.nights||0}</td>
+        <td ${clk} style="padding:8px 6px;font-size:11px;${dec}cursor:pointer">${escapeHtml(v.roomType||'—')}</td>
+        <td ${clk} style="padding:8px 4px;font-size:10px;${dec}cursor:pointer">${fmtDate(v.endDate)}</td>
+        ${side==='exchange'?`<td ${clk} style="padding:8px 6px;font-size:11px;${dec}cursor:pointer">${empName(v.assignedTo)}</td>`:''}
         <td style="padding:8px 4px;text-align:center;white-space:nowrap;${br}" onclick="event.stopPropagation()">
           ${badge}
           ${canEdit?` <button onclick="_vEditVoucher(${realIdx})" style="background:transparent;border:none;cursor:pointer;font-size:11px;padding:1px 2px" title="Sửa">✏️</button><button onclick="_vDeleteVoucher(${realIdx})" style="background:transparent;border:none;cursor:pointer;font-size:11px;padding:1px 2px;color:var(--danger)" title="Xóa">✕</button>`:''}
@@ -36163,7 +36164,7 @@ function renderCBPackage(main){
       const eitherExists = r.hotel || r.exchange;
       if(hasUnused && hasUsed && bothUsed && !addedSeparator && eitherExists){
         addedSeparator = true;
-        tableRows += `<tr><td colspan="14" style="padding:4px 0;background:var(--bg)">
+        tableRows += `<tr><td colspan="13" style="padding:4px 0;background:var(--bg)">
           <div style="display:flex;align-items:center;gap:10px;padding:2px 12px">
             <div style="flex:1;height:1px;background:var(--border)"></div>
             <span style="font-size:10px;color:var(--ink-muted);font-weight:600;text-transform:uppercase;letter-spacing:.1em">Đã sử dụng</span>
@@ -36187,7 +36188,7 @@ function renderCBPackage(main){
     });
 
     if(!filteredRows.length){
-      tableRows = `<tr><td colspan="14" style="text-align:center;padding:30px;color:var(--ink-muted);font-size:12px">Chưa có voucher nào</td></tr>`;
+      tableRows = `<tr><td colspan="13" style="text-align:center;padding:30px;color:var(--ink-muted);font-size:12px">Chưa có voucher nào</td></tr>`;
     }
 
     const thS = 'padding:8px 6px;font-size:9px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-muted);font-weight:600;border-bottom:2px solid var(--border);white-space:nowrap;text-align:left';
@@ -36232,11 +36233,11 @@ function renderCBPackage(main){
         <div style="overflow-x:auto">
           <table style="width:100%;border-collapse:collapse;min-width:1100px">
             <tr>
-              <th colspan="7" style="padding:10px 12px;font-size:12px;font-weight:700;color:var(--accent);border-bottom:2px solid var(--border);border-right:3px solid var(--border);background:rgba(38,166,154,.04);text-align:center">🏨 Voucher Gửi</th>
+              <th colspan="6" style="padding:10px 12px;font-size:12px;font-weight:700;color:var(--accent);border-bottom:2px solid var(--border);border-right:3px solid var(--border);background:rgba(38,166,154,.04);text-align:center">🏨 Voucher Gửi</th>
               <th colspan="7" style="padding:10px 12px;font-size:12px;font-weight:700;color:var(--purple);border-bottom:2px solid var(--border);background:rgba(149,117,205,.04);text-align:center">🔄 Voucher Nhận</th>
             </tr>
             <tr>
-              <th style="${thS}">Code</th><th style="${thS}">Khách sạn</th><th style="${thS};text-align:center">Đêm</th><th style="${thS}">Phòng</th><th style="${thS}">Hết hạn</th><th style="${thS}">Phát cho</th><th style="${thS};text-align:center;border-right:3px solid var(--border)">TT</th>
+              <th style="${thS}">Code</th><th style="${thS}">Khách sạn</th><th style="${thS};text-align:center">Đêm</th><th style="${thS}">Phòng</th><th style="${thS}">Hết hạn</th><th style="${thS};text-align:center;border-right:3px solid var(--border)">TT</th>
               <th style="${thS}">Code</th><th style="${thS}">Khách sạn</th><th style="${thS};text-align:center">Đêm</th><th style="${thS}">Phòng</th><th style="${thS}">Hết hạn</th><th style="${thS}">Phát cho</th><th style="${thS};text-align:center">TT</th>
             </tr>
             ${tableRows}
@@ -36477,10 +36478,10 @@ function _vOpenForm(idx, vtype){
             <input id="_v_end" type="date" value="${v.endDate||''}" style="width:100%;padding:10px 12px;background:var(--bg-card);border:1px solid var(--border);border-radius:8px;color:var(--ink);font-size:13px;margin-top:4px">
           </div>
         </div>
-        <div>
+        ${isExchange?`<div>
           <label style="font-size:11px;color:var(--ink-muted);letter-spacing:.1em;text-transform:uppercase;font-weight:600">Phát cho ai</label>
           <div style="margin-top:4px">${empPickerHtml}</div>
-        </div>
+        </div>`:''}
       </div>
       <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:18px">
         <button onclick="document.getElementById('_vFormOv').remove()" class="btn" style="font-size:12px">Hủy</button>
@@ -36526,6 +36527,107 @@ function _vClearEmp(){
   const vi=document.getElementById('_v_empSearch'); if(vi){ vi.value=''; vi.focus(); }
   const dd=document.getElementById('_v_empDropdown'); if(dd) dd.style.display='none';
   const cb=document.getElementById('_v_empClearBtn'); if(cb) cb.style.display='none';
+}
+
+/* ── Voucher Detail Modal ── */
+function _vShowDetail(idx){
+  const v = DB.cbVouchers[idx]; if(!v) return;
+  const fmtD = d=>{ if(!d) return '—'; return new Date(d).toLocaleDateString('vi-VN',{day:'2-digit',month:'2-digit',year:'numeric'}); };
+  const empN = id=>{ const e=(DB.employees||[]).find(x=>x.id===id); return e ? e.name : (id||'—'); };
+  const deptN = id=>{ const e=(DB.employees||[]).find(x=>x.id===id); return e && typeof deptName==='function' ? deptName(e.deptId) : ''; };
+  const isExch = v.vtype==='exchange';
+
+  // Linked voucher info
+  let linkedHtml = '';
+  if(v.linkedId){
+    const lv = DB.cbVouchers.find(x=>x.vid===v.linkedId);
+    if(lv){
+      const lvType = lv.vtype==='exchange' ? 'Voucher Nhận' : 'Voucher Gửi';
+      const lvColor = lv.vtype==='exchange' ? 'var(--purple)' : 'var(--accent)';
+      linkedHtml = `
+        <div style="margin-top:14px;padding:12px 14px;background:rgba(38,166,154,.06);border:1px solid var(--border);border-radius:10px">
+          <div style="font-size:10px;color:var(--ink-muted);text-transform:uppercase;letter-spacing:.08em;font-weight:600;margin-bottom:8px">🔗 Đã đổi với — <span style="color:${lvColor}">${lvType}</span></div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px 16px;font-size:12px">
+            <div><span style="color:var(--ink-muted)">Code:</span> <span style="font-family:'JetBrains Mono',monospace;color:var(--accent)">${escapeHtml(lv.code||'—')}</span></div>
+            <div><span style="color:var(--ink-muted)">Khách sạn:</span> <b>${escapeHtml(lv.hotelName)}</b></div>
+            <div><span style="color:var(--ink-muted)">Số đêm:</span> ${lv.nights||0} đêm · ${escapeHtml(lv.roomType||'—')}</div>
+            <div><span style="color:var(--ink-muted)">Hết hạn:</span> ${fmtD(lv.endDate)}</div>
+            <div><span style="color:var(--ink-muted)">Bắt đầu:</span> ${fmtD(lv.startDate)}</div>
+            ${lv.assignedTo?`<div><span style="color:var(--ink-muted)">Phát cho:</span> ${escapeHtml(empN(lv.assignedTo))}</div>`:''}
+          </div>
+        </div>`;
+    }
+  } else {
+    linkedHtml = `<div style="margin-top:14px;padding:10px 14px;background:var(--bg);border:1px dashed var(--border);border-radius:10px;text-align:center;font-size:11px;color:var(--ink-muted)">Chưa liên kết đổi với voucher nào</div>`;
+  }
+
+  // Status
+  const now = new Date();
+  const endDt = new Date(v.endDate);
+  const isUsed = !!v.used;
+  const isExpired = endDt < now;
+  const twoM = new Date(now.getFullYear(), now.getMonth()+2, now.getDate());
+  const isExpiringSoon = !isExpired && !isUsed && endDt <= twoM;
+  let statusBadge = '';
+  if(isUsed) statusBadge = `<span style="padding:3px 10px;border-radius:4px;background:var(--ink-muted);color:#fff;font-size:11px;font-weight:600">✓ Đã dùng</span>`;
+  else if(isExpired) statusBadge = `<span style="padding:3px 10px;border-radius:4px;background:var(--danger);color:#fff;font-size:11px">Hết hạn</span>`;
+  else if(isExpiringSoon) statusBadge = `<span style="padding:3px 10px;border-radius:4px;background:var(--danger);color:#fff;font-size:11px;font-weight:600">⚠ Sắp hết hạn</span>`;
+  else statusBadge = `<span style="padding:3px 10px;border-radius:4px;background:var(--success);color:#fff;font-size:11px">Còn hiệu lực</span>`;
+
+  const typeLabel = isExch ? 'Voucher Nhận' : 'Voucher Gửi';
+  const typeColor = isExch ? 'var(--purple)' : 'var(--accent)';
+  const empInfo = v.assignedTo ? `<div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid rgba(255,255,255,.04)"><span style="color:var(--ink-muted);font-size:11px">Phát cho</span><span style="font-weight:500">${escapeHtml(empN(v.assignedTo))}${deptN(v.assignedTo)?` <span style="color:var(--ink-muted);font-size:10px">· ${escapeHtml(deptN(v.assignedTo))}</span>`:''}</span></div>` : '';
+
+  let ov = document.getElementById('_vDetailOv');
+  if(ov) ov.remove();
+  ov = document.createElement('div');
+  ov.id = '_vDetailOv';
+  ov.style.cssText = 'position:fixed;inset:0;z-index:500;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.7);backdrop-filter:blur(4px);padding:20px';
+  ov.innerHTML = `
+    <div style="background:var(--bg-elev);border:1px solid var(--border-strong);border-radius:14px;padding:24px;max-width:520px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,.5);max-height:90vh;overflow-y:auto">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+        <div>
+          <span style="font-size:10px;color:${typeColor};font-weight:600;text-transform:uppercase;letter-spacing:.08em">${typeLabel}</span>
+          <div style="font-family:'Fraunces',serif;font-size:18px;font-weight:500;margin-top:2px">${escapeHtml(v.hotelName)}</div>
+        </div>
+        ${statusBadge}
+      </div>
+
+      <div style="font-size:13px;display:flex;flex-direction:column">
+        <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid rgba(255,255,255,.04)">
+          <span style="color:var(--ink-muted);font-size:11px">Mã Code</span>
+          <span style="font-family:'JetBrains Mono',monospace;color:var(--accent);font-weight:600">${escapeHtml(v.code||'—')}</span>
+        </div>
+        <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid rgba(255,255,255,.04)">
+          <span style="color:var(--ink-muted);font-size:11px">Số đêm</span>
+          <span>${v.nights||0} đêm</span>
+        </div>
+        <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid rgba(255,255,255,.04)">
+          <span style="color:var(--ink-muted);font-size:11px">Hạng phòng</span>
+          <span>${escapeHtml(v.roomType||'—')}</span>
+        </div>
+        <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid rgba(255,255,255,.04)">
+          <span style="color:var(--ink-muted);font-size:11px">Ngày bắt đầu</span>
+          <span>${fmtD(v.startDate)}</span>
+        </div>
+        <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid rgba(255,255,255,.04)">
+          <span style="color:var(--ink-muted);font-size:11px">Ngày kết thúc</span>
+          <span style="${isExpiringSoon?'color:var(--danger);font-weight:700':''}">${fmtD(v.endDate)}</span>
+        </div>
+        ${empInfo}
+      </div>
+
+      ${linkedHtml}
+
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:18px;flex-wrap:wrap">
+        <button onclick="_vToggleUsed(${idx});document.getElementById('_vDetailOv')?.remove()" class="btn" style="font-size:12px;${isUsed?'border-color:var(--success);color:var(--success)':'border-color:var(--ink-muted);color:var(--ink-muted)'}">
+          ${isUsed?'↩ Chưa dùng':'✓ Đánh dấu đã dùng'}
+        </button>
+        <button onclick="document.getElementById('_vDetailOv')?.remove()" class="btn" style="font-size:12px">Đóng</button>
+      </div>
+    </div>`;
+  document.body.appendChild(ov);
+  ov.addEventListener('click',ev=>{if(ev.target===ov)ov.remove();});
 }
 
 function _vSaveVoucher(idx, vtype){
