@@ -11155,6 +11155,29 @@ function saveEmployee(id, isNew){
     DB.employees = _emps; // assign new array → Proxy tracks 'employees'
   }
 
+  // 🚨 FIX: Khi user thay đổi status từ 'exit' về active/probation/leave →
+  // huỷ đơn nghỉ việc confirmed/pending để _autoConfirmExpiredResignations
+  // không ép lại status = 'exit' khi refresh page
+  if(!isNew && data.status !== 'exit' && Array.isArray(DB.resignations)){
+    let _resignChanged = false;
+    DB.resignations = DB.resignations.map(r => {
+      if(r.empId === id && (r.status === 'confirmed' || r.status === 'pending')){
+        _resignChanged = true;
+        return {...r, status: 'cancelled', cancelledAt: new Date().toISOString(),
+                cancelReason: 'Trạng thái NV được chuyển thủ công về ' + (data.status==='active'?'Đang làm':data.status)};
+      }
+      return r;
+    });
+    if(_resignChanged){
+      // Xoá exitDate/exitReason khỏi customData vì NV không còn nghỉ việc
+      delete customValues.exitDate;
+      delete customValues.exitReason;
+      delete customValues.exitNotes;
+      saveData(['resignations']);
+      console.log(`[saveEmployee] ✅ Huỷ đơn nghỉ việc cho ${data.name} — status chuyển về ${data.status}`);
+    }
+  }
+
   // Sync level từ customValues.levelNum (đã được custom field loop cập nhật đúng)
   // Không dùng f_level hidden input nữa vì nó chứa giá trị cũ
   if(customValues.levelNum !== undefined && customValues.levelNum !== ''){
