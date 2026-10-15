@@ -30703,12 +30703,13 @@ function renderCasual(main){
             <tr style="border-bottom:1px solid var(--border)">
               <td style="padding:5px 8px;font-family:'JetBrains Mono',monospace;font-size:11px">${escapeHtml(w.cccd||'—')}</td>
               <td style="padding:5px 8px;font-size:12px;font-weight:500">${escapeHtml(w.name||'—')}</td>
+              <td style="padding:5px 8px;font-size:11px;color:var(--ink-dim)">${escapeHtml(w.gender||'—')}</td>
               <td style="padding:5px 8px;font-size:11px;color:var(--ink-dim)">${escapeHtml(w.dob||'—')}</td>
               <td style="padding:5px 8px;font-size:11px;color:var(--ink-dim)">${escapeHtml(w.taxCode||'—')}</td>
               <td style="padding:5px 8px;font-size:11px">${escapeHtml(w.workDate||'—')}</td>
               <td style="padding:5px 8px;text-align:right;font-family:'JetBrains Mono',monospace;font-weight:600;color:var(--accent)">${fmtNum(w.amount||0)}</td>
               <td style="padding:5px 4px"><button onclick="_casualDelWorker('${w._recId}',${w._wi})" style="background:transparent;border:1px solid rgba(229,115,115,.2);border-radius:4px;color:var(--danger);font-size:10px;padding:2px 6px;cursor:pointer">✕</button></td>
-            </tr>`).join('') : `<tr><td colspan="7" style="padding:12px;text-align:center;color:var(--ink-muted);font-size:12px">${dd.total>0?'⚠️ '+fmtNum(dd.total)+'đ từ bản ghi cũ · <button onclick="'+deptRecIds.map(id=>"_casualDeleteOldRec(\'"+id+"\')").join(';')+'" style=\'background:transparent;border:1px solid rgba(229,115,115,.3);border-radius:4px;color:var(--danger);font-size:11px;padding:2px 10px;cursor:pointer\'>🗑 Xóa</button>':'Chưa có NV casual'}</td></tr>`;
+            </tr>`).join('') : `<tr><td colspan="8" style="padding:12px;text-align:center;color:var(--ink-muted);font-size:12px">${dd.total>0?'⚠️ '+fmtNum(dd.total)+'đ từ bản ghi cũ · <button onclick="'+deptRecIds.map(id=>"_casualDeleteOldRec(\'"+id+"\')").join(';')+'" style=\'background:transparent;border:1px solid rgba(229,115,115,.3);border-radius:4px;color:var(--danger);font-size:11px;padding:2px 10px;cursor:pointer\'>🗑 Xóa</button>':'Chưa có NV casual'}</td></tr>`;
 
           return `<div style="margin-bottom:16px">
             <div style="padding:8px 12px;background:rgba(212,165,116,.06);border-radius:8px 8px 0 0;display:flex;justify-content:space-between;align-items:center">
@@ -30723,6 +30724,7 @@ function renderCasual(main){
                 <thead><tr style="background:var(--bg-elev)">
                   <th style="padding:6px 8px;text-align:left;font-size:10px;font-weight:700;color:var(--ink-muted)">SỐ CCCD</th>
                   <th style="padding:6px 8px;text-align:left;font-size:10px;font-weight:700;color:var(--ink-muted)">HỌ TÊN</th>
+                  <th style="padding:6px 8px;text-align:left;font-size:10px;font-weight:700;color:var(--ink-muted)">GIỚI TÍNH</th>
                   <th style="padding:6px 8px;text-align:left;font-size:10px;font-weight:700;color:var(--ink-muted)">NGÀY SINH</th>
                   <th style="padding:6px 8px;text-align:left;font-size:10px;font-weight:700;color:var(--ink-muted)">MÃ SỐ THUẾ</th>
                   <th style="padding:6px 8px;text-align:left;font-size:10px;font-weight:700;color:var(--ink-muted)">NGÀY LÀM</th>
@@ -31034,10 +31036,14 @@ function _casualAddWorker(deptId, year, month){
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
           <div><label style="font-size:11px;color:var(--ink-muted);letter-spacing:.1em;text-transform:uppercase;font-weight:600">Họ tên *</label>
             <input id="_cw_name" style="width:100%;padding:10px 12px;background:var(--bg-card);border:1px solid var(--border);border-radius:8px;color:var(--ink);font-size:13px;margin-top:4px"></div>
-          <div><label style="font-size:11px;color:var(--ink-muted);letter-spacing:.1em;text-transform:uppercase;font-weight:600">Ngày sinh</label>
-            <input id="_cw_dob" type="date" style="width:100%;padding:10px 12px;background:var(--bg-card);border:1px solid var(--border);border-radius:8px;color:var(--ink);font-size:13px;margin-top:4px"></div>
+          <div><label style="font-size:11px;color:var(--ink-muted);letter-spacing:.1em;text-transform:uppercase;font-weight:600">Giới tính</label>
+            <select id="_cw_gender" style="width:100%;padding:10px 12px;background:var(--bg-card);border:1px solid var(--border);border-radius:8px;color:var(--ink);font-size:13px;margin-top:4px">
+              <option value="">— Chọn —</option><option value="Nam">Nam</option><option value="Nữ">Nữ</option>
+            </select></div>
         </div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+          <div><label style="font-size:11px;color:var(--ink-muted);letter-spacing:.1em;text-transform:uppercase;font-weight:600">Ngày sinh</label>
+            <input id="_cw_dob" type="date" style="width:100%;padding:10px 12px;background:var(--bg-card);border:1px solid var(--border);border-radius:8px;color:var(--ink);font-size:13px;margin-top:4px"></div>
           <div><label style="font-size:11px;color:var(--ink-muted);letter-spacing:.1em;text-transform:uppercase;font-weight:600">Mã số thuế</label>
             <input id="_cw_tax" style="width:100%;padding:10px 12px;background:var(--bg-card);border:1px solid var(--border);border-radius:8px;color:var(--ink);font-size:13px;margin-top:4px"></div>
           <div><label style="font-size:11px;color:var(--ink-muted);letter-spacing:.1em;text-transform:uppercase;font-weight:600">Ngày làm</label>
@@ -31062,6 +31068,7 @@ function _casualLookupCCCD(cccd){
   const found = DB.casualDirectory[cccd];
   if(found){
     document.getElementById('_cw_name').value = found.name||'';
+    document.getElementById('_cw_gender').value = found.gender||'';
     document.getElementById('_cw_dob').value = found.dob||'';
     document.getElementById('_cw_tax').value = found.taxCode||'';
     document.getElementById('_cw_lookup').innerHTML = '✅ Đã tìm thấy: '+escapeHtml(found.name);
@@ -31083,6 +31090,7 @@ function _casualSaveWorker(deptId,year,month){
   const amount=parseFloat(document.getElementById('_cw_amount')?.value)||0;
   if(!name){toast('Nhập họ tên','error');return;}
   if(!amount){toast('Nhập số tiền','error');return;}
+  const gender=document.getElementById('_cw_gender')?.value||'';
   const dob=document.getElementById('_cw_dob')?.value||'';
   const taxCode=document.getElementById('_cw_tax')?.value?.trim()||'';
   const workDate=document.getElementById('_cw_date')?.value||'';
@@ -31090,7 +31098,7 @@ function _casualSaveWorker(deptId,year,month){
   // Save to directory for future lookup
   if(cccd){
     if(!DB.casualDirectory) DB.casualDirectory={};
-    DB.casualDirectory[cccd]={name,dob,taxCode};
+    DB.casualDirectory[cccd]={name,gender,dob,taxCode};
     try{localStorage.setItem('_casualDirectory',JSON.stringify(DB.casualDirectory));}catch(e){}
   }
 
@@ -31101,7 +31109,7 @@ function _casualSaveWorker(deptId,year,month){
     DB.casuals.push(rec);
   }
   if(!rec.workers) rec.workers=[];
-  rec.workers.push({cccd:cccd||'',name:name||'',dob:dob||'',taxCode:taxCode||'',workDate:workDate||'',amount:amount||0});
+  rec.workers.push({cccd:cccd||'',name:name||'',gender:gender||'',dob:dob||'',taxCode:taxCode||'',workDate:workDate||'',amount:amount||0});
   // Update totals
   rec.qty = rec.workers.length;
   rec.total = rec.workers.reduce((s,w)=>s+(w.amount||0),0);
@@ -31148,17 +31156,17 @@ function _casualDelWorker(recId,workerIdx){
 }
 
 function _casualExportTemplate(year){
-  const header=['Số CCCD','Họ tên','Ngày sinh (dd/mm/yyyy)','Mã số thuế','Bộ phận','Ngày làm (dd/mm/yyyy)','Số tiền (VNĐ)'];
+  const header=['Số CCCD','Họ tên','Giới tính','Ngày sinh (dd/mm/yyyy)','Mã số thuế','Bộ phận','Ngày làm (dd/mm/yyyy)','Số tiền (VNĐ)'];
   // Thêm 30 dòng trống
   const rows=[];
-  for(let i=0;i<30;i++) rows.push(['','','','','','','']);
+  for(let i=0;i<30;i++) rows.push(['','','','','','','','']);
   const wb=XLSX.utils.book_new();
   const ws=XLSX.utils.aoa_to_sheet([header,...rows]);
-  ws['!cols']=[{wch:16},{wch:24},{wch:16},{wch:16},{wch:20},{wch:16},{wch:16}];
-  // Thêm dropdown bộ phận vào cột E (validation note)
+  ws['!cols']=[{wch:16},{wch:24},{wch:10},{wch:16},{wch:16},{wch:20},{wch:16},{wch:16}];
+  // Thêm dropdown bộ phận vào cột F (validation note)
   const deptNames=(DB.departments||[]).map(d=>d.name).join(', ');
-  if(!ws['E1'].c) ws['E1'].c=[];
-  ws['E1'].c.push({a:'System',t:'Bộ phận: '+deptNames});
+  if(!ws['F1'].c) ws['F1'].c=[];
+  ws['F1'].c.push({a:'System',t:'Bộ phận: '+deptNames});
   XLSX.utils.book_append_sheet(wb,ws,'Template');
   XLSX.writeFile(wb,'Casual_Template_'+year+'.xlsx');
   toast('📥 File mẫu — điền CCCD + thông tin + số tiền, rồi Nhập Excel','success');
@@ -31181,6 +31189,7 @@ function _casualExportPDF(year,month){
       <td style="padding:4px 6px;text-align:center">${i+1}</td>
       <td style="padding:4px 6px;font-family:monospace">${w.cccd||'—'}</td>
       <td style="padding:4px 6px;font-weight:600">${w.name||'—'}</td>
+      <td style="padding:4px 6px">${w.gender||'—'}</td>
       <td style="padding:4px 6px">${w.dob||'—'}</td>
       <td style="padding:4px 6px;font-family:monospace">${w.taxCode||'—'}</td>
       <td style="padding:4px 6px">${w.workDate||'—'}</td>
@@ -31192,6 +31201,7 @@ function _casualExportPDF(year,month){
         <th style="padding:5px;border:1px solid #ddd;width:30px">STT</th>
         <th style="padding:5px;border:1px solid #ddd">Số CCCD</th>
         <th style="padding:5px;border:1px solid #ddd">Họ tên</th>
+        <th style="padding:5px;border:1px solid #ddd">Giới tính</th>
         <th style="padding:5px;border:1px solid #ddd">Ngày sinh</th>
         <th style="padding:5px;border:1px solid #ddd">MST</th>
         <th style="padding:5px;border:1px solid #ddd">Ngày làm</th>
@@ -31199,7 +31209,7 @@ function _casualExportPDF(year,month){
       </tr></thead>
       <tbody>${rows}</tbody>
       <tfoot><tr style="background:#faf5eb;font-weight:700">
-        <td colspan="6" style="padding:5px 6px;border:1px solid #ddd">Tổng ${dn}</td>
+        <td colspan="7" style="padding:5px 6px;border:1px solid #ddd">Tổng ${dn}</td>
         <td style="padding:5px 6px;border:1px solid #ddd;text-align:right;font-family:monospace">${dd.total.toLocaleString('vi-VN')}</td>
       </tr></tfoot>
     </table>`;
@@ -31228,16 +31238,16 @@ function _casualExportPDF(year,month){
 
 function _casualExportMonth(year,month){
   const recs=DB.casuals.filter(r=>r.year===year&&r.month===month);
-  const header=['Số CCCD','Họ tên','Ngày sinh','Mã số thuế','Bộ phận','Ngày làm','Số tiền (VNĐ)'];
+  const header=['Số CCCD','Họ tên','Giới tính','Ngày sinh','Mã số thuế','Bộ phận','Ngày làm','Số tiền (VNĐ)'];
   const rows=[];
   recs.forEach(r=>{
     (r.workers||[]).forEach(w=>{
-      rows.push([w.cccd||'',w.name||'',w.dob||'',w.taxCode||'',deptName(r.deptId),w.workDate||'',w.amount||0]);
+      rows.push([w.cccd||'',w.name||'',w.gender||'',w.dob||'',w.taxCode||'',deptName(r.deptId),w.workDate||'',w.amount||0]);
     });
   });
   if(!rows.length){toast('Không có dữ liệu tháng '+month,'error');return;}
   const wb=XLSX.utils.book_new();const ws=XLSX.utils.aoa_to_sheet([header,...rows]);
-  ws['!cols']=[{wch:16},{wch:22},{wch:12},{wch:16},{wch:18},{wch:12},{wch:16}];
+  ws['!cols']=[{wch:16},{wch:22},{wch:10},{wch:12},{wch:16},{wch:18},{wch:12},{wch:16}];
   XLSX.utils.book_append_sheet(wb,ws,'T'+month);
   XLSX.writeFile(wb,'Casual_T'+month+'_'+year+'.xlsx');
   toast('📊 Đã xuất Casual T'+month+'/'+year,'success');
@@ -31245,13 +31255,13 @@ function _casualExportMonth(year,month){
 
 function _casualExportFullYear(year){
   const wb=XLSX.utils.book_new();
-  const header=['Số CCCD','Họ tên','Ngày sinh','Mã số thuế','Bộ phận','Ngày làm','Số tiền (VNĐ)'];
+  const header=['Số CCCD','Họ tên','Giới tính','Ngày sinh','Mã số thuế','Bộ phận','Ngày làm','Số tiền (VNĐ)'];
   for(let m=1;m<=12;m++){
     const recs=DB.casuals.filter(r=>r.year===year&&r.month===m);
     const rows=[];
-    recs.forEach(r=>{(r.workers||[]).forEach(w=>{rows.push([w.cccd||'',w.name||'',w.dob||'',w.taxCode||'',deptName(r.deptId),w.workDate||'',w.amount||0]);});});
+    recs.forEach(r=>{(r.workers||[]).forEach(w=>{rows.push([w.cccd||'',w.name||'',w.gender||'',w.dob||'',w.taxCode||'',deptName(r.deptId),w.workDate||'',w.amount||0]);});});
     const ws=XLSX.utils.aoa_to_sheet([header,...rows]);
-    ws['!cols']=[{wch:16},{wch:22},{wch:12},{wch:16},{wch:18},{wch:12},{wch:16}];
+    ws['!cols']=[{wch:16},{wch:22},{wch:10},{wch:12},{wch:16},{wch:18},{wch:12},{wch:16}];
     XLSX.utils.book_append_sheet(wb,ws,'T'+m);
   }
   XLSX.writeFile(wb,'Casual_FullYear_'+year+'.xlsx');
@@ -31289,14 +31299,14 @@ function _casualImportExcel(input,year){
       const byDept={};
       for(let i=1;i<data.length;i++){
         const row=data[i]; if(!row||!row[1]) continue;
-        const deptStr=String(row[4]||'').trim();
+        const deptStr=String(row[5]||'').trim();
         const dept=DB.departments.find(d=>d.name===deptStr);
         const deptId=dept?dept.id:deptStr;
         if(!byDept[deptId]) byDept[deptId]=[];
-        const w={cccd:String(row[0]||'').trim(),name:String(row[1]||'').trim(),dob:String(row[2]||''),taxCode:String(row[3]||'').trim(),workDate:String(row[5]||''),amount:parseFloat(row[6])||0};
+        const w={cccd:String(row[0]||'').trim(),name:String(row[1]||'').trim(),gender:String(row[2]||'').trim(),dob:String(row[3]||''),taxCode:String(row[4]||'').trim(),workDate:String(row[6]||''),amount:parseFloat(row[7])||0};
         byDept[deptId].push(w);
         // Save to directory
-        if(w.cccd) DB.casualDirectory[w.cccd]={name:w.name,dob:w.dob,taxCode:w.taxCode};
+        if(w.cccd) DB.casualDirectory[w.cccd]={name:w.name,gender:w.gender,dob:w.dob,taxCode:w.taxCode};
       }
 
       Object.entries(byDept).forEach(([deptId,workers])=>{
