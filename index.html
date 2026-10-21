@@ -1052,7 +1052,7 @@ const FS_DOC_MAP = {
 // manningPlan + manningActual được shard theo năm qua _pushDynamicKey → KHÔNG để trong FS_DOC_MAP
 const FS_DYNAMIC_KEYS = ['leaves','kpiReviews','rewardRecords','casuals','candidates',
                           'promotions','disciplineRecords','leaveSheet','leaveOpening','leavePlan','leavePlanLocked',
-                          'manningPlan','manningActual','plRevenue','plActionPlan','payrollData','hrGardenPlan','dutyRoster','rosterExtras'];
+                          'manningPlan','manningActual','plRevenue','plActionPlan','payrollData','hrGardenPlan','dutyRoster','rosterExtras','rosterEmpOrder','rosterDeptOverride'];
 
 function _recYear(r){
   const d = r.startDate||r.date||r.effectiveDate||r.period||r.appliedDate||r.createdAt||'';
@@ -27183,10 +27183,17 @@ function _renderRosterGrid(container, isAdm){
 
   // ── Employees + Trainees ──
   const nowStr = new Date().toISOString().slice(0,10);
+  const curMonth = new Date().getMonth();
   let emps = (DB.employees||[]).filter(e=>{
-    if(e.status === 'active') return true;
-    if(e.status === 'exit'){
-      try { const ldg = computeLeaveLedger(e.id, mo, yr); if((ldg.alClose||0) > 0 || (ldg.clClose||0) > 0) return true; } catch(ex){}
+    if(getEffectiveStatus(e) === 'active' || getEffectiveStatus(e) === 'probation') return true;
+    if(getEffectiveStatus(e) === 'exit'){
+      try {
+        if(typeof calcLeaveTotals === 'function'){
+          const alR = calcLeaveTotals(e.id, 'al', yr, curMonth).tonCuoiNam || 0;
+          const clR = calcLeaveTotals(e.id, 'cl', yr, curMonth).tonCuoiNam || 0;
+          if(alR > 0 || clR > 0) return true;
+        }
+      } catch(ex){}
     }
     return false;
   }).map(e=>({...e, _isTrainee:false}));
@@ -27208,11 +27215,23 @@ function _renderRosterGrid(container, isAdm){
   extraIds.forEach(eid => {
     if(emps.find(e=>e.id===eid)) return;
     const emp = (DB.employees||[]).find(e=>e.id===eid);
-    if(emp) emps.push({...emp, _isExtra:true, _isTrainee:false});
+    if(emp){
+      const overDept = ((DB.rosterDeptOverride||{})[extraKey]||{})[eid];
+      emps.push({...emp, deptId: overDept||emp.deptId, _isExtra:true, _isTrainee:false});
+    }
   });
 
   if(filterDeptId && filterDeptId !== 'all') emps = emps.filter(e=>e.deptId===filterDeptId);
-  emps.sort((a,b)=>(a.deptId||'').localeCompare(b.deptId||'')||(a.name||'').localeCompare(b.name||''));
+  // Sort by saved order, then by name
+  const orderKey = yr+'_'+mo;
+  const savedOrder = (DB.rosterEmpOrder||{})[orderKey]||{};
+  emps.sort((a,b)=>{
+    if(a.deptId !== b.deptId) return (a.deptId||'').localeCompare(b.deptId||'');
+    const oa = savedOrder[a.deptId+'_'+a.id]; const ob = savedOrder[b.deptId+'_'+b.id];
+    if(oa!=null && ob!=null) return oa - ob;
+    if(oa!=null) return -1; if(ob!=null) return 1;
+    return (a.name||'').localeCompare(b.name||'');
+  });
 
   // ── AL/CL leaves in this month ──
   const leaveSheet = DB.leaveSheet||{};
@@ -27384,8 +27403,12 @@ function _renderRosterGrid(container, isAdm){
       const extraBadge = e._isExtra ? `<span style="font-size:8px;padding:1px 4px;border-radius:3px;background:var(--danger);color:#fff;margin-left:4px;font-weight:600;cursor:pointer" onclick="_rosterRemoveExtra('${e.id}')" title="Click để bỏ khỏi bảng ca">✕</span>` : '';
       const stickyBg = e._isExtra ? 'rgba(220,53,69,.04)' : rowBg;
 
+      const moveUp = `<span onclick="_rosterMoveEmp('${e.id}','${e.deptId}',-1)" style="cursor:pointer;opacity:.4;font-size:9px;line-height:1" title="Di chuyển lên">▲</span>`;
+      const moveDown = `<span onclick="_rosterMoveEmp('${e.id}','${e.deptId}',1)" style="cursor:pointer;opacity:.4;font-size:9px;line-height:1" title="Di chuyển xuống">▼</span>`;
+      const orderBtns = !isLocked && (isAdm || window.canDo('dutyRoster','edit')) ? `<span style="display:flex;flex-direction:column;gap:0;margin-left:3px">${moveUp}${moveDown}</span>` : '';
+
       allRows += `<tr style="border-bottom:1px solid var(--border)${e._isExtra?' ;background:rgba(220,53,69,.04)':''}">
-        <td style="padding:5px 6px;font-size:11px;text-align:center;position:sticky;left:0;background:${stickyBg};z-index:2;border-right:2px solid var(--border-strong)">${globalIdx}</td>
+        <td style="padding:5px 6px;font-size:11px;text-align:center;position:sticky;left:0;background:${stickyBg};z-index:2;border-right:2px solid var(--border-strong)"><div style="display:flex;align-items:center;justify-content:center;gap:1px">${globalIdx}${orderBtns}</div></td>
         <td style="padding:5px 6px;font-size:11px;font-family:'JetBrains Mono',monospace;position:sticky;left:30px;background:${stickyBg};z-index:2">${escapeHtml(e.code||'')}</td>
         <td style="padding:5px 6px;font-size:12px;${nameStyle};white-space:nowrap;position:sticky;left:90px;background:${stickyBg};z-index:2">${escapeHtml(e.name||'')}${traineeBadge}${extraBadge}</td>
         <td style="padding:5px 6px;font-size:10px;color:var(--ink-dim);white-space:nowrap;position:sticky;left:200px;background:${stickyBg};z-index:2">${escapeHtml(deptName(e.deptId))}</td>
@@ -27420,7 +27443,7 @@ function _renderRosterGrid(container, isAdm){
       allRows += `<tr><td colspan="${totalCols}" style="padding:4px 12px;text-align:right;background:var(--bg-card)">
         <button onclick="_rosterAddEmpToDept('${did}')" style="padding:4px 14px;font-size:10px;background:transparent;border:1px dashed var(--border);border-radius:6px;color:var(--ink-muted);cursor:pointer;transition:all .15s"
           onmouseenter="this.style.color='var(--accent)';this.style.borderColor='var(--accent)'"
-          onmouseleave="this.style.color='var(--ink-muted)';this.style.borderColor='var(--border)'">＋ Thêm NV đã nghỉ</button>
+          onmouseleave="this.style.color='var(--ink-muted)';this.style.borderColor='var(--border)'">＋ Thêm NV</button>
       </td></tr>`;
     }
   });
@@ -27428,17 +27451,23 @@ function _renderRosterGrid(container, isAdm){
   // Summary column headers
   const scSummaryHeaders = (DB.shiftCodes||[]).map(sc=>`<th style="padding:4px 2px;font-size:8px;font-weight:700;color:${sc.textColor||'var(--ink-muted)'};background:${sc.color||'var(--bg-elev)'};text-align:center;min-width:30px;border:1px solid var(--border)">${sc.code}</th>`).join('');
 
-  // ── Copy toolbar ──
-  const scBtns = (DB.shiftCodes||[]).map(sc=>{
+  // ── Copy toolbar (compact for 60+ shift codes) ──
+  const allSC = DB.shiftCodes||[];
+  const pinCodes = ['S','C','Đ','HC','OFF','AL','CL','SL','ML','CT','TC','X'];
+  const pinnedSC = pinCodes.map(c=>allSC.find(sc=>sc.code===c)).filter(Boolean);
+  const pinnedBtns = pinnedSC.map(sc=>{
     const sel = copyActive && copyCode===sc.code;
     return `<button onclick="window._rosterCopy={active:true,code:'${sc.code}'};render()" style="padding:3px 8px;border-radius:4px;font-size:11px;font-weight:700;font-family:'JetBrains Mono',monospace;cursor:pointer;border:${sel?'2px solid var(--accent)':'1px solid var(--border)'};background:${sc.color||'var(--bg-card)'};color:${sc.textColor||'var(--ink)'};${sel?'box-shadow:0 0 8px var(--accent);transform:scale(1.1)':''}" title="${sc.name||sc.code}">${sc.code}</button>`;
   }).join('');
+  const moreCount = allSC.length - pinnedSC.length;
+  const moreBtnHTML = moreCount > 0 ? `<button onclick="_rosterShowAllSC()" style="padding:3px 10px;border-radius:4px;font-size:10px;cursor:pointer;border:1px dashed var(--border);background:var(--bg-card);color:var(--ink-muted)" title="Xem tất cả ${allSC.length} mã ca">⋯ +${moreCount}</button>` : '';
   const copyBar = `<div style="display:flex;align-items:center;gap:6px;padding:8px 12px;background:${copyActive?'rgba(212,165,116,.1)':'var(--bg-card)'};border:1px solid ${copyActive?'var(--accent)':'var(--border)'};border-radius:8px;margin-bottom:10px;flex-wrap:wrap">
     <span style="font-size:11px;font-weight:600;color:var(--ink-muted);white-space:nowrap">⚡ Quick Fill:</span>
-    ${scBtns}
+    ${pinnedBtns}
+    ${moreBtnHTML}
     <button onclick="window._rosterCopy={active:true,code:''};render()" style="padding:3px 8px;border-radius:4px;font-size:11px;cursor:pointer;border:1px solid var(--border);background:var(--bg-card);color:var(--ink-muted);margin-left:4px" title="Xóa mã ca">✕ Xóa</button>
-    ${copyActive?`<span style="font-size:11px;color:var(--accent);font-weight:700;margin-left:8px">🖊 Đang chọn: <span style="background:${scMap[copyCode]?.color||'var(--bg-elev)'};color:${scMap[copyCode]?.textColor||'var(--ink)'};padding:2px 8px;border-radius:4px;font-family:'JetBrains Mono',monospace">${copyCode||'⌫'}</span> — Click hoặc KÉO CHUỘT để điền hàng loạt</span>
-    <button onclick="window._rosterCopy={active:false,code:''};render()" style="padding:3px 10px;border-radius:4px;font-size:11px;cursor:pointer;border:1px solid var(--danger);background:transparent;color:var(--danger);margin-left:auto">Tắt Quick Fill</button>`:'<span style="font-size:10px;color:var(--ink-dim)">Chọn mã ca → click hoặc kéo chuột qua các ô để điền nhanh như Excel</span>'}
+    ${copyActive?`<span style="font-size:11px;color:var(--accent);font-weight:700;margin-left:8px">🖊 Đang chọn: <span style="background:${scMap[copyCode]?.color||'var(--bg-elev)'};color:${scMap[copyCode]?.textColor||'var(--ink)'};padding:2px 8px;border-radius:4px;font-family:'JetBrains Mono',monospace">${copyCode||'⌫'}</span> — Click hoặc KÉO CHUỘT để điền</span>
+    <button onclick="window._rosterCopy={active:false,code:''};render()" style="padding:3px 10px;border-radius:4px;font-size:11px;cursor:pointer;border:1px solid var(--danger);background:transparent;color:var(--danger);margin-left:auto">Tắt</button>`:'<span style="font-size:10px;color:var(--ink-dim)">Chọn mã ca → click hoặc kéo chuột qua các ô để điền nhanh</span>'}
   </div>`;
 
   container.innerHTML = `
@@ -27537,35 +27566,44 @@ function _rosterAddEmpToDept(deptId){
   if(!DB.rosterExtras) DB.rosterExtras = {};
   if(!DB.rosterExtras[key]) DB.rosterExtras[key] = [];
 
-  const currentlyShown = new Set();
+  // Collect all employees currently shown in roster (all depts)
+  const curMonth = new Date().getMonth();
+  const allShown = new Set();
   (DB.employees||[]).forEach(e=>{
-    if(e.deptId !== deptId) return;
-    if(e.status === 'active'){ currentlyShown.add(e.id); return; }
-    if(e.status === 'exit'){
-      const cd = (DB.customData||{})[e.id]||{};
-      if((parseFloat(cd.leaveBalance)||0) > 0 || (parseFloat(cd.compLeaveBalance)||0) > 0) currentlyShown.add(e.id);
+    const st = getEffectiveStatus(e);
+    if(st === 'active' || st === 'probation'){ allShown.add(e.id); return; }
+    if(st === 'exit'){
+      try {
+        if(typeof calcLeaveTotals === 'function'){
+          const alR = calcLeaveTotals(e.id, 'al', rf.year, curMonth).tonCuoiNam || 0;
+          const clR = calcLeaveTotals(e.id, 'cl', rf.year, curMonth).tonCuoiNam || 0;
+          if(alR > 0 || clR > 0) allShown.add(e.id);
+        }
+      } catch(ex){}
     }
   });
-  (DB.rosterExtras[key]||[]).forEach(id=>currentlyShown.add(id));
+  (DB.rosterExtras[key]||[]).forEach(id=>allShown.add(id));
 
-  const available = (DB.employees||[]).filter(e=>e.deptId===deptId && !currentlyShown.has(e.id));
+  // Show ALL employees not currently in roster — user can search across depts
+  const available = (DB.employees||[]).filter(e=>!allShown.has(e.id));
   if(!available.length){
-    toast('Không có nhân viên nào để thêm trong bộ phận này','info');
+    toast('Không có nhân viên nào để thêm','info');
     return;
   }
 
   const html = `<div id="_rosterAddModal" style="position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9999;display:flex;align-items:center;justify-content:center" onclick="if(event.target===this)this.remove()">
-    <div style="background:var(--bg-card);border-radius:12px;padding:24px;width:380px;max-height:70vh;overflow-y:auto;border:1px solid var(--border)">
-      <div style="font-size:14px;font-weight:700;color:var(--ink);margin-bottom:6px">＋ Thêm nhân viên</div>
-      <div style="font-size:11px;color:var(--ink-muted);margin-bottom:14px">${escapeHtml(deptName(deptId))} — T${rf.month}/${rf.year}</div>
-      <input id="_rosterAddSearch" oninput="_rosterFilterAddList()" placeholder="Tìm tên / mã NV..." style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg-elev);color:var(--ink);font-size:12px;margin-bottom:10px;box-sizing:border-box">
-      <div id="_rosterAddList">${available.map(e=>`
-        <div class="_rosterAddItem" data-name="${escapeHtml((e.name||'').toLowerCase())}" data-code="${escapeHtml((e.code||'').toLowerCase())}" onclick="_rosterConfirmAddEmp('${e.id}','${key}')" style="padding:10px 12px;border:1px solid var(--border);border-radius:8px;margin-bottom:6px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;transition:all .15s"
+    <div style="background:var(--bg-card);border-radius:12px;padding:24px;width:420px;max-height:70vh;overflow-y:auto;border:1px solid var(--border)">
+      <div style="font-size:14px;font-weight:700;color:var(--ink);margin-bottom:6px">＋ Thêm nhân viên vào Bảng Ca</div>
+      <div style="font-size:11px;color:var(--ink-muted);margin-bottom:14px">Thêm vào: <b>${escapeHtml(deptName(deptId))}</b> — T${rf.month}/${rf.year}</div>
+      <input id="_rosterAddSearch" oninput="_rosterFilterAddList()" placeholder="Tìm tên / mã NV / bộ phận..." style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg-elev);color:var(--ink);font-size:12px;margin-bottom:10px;box-sizing:border-box">
+      <div style="font-size:10px;color:var(--ink-dim);margin-bottom:8px">${available.length} nhân viên có thể thêm</div>
+      <div id="_rosterAddList" style="max-height:45vh;overflow-y:auto">${available.map(e=>`
+        <div class="_rosterAddItem" data-name="${escapeHtml((e.name||'').toLowerCase())}" data-code="${escapeHtml((e.code||'').toLowerCase())}" data-dept="${escapeHtml((deptName(e.deptId)||'').toLowerCase())}" onclick="_rosterConfirmAddEmp('${e.id}','${key}','${deptId}')" style="padding:10px 12px;border:1px solid var(--border);border-radius:8px;margin-bottom:6px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;transition:all .15s"
           onmouseenter="this.style.background='var(--bg-elev)';this.style.borderColor='var(--accent)'"
           onmouseleave="this.style.background='';this.style.borderColor='var(--border)'">
           <div>
             <div style="font-size:12px;font-weight:600;color:var(--ink)">${escapeHtml(e.name||'')}</div>
-            <div style="font-size:10px;color:var(--ink-muted)">${escapeHtml(e.code||'')} · ${e.status==='exit'?'Đã nghỉ việc':e.status||''}</div>
+            <div style="font-size:10px;color:var(--ink-muted)">${escapeHtml(e.code||'')} · ${escapeHtml(deptName(e.deptId))} · ${e.status==='exit'?'Đã nghỉ việc':e.status||''}</div>
           </div>
           <span style="color:var(--accent);font-size:20px;font-weight:300">+</span>
         </div>
@@ -27579,16 +27617,25 @@ function _rosterAddEmpToDept(deptId){
 function _rosterFilterAddList(){
   const q = (document.getElementById('_rosterAddSearch')?.value||'').toLowerCase();
   document.querySelectorAll('._rosterAddItem').forEach(el=>{
-    const show = !q || (el.dataset.name||'').includes(q) || (el.dataset.code||'').includes(q);
+    const show = !q || (el.dataset.name||'').includes(q) || (el.dataset.code||'').includes(q) || (el.dataset.dept||'').includes(q);
     el.style.display = show ? '' : 'none';
   });
 }
-function _rosterConfirmAddEmp(empId, key){
+function _rosterConfirmAddEmp(empId, key, targetDeptId){
   if(!DB.rosterExtras) DB.rosterExtras = {};
   if(!DB.rosterExtras[key]) DB.rosterExtras[key] = [];
   if(!DB.rosterExtras[key].includes(empId)){
     DB.rosterExtras[key].push(empId);
-    saveData(['rosterExtras']);
+    // If employee is from a different dept, temporarily assign to target dept for this roster
+    const emp = (DB.employees||[]).find(e=>e.id===empId);
+    if(emp && emp.deptId !== targetDeptId){
+      if(!DB.rosterDeptOverride) DB.rosterDeptOverride = {};
+      if(!DB.rosterDeptOverride[key]) DB.rosterDeptOverride[key] = {};
+      DB.rosterDeptOverride[key][empId] = targetDeptId;
+      saveData(['rosterExtras','rosterDeptOverride']);
+    } else {
+      saveData(['rosterExtras']);
+    }
     toast('Đã thêm nhân viên vào bảng ca tháng này','success');
   }
   document.getElementById('_rosterAddModal')?.remove();
@@ -27603,6 +27650,101 @@ function _rosterRemoveExtra(empId){
     toast('Đã bỏ nhân viên khỏi bảng ca tháng này','info');
     render();
   }
+}
+
+function _rosterShowAllSC(){
+  const allSC = DB.shiftCodes||[];
+  const copyCode = window._rosterCopy?.code||'';
+  const items = allSC.map(sc=>{
+    const sel = copyCode===sc.code;
+    return `<div class="_scPickItem" data-code="${escapeHtml((sc.code||'').toLowerCase())}" data-name="${escapeHtml((sc.name||'').toLowerCase())}"
+      onclick="window._rosterCopy={active:true,code:'${sc.code}'};document.getElementById('_scPickModal')?.remove();render()"
+      style="display:flex;align-items:center;gap:10px;padding:8px 12px;border:1px solid ${sel?'var(--accent)':'var(--border)'};border-radius:8px;margin-bottom:4px;cursor:pointer;transition:all .15s;${sel?'background:rgba(212,165,116,.12)':''}"
+      onmouseenter="this.style.background='var(--bg-elev)';this.style.borderColor='var(--accent)'"
+      onmouseleave="this.style.background='${sel?'rgba(212,165,116,.12)':''}';this.style.borderColor='${sel?'var(--accent)':'var(--border)'}'" >
+      <span style="display:inline-block;min-width:50px;padding:4px 10px;border-radius:5px;font-weight:700;font-size:12px;font-family:'JetBrains Mono',monospace;text-align:center;background:${sc.color||'var(--bg-elev)'};color:${sc.textColor||'var(--ink)'}">${sc.code}</span>
+      <div style="flex:1">
+        <div style="font-size:12px;font-weight:500;color:var(--ink)">${escapeHtml(sc.name||sc.code)}</div>
+        <div style="font-size:10px;color:var(--ink-muted)">Mã công: ${sc.workCode||'—'} · Giá trị: ${sc.workValue||0}</div>
+      </div>
+      ${sel?'<span style="color:var(--accent);font-weight:700">✓</span>':''}
+    </div>`;
+  }).join('');
+  const html = `<div id="_scPickModal" style="position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9999;display:flex;align-items:center;justify-content:center" onclick="if(event.target===this)this.remove()">
+    <div style="background:var(--bg-card);border-radius:12px;padding:24px;width:420px;max-height:70vh;border:1px solid var(--border);display:flex;flex-direction:column">
+      <div style="font-size:14px;font-weight:700;color:var(--ink);margin-bottom:6px">⚡ Chọn mã ca — Quick Fill</div>
+      <div style="font-size:11px;color:var(--ink-muted);margin-bottom:10px">${allSC.length} mã ca</div>
+      <input id="_scPickSearch" oninput="_rosterFilterSCList()" placeholder="Tìm mã ca hoặc tên..." autofocus
+        style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg-elev);color:var(--ink);font-size:12px;margin-bottom:10px;box-sizing:border-box">
+      <div id="_scPickList" style="overflow-y:auto;flex:1">${items}</div>
+      <button onclick="document.getElementById('_scPickModal').remove()" style="margin-top:10px;padding:8px 16px;border-radius:6px;border:1px solid var(--border);background:var(--bg-card);color:var(--ink);cursor:pointer;width:100%;font-size:12px">Đóng</button>
+    </div>
+  </div>`;
+  document.body.insertAdjacentHTML('beforeend', html);
+  document.getElementById('_scPickSearch')?.focus();
+}
+function _rosterFilterSCList(){
+  const q = (document.getElementById('_scPickSearch')?.value||'').toLowerCase();
+  document.querySelectorAll('._scPickItem').forEach(el=>{
+    const show = !q || (el.dataset.code||'').includes(q) || (el.dataset.name||'').includes(q);
+    el.style.display = show ? '' : 'none';
+  });
+}
+
+function _rosterMoveEmp(empId, deptId, dir){
+  const rf = window._rosterFilter;
+  const key = rf.year+'_'+rf.month;
+  if(!DB.rosterEmpOrder) DB.rosterEmpOrder = {};
+  if(!DB.rosterEmpOrder[key]) DB.rosterEmpOrder[key] = {};
+  const order = DB.rosterEmpOrder[key];
+  const curMonth = new Date().getMonth();
+
+  // Build current dept employee list in display order
+  const deptEmps = (DB.employees||[]).filter(e=>{
+    if(e.deptId !== deptId) return false;
+    const st = getEffectiveStatus(e);
+    if(st === 'active' || st === 'probation') return true;
+    if(st === 'exit'){
+      try {
+        if(typeof calcLeaveTotals === 'function'){
+          const alR = calcLeaveTotals(e.id, 'al', rf.year, curMonth).tonCuoiNam || 0;
+          const clR = calcLeaveTotals(e.id, 'cl', rf.year, curMonth).tonCuoiNam || 0;
+          if(alR > 0 || clR > 0) return true;
+        }
+      } catch(ex){}
+    }
+    return false;
+  });
+  // Add extras in this dept
+  const extraIds = (DB.rosterExtras||{})[key] || [];
+  extraIds.forEach(eid => {
+    if(deptEmps.find(e=>e.id===eid)) return;
+    const emp = (DB.employees||[]).find(e=>e.id===eid);
+    if(emp){
+      const overDept = ((DB.rosterDeptOverride||{})[key]||{})[eid];
+      if((overDept||emp.deptId) === deptId) deptEmps.push(emp);
+    }
+  });
+  // Sort by current order
+  deptEmps.sort((a,b)=>{
+    const oa = order[deptId+'_'+a.id]; const ob = order[deptId+'_'+b.id];
+    if(oa!=null && ob!=null) return oa - ob;
+    if(oa!=null) return -1; if(ob!=null) return 1;
+    return (a.name||'').localeCompare(b.name||'');
+  });
+
+  const idx = deptEmps.findIndex(e=>e.id===empId);
+  if(idx < 0) return;
+  const newIdx = idx + dir;
+  if(newIdx < 0 || newIdx >= deptEmps.length) return;
+
+  // Swap
+  [deptEmps[idx], deptEmps[newIdx]] = [deptEmps[newIdx], deptEmps[idx]];
+
+  // Save new order
+  deptEmps.forEach((e,i)=>{ order[deptId+'_'+e.id] = i; });
+  saveData(['rosterEmpOrder']);
+  render();
 }
 
 // ══════════════════════════════════════════════════════════
@@ -27626,9 +27768,15 @@ function _renderTimesheetGrid(container, isAdm){
   const nowStr = new Date().toISOString().slice(0,10);
 
   let emps = (DB.employees||[]).filter(e=>{
-    if(e.status === 'active') return true;
-    if(e.status === 'exit'){
-      try { const ldg = computeLeaveLedger(e.id, mo, yr); if((ldg.alClose||0) > 0 || (ldg.clClose||0) > 0) return true; } catch(ex){}
+    if(getEffectiveStatus(e) === 'active' || getEffectiveStatus(e) === 'probation') return true;
+    if(getEffectiveStatus(e) === 'exit'){
+      try {
+        if(typeof calcLeaveTotals === 'function'){
+          const alR = calcLeaveTotals(e.id, 'al', yr, curMonth).tonCuoiNam || 0;
+          const clR = calcLeaveTotals(e.id, 'cl', yr, curMonth).tonCuoiNam || 0;
+          if(alR > 0 || clR > 0) return true;
+        }
+      } catch(ex){}
     }
     return false;
   }).map(e=>({...e, _isTrainee:false}));
@@ -27646,11 +27794,23 @@ function _renderTimesheetGrid(container, isAdm){
   extraIds.forEach(eid => {
     if(emps.find(e=>e.id===eid)) return;
     const emp = (DB.employees||[]).find(e=>e.id===eid);
-    if(emp) emps.push({...emp, _isExtra:true, _isTrainee:false});
+    if(emp){
+      const overDept = ((DB.rosterDeptOverride||{})[extraKey]||{})[eid];
+      emps.push({...emp, deptId: overDept||emp.deptId, _isExtra:true, _isTrainee:false});
+    }
   });
 
   if(filterDeptId && filterDeptId !== 'all') emps = emps.filter(e=>e.deptId===filterDeptId);
-  emps.sort((a,b)=>(a.deptId||'').localeCompare(b.deptId||'')||(a.name||'').localeCompare(b.name||''));
+  // Sort by saved order, then by name
+  const orderKey2 = yr+'_'+mo;
+  const savedOrder2 = (DB.rosterEmpOrder||{})[orderKey2]||{};
+  emps.sort((a,b)=>{
+    if(a.deptId !== b.deptId) return (a.deptId||'').localeCompare(b.deptId||'');
+    const oa = savedOrder2[a.deptId+'_'+a.id]; const ob = savedOrder2[b.deptId+'_'+b.id];
+    if(oa!=null && ob!=null) return oa - ob;
+    if(oa!=null) return -1; if(ob!=null) return 1;
+    return (a.name||'').localeCompare(b.name||'');
+  });
 
   const MN = ['T1','T2','T3','T4','T5','T6','T7','T8','T9','T10','T11','T12'];
   const moSelect = MN.map((_,i)=>`<option value="${i+1}" ${mo===i+1?'selected':''}>${MN[i]}</option>`).join('');
@@ -27798,7 +27958,7 @@ function _renderTimesheetGrid(container, isAdm){
       allRows += `<tr><td colspan="${totalCols}" style="padding:4px 12px;text-align:right;background:var(--bg-card)">
         <button onclick="_rosterAddEmpToDept('${did}')" style="padding:4px 14px;font-size:10px;background:transparent;border:1px dashed var(--border);border-radius:6px;color:var(--ink-muted);cursor:pointer;transition:all .15s"
           onmouseenter="this.style.color='var(--accent)';this.style.borderColor='var(--accent)'"
-          onmouseleave="this.style.color='var(--ink-muted)';this.style.borderColor='var(--border)'">＋ Thêm NV đã nghỉ</button>
+          onmouseleave="this.style.color='var(--ink-muted)';this.style.borderColor='var(--border)'">＋ Thêm NV</button>
       </td></tr>`;
     }
   });
