@@ -26555,7 +26555,7 @@ const REQUIRED_FIELDS = new Proxy([], {
   }
 });
 
-let tasksFilter = {dept:'', priority:'critical', search:''};
+let tasksFilter = {dept:'', priority:'critical', search:'', field:''};
 
 function renderTasks(main){
   if(!window.canDo('tasks')){
@@ -26581,6 +26581,9 @@ function renderTasks(main){
   if(tasksFilter.dept) filtered = filtered.filter(t => t.emp.deptId === tasksFilter.dept);
   if(tasksFilter.priority === 'critical'){
     filtered = filtered.filter(t => t.missing.some(f => f.critical));
+  }
+  if(tasksFilter.field){
+    filtered = filtered.filter(t => t.missing.some(f => f.key === tasksFilter.field));
   }
   if(tasksFilter.search){
     const q = tasksFilter.search;
@@ -26638,7 +26641,7 @@ function renderTasks(main){
         </div>
         <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:8px">
           ${topMissingFields.map(t => `
-            <div style="padding:10px 14px;background:var(--bg-elev);border:1px solid var(--border);border-radius:6px;border-left:3px solid ${t.field.critical?'var(--danger)':'var(--warning)'}">
+            <div onclick="setTasksFilter('field','${escapeHtml(t.field.key)}')" style="padding:10px 14px;background:var(--bg-elev);border:1px solid ${tasksFilter.field===t.field.key?'var(--accent)':'var(--border)'};border-radius:6px;border-left:3px solid ${t.field.critical?'var(--danger)':'var(--warning)'};cursor:pointer;transition:border .15s${tasksFilter.field===t.field.key?';box-shadow:0 0 0 1px var(--accent)':''}">
               <div style="display:flex;align-items:center;justify-content:space-between">
                 <div style="font-size:12.5px;font-weight:600">${escapeHtml(t.field.label)}</div>
                 <div style="font-family:'JetBrains Mono',monospace;font-weight:700;color:${t.field.critical?'var(--danger)':'var(--warning)'};font-size:16px">${t.count}</div>
@@ -26669,6 +26672,11 @@ function renderTasks(main){
             <option value="critical" ${tasksFilter.priority==='critical'?'selected':''}>🔴 Chỉ trường bắt buộc</option>
             <option value="all" ${tasksFilter.priority==='all'?'selected':''}>Tất cả trường</option>
           </select>
+          <select class="filter-select" onchange="setTasksFilter('field', this.value)" style="min-width:180px">
+            <option value="">📄 Tất cả trường thiếu</option>
+            ${Object.values(fieldCounts).sort((a,b)=>b.count-a.count).map(fc=>`<option value="${escapeHtml(fc.field.key)}" ${tasksFilter.field===fc.field.key?'selected':''}>${fc.field.critical?'🔴':'🟡'} ${escapeHtml(fc.field.label)} (${fc.count})</option>`).join('')}
+          </select>
+          ${tasksFilter.field?`<button class="btn" onclick="setTasksFilter('field','')" style="font-size:11px;padding:4px 10px" title="Xóa bộ lọc trường">✕</button>`:''}
         </div>
       </div>
 
