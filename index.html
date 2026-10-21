@@ -34611,19 +34611,24 @@ fbAuth.onAuthStateChanged(async user => {
           }
         })();
 
-        // Load C&B Vouchers
+        // Load C&B Vouchers — ưu tiên theo _lastSaved timestamp, KHÔNG theo số lượng
         (async()=>{
           try{
             const snap = await window.fbDb.collection('hrdata').doc('cb_vouchers').get();
-            const cloudV = snap.exists ? (snap.data().cbVouchers||[]) : [];
+            const cloudData = snap.exists ? snap.data() : {};
+            const cloudV = cloudData.cbVouchers || [];
+            const cloudTs = cloudData._lastSaved || 0;
             let lsV = [];
+            let lsTs = 0;
             try{ lsV = JSON.parse(localStorage.getItem('_cbVouchers')||'[]'); }catch(e){}
-            if(cloudV.length >= lsV.length){
+            try{ lsTs = parseInt(localStorage.getItem('_cbVouchers_ts')||'0'); }catch(e){}
+            // Cloud wins nếu timestamp >= localStorage (hoặc cả 2 = 0)
+            if(cloudTs >= lsTs){
               DB.cbVouchers = cloudV;
-              if(cloudV.length) try{ localStorage.setItem('_cbVouchers', JSON.stringify(cloudV)); }catch(e){}
+              try{ localStorage.setItem('_cbVouchers', JSON.stringify(cloudV)); localStorage.setItem('_cbVouchers_ts', String(cloudTs)); }catch(e){}
             } else {
               DB.cbVouchers = lsV;
-              console.log('[CB-V] ⚠ Restored', lsV.length, 'vouchers from localStorage (cloud had', cloudV.length, ')');
+              console.log('[CB-V] ⚠ Restored', lsV.length, 'vouchers from localStorage (cloud ts:', cloudTs, 'ls ts:', lsTs, ')');
               _saveCBVouchers();
             }
             console.log('[CB-V] ✅ Loaded', DB.cbVouchers.length, 'vouchers');
@@ -37505,13 +37510,14 @@ function _vUnlink(idx){
 }
 
 function _saveCBVouchers(){
-  // Save localStorage backup trước (instant)
-  try{ localStorage.setItem('_cbVouchers', JSON.stringify(DB.cbVouchers||[])); }catch(e){}
+  const ts = Date.now();
+  // Save localStorage backup trước (instant) — kèm timestamp
+  try{ localStorage.setItem('_cbVouchers', JSON.stringify(DB.cbVouchers||[])); localStorage.setItem('_cbVouchers_ts', String(ts)); }catch(e){}
   if(!window.fbDb||!window.currentUser) return;
-  const meta = {_syncBy:window.currentUser.uid, _syncAt:Date.now(), _lastSaved:Date.now()};
+  const meta = {_syncBy:window.currentUser.uid, _syncAt:ts, _lastSaved:ts};
   window.fbDb.collection('hrdata').doc('cb_vouchers')
     .set({...meta, cbVouchers: DB.cbVouchers||[]}, {merge:false})
-    .then(()=>console.log('[CB-V] ✅ Saved', (DB.cbVouchers||[]).length, 'vouchers'))
+    .then(()=>console.log('[CB-V] ✅ Saved', (DB.cbVouchers||[]).length, 'vouchers at', ts))
     .catch(err=>console.error('[CB-V] ❌ Save failed:', err.message));
 }
 
