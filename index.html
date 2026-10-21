@@ -1052,7 +1052,7 @@ const FS_DOC_MAP = {
 // manningPlan + manningActual được shard theo năm qua _pushDynamicKey → KHÔNG để trong FS_DOC_MAP
 const FS_DYNAMIC_KEYS = ['leaves','kpiReviews','rewardRecords','casuals','candidates',
                           'promotions','disciplineRecords','leaveSheet','leaveOpening','leavePlan','leavePlanLocked',
-                          'manningPlan','manningActual','plRevenue','plActionPlan','payrollData','hrGardenPlan','dutyRoster'];
+                          'manningPlan','manningActual','plRevenue','plActionPlan','payrollData','hrGardenPlan','dutyRoster','rosterExtras'];
 
 function _recYear(r){
   const d = r.startDate||r.date||r.effectiveDate||r.period||r.appliedDate||r.createdAt||'';
@@ -26950,6 +26950,7 @@ function renderDutyRoster(main){
   if(!DB.shiftCodes) DB.shiftCodes = [];
   if(!DB.dutyRoster) DB.dutyRoster = [];
   if(!DB.rosterLocks) DB.rosterLocks = {};
+  if(!DB.rosterExtras) DB.rosterExtras = {};
 
   const rf = window._rosterFilter;
   const isAdm = window.isAdmin();
@@ -27202,6 +27203,15 @@ function _renderRosterGrid(container, isAdm){
     });
   });
 
+  // Thêm nhân viên đã nghỉ được add thủ công vào tháng này
+  const extraKey = yr+'_'+mo;
+  const extraIds = (DB.rosterExtras||{})[extraKey] || [];
+  extraIds.forEach(eid => {
+    if(emps.find(e=>e.id===eid)) return;
+    const emp = (DB.employees||[]).find(e=>e.id===eid);
+    if(emp) emps.push({...emp, _isExtra:true, _isTrainee:false});
+  });
+
   if(filterDeptId && filterDeptId !== 'all') emps = emps.filter(e=>e.deptId===filterDeptId);
   emps.sort((a,b)=>(a.deptId||'').localeCompare(b.deptId||'')||(a.name||'').localeCompare(b.name||''));
 
@@ -27278,6 +27288,10 @@ function _renderRosterGrid(container, isAdm){
     deptGroups[did].push(e);
   });
 
+  // ── Copy mode state ── (needed before cell rendering)
+  const copyActive = window._rosterCopy?.active;
+  const copyCode = window._rosterCopy?.code||'';
+
   // Build rows with department separators + subtotals
   let allRows = '';
   let globalIdx = 0;
@@ -27312,13 +27326,22 @@ function _renderRosterGrid(container, isAdm){
       for(let d=1;d<=daysInMonth;d++){
         const val = rd[d] || '';
         const sc = scMap[val];
-        const bg = sc ? sc.color : 'transparent';
-        const fg = sc ? sc.textColor : 'var(--ink-dim)';
+        let bg, fg;
+        if(sc){ bg=sc.color||'transparent'; fg=sc.textColor||'var(--ink)'; }
+        else if(val==='AL'){ bg='#2d6a4f'; fg='#b7e4c7'; }
+        else if(val==='CL'){ bg='#1d3557'; fg='#a8dadc'; }
+        else { bg='transparent'; fg='var(--ink-dim)'; }
         // Check if this is an auto-filled AL/CL from leave system
         const isAutoLeave = alClDays[e.id] && alClDays[e.id][d] && !((DB.dutyRoster||[]).find(r=>r.empId===e.id&&r.year===yr&&r.month===mo&&r.day===d));
         const autoBorder = isAutoLeave ? 'outline:1px dashed var(--accent);outline-offset:-1px;' : '';
-        if(canEditThisRow){
-          dayCells += `<td style="padding:0;border:1px solid var(--border);min-width:38px;text-align:center;${autoBorder}" onclick="if(window._rosterCopy?.active){_rosterSetCell('${e.id}',${yr},${mo},${d},window._rosterCopy.code);render();return;}" title="${isAutoLeave?'Tự động từ phép duyệt':''}">
+        if(canEditThisRow && copyActive){
+          // Quick Fill mode: plain cell, click or drag to fill
+          dayCells += `<td style="padding:4px 2px;border:1px solid var(--border);min-width:38px;text-align:center;background:${bg};color:${fg};font-size:11px;font-weight:700;font-family:'JetBrains Mono',monospace;cursor:crosshair;user-select:none;${autoBorder}"
+            onmousedown="event.preventDefault();window._rosterDrag=true;_rosterQuickFill(this,'${e.id}',${d})"
+            onmouseenter="if(window._rosterDrag)_rosterQuickFill(this,'${e.id}',${d})"
+            title="${val?(isAutoLeave?'Tự động từ phép':''):'Kéo chuột để điền nhanh'}">${val}</td>`;
+        } else if(canEditThisRow){
+          dayCells += `<td style="padding:0;border:1px solid var(--border);min-width:38px;text-align:center;${autoBorder}" title="${isAutoLeave?'Tự động từ phép duyệt':''}">
             <select onchange="_rosterSetCell('${e.id}',${yr},${mo},${d},this.value)" style="width:100%;padding:4px 0;border:none;background:${bg};color:${fg};font-size:11px;font-weight:700;font-family:'JetBrains Mono',monospace;text-align:center;cursor:pointer;-webkit-appearance:none;appearance:none">
               <option value=""></option>${(DB.shiftCodes||[]).map(sc2=>`<option value="${sc2.code}" ${val===sc2.code?'selected':''}>${sc2.code}</option>`).join('')}
             </select>
@@ -27350,11 +27373,12 @@ function _renderRosterGrid(container, isAdm){
       const clBal = parseFloat(cd.compLeaveBalance)||0;
       const leaveBadge = (alBal||clBal) ? `<span style="font-size:8px;color:var(--ink-muted);margin-left:4px" title="AL: ${alBal} / CL: ${clBal}">📋${alBal}/${clBal}</span>` : '';
       const traineeBadge = e._isTrainee ? `<span style="font-size:8px;padding:1px 4px;border-radius:3px;background:var(--accent);color:#000;margin-left:4px;font-weight:600">TTS</span>` : '';
+      const extraBadge = e._isExtra ? `<span style="font-size:8px;padding:1px 4px;border-radius:3px;background:var(--danger);color:#fff;margin-left:4px;font-weight:600;cursor:pointer" onclick="_rosterRemoveExtra('${e.id}')" title="Click để bỏ khỏi bảng ca">✕</span>` : '';
 
-      allRows += `<tr style="border-bottom:1px solid var(--border)">
-        <td style="padding:5px 6px;font-size:11px;text-align:center;position:sticky;left:0;background:${rowBg};z-index:2;border-right:2px solid var(--border-strong)">${globalIdx}</td>
+      allRows += `<tr style="border-bottom:1px solid var(--border)${e._isExtra?' ;background:rgba(220,53,69,.04)':''}">
+        <td style="padding:5px 6px;font-size:11px;text-align:center;position:sticky;left:0;background:${e._isExtra?'rgba(220,53,69,.04)':rowBg};z-index:2;border-right:2px solid var(--border-strong)">${globalIdx}</td>
         <td style="padding:5px 6px;font-size:11px;font-family:'JetBrains Mono',monospace;position:sticky;left:30px;background:${rowBg};z-index:2">${escapeHtml(e.code||'')}</td>
-        <td style="padding:5px 6px;font-size:12px;${nameStyle};white-space:nowrap;position:sticky;left:90px;background:${rowBg};z-index:2">${escapeHtml(e.name||'')}${traineeBadge}${leaveBadge}</td>
+        <td style="padding:5px 6px;font-size:12px;${nameStyle};white-space:nowrap;position:sticky;left:90px;background:${e._isExtra?'rgba(220,53,69,.04)':rowBg};z-index:2">${escapeHtml(e.name||'')}${traineeBadge}${extraBadge}${leaveBadge}</td>
         <td style="padding:5px 6px;font-size:10px;color:var(--ink-dim);white-space:nowrap;position:sticky;left:200px;background:${rowBg};z-index:2">${escapeHtml(deptName(e.deptId))}</td>
         <td style="padding:5px 6px;font-size:10px;color:var(--ink-dim);white-space:nowrap;position:sticky;left:300px;background:${rowBg};z-index:2">${escapeHtml(e.role||cd.position||'')}</td>
         <td style="padding:5px 4px;font-size:10px;text-align:center;position:sticky;left:400px;background:${rowBg};z-index:2;font-family:'JetBrains Mono',monospace;border-right:2px solid var(--accent)">${cd.standardWorkdays||''}</td>
@@ -27379,14 +27403,21 @@ function _renderRosterGrid(container, isAdm){
       ${subCells}
       <td style="padding:4px 4px;text-align:center;font-size:12px;font-weight:800;color:var(--accent);font-family:'JetBrains Mono',monospace;background:rgba(212,165,116,.15);border:1px solid var(--border)">${deptTotalWork||''}</td>
     </tr>`;
+
+    // ＋ Thêm NV button per department
+    if(!isLocked && did!=='_none' && (isAdm || window.canDo('dutyRoster','edit'))){
+      allRows += `<tr><td colspan="${totalCols}" style="padding:4px 12px;text-align:right;background:var(--bg-card)">
+        <button onclick="_rosterAddEmpToDept('${did}')" style="padding:4px 14px;font-size:10px;background:transparent;border:1px dashed var(--border);border-radius:6px;color:var(--ink-muted);cursor:pointer;transition:all .15s"
+          onmouseenter="this.style.color='var(--accent)';this.style.borderColor='var(--accent)'"
+          onmouseleave="this.style.color='var(--ink-muted)';this.style.borderColor='var(--border)'">＋ Thêm NV đã nghỉ</button>
+      </td></tr>`;
+    }
   });
 
   // Summary column headers
   const scSummaryHeaders = (DB.shiftCodes||[]).map(sc=>`<th style="padding:4px 2px;font-size:8px;font-weight:700;color:${sc.textColor||'var(--ink-muted)'};background:${sc.color||'var(--bg-elev)'};text-align:center;min-width:30px;border:1px solid var(--border)">${sc.code}</th>`).join('');
 
   // ── Copy toolbar ──
-  const copyActive = window._rosterCopy?.active;
-  const copyCode = window._rosterCopy?.code||'';
   const scBtns = (DB.shiftCodes||[]).map(sc=>{
     const sel = copyActive && copyCode===sc.code;
     return `<button onclick="window._rosterCopy={active:true,code:'${sc.code}'};render()" style="padding:3px 8px;border-radius:4px;font-size:11px;font-weight:700;font-family:'JetBrains Mono',monospace;cursor:pointer;border:${sel?'2px solid var(--accent)':'1px solid var(--border)'};background:${sc.color||'var(--bg-card)'};color:${sc.textColor||'var(--ink)'};${sel?'box-shadow:0 0 8px var(--accent);transform:scale(1.1)':''}" title="${sc.name||sc.code}">${sc.code}</button>`;
@@ -27395,8 +27426,8 @@ function _renderRosterGrid(container, isAdm){
     <span style="font-size:11px;font-weight:600;color:var(--ink-muted);white-space:nowrap">⚡ Quick Fill:</span>
     ${scBtns}
     <button onclick="window._rosterCopy={active:true,code:''};render()" style="padding:3px 8px;border-radius:4px;font-size:11px;cursor:pointer;border:1px solid var(--border);background:var(--bg-card);color:var(--ink-muted);margin-left:4px" title="Xóa mã ca">✕ Xóa</button>
-    ${copyActive?`<span style="font-size:11px;color:var(--accent);font-weight:700;margin-left:8px">🖊 Đang chọn: <span style="background:${scMap[copyCode]?.color||'var(--bg-elev)'};color:${scMap[copyCode]?.textColor||'var(--ink)'};padding:2px 8px;border-radius:4px;font-family:'JetBrains Mono',monospace">${copyCode||'⌫'}</span> — Click vào ô để điền</span>
-    <button onclick="window._rosterCopy={active:false,code:''};render()" style="padding:3px 10px;border-radius:4px;font-size:11px;cursor:pointer;border:1px solid var(--danger);background:transparent;color:var(--danger);margin-left:auto">Tắt Quick Fill</button>`:'<span style="font-size:10px;color:var(--ink-dim)">Chọn mã ca rồi click vào ô trên bảng để điền nhanh</span>'}
+    ${copyActive?`<span style="font-size:11px;color:var(--accent);font-weight:700;margin-left:8px">🖊 Đang chọn: <span style="background:${scMap[copyCode]?.color||'var(--bg-elev)'};color:${scMap[copyCode]?.textColor||'var(--ink)'};padding:2px 8px;border-radius:4px;font-family:'JetBrains Mono',monospace">${copyCode||'⌫'}</span> — Click hoặc KÉO CHUỘT để điền hàng loạt</span>
+    <button onclick="window._rosterCopy={active:false,code:''};render()" style="padding:3px 10px;border-radius:4px;font-size:11px;cursor:pointer;border:1px solid var(--danger);background:transparent;color:var(--danger);margin-left:auto">Tắt Quick Fill</button>`:'<span style="font-size:10px;color:var(--ink-dim)">Chọn mã ca → click hoặc kéo chuột qua các ô để điền nhanh như Excel</span>'}
   </div>`;
 
   container.innerHTML = `
@@ -27457,6 +27488,108 @@ function _rosterToggleLock(year, month){
   }
   saveData(['rosterLocks']);
   render();
+}
+
+// ── Quick Fill: drag-to-fill like Excel ──
+if(!window._rosterMouseUpSet){
+  window._rosterMouseUpSet = true;
+  document.addEventListener('mouseup', ()=>{ window._rosterDrag=false; });
+}
+function _rosterQuickFill(td, empId, day){
+  const code = window._rosterCopy?.code || '';
+  const rf = window._rosterFilter;
+  if(!DB.dutyRoster) DB.dutyRoster = [];
+  DB.dutyRoster = DB.dutyRoster.filter(r=>!(r.empId===empId && r.year===rf.year && r.month===rf.month && r.day===day));
+  if(code) DB.dutyRoster.push({empId, year:rf.year, month:rf.month, day, shiftCode:code, _savedAt:Date.now()});
+  const scMap = {};
+  (DB.shiftCodes||[]).forEach(sc=>{ scMap[sc.code]=sc; });
+  const sc = scMap[code];
+  let bg, fg;
+  if(sc){ bg=sc.color||'transparent'; fg=sc.textColor||'var(--ink)'; }
+  else if(code==='AL'){ bg='#2d6a4f'; fg='#b7e4c7'; }
+  else if(code==='CL'){ bg='#1d3557'; fg='#a8dadc'; }
+  else { bg='transparent'; fg='var(--ink-dim)'; }
+  td.textContent = code;
+  td.style.background = bg;
+  td.style.color = fg;
+  td.style.fontWeight = code ? '700' : '400';
+  clearTimeout(window._rosterSaveTimer);
+  window._rosterSaveTimer = setTimeout(()=>saveData(['dutyRoster']),500);
+}
+
+// ── Add resigned employee to roster for a specific month ──
+function _rosterAddEmpToDept(deptId){
+  const rf = window._rosterFilter;
+  const key = rf.year+'_'+rf.month;
+  if(!DB.rosterExtras) DB.rosterExtras = {};
+  if(!DB.rosterExtras[key]) DB.rosterExtras[key] = [];
+
+  const currentlyShown = new Set();
+  (DB.employees||[]).forEach(e=>{
+    if(e.deptId !== deptId) return;
+    if(e.status === 'active'){ currentlyShown.add(e.id); return; }
+    if(e.status === 'exit'){
+      const cd = (DB.customData||{})[e.id]||{};
+      if((parseFloat(cd.leaveBalance)||0) > 0 || (parseFloat(cd.compLeaveBalance)||0) > 0) currentlyShown.add(e.id);
+    }
+  });
+  (DB.rosterExtras[key]||[]).forEach(id=>currentlyShown.add(id));
+
+  const available = (DB.employees||[]).filter(e=>e.deptId===deptId && !currentlyShown.has(e.id));
+  if(!available.length){
+    toast('Không có nhân viên nào để thêm trong bộ phận này','info');
+    return;
+  }
+
+  const html = `<div id="_rosterAddModal" style="position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9999;display:flex;align-items:center;justify-content:center" onclick="if(event.target===this)this.remove()">
+    <div style="background:var(--bg-card);border-radius:12px;padding:24px;width:380px;max-height:70vh;overflow-y:auto;border:1px solid var(--border)">
+      <div style="font-size:14px;font-weight:700;color:var(--ink);margin-bottom:6px">＋ Thêm nhân viên</div>
+      <div style="font-size:11px;color:var(--ink-muted);margin-bottom:14px">${escapeHtml(deptName(deptId))} — T${rf.month}/${rf.year}</div>
+      <input id="_rosterAddSearch" oninput="_rosterFilterAddList()" placeholder="Tìm tên / mã NV..." style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg-elev);color:var(--ink);font-size:12px;margin-bottom:10px;box-sizing:border-box">
+      <div id="_rosterAddList">${available.map(e=>`
+        <div class="_rosterAddItem" data-name="${escapeHtml((e.name||'').toLowerCase())}" data-code="${escapeHtml((e.code||'').toLowerCase())}" onclick="_rosterConfirmAddEmp('${e.id}','${key}')" style="padding:10px 12px;border:1px solid var(--border);border-radius:8px;margin-bottom:6px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;transition:all .15s"
+          onmouseenter="this.style.background='var(--bg-elev)';this.style.borderColor='var(--accent)'"
+          onmouseleave="this.style.background='';this.style.borderColor='var(--border)'">
+          <div>
+            <div style="font-size:12px;font-weight:600;color:var(--ink)">${escapeHtml(e.name||'')}</div>
+            <div style="font-size:10px;color:var(--ink-muted)">${escapeHtml(e.code||'')} · ${e.status==='exit'?'Đã nghỉ việc':e.status||''}</div>
+          </div>
+          <span style="color:var(--accent);font-size:20px;font-weight:300">+</span>
+        </div>
+      `).join('')}</div>
+      <button onclick="document.getElementById('_rosterAddModal').remove()" style="margin-top:10px;padding:8px 16px;border-radius:6px;border:1px solid var(--border);background:var(--bg-card);color:var(--ink);cursor:pointer;width:100%;font-size:12px">Đóng</button>
+    </div>
+  </div>`;
+  document.body.insertAdjacentHTML('beforeend', html);
+  document.getElementById('_rosterAddSearch')?.focus();
+}
+function _rosterFilterAddList(){
+  const q = (document.getElementById('_rosterAddSearch')?.value||'').toLowerCase();
+  document.querySelectorAll('._rosterAddItem').forEach(el=>{
+    const show = !q || (el.dataset.name||'').includes(q) || (el.dataset.code||'').includes(q);
+    el.style.display = show ? '' : 'none';
+  });
+}
+function _rosterConfirmAddEmp(empId, key){
+  if(!DB.rosterExtras) DB.rosterExtras = {};
+  if(!DB.rosterExtras[key]) DB.rosterExtras[key] = [];
+  if(!DB.rosterExtras[key].includes(empId)){
+    DB.rosterExtras[key].push(empId);
+    saveData(['rosterExtras']);
+    toast('Đã thêm nhân viên vào bảng ca tháng này','success');
+  }
+  document.getElementById('_rosterAddModal')?.remove();
+  render();
+}
+function _rosterRemoveExtra(empId){
+  const rf = window._rosterFilter;
+  const key = rf.year+'_'+rf.month;
+  if(DB.rosterExtras && DB.rosterExtras[key]){
+    DB.rosterExtras[key] = DB.rosterExtras[key].filter(id=>id!==empId);
+    saveData(['rosterExtras']);
+    toast('Đã bỏ nhân viên khỏi bảng ca tháng này','info');
+    render();
+  }
 }
 
 // ══════════════════════════════════════════════════════════
