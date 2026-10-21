@@ -209,6 +209,10 @@ if('serviceWorker' in navigator){
         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
         <span>Manning & Budget</span>
       </div>
+      <div class="nav-item" data-page="dutyRoster">
+        <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M9 14h.01M12 14h.01M15 14h.01M9 17h.01M12 17h.01"/></svg>
+        <span>Duty Roster</span>
+      </div>
 
     </div>
 
@@ -951,6 +955,9 @@ function loadData(){
       if(!data.bonusData) data.bonusData = {};
       if(!data.bonusName) data.bonusName = {};
       if(!data.traineeSchedules) data.traineeSchedules = [];
+      if(!data.shiftCodes) data.shiftCodes = [];
+      if(!data.dutyRoster) data.dutyRoster = [];
+      if(!data.rosterLocks) data.rosterLocks = {};
       if(!data._rewardTypesV2){
         const oldGeneric = [(_lang==="en"?"Commendation":"Tuyên dương"),'Bằng khen',(_lang==="en"?"Certificate":"Giấy khen"),(_lang==="en"?"Cash bonus":"Thưởng tiền"),(_lang==="en"?"Salary raise":"Tăng lương"),(_lang==="en"?"Promotion":"Thăng chức"),(_lang==="en"?"Other recognition":"Vinh danh khác")];
         const hasAllOldGeneric = oldGeneric.every(lbl => data.rewardTypes.some(t => t.label === lbl));
@@ -1039,13 +1046,13 @@ const FS_DOC_MAP = {
                'dashboardConfig','brandConfig','customRecruitSources','docChecklistItems',
                'disciplineSeverityConfig','requiredFieldsConfig',
                'contractTemplates','quickFilterPrefs','recReportConfig','perfReportConfig','plConfig','trainingKpi',
-               'salaryStructure',
+               'salaryStructure','shiftCodes','rosterLocks',
                '_rewardTypesV2','_levelReset2026','_removedProbationStatus','_normalizedDates2026','_cleanedCandYearShards','_backfillTraineeCodes'],
 };
 // manningPlan + manningActual được shard theo năm qua _pushDynamicKey → KHÔNG để trong FS_DOC_MAP
 const FS_DYNAMIC_KEYS = ['leaves','kpiReviews','rewardRecords','casuals','candidates',
                           'promotions','disciplineRecords','leaveSheet','leaveOpening','leavePlan','leavePlanLocked',
-                          'manningPlan','manningActual','plRevenue','plActionPlan','payrollData','hrGardenPlan'];
+                          'manningPlan','manningActual','plRevenue','plActionPlan','payrollData','hrGardenPlan','dutyRoster'];
 
 function _recYear(r){
   const d = r.startDate||r.date||r.effectiveDate||r.period||r.appliedDate||r.createdAt||'';
@@ -2544,6 +2551,7 @@ function _doRender(){
       manning: (main)=>renderManning(main),
       hrGarden: renderHRGarden,
       cbPackage: renderCBPackage,
+      dutyRoster: renderDutyRoster,
     };
     (renderers[currentPage] || renderDashboard)(main);
     setTimeout(function(){ initDateInputs(main); }, 20);
@@ -26916,7 +26924,532 @@ const MODULE_LIST = [
   {key:'plreview',     label:'HR P&L Review'},
   {key:'hrGarden',     label:'🌱 HR Action Plan'},
   {key:'cbPackage',    label:'🎁 C&B Package'},
+  {key:'dutyRoster',   label:'📅 Duty Roster'},
 ];
+/* ═════════════════════════════════════════════════════════
+   DUTY ROSTER — Bảng Ca / Bảng Công
+   ═════════════════════════════════════════════════════════ */
+if(!window._rosterFilter) window._rosterFilter = {
+  tab: 'shiftCodes', // shiftCodes | roster | timesheet
+  year: new Date().getFullYear(),
+  month: new Date().getMonth()+1,
+  deptId: 'all'
+};
+
+function renderDutyRoster(main){
+  if(!window.canDo('dutyRoster')){ main.innerHTML='<div class="topbar"><div class="topbar-left"><h1 class="page-title">Không có quyền truy cập</h1></div></div>'; return; }
+  if(!DB.shiftCodes) DB.shiftCodes = [];
+  if(!DB.dutyRoster) DB.dutyRoster = [];
+  if(!DB.rosterLocks) DB.rosterLocks = {};
+
+  const rf = window._rosterFilter;
+  const isAdm = window.isAdmin();
+
+  // ── Tab pills ──
+  const tabs = [
+    {id:'shiftCodes', icon:'⚙️', label:'Mã Ca / Công'},
+    {id:'roster',     icon:'📅', label:'Bảng Ca'},
+    {id:'timesheet',  icon:'📊', label:'Bảng Công'},
+  ];
+  const tabHtml = tabs.map(t=>`<button onclick="window._rosterFilter.tab='${t.id}';render()" style="padding:8px 18px;border-radius:8px;border:1px solid ${rf.tab===t.id?'var(--accent)':'var(--border)'};background:${rf.tab===t.id?'var(--accent)':'transparent'};color:${rf.tab===t.id?'var(--bg)':'var(--ink-dim)'};font-size:13px;font-weight:${rf.tab===t.id?'700':'400'};cursor:pointer">${t.icon} ${t.label}</button>`).join('');
+
+  main.innerHTML = `
+    <div class="topbar">
+      <div class="topbar-left"><h1 class="page-title">📅 Duty Roster</h1><div class="page-sub">Quản lý ca làm việc & chấm công</div></div>
+    </div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:16px">${tabHtml}</div>
+    <div id="_rosterContent"></div>
+  `;
+
+  const container = document.getElementById('_rosterContent');
+  if(rf.tab === 'shiftCodes') _renderShiftCodes(container, isAdm);
+  else if(rf.tab === 'roster') _renderRosterGrid(container, isAdm);
+  else if(rf.tab === 'timesheet') _renderTimesheetGrid(container, isAdm);
+}
+
+// ══════════════════════════════════════════════════════════
+// TAB 1: MÃ CA / CÔNG  (config — chỉ admin sửa)
+// ══════════════════════════════════════════════════════════
+function _renderShiftCodes(container, isAdm){
+  const codes = DB.shiftCodes || [];
+
+  // Default shift codes nếu chưa có
+  if(!codes.length && isAdm){
+    container.innerHTML = `
+      <div class="card">
+        <div class="card-head"><div><div class="card-title">⚙️ Bảng Mã Ca / Công</div><div class="card-sub">Chưa có mã ca nào. Tạo mã ca mặc định hoặc thêm thủ công.</div></div>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-primary" onclick="_shiftCodeDefaults()" style="font-size:12px">🚀 Tạo mã mặc định</button>
+            <button class="btn" onclick="_editShiftCode()" style="font-size:12px">+ Thêm mã ca</button>
+          </div>
+        </div>
+      </div>`;
+    return;
+  }
+
+  const rows = codes.map((sc,i)=>`
+    <tr style="border-bottom:1px solid var(--border)">
+      <td style="padding:8px 12px;text-align:center;font-weight:700">${i+1}</td>
+      <td style="padding:8px 12px"><span style="display:inline-block;padding:4px 14px;border-radius:6px;font-weight:700;font-size:13px;font-family:'JetBrains Mono',monospace;background:${sc.color||'var(--bg-elev)'};color:${sc.textColor||'var(--ink)'}">${escapeHtml(sc.code)}</span></td>
+      <td style="padding:8px 12px;font-weight:500">${escapeHtml(sc.name)}</td>
+      <td style="padding:8px 12px;text-align:center;font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--accent)">${sc.workCode??''}</td>
+      <td style="padding:8px 12px;text-align:center;font-family:'JetBrains Mono',monospace">${sc.workValue??''}</td>
+      <td style="padding:8px 12px;font-size:11px;color:var(--ink-dim)">${escapeHtml(sc.desc||'')}</td>
+      ${isAdm?`<td style="padding:8px 4px;text-align:center">
+        <button onclick="_editShiftCode('${sc.id}')" style="background:transparent;border:1px solid var(--border);border-radius:4px;color:var(--ink-dim);font-size:11px;padding:3px 8px;cursor:pointer;margin-right:4px">✏️</button>
+        <button onclick="_deleteShiftCode('${sc.id}')" style="background:transparent;border:1px solid rgba(229,115,115,.3);border-radius:4px;color:var(--danger);font-size:11px;padding:3px 8px;cursor:pointer">✕</button>
+      </td>`:''}
+    </tr>`).join('');
+
+  container.innerHTML = `
+    <div class="card">
+      <div class="card-head"><div><div class="card-title">⚙️ Bảng Mã Ca / Công</div><div class="card-sub">${codes.length} mã ca · Quy đổi ca → công</div></div>
+        ${isAdm?`<div style="display:flex;gap:8px">
+          <button class="btn btn-primary" onclick="_editShiftCode()" style="font-size:12px">+ Thêm mã ca</button>
+        </div>`:''}
+      </div>
+      <div style="overflow-x:auto">
+        <table style="border-collapse:collapse;width:100%;font-size:13px">
+          <thead><tr style="background:var(--bg-elev)">
+            <th style="padding:8px 12px;font-size:10px;font-weight:700;color:var(--ink-muted);width:40px">STT</th>
+            <th style="padding:8px 12px;font-size:10px;font-weight:700;color:var(--ink-muted);text-align:left">MÃ CA</th>
+            <th style="padding:8px 12px;font-size:10px;font-weight:700;color:var(--ink-muted);text-align:left">TÊN CA</th>
+            <th style="padding:8px 12px;font-size:10px;font-weight:700;color:var(--accent);text-align:center">MÃ CÔNG</th>
+            <th style="padding:8px 12px;font-size:10px;font-weight:700;color:var(--accent);text-align:center">GIÁ TRỊ CÔNG</th>
+            <th style="padding:8px 12px;font-size:10px;font-weight:700;color:var(--ink-muted);text-align:left">MÔ TẢ</th>
+            ${isAdm?'<th style="padding:8px 12px;font-size:10px;font-weight:700;color:var(--ink-muted);width:80px"></th>':''}
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:16px">
+      <div class="card-head"><div><div class="card-title">📖 Hướng dẫn</div></div></div>
+      <div style="padding:0 18px 16px;font-size:12px;color:var(--ink-dim);line-height:1.8">
+        <b>Mã Ca</b> = ký hiệu điền vào Bảng Ca (VD: S, C, Đ, OFF, AL...)<br>
+        <b>Mã Công</b> = mã tương ứng khi chuyển sang Bảng Công<br>
+        <b>Giá trị Công</b> = số công quy đổi (VD: Ca Sáng = 1 công, Ca Đêm = 1.5 công)<br>
+        Trưởng bộ phận chỉ điền Mã Ca vào bảng. Khi bấm <em>"Chuyển sang Bảng Công"</em>, hệ thống tự quy đổi theo bảng này.
+      </div>
+    </div>
+  `;
+}
+
+function _shiftCodeDefaults(){
+  DB.shiftCodes = [
+    {id:'sc_s',   code:'S',   name:'Ca Sáng',          workCode:'1',   workValue:1,   color:'#e3f2fd', textColor:'#1565c0', desc:'06:00 – 14:00'},
+    {id:'sc_c',   code:'C',   name:'Ca Chiều',         workCode:'1',   workValue:1,   color:'#fff3e0', textColor:'#e65100', desc:'14:00 – 22:00'},
+    {id:'sc_d',   code:'Đ',   name:'Ca Đêm',           workCode:'1.5', workValue:1.5, color:'#1a237e', textColor:'#e8eaf6', desc:'22:00 – 06:00'},
+    {id:'sc_hc',  code:'HC',  name:'Hành chính',       workCode:'1',   workValue:1,   color:'#e8f5e9', textColor:'#2e7d32', desc:'08:00 – 17:00'},
+    {id:'sc_off', code:'OFF', name:'Nghỉ',             workCode:'0',   workValue:0,   color:'#f5f5f5', textColor:'#9e9e9e', desc:'Ngày nghỉ'},
+    {id:'sc_al',  code:'AL',  name:'Annual Leave',     workCode:'P',   workValue:1,   color:'#fce4ec', textColor:'#c62828', desc:'Nghỉ phép năm'},
+    {id:'sc_cl',  code:'CL',  name:'Compensatory Leave',workCode:'Bù', workValue:1,   color:'#f3e5f5', textColor:'#7b1fa2', desc:'Nghỉ bù'},
+    {id:'sc_sl',  code:'SL',  name:'Sick Leave',       workCode:'Ốm',  workValue:1,   color:'#fff9c4', textColor:'#f57f17', desc:'Nghỉ ốm (BHXH)'},
+    {id:'sc_ml',  code:'ML',  name:'Maternity Leave',  workCode:'TS',  workValue:1,   color:'#fce4ec', textColor:'#ad1457', desc:'Nghỉ thai sản'},
+    {id:'sc_ct',  code:'CT',  name:'Công tác',         workCode:'CT',  workValue:1,   color:'#e0f7fa', textColor:'#00695c', desc:'Đi công tác'},
+    {id:'sc_tc',  code:'TC',  name:'Training/Course',  workCode:'ĐT',  workValue:1,   color:'#ede7f6', textColor:'#4527a0', desc:'Đào tạo/Học'},
+    {id:'sc_x',   code:'X',   name:'Nghỉ không lương', workCode:'KL',  workValue:0,   color:'#efebe9', textColor:'#4e342e', desc:'Nghỉ không lương'},
+  ];
+  saveData(['shiftCodes']);
+  toast('✅ Đã tạo 12 mã ca mặc định','success');
+  render();
+}
+
+function _editShiftCode(id){
+  const isNew = !id;
+  const sc = isNew ? {id:'',code:'',name:'',workCode:'',workValue:1,color:'#e3f2fd',textColor:'#1565c0',desc:''} : DB.shiftCodes.find(x=>x.id===id) || {};
+
+  openModal(`
+    <div class="modal-head">
+      <div class="modal-title">${isNew?'Thêm':'Sửa'} <em style="color:var(--accent)">Mã Ca</em></div>
+    </div>
+    <div class="form-grid">
+      <div class="field"><label>Mã Ca *</label>
+        <input id="_sc_code" value="${escapeHtml(sc.code||'')}" placeholder="VD: S, C, Đ, OFF" style="text-transform:uppercase;font-family:'JetBrains Mono',monospace;font-weight:700" maxlength="5">
+      </div>
+      <div class="field"><label>Tên Ca *</label>
+        <input id="_sc_name" value="${escapeHtml(sc.name||'')}" placeholder="VD: Ca Sáng">
+      </div>
+      <div class="field"><label>Mã Công (quy đổi)</label>
+        <input id="_sc_workCode" value="${escapeHtml(sc.workCode??'')}" placeholder="VD: 1, P, Bù" style="font-family:'JetBrains Mono',monospace">
+      </div>
+      <div class="field"><label>Giá trị Công (số)</label>
+        <input id="_sc_workValue" type="number" step="0.5" value="${sc.workValue??1}" placeholder="1">
+      </div>
+      <div class="field"><label>Màu nền</label>
+        <input id="_sc_color" type="color" value="${sc.color||'#e3f2fd'}" style="width:50px;height:36px;padding:2px;cursor:pointer">
+      </div>
+      <div class="field"><label>Màu chữ</label>
+        <input id="_sc_textColor" type="color" value="${sc.textColor||'#1565c0'}" style="width:50px;height:36px;padding:2px;cursor:pointer">
+      </div>
+      <div class="field full"><label>Mô tả</label>
+        <input id="_sc_desc" value="${escapeHtml(sc.desc||'')}" placeholder="VD: 06:00 – 14:00">
+      </div>
+      <div class="field full" style="margin-top:8px">
+        <label>Xem trước:</label>
+        <span id="_sc_preview" style="display:inline-block;padding:6px 18px;border-radius:6px;font-weight:700;font-size:14px;font-family:'JetBrains Mono',monospace;background:${sc.color||'#e3f2fd'};color:${sc.textColor||'#1565c0'}">${escapeHtml(sc.code||'?')}</span>
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeModal()">Hủy</button>
+      <button class="btn btn-primary" onclick="_saveShiftCode('${id||''}')">💾 Lưu</button>
+    </div>
+  `);
+
+  // Live preview
+  const updatePreview = ()=>{
+    const prev = document.getElementById('_sc_preview');
+    if(!prev) return;
+    prev.textContent = document.getElementById('_sc_code')?.value || '?';
+    prev.style.background = document.getElementById('_sc_color')?.value || '#e3f2fd';
+    prev.style.color = document.getElementById('_sc_textColor')?.value || '#1565c0';
+  };
+  ['_sc_code','_sc_color','_sc_textColor'].forEach(id=>{
+    const el=document.getElementById(id);
+    if(el) el.addEventListener('input', updatePreview);
+  });
+}
+
+function _saveShiftCode(id){
+  const code = (document.getElementById('_sc_code')?.value||'').trim().toUpperCase();
+  const name = (document.getElementById('_sc_name')?.value||'').trim();
+  if(!code){toast('Nhập mã ca','error');return;}
+  if(!name){toast('Nhập tên ca','error');return;}
+
+  // Check duplicate code
+  const dup = DB.shiftCodes.find(s=>s.code===code && s.id!==id);
+  if(dup){toast('Mã ca "'+code+'" đã tồn tại','error');return;}
+
+  const data = {
+    code, name,
+    workCode: (document.getElementById('_sc_workCode')?.value||'').trim(),
+    workValue: parseFloat(document.getElementById('_sc_workValue')?.value)||0,
+    color: document.getElementById('_sc_color')?.value||'#e3f2fd',
+    textColor: document.getElementById('_sc_textColor')?.value||'#1565c0',
+    desc: (document.getElementById('_sc_desc')?.value||'').trim()
+  };
+
+  if(id){
+    const idx = DB.shiftCodes.findIndex(s=>s.id===id);
+    if(idx>=0) DB.shiftCodes[idx] = {...DB.shiftCodes[idx], ...data};
+  } else {
+    data.id = 'sc_'+Date.now().toString(36)+Math.random().toString(36).slice(2,5);
+    DB.shiftCodes.push(data);
+  }
+
+  saveData(['shiftCodes']);
+  closeModal();
+  toast('✅ Đã lưu mã ca '+code,'success');
+  render();
+}
+
+function _deleteShiftCode(id){
+  const sc = DB.shiftCodes.find(s=>s.id===id);
+  if(!sc) return;
+  if(!confirm('Xóa mã ca "'+sc.code+' — '+sc.name+'"?')) return;
+  DB.shiftCodes = DB.shiftCodes.filter(s=>s.id!==id);
+  saveData(['shiftCodes']);
+  toast('Đã xóa mã ca '+sc.code,'info');
+  render();
+}
+
+// ══════════════════════════════════════════════════════════
+// TAB 2: BẢNG CA (Roster Grid)
+// ══════════════════════════════════════════════════════════
+function _renderRosterGrid(container, isAdm){
+  const rf = window._rosterFilter;
+  const yr = rf.year;
+  const mo = rf.month;
+  const daysInMonth = new Date(yr, mo, 0).getDate();
+  const lockKey = yr+'_'+mo;
+  const isLocked = !!DB.rosterLocks[lockKey];
+
+  // Dept filter
+  const depts = DB.departments||[];
+  const userDeptId = window.currentUserData?.deptId; // cho trưởng BP
+  const canEditAll = isAdm || window.canDo('dutyRoster','full');
+  const filterDeptId = canEditAll ? rf.deptId : (userDeptId||'all');
+
+  // Employees: đang làm + nghỉ việc còn AL/CL
+  let emps = (DB.employees||[]).filter(e=>{
+    if(e.status === 'active') return true;
+    if(e.status === 'exit'){
+      // Kiểm tra còn AL/CL không
+      const cd = (DB.customData||{})[e.id]||{};
+      const al = parseFloat(cd.leaveBalance)||0;
+      const cl = parseFloat(cd.compLeaveBalance)||0;
+      return (al > 0 || cl > 0);
+    }
+    return false;
+  });
+  if(filterDeptId && filterDeptId !== 'all') emps = emps.filter(e=>e.deptId===filterDeptId);
+  emps.sort((a,b)=>(a.deptId||'').localeCompare(b.deptId||'')||(a.name||'').localeCompare(b.name||''));
+
+  // Month/Year selectors
+  const MN = ['T1','T2','T3','T4','T5','T6','T7','T8','T9','T10','T11','T12'];
+  const moSelect = MN.map((_,i)=>`<option value="${i+1}" ${mo===i+1?'selected':''}>${MN[i]}</option>`).join('');
+  const deptSelect = `<option value="all">-- Tất cả BP --</option>`+depts.map(d=>`<option value="${d.id}" ${filterDeptId===d.id?'selected':''}>${escapeHtml(d.name)}</option>`).join('');
+
+  // Day headers with weekday
+  const dayNames = ['CN','T2','T3','T4','T5','T6','T7'];
+  let dayHeaders = '';
+  for(let d=1;d<=daysInMonth;d++){
+    const dow = new Date(yr,mo-1,d).getDay();
+    const isSun = dow===0;
+    const isSat = dow===6;
+    dayHeaders += `<th style="padding:4px 2px;font-size:9px;font-weight:700;color:${isSun?'var(--danger)':isSat?'var(--accent)':'var(--ink-muted)'};text-align:center;min-width:38px;writing-mode:initial">
+      <div>${d}</div><div style="font-size:8px;font-weight:400">${dayNames[dow]}</div>
+    </th>`;
+  }
+
+  // Build roster data lookup: key = empId → {1: 'S', 2: 'OFF', ...}
+  const rosterData = {};
+  (DB.dutyRoster||[]).forEach(r=>{
+    if(r.year===yr && r.month===mo){
+      if(!rosterData[r.empId]) rosterData[r.empId]={};
+      rosterData[r.empId][r.day] = r.shiftCode;
+    }
+  });
+
+  // Shift code lookup for colors
+  const scMap = {};
+  (DB.shiftCodes||[]).forEach(sc=>{ scMap[sc.code] = sc; });
+  const scOptions = (DB.shiftCodes||[]).map(sc=>`<option value="${sc.code}">${sc.code}</option>`).join('');
+
+  // Employee rows
+  const empRows = emps.map((e,idx)=>{
+    const cd = (DB.customData||{})[e.id]||{};
+    const dn = deptName(e.deptId);
+    const rd = rosterData[e.id] || {};
+    const canEditThisRow = !isLocked && (isAdm || window.canDo('dutyRoster','edit')) && (canEditAll || e.deptId===userDeptId);
+
+    // Day cells
+    let dayCells = '';
+    for(let d=1;d<=daysInMonth;d++){
+      const val = rd[d] || '';
+      const sc = scMap[val];
+      const bg = sc ? sc.color : 'transparent';
+      const fg = sc ? sc.textColor : 'var(--ink-dim)';
+      if(canEditThisRow){
+        dayCells += `<td style="padding:0;border:1px solid var(--border);min-width:38px;text-align:center">
+          <select onchange="_rosterSetCell('${e.id}',${yr},${mo},${d},this.value)" style="width:100%;padding:4px 0;border:none;background:${bg};color:${fg};font-size:11px;font-weight:700;font-family:'JetBrains Mono',monospace;text-align:center;cursor:pointer;-webkit-appearance:none;appearance:none">
+            <option value=""></option>${(DB.shiftCodes||[]).map(sc2=>`<option value="${sc2.code}" ${val===sc2.code?'selected':''}>${sc2.code}</option>`).join('')}
+          </select>
+        </td>`;
+      } else {
+        dayCells += `<td style="padding:4px 2px;border:1px solid var(--border);min-width:38px;text-align:center;background:${bg};color:${fg};font-size:11px;font-weight:700;font-family:'JetBrains Mono',monospace">${val}</td>`;
+      }
+    }
+
+    // Summary: count mỗi mã ca
+    const counts = {};
+    let totalWork = 0;
+    for(let d=1;d<=daysInMonth;d++){
+      const v = rd[d];
+      if(v){
+        counts[v] = (counts[v]||0) + 1;
+        const sc2 = scMap[v];
+        if(sc2) totalWork += (sc2.workValue||0);
+      }
+    }
+    const countCells = (DB.shiftCodes||[]).map(sc2=>{
+      const cnt = counts[sc2.code]||0;
+      return `<td style="padding:4px 2px;text-align:center;font-size:10px;font-family:'JetBrains Mono',monospace;color:${cnt?'var(--ink)':'var(--ink-muted)'};font-weight:${cnt?'700':'400'};border:1px solid var(--border)">${cnt||''}</td>`;
+    }).join('');
+
+    return `<tr style="border-bottom:1px solid var(--border)">
+      <td style="padding:5px 6px;font-size:11px;text-align:center;position:sticky;left:0;background:var(--bg-card);z-index:2;border-right:2px solid var(--border-strong)">${idx+1}</td>
+      <td style="padding:5px 6px;font-size:11px;font-family:'JetBrains Mono',monospace;position:sticky;left:30px;background:var(--bg-card);z-index:2">${escapeHtml(e.code||'')}</td>
+      <td style="padding:5px 6px;font-size:12px;font-weight:500;white-space:nowrap;position:sticky;left:90px;background:var(--bg-card);z-index:2">${escapeHtml(e.name||'')}</td>
+      <td style="padding:5px 6px;font-size:10px;color:var(--ink-dim);white-space:nowrap;position:sticky;left:200px;background:var(--bg-card);z-index:2">${escapeHtml(dn)}</td>
+      <td style="padding:5px 6px;font-size:10px;color:var(--ink-dim);white-space:nowrap;position:sticky;left:300px;background:var(--bg-card);z-index:2">${escapeHtml(e.role||cd.position||'')}</td>
+      <td style="padding:5px 4px;font-size:10px;text-align:center;position:sticky;left:400px;background:var(--bg-card);z-index:2;font-family:'JetBrains Mono',monospace;border-right:2px solid var(--accent)">${cd.standardWorkdays||''}</td>
+      ${dayCells}
+      ${countCells}
+      <td style="padding:4px 4px;text-align:center;font-size:12px;font-weight:800;color:var(--accent);font-family:'JetBrains Mono',monospace;background:rgba(212,165,116,.08);border:1px solid var(--border)">${totalWork||''}</td>
+    </tr>`;
+  }).join('');
+
+  // Summary column headers
+  const scSummaryHeaders = (DB.shiftCodes||[]).map(sc=>`<th style="padding:4px 2px;font-size:8px;font-weight:700;color:${sc.textColor||'var(--ink-muted)'};background:${sc.color||'var(--bg-elev)'};text-align:center;min-width:30px;border:1px solid var(--border)">${sc.code}</th>`).join('');
+
+  container.innerHTML = `
+    <div class="card">
+      <div class="card-head">
+        <div><div class="card-title">📅 Bảng Ca — T${mo}/${yr}</div>
+          <div class="card-sub">${emps.length} nhân viên · ${daysInMonth} ngày ${isLocked?'· 🔒 ĐÃ KHÓA':''}</div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <select onchange="window._rosterFilter.month=parseInt(this.value);render()" style="padding:6px 10px;background:var(--bg-card);border:1px solid var(--border);border-radius:6px;color:var(--ink);font-size:12px">${moSelect}</select>
+          <input type="number" value="${yr}" min="2020" max="2035" onchange="window._rosterFilter.year=parseInt(this.value);render()" style="width:80px;padding:6px 10px;background:var(--bg-card);border:1px solid var(--border);border-radius:6px;color:var(--ink);font-size:12px">
+          ${canEditAll?`<select onchange="window._rosterFilter.deptId=this.value;render()" style="padding:6px 10px;background:var(--bg-card);border:1px solid var(--border);border-radius:6px;color:var(--ink);font-size:12px">${deptSelect}</select>`:''}
+          ${isAdm?`<button class="btn ${isLocked?'btn-primary':''}" onclick="_rosterToggleLock(${yr},${mo})" style="font-size:11px">${isLocked?'🔓 Mở khóa':'🔒 Khóa tháng'}</button>`:''}
+        </div>
+      </div>
+      <div style="overflow-x:auto;max-height:80vh;overflow-y:auto">
+        <table style="border-collapse:collapse;font-size:12px;min-width:100%">
+          <thead>
+            <tr style="background:var(--bg-elev);position:sticky;top:0;z-index:5">
+              <th style="padding:6px 6px;font-size:9px;font-weight:700;color:var(--ink-muted);position:sticky;left:0;background:var(--bg-elev);z-index:6;border-right:2px solid var(--border-strong);width:30px">STT</th>
+              <th style="padding:6px 6px;font-size:9px;font-weight:700;color:var(--ink-muted);text-align:left;position:sticky;left:30px;background:var(--bg-elev);z-index:6">MÃ NV</th>
+              <th style="padding:6px 6px;font-size:9px;font-weight:700;color:var(--ink-muted);text-align:left;position:sticky;left:90px;background:var(--bg-elev);z-index:6">HỌ TÊN</th>
+              <th style="padding:6px 6px;font-size:9px;font-weight:700;color:var(--ink-muted);text-align:left;position:sticky;left:200px;background:var(--bg-elev);z-index:6">BỘ PHẬN</th>
+              <th style="padding:6px 6px;font-size:9px;font-weight:700;color:var(--ink-muted);text-align:left;position:sticky;left:300px;background:var(--bg-elev);z-index:6">CHỨC DANH</th>
+              <th style="padding:6px 6px;font-size:9px;font-weight:700;color:var(--accent);text-align:center;position:sticky;left:400px;background:var(--bg-elev);z-index:6;border-right:2px solid var(--accent)">CÔNG TC</th>
+              ${dayHeaders}
+              ${scSummaryHeaders}
+              <th style="padding:4px 4px;font-size:9px;font-weight:800;color:var(--accent);text-align:center;background:rgba(212,165,116,.1);min-width:40px;border:1px solid var(--border)">TOTAL</th>
+            </tr>
+          </thead>
+          <tbody>${empRows || '<tr><td colspan="99" style="padding:30px;text-align:center;color:var(--ink-muted)">Chưa có nhân viên</td></tr>'}</tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}
+
+function _rosterSetCell(empId, year, month, day, shiftCode){
+  if(!DB.dutyRoster) DB.dutyRoster = [];
+  // Remove existing entry
+  DB.dutyRoster = DB.dutyRoster.filter(r=>!(r.empId===empId && r.year===year && r.month===month && r.day===day));
+  // Add new if not empty
+  if(shiftCode){
+    DB.dutyRoster.push({empId, year, month, day, shiftCode, _savedAt:Date.now()});
+  }
+  saveData(['dutyRoster']);
+}
+
+function _rosterToggleLock(year, month){
+  const key = year+'_'+month;
+  if(DB.rosterLocks[key]){
+    delete DB.rosterLocks[key];
+    toast('🔓 Đã mở khóa T'+month+'/'+year,'success');
+  } else {
+    DB.rosterLocks[key] = {lockedAt:new Date().toISOString(), lockedBy:window.currentUser?.email||'admin'};
+    toast('🔒 Đã khóa T'+month+'/'+year+' — không ai sửa được','info');
+  }
+  saveData(['rosterLocks']);
+  render();
+}
+
+// ══════════════════════════════════════════════════════════
+// TAB 3: BẢNG CÔNG (Timesheet — auto từ Bảng Ca)
+// ══════════════════════════════════════════════════════════
+function _renderTimesheetGrid(container, isAdm){
+  const rf = window._rosterFilter;
+  const yr = rf.year;
+  const mo = rf.month;
+  const daysInMonth = new Date(yr, mo, 0).getDate();
+
+  if(!(DB.shiftCodes||[]).length){
+    container.innerHTML = `<div class="card"><div style="padding:40px;text-align:center;color:var(--ink-muted)">⚠️ Chưa có Mã Ca/Công. Vào tab <b>"Mã Ca / Công"</b> để tạo trước.</div></div>`;
+    return;
+  }
+
+  const depts = DB.departments||[];
+  const canEditAll = isAdm || window.canDo('dutyRoster','full');
+  const userDeptId = window.currentUserData?.deptId;
+  const filterDeptId = canEditAll ? rf.deptId : (userDeptId||'all');
+
+  let emps = (DB.employees||[]).filter(e=>{
+    if(e.status === 'active') return true;
+    if(e.status === 'exit'){
+      const cd = (DB.customData||{})[e.id]||{};
+      return (parseFloat(cd.leaveBalance)||0) > 0 || (parseFloat(cd.compLeaveBalance)||0) > 0;
+    }
+    return false;
+  });
+  if(filterDeptId && filterDeptId !== 'all') emps = emps.filter(e=>e.deptId===filterDeptId);
+  emps.sort((a,b)=>(a.deptId||'').localeCompare(b.deptId||'')||(a.name||'').localeCompare(b.name||''));
+
+  const MN = ['T1','T2','T3','T4','T5','T6','T7','T8','T9','T10','T11','T12'];
+  const moSelect = MN.map((_,i)=>`<option value="${i+1}" ${mo===i+1?'selected':''}>${MN[i]}</option>`).join('');
+  const deptSelect = `<option value="all">-- Tất cả BP --</option>`+depts.map(d=>`<option value="${d.id}" ${filterDeptId===d.id?'selected':''}>${escapeHtml(d.name)}</option>`).join('');
+
+  // Shift code map
+  const scMap = {};
+  (DB.shiftCodes||[]).forEach(sc=>{ scMap[sc.code] = sc; });
+
+  // Roster data
+  const rosterData = {};
+  (DB.dutyRoster||[]).forEach(r=>{
+    if(r.year===yr && r.month===mo){
+      if(!rosterData[r.empId]) rosterData[r.empId]={};
+      rosterData[r.empId][r.day] = r.shiftCode;
+    }
+  });
+
+  // Day headers
+  const dayNames = ['CN','T2','T3','T4','T5','T6','T7'];
+  let dayHeaders = '';
+  for(let d=1;d<=daysInMonth;d++){
+    const dow = new Date(yr,mo-1,d).getDay();
+    dayHeaders += `<th style="padding:4px 2px;font-size:9px;font-weight:700;color:${dow===0?'var(--danger)':dow===6?'var(--accent)':'var(--ink-muted)'};text-align:center;min-width:36px">
+      <div>${d}</div><div style="font-size:8px;font-weight:400">${dayNames[dow]}</div>
+    </th>`;
+  }
+
+  // Employee rows — chuyển mã ca → mã công
+  const empRows = emps.map((e,idx)=>{
+    const cd = (DB.customData||{})[e.id]||{};
+    const dn = deptName(e.deptId);
+    const rd = rosterData[e.id]||{};
+
+    let dayCells = '';
+    let totalWork = 0;
+    for(let d=1;d<=daysInMonth;d++){
+      const shiftCode = rd[d]||'';
+      const sc = scMap[shiftCode];
+      const workCode = sc ? (sc.workCode||'') : '';
+      const workVal = sc ? (sc.workValue||0) : 0;
+      totalWork += workVal;
+      dayCells += `<td style="padding:4px 2px;text-align:center;font-size:10px;font-family:'JetBrains Mono',monospace;font-weight:600;color:var(--ink);border:1px solid var(--border)">${workCode}</td>`;
+    }
+
+    return `<tr style="border-bottom:1px solid var(--border)">
+      <td style="padding:5px 6px;font-size:11px;text-align:center;position:sticky;left:0;background:var(--bg-card);z-index:2;border-right:2px solid var(--border-strong)">${idx+1}</td>
+      <td style="padding:5px 6px;font-size:11px;font-family:'JetBrains Mono',monospace;position:sticky;left:30px;background:var(--bg-card);z-index:2">${escapeHtml(e.code||'')}</td>
+      <td style="padding:5px 6px;font-size:12px;font-weight:500;white-space:nowrap;position:sticky;left:90px;background:var(--bg-card);z-index:2">${escapeHtml(e.name||'')}</td>
+      <td style="padding:5px 6px;font-size:10px;color:var(--ink-dim);white-space:nowrap;position:sticky;left:200px;background:var(--bg-card);z-index:2">${escapeHtml(dn)}</td>
+      <td style="padding:5px 6px;font-size:10px;color:var(--ink-dim);white-space:nowrap;position:sticky;left:300px;background:var(--bg-card);z-index:2;border-right:2px solid var(--accent)">${escapeHtml(e.role||cd.position||'')}</td>
+      ${dayCells}
+      <td style="padding:5px 4px;text-align:center;font-size:12px;font-weight:800;color:var(--accent);font-family:'JetBrains Mono',monospace;background:rgba(212,165,116,.08);border:1px solid var(--border)">${totalWork||''}</td>
+    </tr>`;
+  }).join('');
+
+  container.innerHTML = `
+    <div class="card">
+      <div class="card-head">
+        <div><div class="card-title">📊 Bảng Công — T${mo}/${yr}</div>
+          <div class="card-sub">${emps.length} nhân viên · Tự quy đổi từ Bảng Ca</div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <select onchange="window._rosterFilter.month=parseInt(this.value);render()" style="padding:6px 10px;background:var(--bg-card);border:1px solid var(--border);border-radius:6px;color:var(--ink);font-size:12px">${moSelect}</select>
+          <input type="number" value="${yr}" min="2020" max="2035" onchange="window._rosterFilter.year=parseInt(this.value);render()" style="width:80px;padding:6px 10px;background:var(--bg-card);border:1px solid var(--border);border-radius:6px;color:var(--ink);font-size:12px">
+          ${canEditAll?`<select onchange="window._rosterFilter.deptId=this.value;render()" style="padding:6px 10px;background:var(--bg-card);border:1px solid var(--border);border-radius:6px;color:var(--ink);font-size:12px">${deptSelect}</select>`:''}
+        </div>
+      </div>
+      <div style="overflow-x:auto;max-height:80vh;overflow-y:auto">
+        <table style="border-collapse:collapse;font-size:12px;min-width:100%">
+          <thead>
+            <tr style="background:var(--bg-elev);position:sticky;top:0;z-index:5">
+              <th style="padding:6px 6px;font-size:9px;font-weight:700;color:var(--ink-muted);position:sticky;left:0;background:var(--bg-elev);z-index:6;border-right:2px solid var(--border-strong);width:30px">STT</th>
+              <th style="padding:6px 6px;font-size:9px;font-weight:700;color:var(--ink-muted);text-align:left;position:sticky;left:30px;background:var(--bg-elev);z-index:6">MÃ NV</th>
+              <th style="padding:6px 6px;font-size:9px;font-weight:700;color:var(--ink-muted);text-align:left;position:sticky;left:90px;background:var(--bg-elev);z-index:6">HỌ TÊN</th>
+              <th style="padding:6px 6px;font-size:9px;font-weight:700;color:var(--ink-muted);text-align:left;position:sticky;left:200px;background:var(--bg-elev);z-index:6">BỘ PHẬN</th>
+              <th style="padding:6px 6px;font-size:9px;font-weight:700;color:var(--ink-muted);text-align:left;position:sticky;left:300px;background:var(--bg-elev);z-index:6;border-right:2px solid var(--accent)">CHỨC DANH</th>
+              ${dayHeaders}
+              <th style="padding:4px 4px;font-size:9px;font-weight:800;color:var(--accent);text-align:center;background:rgba(212,165,116,.1);min-width:40px;border:1px solid var(--border)">TOTAL</th>
+            </tr>
+          </thead>
+          <tbody>${empRows || '<tr><td colspan="99" style="padding:30px;text-align:center;color:var(--ink-muted)">Chưa có dữ liệu</td></tr>'}</tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}
+
 const PERM_LEVELS = ['none','view','edit','full'];
 const PERM_LABELS = {none:(_lang==="en"?"🚫 No access":"🚫 Không xem"), view:(_lang==="en"?"👁 View only":"👁 Chỉ xem"), edit:(_lang==="en"?"✏️ View & Edit":"✏️ Xem & Sửa"), full:(_lang==="en"?"⭐ Full access":"⭐ Toàn quyền")};
 
