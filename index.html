@@ -36684,6 +36684,19 @@ function renderCBPackage(main){
     const buildCell = (v, side) => {
       if(!v) return `<td colspan="${side==='hotel'?6:7}" style="padding:12px;text-align:center;color:var(--border);font-size:20px;border-right:${side==='hotel'?'3px solid var(--border)':'none'}">—</td>`;
       const realIdx = vouchers.indexOf(v);
+      // Placeholder voucher — show empty row with "Thêm" button
+      const isEmpty = v._placeholder || (!v.code && !v.hotelName);
+      if(isEmpty){
+        const br = side==='hotel' ? 'border-right:3px solid var(--border);' : '';
+        const cols = side==='exchange' ? 7 : 6;
+        return `<td colspan="${cols}" style="padding:12px;text-align:center;${br}">
+          <button onclick="_vEditVoucher(${realIdx})" style="padding:6px 16px;background:var(--bg-elev);border:1px dashed var(--border-strong);border-radius:8px;color:var(--accent);cursor:pointer;font-size:12px;font-weight:600;transition:all .2s"
+            onmouseenter="this.style.background='var(--accent)';this.style.color='#fff';this.style.borderStyle='solid'"
+            onmouseleave="this.style.background='var(--bg-elev)';this.style.color='var(--accent)';this.style.borderStyle='dashed'">
+            ＋ Thêm Voucher ${side==='hotel'?'Gửi':'Nhận'}
+          </button>
+        </td>`;
+      }
       const endDt = new Date(v.endDate);
       const isExpired = endDt < now;
       const isExpiringSoon = !isExpired && !v.used && endDt <= twoMonthsFromNow;
@@ -36732,10 +36745,12 @@ function renderCBPackage(main){
 
     const thS = 'padding:8px 6px;font-size:9px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-muted);font-weight:600;border-bottom:2px solid var(--border);white-space:nowrap;text-align:left';
 
-    // Stats
-    const totalH = hotelV.length, totalE = exchV.length;
+    // Stats (exclude placeholders from counts)
+    const _isPlaceholder = v => v._placeholder || (!v.code && !v.hotelName);
+    const totalH = hotelV.filter(v=>!_isPlaceholder(v)).length;
+    const totalE = exchV.filter(v=>!_isPlaceholder(v)).length;
     const linkedCount = hotelV.filter(v=>v.linkedId && vouchers.find(x=>x.vid===v.linkedId)).length;
-    const expiringAll = vouchers.filter(v=>!v.used && new Date(v.endDate)>=now && new Date(v.endDate)<=twoMonthsFromNow).length;
+    const expiringAll = vouchers.filter(v=>!v.used && !_isPlaceholder(v) && v.endDate && new Date(v.endDate)>=now && new Date(v.endDate)<=twoMonthsFromNow).length;
 
     sectionContent = `
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px;margin-bottom:18px">
@@ -37107,15 +37122,14 @@ function _vSaveRow(){
   const vidH = 'v_'+now+'_h'+Math.random().toString(36).slice(2,5);
   const vidE = 'v_'+now+'_e'+Math.random().toString(36).slice(2,5);
 
-  let newH = null, newE = null;
-  if(hasH){
-    newH = {...h, vid:vidH, vtype:'hotel', used:false, linkedId:hasE?vidE:'', createdAt:now, updatedAt:now};
-    DB.cbVouchers.push(newH);
-  }
-  if(hasE){
-    newE = {...e, vid:vidE, vtype:'exchange', used:false, linkedId:hasH?vidH:'', createdAt:now, updatedAt:now};
-    DB.cbVouchers.push(newE);
-  }
+  // Always create BOTH records — empty side gets a placeholder linked to the filled side
+  const newH = {...h, vid:vidH, vtype:'hotel', used:false, linkedId:vidE, createdAt:now, updatedAt:now};
+  if(!hasH){ newH.code=''; newH.hotelName=''; newH.roomType=''; newH.nights=0; newH.startDate=''; newH.endDate=''; newH._placeholder=true; }
+  DB.cbVouchers.push(newH);
+
+  const newE = {...e, vid:vidE, vtype:'exchange', used:false, linkedId:vidH, createdAt:now, updatedAt:now};
+  if(!hasE){ newE.code=''; newE.hotelName=''; newE.roomType=''; newE.nights=0; newE.startDate=''; newE.endDate=''; newE._placeholder=true; }
+  DB.cbVouchers.push(newE);
   _saveCBVouchers();
   document.getElementById('_vFormOv')?.remove();
   toast('✅ Đã thêm dòng đổi voucher','success');
@@ -37370,6 +37384,7 @@ function _vSaveVoucher(idx, vtype){
     voucher.createdAt = DB.cbVouchers[idx].createdAt||Date.now();
     voucher.used = DB.cbVouchers[idx].used||false;
     voucher.linkedId = DB.cbVouchers[idx].linkedId||'';
+    // Clear placeholder flag when user fills in data
     DB.cbVouchers[idx] = voucher;
   }
   _saveCBVouchers();
@@ -37380,13 +37395,27 @@ function _vSaveVoucher(idx, vtype){
 
 function _vDeleteVoucher(idx){
   if(!confirm('Xóa voucher "'+DB.cbVouchers[idx]?.hotelName+'"?')) return;
-  // Unlink any linked voucher
+  // Unlink any linked voucher — also delete linked placeholder if empty
   const deleted = DB.cbVouchers[idx];
   if(deleted && deleted.linkedId){
-    const linked = DB.cbVouchers.find(v=>v.vid===deleted.linkedId);
-    if(linked) linked.linkedId = '';
+    const linkedIdx = DB.cbVouchers.findIndex(v=>v.vid===deleted.linkedId);
+    if(linkedIdx>=0){
+      const linked = DB.cbVouchers[linkedIdx];
+      const linkedIsEmpty = linked._placeholder || (!linked.code && !linked.hotelName);
+      if(linkedIsEmpty){
+        // Also remove the empty placeholder partner
+        if(linkedIdx < idx) { DB.cbVouchers.splice(idx,1); DB.cbVouchers.splice(linkedIdx,1); }
+        else { DB.cbVouchers.splice(linkedIdx,1); DB.cbVouchers.splice(idx,1); }
+      } else {
+        linked.linkedId = '';
+        DB.cbVouchers.splice(idx,1);
+      }
+    } else {
+      DB.cbVouchers.splice(idx,1);
+    }
+  } else {
+    DB.cbVouchers.splice(idx,1);
   }
-  DB.cbVouchers.splice(idx,1);
   _saveCBVouchers();
   toast('Đã xóa voucher','info');
   render();
