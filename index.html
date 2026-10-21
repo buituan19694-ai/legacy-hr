@@ -27186,8 +27186,7 @@ function _renderRosterGrid(container, isAdm){
   let emps = (DB.employees||[]).filter(e=>{
     if(e.status === 'active') return true;
     if(e.status === 'exit'){
-      const cd = (DB.customData||{})[e.id]||{};
-      return (parseFloat(cd.leaveBalance)||0) > 0 || (parseFloat(cd.compLeaveBalance)||0) > 0;
+      try { const ldg = computeLeaveLedger(e.id, mo, yr); if((ldg.alClose||0) > 0 || (ldg.clClose||0) > 0) return true; } catch(ex){}
     }
     return false;
   }).map(e=>({...e, _isTrainee:false}));
@@ -27296,8 +27295,9 @@ function _renderRosterGrid(container, isAdm){
   let allRows = '';
   let globalIdx = 0;
   const scCodes = (DB.shiftCodes||[]).map(s=>s.code);
-  // STT + MÃ NV + HỌ TÊN + BỘ PHẬN + CHỨC DANH + TỒN AL + TỒN CL + CÔNG TC = 8
+  // STT + MÃ NV + HỌ TÊN + BỘ PHẬN + CHỨC DANH + CÔNG TC + TỒN AL + TỒN CL = 8
   const fixedCols = 8;
+  const curMonth = new Date().getMonth(); // 0-based for calcLeaveTotals
   const totalCols = fixedCols + daysInMonth + scCodes.length + 1;
 
   deptOrder.forEach(did=>{
@@ -27370,9 +27370,16 @@ function _renderRosterGrid(container, isAdm){
         return `<td style="padding:4px 2px;text-align:center;font-size:10px;font-family:'JetBrains Mono',monospace;color:${cnt?'var(--ink)':'var(--ink-muted)'};font-weight:${cnt?'700':'400'};border:1px solid var(--border)">${cnt||''}</td>`;
       }).join('');
 
-      // AL/CL balance
-      const alBal = parseFloat(cd.leaveBalance)||0;
-      const clBal = parseFloat(cd.compLeaveBalance)||0;
+      // CÔNG TC from employee custom data
+      const stdWD = cd.stdWorkDays || '';
+      // AL/CL Tồn còn lại from Leave module (calcLeaveTotals)
+      let alBal = 0, clBal = 0;
+      try {
+        if(typeof calcLeaveTotals === 'function' && !e._isTrainee){
+          alBal = calcLeaveTotals(e.id, 'al', yr, curMonth).tonCuoiNam || 0;
+          clBal = calcLeaveTotals(e.id, 'cl', yr, curMonth).tonCuoiNam || 0;
+        }
+      } catch(ex){}
       const traineeBadge = e._isTrainee ? `<span style="font-size:8px;padding:1px 4px;border-radius:3px;background:var(--accent);color:#000;margin-left:4px;font-weight:600">TTS</span>` : '';
       const extraBadge = e._isExtra ? `<span style="font-size:8px;padding:1px 4px;border-radius:3px;background:var(--danger);color:#fff;margin-left:4px;font-weight:600;cursor:pointer" onclick="_rosterRemoveExtra('${e.id}')" title="Click để bỏ khỏi bảng ca">✕</span>` : '';
       const stickyBg = e._isExtra ? 'rgba(220,53,69,.04)' : rowBg;
@@ -27383,9 +27390,9 @@ function _renderRosterGrid(container, isAdm){
         <td style="padding:5px 6px;font-size:12px;${nameStyle};white-space:nowrap;position:sticky;left:90px;background:${stickyBg};z-index:2">${escapeHtml(e.name||'')}${traineeBadge}${extraBadge}</td>
         <td style="padding:5px 6px;font-size:10px;color:var(--ink-dim);white-space:nowrap;position:sticky;left:200px;background:${stickyBg};z-index:2">${escapeHtml(deptName(e.deptId))}</td>
         <td style="padding:5px 6px;font-size:10px;color:var(--ink-dim);white-space:nowrap;position:sticky;left:300px;background:${stickyBg};z-index:2">${escapeHtml(e.role||cd.position||'')}</td>
+        <td style="padding:5px 4px;font-size:10px;text-align:center;font-family:'JetBrains Mono',monospace;border:1px solid var(--border)">${stdWD}</td>
         <td style="padding:4px 4px;text-align:center;font-size:10px;font-weight:700;font-family:'JetBrains Mono',monospace;color:${alBal>0?'#2d6a4f':'var(--ink-muted)'};background:${alBal>0?'rgba(45,106,79,.08)':'transparent'};border:1px solid var(--border)">${alBal||'—'}</td>
-        <td style="padding:4px 4px;text-align:center;font-size:10px;font-weight:700;font-family:'JetBrains Mono',monospace;color:${clBal>0?'#1d3557':'var(--ink-muted)'};background:${clBal>0?'rgba(29,53,87,.08)':'transparent'};border:1px solid var(--border)">${clBal||'—'}</td>
-        <td style="padding:5px 4px;font-size:10px;text-align:center;position:sticky;left:400px;background:${stickyBg};z-index:2;font-family:'JetBrains Mono',monospace;border-right:2px solid var(--accent)">${cd.standardWorkdays||''}</td>
+        <td style="padding:4px 4px;text-align:center;font-size:10px;font-weight:700;font-family:'JetBrains Mono',monospace;color:${clBal>0?'#1d3557':'var(--ink-muted)'};background:${clBal>0?'rgba(29,53,87,.08)':'transparent'};border:1px solid var(--border);border-right:2px solid var(--accent)">${clBal||'—'}</td>
         ${dayCells}
         ${countCells}
         <td style="padding:4px 4px;text-align:center;font-size:12px;font-weight:800;color:var(--accent);font-family:'JetBrains Mono',monospace;background:rgba(212,165,116,.08);border:1px solid var(--border)">${totalWork||''}</td>
@@ -27457,9 +27464,9 @@ function _renderRosterGrid(container, isAdm){
               <th style="padding:6px 6px;font-size:9px;font-weight:700;color:var(--ink-muted);text-align:left;position:sticky;left:90px;background:var(--bg-elev);z-index:6">HỌ TÊN</th>
               <th style="padding:6px 6px;font-size:9px;font-weight:700;color:var(--ink-muted);text-align:left;position:sticky;left:200px;background:var(--bg-elev);z-index:6">BỘ PHẬN</th>
               <th style="padding:6px 6px;font-size:9px;font-weight:700;color:var(--ink-muted);text-align:left;position:sticky;left:300px;background:var(--bg-elev);z-index:6">CHỨC DANH</th>
+              <th style="padding:6px 4px;font-size:8px;font-weight:700;color:var(--accent);text-align:center;background:var(--bg-elev);min-width:36px;border:1px solid var(--border)">CÔNG<br>TC</th>
               <th style="padding:4px 4px;font-size:8px;font-weight:700;color:#2d6a4f;text-align:center;background:rgba(45,106,79,.08);min-width:36px;border:1px solid var(--border)">TỒN<br>AL</th>
-              <th style="padding:4px 4px;font-size:8px;font-weight:700;color:#1d3557;text-align:center;background:rgba(29,53,87,.08);min-width:36px;border:1px solid var(--border)">TỒN<br>CL</th>
-              <th style="padding:6px 6px;font-size:9px;font-weight:700;color:var(--accent);text-align:center;position:sticky;left:400px;background:var(--bg-elev);z-index:6;border-right:2px solid var(--accent)">CÔNG TC</th>
+              <th style="padding:4px 4px;font-size:8px;font-weight:700;color:#1d3557;text-align:center;background:rgba(29,53,87,.08);min-width:36px;border:1px solid var(--border);border-right:2px solid var(--accent)">TỒN<br>CL</th>
               ${dayHeaders}
               ${scSummaryHeaders}
               <th style="padding:4px 4px;font-size:9px;font-weight:800;color:var(--accent);text-align:center;background:rgba(212,165,116,.1);min-width:40px;border:1px solid var(--border)">TOTAL</th>
@@ -27621,8 +27628,7 @@ function _renderTimesheetGrid(container, isAdm){
   let emps = (DB.employees||[]).filter(e=>{
     if(e.status === 'active') return true;
     if(e.status === 'exit'){
-      const cd = (DB.customData||{})[e.id]||{};
-      return (parseFloat(cd.leaveBalance)||0) > 0 || (parseFloat(cd.compLeaveBalance)||0) > 0;
+      try { const ldg = computeLeaveLedger(e.id, mo, yr); if((ldg.alClose||0) > 0 || (ldg.clClose||0) > 0) return true; } catch(ex){}
     }
     return false;
   }).map(e=>({...e, _isTrainee:false}));
@@ -27701,9 +27707,10 @@ function _renderTimesheetGrid(container, isAdm){
 
   let allRows = '';
   let globalIdx = 0;
-  // STT + MÃ NV + HỌ TÊN + BỘ PHẬN + CHỨC DANH + TỒN AL + TỒN CL + days + TOTAL
-  const fixedCols = 7;
+  // STT + MÃ NV + HỌ TÊN + BỘ PHẬN + CHỨC DANH + CÔNG TC + TỒN AL + TỒN CL + days + TOTAL
+  const fixedCols = 8;
   const totalCols = fixedCols + daysInMonth + 1;
+  const curMonth = new Date().getMonth();
 
   deptOrder.forEach(did=>{
     const deptEmps = deptGroups[did];
@@ -27726,9 +27733,16 @@ function _renderTimesheetGrid(container, isAdm){
       const extraBadge = e._isExtra ? ` <span style="font-size:8px;padding:1px 4px;border-radius:3px;background:var(--danger);color:#fff;font-weight:600;cursor:pointer" onclick="_rosterRemoveExtra('${e.id}')" title="Bỏ khỏi bảng">✕</span>` : '';
       const rowBg = e._isExtra ? 'rgba(220,53,69,.04)' : 'var(--bg-card)';
 
-      // AL/CL balance
-      const alBal = parseFloat(cd.leaveBalance)||0;
-      const clBal = parseFloat(cd.compLeaveBalance)||0;
+      // CÔNG TC from employee custom data
+      const stdWD = cd.stdWorkDays || '';
+      // AL/CL Tồn còn lại from Leave module
+      let alBal = 0, clBal = 0;
+      try {
+        if(typeof calcLeaveTotals === 'function' && !e._isTrainee){
+          alBal = calcLeaveTotals(e.id, 'al', yr, curMonth).tonCuoiNam || 0;
+          clBal = calcLeaveTotals(e.id, 'cl', yr, curMonth).tonCuoiNam || 0;
+        }
+      } catch(ex){}
 
       let dayCells = '';
       let totalWork = 0;
@@ -27762,6 +27776,7 @@ function _renderTimesheetGrid(container, isAdm){
         <td style="padding:5px 6px;font-size:12px;${nameStyle};white-space:nowrap;position:sticky;left:90px;background:${rowBg};z-index:2">${escapeHtml(e.name||'')}${traineeBadge}${extraBadge}</td>
         <td style="padding:5px 6px;font-size:10px;color:var(--ink-dim);white-space:nowrap;position:sticky;left:200px;background:${rowBg};z-index:2">${escapeHtml(deptName(e.deptId))}</td>
         <td style="padding:5px 6px;font-size:10px;color:var(--ink-dim);white-space:nowrap;position:sticky;left:300px;background:${rowBg};z-index:2">${escapeHtml(e.role||cd.position||'')}</td>
+        <td style="padding:4px 4px;text-align:center;font-size:10px;font-weight:700;font-family:'JetBrains Mono',monospace;color:var(--ink);background:rgba(212,165,116,.06);border:1px solid var(--border)">${stdWD||'—'}</td>
         <td style="padding:4px 4px;text-align:center;font-size:10px;font-weight:700;font-family:'JetBrains Mono',monospace;color:${alBal>0?'#2d6a4f':'var(--ink-muted)'};background:${alBal>0?'rgba(45,106,79,.08)':'transparent'};border:1px solid var(--border)">${alBal||'—'}</td>
         <td style="padding:4px 4px;text-align:center;font-size:10px;font-weight:700;font-family:'JetBrains Mono',monospace;color:${clBal>0?'#1d3557':'var(--ink-muted)'};background:${clBal>0?'rgba(29,53,87,.08)':'transparent'};border:1px solid var(--border);border-right:2px solid var(--accent)">${clBal||'—'}</td>
         ${dayCells}
@@ -27809,6 +27824,7 @@ function _renderTimesheetGrid(container, isAdm){
               <th style="padding:6px 6px;font-size:9px;font-weight:700;color:var(--ink-muted);text-align:left;position:sticky;left:90px;background:var(--bg-elev);z-index:6">HỌ TÊN</th>
               <th style="padding:6px 6px;font-size:9px;font-weight:700;color:var(--ink-muted);text-align:left;position:sticky;left:200px;background:var(--bg-elev);z-index:6">BỘ PHẬN</th>
               <th style="padding:6px 6px;font-size:9px;font-weight:700;color:var(--ink-muted);text-align:left;position:sticky;left:300px;background:var(--bg-elev);z-index:6">CHỨC DANH</th>
+              <th style="padding:4px 4px;font-size:8px;font-weight:700;color:var(--accent);text-align:center;background:rgba(212,165,116,.08);min-width:40px;border:1px solid var(--border)">CÔNG<br>TC</th>
               <th style="padding:4px 4px;font-size:8px;font-weight:700;color:#2d6a4f;text-align:center;background:rgba(45,106,79,.08);min-width:36px;border:1px solid var(--border)">TỒN<br>AL</th>
               <th style="padding:4px 4px;font-size:8px;font-weight:700;color:#1d3557;text-align:center;background:rgba(29,53,87,.08);min-width:36px;border:1px solid var(--border);border-right:2px solid var(--accent)">TỒN<br>CL</th>
               ${dayHeaders}
