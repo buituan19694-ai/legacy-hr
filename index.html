@@ -1046,7 +1046,7 @@ const FS_DOC_MAP = {
                'dashboardConfig','brandConfig','customRecruitSources','docChecklistItems',
                'disciplineSeverityConfig','requiredFieldsConfig',
                'contractTemplates','quickFilterPrefs','recReportConfig','perfReportConfig','plConfig','trainingKpi',
-               'salaryStructure','shiftCodes','rosterLocks',
+               'salaryStructure','shiftCodes','rosterLocks','cbVoucherReqFields',
                '_rewardTypesV2','_levelReset2026','_removedProbationStatus','_normalizedDates2026','_cleanedCandYearShards','_backfillTraineeCodes'],
 };
 // manningPlan + manningActual được shard theo năm qua _pushDynamicKey → KHÔNG để trong FS_DOC_MAP
@@ -1923,6 +1923,7 @@ if(!DB.cbPackageDocs || !Array.isArray(DB.cbPackageDocs)){
 if(!DB.cbVouchers || !Array.isArray(DB.cbVouchers)){
   try{ DB.cbVouchers = JSON.parse(localStorage.getItem('_cbVouchers')||'[]'); }catch(e){ DB.cbVouchers=[]; }
 }
+if(!DB.cbVoucherReqFields) DB.cbVoucherReqFields = {code:true, hotelName:true, roomType:true, nights:false, startDate:false, endDate:false};
 if(!DB.casualDirectory){try{DB.casualDirectory=JSON.parse(localStorage.getItem('_casualDirectory')||'{}');}catch(e){DB.casualDirectory={};}}
 if(!DB.plConfig     || Array.isArray(DB.plConfig))     DB.plConfig     = {};
 // Training KPI config — {monthlyHoursTarget: 1} mặc định 1h/tháng/NV
@@ -36763,6 +36764,7 @@ function renderCBPackage(main){
           style="padding:7px 14px;background:var(--bg-card);border:1px solid var(--border);border-radius:8px;color:var(--ink);font-size:12px;min-width:220px;flex:1;max-width:320px">
         ${canEdit?`
           <button class="btn btn-primary" onclick="_vAddRow()" style="font-size:12px;padding:6px 14px">+ Thêm dòng đổi</button>
+          <button class="btn" onclick="_vReqFieldsConfig()" style="font-size:11px;padding:6px 12px" title="Cấu hình trường bắt buộc">⚙️ Trường bắt buộc</button>
         `:''}
       </div>
 
@@ -36960,15 +36962,15 @@ function _vAddRow(){
     <div style="flex:1;min-width:240px">
       <div style="font-size:13px;font-weight:600;color:${color};margin-bottom:10px">${title}</div>
       <div style="display:flex;flex-direction:column;gap:8px">
-        <div><label style="${lblS}">Mã Code *</label><input id="${prefix}_code" placeholder="VD: YT-2024-001" style="${inpS};font-family:'JetBrains Mono',monospace"></div>
-        <div><label style="${lblS}">Khách sạn *</label><input id="${prefix}_hotel" placeholder="Tên khách sạn" style="${inpS}"></div>
+        <div><label style="${lblS}">Mã Code${_vReqStar('code')}</label><input id="${prefix}_code" placeholder="VD: YT-2024-001" style="${inpS};font-family:'JetBrains Mono',monospace"></div>
+        <div><label style="${lblS}">Khách sạn${_vReqStar('hotelName')}</label><input id="${prefix}_hotel" placeholder="Tên khách sạn" style="${inpS}"></div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-          <div><label style="${lblS}">Số đêm</label><input id="${prefix}_nights" type="number" min="1" value="1" style="${inpS}"></div>
-          <div><label style="${lblS}">Hạng phòng *</label><select id="${prefix}_room" style="${inpS}"><option value="">--</option>${prefix==='_rH'?roomOptsH:roomOptsE}</select></div>
+          <div><label style="${lblS}">Số đêm${_vReqStar('nights')}</label><input id="${prefix}_nights" type="number" min="1" value="1" style="${inpS}"></div>
+          <div><label style="${lblS}">Hạng phòng${_vReqStar('roomType')}</label><select id="${prefix}_room" style="${inpS}"><option value="">--</option>${prefix==='_rH'?roomOptsH:roomOptsE}</select></div>
         </div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-          <div><label style="${lblS}">Ngày bắt đầu</label><input id="${prefix}_start" type="date" style="${inpS}"></div>
-          <div><label style="${lblS}">Ngày kết thúc *</label><input id="${prefix}_end" type="date" style="${inpS}"></div>
+          <div><label style="${lblS}">Ngày bắt đầu${_vReqStar('startDate')}</label><input id="${prefix}_start" type="date" style="${inpS}"></div>
+          <div><label style="${lblS}">Ngày kết thúc${_vReqStar('endDate')}</label><input id="${prefix}_end" type="date" style="${inpS}"></div>
         </div>
         ${showEmp?`<div>
           <label style="${lblS}">Phát cho ai</label>
@@ -37029,6 +37031,49 @@ function _vRowSelectEmp(empId, prefix){
   const dd=document.getElementById(prefix+'_empDD'); if(dd) dd.style.display='none';
 }
 
+/* ── Voucher required fields config ── */
+function _vReqFieldsConfig(){
+  const cfg = DB.cbVoucherReqFields || {code:true, hotelName:true, roomType:true, nights:false, startDate:false, endDate:false};
+  const fields = [
+    {key:'code',      label:'Mã Code Voucher'},
+    {key:'hotelName', label:'Tên khách sạn'},
+    {key:'nights',    label:'Số đêm'},
+    {key:'roomType',  label:'Hạng phòng'},
+    {key:'startDate', label:'Ngày bắt đầu'},
+    {key:'endDate',   label:'Ngày kết thúc'},
+  ];
+  const rows = fields.map(f=>{
+    const on = !!cfg[f.key];
+    return `<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border:1px solid var(--border);border-radius:8px;background:var(--bg-elev)">
+      <div style="font-size:13px;font-weight:500">${escapeHtml(f.label)}</div>
+      <div style="display:flex;gap:6px">
+        <button onclick="_vSetReqField('${f.key}',true,this)" style="padding:4px 12px;font-size:11px;border-radius:5px;cursor:pointer;font-weight:600;border:1px solid ${on?'var(--danger)':'var(--border)'};background:${on?'rgba(229,115,115,.12)':'var(--bg)'};color:${on?'var(--danger)':'var(--ink-muted)'}">🔴 Bắt buộc</button>
+        <button onclick="_vSetReqField('${f.key}',false,this)" style="padding:4px 12px;font-size:11px;border-radius:5px;cursor:pointer;font-weight:600;border:1px solid ${!on?'var(--accent)':'var(--border)'};background:${!on?'rgba(212,165,116,.12)':'var(--bg)'};color:${!on?'var(--accent)':'var(--ink-muted)'}">Không bắt buộc</button>
+      </div>
+    </div>`;
+  }).join('');
+
+  openModal(`
+    <div class="modal-head">
+      <div class="modal-title">⚙️ Cấu hình <em>trường bắt buộc</em> Voucher</div>
+      <div class="modal-sub">Chọn trường nào phải điền (*) khi thêm/sửa voucher</div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:16px">${rows}</div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeModal()">Đóng</button>
+    </div>
+  `);
+}
+function _vSetReqField(key, required){
+  if(!DB.cbVoucherReqFields) DB.cbVoucherReqFields = {code:true, hotelName:true, roomType:true, nights:false, startDate:false, endDate:false};
+  DB.cbVoucherReqFields[key] = required;
+  saveData(['cbVoucherReqFields']);
+  toast(required ? '🔴 '+key+' → Bắt buộc' : '✅ '+key+' → Không bắt buộc','success');
+  _vReqFieldsConfig(); // refresh modal
+}
+function _vIsReq(key){ return !!(DB.cbVoucherReqFields||{})[key]; }
+function _vReqStar(key){ return _vIsReq(key) ? ' *' : ''; }
+
 /* Save paired row */
 function _vSaveRow(){
   const g = p => ({
@@ -37044,12 +37089,14 @@ function _vSaveRow(){
   const hasH = !!(h.code || h.hotelName);
   const hasE = !!(e.code || e.hotelName);
   if(!hasH && !hasE){ toast('Nhập ít nhất 1 bên voucher','error'); return; }
-  // Validate filled sides
+  // Validate filled sides — dựa theo config
   const validate = (d, label) => {
-    if(!d.code){ toast(label+': Nhập mã code','error'); return false; }
-    if(!d.hotelName){ toast(label+': Nhập tên khách sạn','error'); return false; }
-    if(!d.roomType){ toast(label+': Chọn hạng phòng','error'); return false; }
-    if(!d.endDate){ toast(label+': Chọn ngày kết thúc','error'); return false; }
+    if(_vIsReq('code') && !d.code){ toast(label+': Nhập mã code','error'); return false; }
+    if(_vIsReq('hotelName') && !d.hotelName){ toast(label+': Nhập tên khách sạn','error'); return false; }
+    if(_vIsReq('roomType') && !d.roomType){ toast(label+': Chọn hạng phòng','error'); return false; }
+    if(_vIsReq('startDate') && !d.startDate){ toast(label+': Chọn ngày bắt đầu','error'); return false; }
+    if(_vIsReq('endDate') && !d.endDate){ toast(label+': Chọn ngày kết thúc','error'); return false; }
+    if(d.startDate && d.endDate && new Date(d.endDate)<=new Date(d.startDate)){ toast(label+': Ngày kết thúc phải sau ngày bắt đầu','error'); return false; }
     return true;
   };
   if(hasH && !validate(h,'Gửi')) return;
@@ -37112,20 +37159,20 @@ function _vOpenForm(idx, vtype){
       </div>
       <div style="display:flex;flex-direction:column;gap:12px">
         <div>
-          <label style="font-size:11px;color:var(--ink-muted);letter-spacing:.1em;text-transform:uppercase;font-weight:600">Mã Code Voucher *</label>
+          <label style="font-size:11px;color:var(--ink-muted);letter-spacing:.1em;text-transform:uppercase;font-weight:600">Mã Code Voucher${_vReqStar('code')}</label>
           <input id="_v_code" value="${escapeHtml(v.code||'')}" placeholder="VD: YT-2024-001..." style="width:100%;padding:10px 12px;background:var(--bg-card);border:1px solid var(--border);border-radius:8px;color:var(--ink);font-size:13px;margin-top:4px;font-family:'JetBrains Mono',monospace">
         </div>
         <div>
-          <label style="font-size:11px;color:var(--ink-muted);letter-spacing:.1em;text-transform:uppercase;font-weight:600">${isExchange?'Tên khách sạn đối tác *':'Tên khách sạn *'}</label>
+          <label style="font-size:11px;color:var(--ink-muted);letter-spacing:.1em;text-transform:uppercase;font-weight:600">${isExchange?'Tên khách sạn đối tác':'Tên khách sạn'}${_vReqStar('hotelName')}</label>
           <input id="_v_hotel" value="${escapeHtml(v.hotelName)}" placeholder="${isExchange?'VD: Sofitel Legend...':'VD: Legacy Yên Tử MGallery...'}" style="width:100%;padding:10px 12px;background:var(--bg-card);border:1px solid var(--border);border-radius:8px;color:var(--ink);font-size:13px;margin-top:4px">
         </div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
           <div>
-            <label style="font-size:11px;color:var(--ink-muted);letter-spacing:.1em;text-transform:uppercase;font-weight:600">Số đêm *</label>
+            <label style="font-size:11px;color:var(--ink-muted);letter-spacing:.1em;text-transform:uppercase;font-weight:600">Số đêm${_vReqStar('nights')}</label>
             <input id="_v_nights" type="number" min="1" value="${v.nights||1}" style="width:100%;padding:10px 12px;background:var(--bg-card);border:1px solid var(--border);border-radius:8px;color:var(--ink);font-size:13px;margin-top:4px">
           </div>
           <div>
-            <label style="font-size:11px;color:var(--ink-muted);letter-spacing:.1em;text-transform:uppercase;font-weight:600">Hạng phòng *</label>
+            <label style="font-size:11px;color:var(--ink-muted);letter-spacing:.1em;text-transform:uppercase;font-weight:600">Hạng phòng${_vReqStar('roomType')}</label>
             <select id="_v_room" style="width:100%;padding:10px 12px;background:var(--bg-card);border:1px solid var(--border);border-radius:8px;color:var(--ink);font-size:13px;margin-top:4px">
               <option value="">-- Chọn --</option>
               ${roomOpts}
@@ -37134,11 +37181,11 @@ function _vOpenForm(idx, vtype){
         </div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
           <div>
-            <label style="font-size:11px;color:var(--ink-muted);letter-spacing:.1em;text-transform:uppercase;font-weight:600">Ngày bắt đầu</label>
+            <label style="font-size:11px;color:var(--ink-muted);letter-spacing:.1em;text-transform:uppercase;font-weight:600">Ngày bắt đầu${_vReqStar('startDate')}</label>
             <input id="_v_start" type="date" value="${v.startDate||''}" style="width:100%;padding:10px 12px;background:var(--bg-card);border:1px solid var(--border);border-radius:8px;color:var(--ink);font-size:13px;margin-top:4px">
           </div>
           <div>
-            <label style="font-size:11px;color:var(--ink-muted);letter-spacing:.1em;text-transform:uppercase;font-weight:600">Ngày kết thúc</label>
+            <label style="font-size:11px;color:var(--ink-muted);letter-spacing:.1em;text-transform:uppercase;font-weight:600">Ngày kết thúc${_vReqStar('endDate')}</label>
             <input id="_v_end" type="date" value="${v.endDate||''}" style="width:100%;padding:10px 12px;background:var(--bg-card);border:1px solid var(--border);border-radius:8px;color:var(--ink);font-size:13px;margin-top:4px">
           </div>
         </div>
@@ -37303,9 +37350,11 @@ function _vSaveVoucher(idx, vtype){
   const endDate = document.getElementById('_v_end')?.value||'';
   const assignedTo = document.getElementById('_v_assignedTo')?.value||'';
 
-  if(!code){ toast('Nhập mã code voucher','error'); return; }
-  if(!hotelName){ toast('Nhập tên khách sạn','error'); return; }
-  if(!roomType){ toast('Chọn hạng phòng','error'); return; }
+  if(_vIsReq('code') && !code){ toast('Nhập mã code voucher','error'); return; }
+  if(_vIsReq('hotelName') && !hotelName){ toast('Nhập tên khách sạn','error'); return; }
+  if(_vIsReq('roomType') && !roomType){ toast('Chọn hạng phòng','error'); return; }
+  if(_vIsReq('startDate') && !startDate){ toast('Chọn ngày bắt đầu','error'); return; }
+  if(_vIsReq('endDate') && !endDate){ toast('Chọn ngày kết thúc','error'); return; }
   if(startDate && endDate && new Date(endDate) <= new Date(startDate)){ toast('Ngày kết thúc phải sau ngày bắt đầu','error'); return; }
 
   if(!DB.cbVouchers) DB.cbVouchers = [];
