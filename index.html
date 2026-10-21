@@ -27176,24 +27176,57 @@ function _renderRosterGrid(container, isAdm){
 
   // Dept filter
   const depts = DB.departments||[];
-  const userDeptId = window.currentUserData?.deptId; // cho trưởng BP
+  const userDeptId = window.currentUserData?.deptId;
   const canEditAll = isAdm || window.canDo('dutyRoster','full');
   const filterDeptId = canEditAll ? rf.deptId : (userDeptId||'all');
 
-  // Employees: đang làm + nghỉ việc còn AL/CL
+  // ── Employees + Trainees ──
+  const nowStr = new Date().toISOString().slice(0,10);
   let emps = (DB.employees||[]).filter(e=>{
     if(e.status === 'active') return true;
     if(e.status === 'exit'){
-      // Kiểm tra còn AL/CL không
       const cd = (DB.customData||{})[e.id]||{};
-      const al = parseFloat(cd.leaveBalance)||0;
-      const cl = parseFloat(cd.compLeaveBalance)||0;
-      return (al > 0 || cl > 0);
+      return (parseFloat(cd.leaveBalance)||0) > 0 || (parseFloat(cd.compLeaveBalance)||0) > 0;
     }
     return false;
+  }).map(e=>({...e, _isTrainee:false}));
+
+  // Thêm trainees đang thực tập
+  (DB.trainees||[]).forEach(tr=>{
+    const isActive = tr.startDate && (!tr.endDate || tr.endDate >= nowStr);
+    if(!isActive) return;
+    emps.push({
+      id: 'tr_'+tr.id, code: tr.code||'', name: tr.name||'',
+      deptId: tr.deptId||'', role: 'Thực tập sinh',
+      status: 'active', _isTrainee: true, _school: tr.school||''
+    });
   });
+
   if(filterDeptId && filterDeptId !== 'all') emps = emps.filter(e=>e.deptId===filterDeptId);
   emps.sort((a,b)=>(a.deptId||'').localeCompare(b.deptId||'')||(a.name||'').localeCompare(b.name||''));
+
+  // ── AL/CL leaves in this month ──
+  const leaveSheet = DB.leaveSheet||{};
+  const leaves = DB.leaves||[];
+  // Build set of empId+day with approved AL/CL
+  const alClDays = {}; // empId → {day: 'AL'|'CL'}
+  leaves.forEach(l=>{
+    if(l.status !== 'approved' && l.status !== 'taken') return;
+    if(!l.startDate) return;
+    const lType = (l.type||'').toUpperCase();
+    if(lType !== 'AL' && lType !== 'CL' && lType !== 'ANNUAL' && lType !== 'COMP') return;
+    const code = (lType==='AL'||lType==='ANNUAL') ? 'AL' : 'CL';
+    const sd = new Date(l.startDate);
+    const ed = l.endDate ? new Date(l.endDate) : sd;
+    for(let dt = new Date(sd); dt <= ed; dt.setDate(dt.getDate()+1)){
+      if(dt.getFullYear()===yr && dt.getMonth()+1===mo){
+        const eid = l.empId||l.employeeId;
+        if(!eid) continue;
+        if(!alClDays[eid]) alClDays[eid] = {};
+        alClDays[eid][dt.getDate()] = code;
+      }
+    }
+  });
 
   // Month/Year selectors
   const MN = ['T1','T2','T3','T4','T5','T6','T7','T8','T9','T10','T11','T12'];
@@ -27212,7 +27245,7 @@ function _renderRosterGrid(container, isAdm){
     </th>`;
   }
 
-  // Build roster data lookup: key = empId → {1: 'S', 2: 'OFF', ...}
+  // Build roster data lookup: empId → {1: 'S', 2: 'OFF', ...}
   const rosterData = {};
   (DB.dutyRoster||[]).forEach(r=>{
     if(r.year===yr && r.month===mo){
@@ -27221,67 +27254,150 @@ function _renderRosterGrid(container, isAdm){
     }
   });
 
-  // Shift code lookup for colors
+  // Merge AL/CL into roster: nếu chưa có shift code → tự điền AL/CL
+  Object.keys(alClDays).forEach(eid=>{
+    if(!rosterData[eid]) rosterData[eid]={};
+    Object.entries(alClDays[eid]).forEach(([day,code])=>{
+      if(!rosterData[eid][parseInt(day)]) rosterData[eid][parseInt(day)] = code;
+    });
+  });
+
+  // Shift code lookup
   const scMap = {};
   (DB.shiftCodes||[]).forEach(sc=>{ scMap[sc.code] = sc; });
-  const scOptions = (DB.shiftCodes||[]).map(sc=>`<option value="${sc.code}">${sc.code}</option>`).join('');
 
-  // Employee rows
-  const empRows = emps.map((e,idx)=>{
-    const cd = (DB.customData||{})[e.id]||{};
-    const dn = deptName(e.deptId);
-    const rd = rosterData[e.id] || {};
-    const canEditThisRow = !isLocked && (isAdm || window.canDo('dutyRoster','edit')) && (canEditAll || e.deptId===userDeptId);
+  // ── Copy mode state ──
+  if(!window._rosterCopy) window._rosterCopy = {active:false, code:''};
 
-    // Day cells
-    let dayCells = '';
-    for(let d=1;d<=daysInMonth;d++){
-      const val = rd[d] || '';
-      const sc = scMap[val];
-      const bg = sc ? sc.color : 'transparent';
-      const fg = sc ? sc.textColor : 'var(--ink-dim)';
-      if(canEditThisRow){
-        dayCells += `<td style="padding:0;border:1px solid var(--border);min-width:38px;text-align:center">
-          <select onchange="_rosterSetCell('${e.id}',${yr},${mo},${d},this.value)" style="width:100%;padding:4px 0;border:none;background:${bg};color:${fg};font-size:11px;font-weight:700;font-family:'JetBrains Mono',monospace;text-align:center;cursor:pointer;-webkit-appearance:none;appearance:none">
-            <option value=""></option>${(DB.shiftCodes||[]).map(sc2=>`<option value="${sc2.code}" ${val===sc2.code?'selected':''}>${sc2.code}</option>`).join('')}
-          </select>
-        </td>`;
-      } else {
-        dayCells += `<td style="padding:4px 2px;border:1px solid var(--border);min-width:38px;text-align:center;background:${bg};color:${fg};font-size:11px;font-weight:700;font-family:'JetBrains Mono',monospace">${val}</td>`;
-      }
-    }
+  // ── Group by department ──
+  const deptGroups = {};
+  const deptOrder = [];
+  emps.forEach(e=>{
+    const did = e.deptId||'_none';
+    if(!deptGroups[did]){ deptGroups[did]=[]; deptOrder.push(did); }
+    deptGroups[did].push(e);
+  });
 
-    // Summary: count mỗi mã ca
-    const counts = {};
-    let totalWork = 0;
-    for(let d=1;d<=daysInMonth;d++){
-      const v = rd[d];
-      if(v){
-        counts[v] = (counts[v]||0) + 1;
-        const sc2 = scMap[v];
-        if(sc2) totalWork += (sc2.workValue||0);
-      }
-    }
-    const countCells = (DB.shiftCodes||[]).map(sc2=>{
-      const cnt = counts[sc2.code]||0;
-      return `<td style="padding:4px 2px;text-align:center;font-size:10px;font-family:'JetBrains Mono',monospace;color:${cnt?'var(--ink)':'var(--ink-muted)'};font-weight:${cnt?'700':'400'};border:1px solid var(--border)">${cnt||''}</td>`;
-    }).join('');
+  // Build rows with department separators + subtotals
+  let allRows = '';
+  let globalIdx = 0;
+  const scCodes = (DB.shiftCodes||[]).map(s=>s.code);
+  const totalCols = 6 + daysInMonth + scCodes.length + 1;
 
-    return `<tr style="border-bottom:1px solid var(--border)">
-      <td style="padding:5px 6px;font-size:11px;text-align:center;position:sticky;left:0;background:var(--bg-card);z-index:2;border-right:2px solid var(--border-strong)">${idx+1}</td>
-      <td style="padding:5px 6px;font-size:11px;font-family:'JetBrains Mono',monospace;position:sticky;left:30px;background:var(--bg-card);z-index:2">${escapeHtml(e.code||'')}</td>
-      <td style="padding:5px 6px;font-size:12px;font-weight:500;white-space:nowrap;position:sticky;left:90px;background:var(--bg-card);z-index:2">${escapeHtml(e.name||'')}</td>
-      <td style="padding:5px 6px;font-size:10px;color:var(--ink-dim);white-space:nowrap;position:sticky;left:200px;background:var(--bg-card);z-index:2">${escapeHtml(dn)}</td>
-      <td style="padding:5px 6px;font-size:10px;color:var(--ink-dim);white-space:nowrap;position:sticky;left:300px;background:var(--bg-card);z-index:2">${escapeHtml(e.role||cd.position||'')}</td>
-      <td style="padding:5px 4px;font-size:10px;text-align:center;position:sticky;left:400px;background:var(--bg-card);z-index:2;font-family:'JetBrains Mono',monospace;border-right:2px solid var(--accent)">${cd.standardWorkdays||''}</td>
-      ${dayCells}
-      ${countCells}
-      <td style="padding:4px 4px;text-align:center;font-size:12px;font-weight:800;color:var(--accent);font-family:'JetBrains Mono',monospace;background:rgba(212,165,116,.08);border:1px solid var(--border)">${totalWork||''}</td>
+  deptOrder.forEach(did=>{
+    const deptEmps = deptGroups[did];
+    const dn = did==='_none' ? 'Chưa phân bổ' : deptName(did);
+
+    // Department header row
+    allRows += `<tr style="background:var(--bg-elev);border-top:2px solid var(--accent)">
+      <td colspan="${totalCols}" style="padding:8px 12px;font-size:12px;font-weight:700;color:var(--accent);position:sticky;left:0;background:var(--bg-elev);z-index:2;letter-spacing:.03em">
+        📁 ${escapeHtml(dn)} <span style="font-weight:400;color:var(--ink-muted);font-size:11px">(${deptEmps.length} người)</span>
+      </td>
     </tr>`;
-  }).join('');
+
+    // Department-level accumulators for subtotals
+    const deptCounts = {}; // code → total
+    let deptTotalWork = 0;
+
+    deptEmps.forEach(e=>{
+      globalIdx++;
+      const cd = (DB.customData||{})[e.id]||{};
+      const rd = rosterData[e.id] || {};
+      const canEditThisRow = !isLocked && (isAdm || window.canDo('dutyRoster','edit')) && (canEditAll || e.deptId===userDeptId);
+      const rowBg = e._isTrainee ? 'var(--bg-card)' : 'var(--bg-card)';
+      const nameStyle = e._isTrainee ? 'font-style:italic;color:var(--accent)' : 'font-weight:500';
+
+      // Day cells
+      let dayCells = '';
+      for(let d=1;d<=daysInMonth;d++){
+        const val = rd[d] || '';
+        const sc = scMap[val];
+        const bg = sc ? sc.color : 'transparent';
+        const fg = sc ? sc.textColor : 'var(--ink-dim)';
+        // Check if this is an auto-filled AL/CL from leave system
+        const isAutoLeave = alClDays[e.id] && alClDays[e.id][d] && !((DB.dutyRoster||[]).find(r=>r.empId===e.id&&r.year===yr&&r.month===mo&&r.day===d));
+        const autoBorder = isAutoLeave ? 'outline:1px dashed var(--accent);outline-offset:-1px;' : '';
+        if(canEditThisRow){
+          dayCells += `<td style="padding:0;border:1px solid var(--border);min-width:38px;text-align:center;${autoBorder}" onclick="if(window._rosterCopy?.active){_rosterSetCell('${e.id}',${yr},${mo},${d},window._rosterCopy.code);render();return;}" title="${isAutoLeave?'Tự động từ phép duyệt':''}">
+            <select onchange="_rosterSetCell('${e.id}',${yr},${mo},${d},this.value)" style="width:100%;padding:4px 0;border:none;background:${bg};color:${fg};font-size:11px;font-weight:700;font-family:'JetBrains Mono',monospace;text-align:center;cursor:pointer;-webkit-appearance:none;appearance:none">
+              <option value=""></option>${(DB.shiftCodes||[]).map(sc2=>`<option value="${sc2.code}" ${val===sc2.code?'selected':''}>${sc2.code}</option>`).join('')}
+            </select>
+          </td>`;
+        } else {
+          dayCells += `<td style="padding:4px 2px;border:1px solid var(--border);min-width:38px;text-align:center;background:${bg};color:${fg};font-size:11px;font-weight:700;font-family:'JetBrains Mono',monospace;${autoBorder}">${val}</td>`;
+        }
+      }
+
+      // Summary per employee
+      const counts = {};
+      let totalWork = 0;
+      for(let d=1;d<=daysInMonth;d++){
+        const v = rd[d];
+        if(v){
+          counts[v] = (counts[v]||0) + 1;
+          deptCounts[v] = (deptCounts[v]||0) + 1;
+          const sc2 = scMap[v];
+          if(sc2){ totalWork += (sc2.workValue||0); deptTotalWork += (sc2.workValue||0); }
+        }
+      }
+      const countCells = scCodes.map(code=>{
+        const cnt = counts[code]||0;
+        return `<td style="padding:4px 2px;text-align:center;font-size:10px;font-family:'JetBrains Mono',monospace;color:${cnt?'var(--ink)':'var(--ink-muted)'};font-weight:${cnt?'700':'400'};border:1px solid var(--border)">${cnt||''}</td>`;
+      }).join('');
+
+      // AL/CL remaining badge
+      const alBal = parseFloat(cd.leaveBalance)||0;
+      const clBal = parseFloat(cd.compLeaveBalance)||0;
+      const leaveBadge = (alBal||clBal) ? `<span style="font-size:8px;color:var(--ink-muted);margin-left:4px" title="AL: ${alBal} / CL: ${clBal}">📋${alBal}/${clBal}</span>` : '';
+      const traineeBadge = e._isTrainee ? `<span style="font-size:8px;padding:1px 4px;border-radius:3px;background:var(--accent);color:#000;margin-left:4px;font-weight:600">TTS</span>` : '';
+
+      allRows += `<tr style="border-bottom:1px solid var(--border)">
+        <td style="padding:5px 6px;font-size:11px;text-align:center;position:sticky;left:0;background:${rowBg};z-index:2;border-right:2px solid var(--border-strong)">${globalIdx}</td>
+        <td style="padding:5px 6px;font-size:11px;font-family:'JetBrains Mono',monospace;position:sticky;left:30px;background:${rowBg};z-index:2">${escapeHtml(e.code||'')}</td>
+        <td style="padding:5px 6px;font-size:12px;${nameStyle};white-space:nowrap;position:sticky;left:90px;background:${rowBg};z-index:2">${escapeHtml(e.name||'')}${traineeBadge}${leaveBadge}</td>
+        <td style="padding:5px 6px;font-size:10px;color:var(--ink-dim);white-space:nowrap;position:sticky;left:200px;background:${rowBg};z-index:2">${escapeHtml(deptName(e.deptId))}</td>
+        <td style="padding:5px 6px;font-size:10px;color:var(--ink-dim);white-space:nowrap;position:sticky;left:300px;background:${rowBg};z-index:2">${escapeHtml(e.role||cd.position||'')}</td>
+        <td style="padding:5px 4px;font-size:10px;text-align:center;position:sticky;left:400px;background:${rowBg};z-index:2;font-family:'JetBrains Mono',monospace;border-right:2px solid var(--accent)">${cd.standardWorkdays||''}</td>
+        ${dayCells}
+        ${countCells}
+        <td style="padding:4px 4px;text-align:center;font-size:12px;font-weight:800;color:var(--accent);font-family:'JetBrains Mono',monospace;background:rgba(212,165,116,.08);border:1px solid var(--border)">${totalWork||''}</td>
+      </tr>`;
+    });
+
+    // ── Department subtotal row ──
+    const subCells = scCodes.map(code=>{
+      const cnt = deptCounts[code]||0;
+      return `<td style="padding:4px 2px;text-align:center;font-size:10px;font-family:'JetBrains Mono',monospace;font-weight:700;color:${cnt?'var(--accent)':'var(--ink-muted)'};background:var(--bg-elev);border:1px solid var(--border)">${cnt||''}</td>`;
+    }).join('');
+    // Empty day cells for subtotal
+    let subDayCells = '';
+    for(let d=1;d<=daysInMonth;d++) subDayCells += `<td style="border:1px solid var(--border);background:var(--bg-elev)"></td>`;
+
+    allRows += `<tr style="border-bottom:2px solid var(--accent);background:var(--bg-elev)">
+      <td colspan="6" style="padding:5px 12px;font-size:10px;font-weight:700;color:var(--accent);text-align:right;position:sticky;left:0;background:var(--bg-elev);z-index:2;border-right:2px solid var(--accent);letter-spacing:.05em">∑ ${escapeHtml(dn)}</td>
+      ${subDayCells}
+      ${subCells}
+      <td style="padding:4px 4px;text-align:center;font-size:12px;font-weight:800;color:var(--accent);font-family:'JetBrains Mono',monospace;background:rgba(212,165,116,.15);border:1px solid var(--border)">${deptTotalWork||''}</td>
+    </tr>`;
+  });
 
   // Summary column headers
   const scSummaryHeaders = (DB.shiftCodes||[]).map(sc=>`<th style="padding:4px 2px;font-size:8px;font-weight:700;color:${sc.textColor||'var(--ink-muted)'};background:${sc.color||'var(--bg-elev)'};text-align:center;min-width:30px;border:1px solid var(--border)">${sc.code}</th>`).join('');
+
+  // ── Copy toolbar ──
+  const copyActive = window._rosterCopy?.active;
+  const copyCode = window._rosterCopy?.code||'';
+  const scBtns = (DB.shiftCodes||[]).map(sc=>{
+    const sel = copyActive && copyCode===sc.code;
+    return `<button onclick="window._rosterCopy={active:true,code:'${sc.code}'};render()" style="padding:3px 8px;border-radius:4px;font-size:11px;font-weight:700;font-family:'JetBrains Mono',monospace;cursor:pointer;border:${sel?'2px solid var(--accent)':'1px solid var(--border)'};background:${sc.color||'var(--bg-card)'};color:${sc.textColor||'var(--ink)'};${sel?'box-shadow:0 0 8px var(--accent);transform:scale(1.1)':''}" title="${sc.name||sc.code}">${sc.code}</button>`;
+  }).join('');
+  const copyBar = `<div style="display:flex;align-items:center;gap:6px;padding:8px 12px;background:${copyActive?'rgba(212,165,116,.1)':'var(--bg-card)'};border:1px solid ${copyActive?'var(--accent)':'var(--border)'};border-radius:8px;margin-bottom:10px;flex-wrap:wrap">
+    <span style="font-size:11px;font-weight:600;color:var(--ink-muted);white-space:nowrap">⚡ Quick Fill:</span>
+    ${scBtns}
+    <button onclick="window._rosterCopy={active:true,code:''};render()" style="padding:3px 8px;border-radius:4px;font-size:11px;cursor:pointer;border:1px solid var(--border);background:var(--bg-card);color:var(--ink-muted);margin-left:4px" title="Xóa mã ca">✕ Xóa</button>
+    ${copyActive?`<span style="font-size:11px;color:var(--accent);font-weight:700;margin-left:8px">🖊 Đang chọn: <span style="background:${scMap[copyCode]?.color||'var(--bg-elev)'};color:${scMap[copyCode]?.textColor||'var(--ink)'};padding:2px 8px;border-radius:4px;font-family:'JetBrains Mono',monospace">${copyCode||'⌫'}</span> — Click vào ô để điền</span>
+    <button onclick="window._rosterCopy={active:false,code:''};render()" style="padding:3px 10px;border-radius:4px;font-size:11px;cursor:pointer;border:1px solid var(--danger);background:transparent;color:var(--danger);margin-left:auto">Tắt Quick Fill</button>`:'<span style="font-size:10px;color:var(--ink-dim)">Chọn mã ca rồi click vào ô trên bảng để điền nhanh</span>'}
+  </div>`;
 
   container.innerHTML = `
     <div class="card">
@@ -27296,6 +27412,7 @@ function _renderRosterGrid(container, isAdm){
           ${isAdm?`<button class="btn ${isLocked?'btn-primary':''}" onclick="_rosterToggleLock(${yr},${mo})" style="font-size:11px">${isLocked?'🔓 Mở khóa':'🔒 Khóa tháng'}</button>`:''}
         </div>
       </div>
+      ${(!isLocked && (isAdm || window.canDo('dutyRoster','edit'))) ? copyBar : ''}
       <div style="overflow-x:auto;max-height:80vh;overflow-y:auto">
         <table style="border-collapse:collapse;font-size:12px;min-width:100%">
           <thead>
@@ -27311,7 +27428,7 @@ function _renderRosterGrid(container, isAdm){
               <th style="padding:4px 4px;font-size:9px;font-weight:800;color:var(--accent);text-align:center;background:rgba(212,165,116,.1);min-width:40px;border:1px solid var(--border)">TOTAL</th>
             </tr>
           </thead>
-          <tbody>${empRows || '<tr><td colspan="99" style="padding:30px;text-align:center;color:var(--ink-muted)">Chưa có nhân viên</td></tr>'}</tbody>
+          <tbody>${allRows || '<tr><td colspan="99" style="padding:30px;text-align:center;color:var(--ink-muted)">Chưa có nhân viên</td></tr>'}</tbody>
         </table>
       </div>
     </div>
@@ -27360,6 +27477,7 @@ function _renderTimesheetGrid(container, isAdm){
   const canEditAll = isAdm || window.canDo('dutyRoster','full');
   const userDeptId = window.currentUserData?.deptId;
   const filterDeptId = canEditAll ? rf.deptId : (userDeptId||'all');
+  const nowStr = new Date().toISOString().slice(0,10);
 
   let emps = (DB.employees||[]).filter(e=>{
     if(e.status === 'active') return true;
@@ -27368,7 +27486,15 @@ function _renderTimesheetGrid(container, isAdm){
       return (parseFloat(cd.leaveBalance)||0) > 0 || (parseFloat(cd.compLeaveBalance)||0) > 0;
     }
     return false;
+  }).map(e=>({...e, _isTrainee:false}));
+
+  // Thêm trainees đang thực tập
+  (DB.trainees||[]).forEach(tr=>{
+    const isActive = tr.startDate && (!tr.endDate || tr.endDate >= nowStr);
+    if(!isActive) return;
+    emps.push({id:'tr_'+tr.id, code:tr.code||'', name:tr.name||'', deptId:tr.deptId||'', role:'Thực tập sinh', status:'active', _isTrainee:true});
   });
+
   if(filterDeptId && filterDeptId !== 'all') emps = emps.filter(e=>e.deptId===filterDeptId);
   emps.sort((a,b)=>(a.deptId||'').localeCompare(b.deptId||'')||(a.name||'').localeCompare(b.name||''));
 
@@ -27376,11 +27502,9 @@ function _renderTimesheetGrid(container, isAdm){
   const moSelect = MN.map((_,i)=>`<option value="${i+1}" ${mo===i+1?'selected':''}>${MN[i]}</option>`).join('');
   const deptSelect = `<option value="all">-- Tất cả BP --</option>`+depts.map(d=>`<option value="${d.id}" ${filterDeptId===d.id?'selected':''}>${escapeHtml(d.name)}</option>`).join('');
 
-  // Shift code map
   const scMap = {};
   (DB.shiftCodes||[]).forEach(sc=>{ scMap[sc.code] = sc; });
 
-  // Roster data
   const rosterData = {};
   (DB.dutyRoster||[]).forEach(r=>{
     if(r.year===yr && r.month===mo){
@@ -27389,7 +27513,6 @@ function _renderTimesheetGrid(container, isAdm){
     }
   });
 
-  // Day headers
   const dayNames = ['CN','T2','T3','T4','T5','T6','T7'];
   let dayHeaders = '';
   for(let d=1;d<=daysInMonth;d++){
@@ -27399,33 +27522,70 @@ function _renderTimesheetGrid(container, isAdm){
     </th>`;
   }
 
-  // Employee rows — chuyển mã ca → mã công
-  const empRows = emps.map((e,idx)=>{
-    const cd = (DB.customData||{})[e.id]||{};
-    const dn = deptName(e.deptId);
-    const rd = rosterData[e.id]||{};
+  // Group by department
+  const deptGroups = {};
+  const deptOrder = [];
+  emps.forEach(e=>{
+    const did = e.deptId||'_none';
+    if(!deptGroups[did]){ deptGroups[did]=[]; deptOrder.push(did); }
+    deptGroups[did].push(e);
+  });
 
-    let dayCells = '';
-    let totalWork = 0;
-    for(let d=1;d<=daysInMonth;d++){
-      const shiftCode = rd[d]||'';
-      const sc = scMap[shiftCode];
-      const workCode = sc ? (sc.workCode||'') : '';
-      const workVal = sc ? (sc.workValue||0) : 0;
-      totalWork += workVal;
-      dayCells += `<td style="padding:4px 2px;text-align:center;font-size:10px;font-family:'JetBrains Mono',monospace;font-weight:600;color:var(--ink);border:1px solid var(--border)">${workCode}</td>`;
-    }
+  let allRows = '';
+  let globalIdx = 0;
+  const totalCols = 5 + daysInMonth + 1;
 
-    return `<tr style="border-bottom:1px solid var(--border)">
-      <td style="padding:5px 6px;font-size:11px;text-align:center;position:sticky;left:0;background:var(--bg-card);z-index:2;border-right:2px solid var(--border-strong)">${idx+1}</td>
-      <td style="padding:5px 6px;font-size:11px;font-family:'JetBrains Mono',monospace;position:sticky;left:30px;background:var(--bg-card);z-index:2">${escapeHtml(e.code||'')}</td>
-      <td style="padding:5px 6px;font-size:12px;font-weight:500;white-space:nowrap;position:sticky;left:90px;background:var(--bg-card);z-index:2">${escapeHtml(e.name||'')}</td>
-      <td style="padding:5px 6px;font-size:10px;color:var(--ink-dim);white-space:nowrap;position:sticky;left:200px;background:var(--bg-card);z-index:2">${escapeHtml(dn)}</td>
-      <td style="padding:5px 6px;font-size:10px;color:var(--ink-dim);white-space:nowrap;position:sticky;left:300px;background:var(--bg-card);z-index:2;border-right:2px solid var(--accent)">${escapeHtml(e.role||cd.position||'')}</td>
-      ${dayCells}
-      <td style="padding:5px 4px;text-align:center;font-size:12px;font-weight:800;color:var(--accent);font-family:'JetBrains Mono',monospace;background:rgba(212,165,116,.08);border:1px solid var(--border)">${totalWork||''}</td>
+  deptOrder.forEach(did=>{
+    const deptEmps = deptGroups[did];
+    const dn = did==='_none' ? 'Chưa phân bổ' : deptName(did);
+
+    allRows += `<tr style="background:var(--bg-elev);border-top:2px solid var(--accent)">
+      <td colspan="${totalCols}" style="padding:8px 12px;font-size:12px;font-weight:700;color:var(--accent);position:sticky;left:0;background:var(--bg-elev);z-index:2">
+        📁 ${escapeHtml(dn)} <span style="font-weight:400;color:var(--ink-muted);font-size:11px">(${deptEmps.length})</span>
+      </td>
     </tr>`;
-  }).join('');
+
+    let deptTotalWork = 0;
+
+    deptEmps.forEach(e=>{
+      globalIdx++;
+      const cd = (DB.customData||{})[e.id]||{};
+      const rd = rosterData[e.id]||{};
+      const nameStyle = e._isTrainee ? 'font-style:italic;color:var(--accent)' : 'font-weight:500';
+      const traineeBadge = e._isTrainee ? ` <span style="font-size:8px;padding:1px 4px;border-radius:3px;background:var(--accent);color:#000;font-weight:600">TTS</span>` : '';
+
+      let dayCells = '';
+      let totalWork = 0;
+      for(let d=1;d<=daysInMonth;d++){
+        const shiftCode = rd[d]||'';
+        const sc = scMap[shiftCode];
+        const workCode = sc ? (sc.workCode||'') : '';
+        const workVal = sc ? (sc.workValue||0) : 0;
+        totalWork += workVal;
+        dayCells += `<td style="padding:4px 2px;text-align:center;font-size:10px;font-family:'JetBrains Mono',monospace;font-weight:600;color:var(--ink);border:1px solid var(--border)">${workCode}</td>`;
+      }
+      deptTotalWork += totalWork;
+
+      allRows += `<tr style="border-bottom:1px solid var(--border)">
+        <td style="padding:5px 6px;font-size:11px;text-align:center;position:sticky;left:0;background:var(--bg-card);z-index:2;border-right:2px solid var(--border-strong)">${globalIdx}</td>
+        <td style="padding:5px 6px;font-size:11px;font-family:'JetBrains Mono',monospace;position:sticky;left:30px;background:var(--bg-card);z-index:2">${escapeHtml(e.code||'')}</td>
+        <td style="padding:5px 6px;font-size:12px;${nameStyle};white-space:nowrap;position:sticky;left:90px;background:var(--bg-card);z-index:2">${escapeHtml(e.name||'')}${traineeBadge}</td>
+        <td style="padding:5px 6px;font-size:10px;color:var(--ink-dim);white-space:nowrap;position:sticky;left:200px;background:var(--bg-card);z-index:2">${escapeHtml(deptName(e.deptId))}</td>
+        <td style="padding:5px 6px;font-size:10px;color:var(--ink-dim);white-space:nowrap;position:sticky;left:300px;background:var(--bg-card);z-index:2;border-right:2px solid var(--accent)">${escapeHtml(e.role||cd.position||'')}</td>
+        ${dayCells}
+        <td style="padding:5px 4px;text-align:center;font-size:12px;font-weight:800;color:var(--accent);font-family:'JetBrains Mono',monospace;background:rgba(212,165,116,.08);border:1px solid var(--border)">${totalWork||''}</td>
+      </tr>`;
+    });
+
+    // Subtotal row
+    let subDayCells = '';
+    for(let d=1;d<=daysInMonth;d++) subDayCells += `<td style="border:1px solid var(--border);background:var(--bg-elev)"></td>`;
+    allRows += `<tr style="border-bottom:2px solid var(--accent);background:var(--bg-elev)">
+      <td colspan="5" style="padding:5px 12px;font-size:10px;font-weight:700;color:var(--accent);text-align:right;position:sticky;left:0;background:var(--bg-elev);z-index:2;border-right:2px solid var(--accent)">∑ ${escapeHtml(dn)}</td>
+      ${subDayCells}
+      <td style="padding:4px 4px;text-align:center;font-size:12px;font-weight:800;color:var(--accent);font-family:'JetBrains Mono',monospace;background:rgba(212,165,116,.15);border:1px solid var(--border)">${deptTotalWork||''}</td>
+    </tr>`;
+  });
 
   container.innerHTML = `
     <div class="card">
@@ -27452,7 +27612,7 @@ function _renderTimesheetGrid(container, isAdm){
               <th style="padding:4px 4px;font-size:9px;font-weight:800;color:var(--accent);text-align:center;background:rgba(212,165,116,.1);min-width:40px;border:1px solid var(--border)">TOTAL</th>
             </tr>
           </thead>
-          <tbody>${empRows || '<tr><td colspan="99" style="padding:30px;text-align:center;color:var(--ink-muted)">Chưa có dữ liệu</td></tr>'}</tbody>
+          <tbody>${allRows || '<tr><td colspan="99" style="padding:30px;text-align:center;color:var(--ink-muted)">Chưa có dữ liệu</td></tr>'}</tbody>
         </table>
       </div>
     </div>
