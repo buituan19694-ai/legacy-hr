@@ -27402,12 +27402,8 @@ function _renderRosterGrid(container, isAdm){
       const extraBadge = e._isExtra ? `<span style="font-size:8px;padding:1px 4px;border-radius:3px;background:var(--danger);color:#fff;margin-left:4px;font-weight:600;cursor:pointer" onclick="_rosterRemoveExtra('${e.id}')" title="Click để bỏ khỏi bảng ca">✕</span>` : '';
       const stickyBg = e._isExtra ? 'rgba(220,53,69,.04)' : rowBg;
 
-      const moveUp = `<span onclick="_rosterMoveEmp('${e.id}','${e.deptId}',-1)" style="cursor:pointer;opacity:.4;font-size:9px;line-height:1" title="Di chuyển lên">▲</span>`;
-      const moveDown = `<span onclick="_rosterMoveEmp('${e.id}','${e.deptId}',1)" style="cursor:pointer;opacity:.4;font-size:9px;line-height:1" title="Di chuyển xuống">▼</span>`;
-      const orderBtns = `<span style="display:flex;flex-direction:column;gap:0;margin-left:3px">${moveUp}${moveDown}</span>`;
-
-      allRows += `<tr style="border-bottom:1px solid var(--border)${e._isExtra?' ;background:rgba(220,53,69,.04)':''}">
-        <td style="padding:5px 6px;font-size:11px;text-align:center;position:sticky;left:0;background:${stickyBg};z-index:2;border-right:2px solid var(--border-strong)"><div style="display:flex;align-items:center;justify-content:center;gap:1px">${globalIdx}${orderBtns}</div></td>
+      allRows += `<tr data-roster-row="${e.id}" data-roster-dept="${e.deptId}" draggable="true" ondragstart="_rDragStart(event,'${e.id}','${e.deptId}')" ondragover="_rDragOver(event,'${e.deptId}')" ondrop="_rDrop(event,'${e.id}','${e.deptId}')" ondragend="_rDragEnd(event)" style="border-bottom:1px solid var(--border);cursor:grab${e._isExtra?' ;background:rgba(220,53,69,.04)':''}">
+        <td class="_rStt" style="padding:5px 6px;font-size:11px;text-align:center;position:sticky;left:0;background:${stickyBg};z-index:2;border-right:2px solid var(--border-strong)"><span class="_rNum">${globalIdx}</span></td>
         <td style="padding:5px 6px;font-size:11px;font-family:'JetBrains Mono',monospace;position:sticky;left:30px;background:${stickyBg};z-index:2">${escapeHtml(e.code||'')}</td>
         <td style="padding:5px 6px;font-size:12px;${nameStyle};white-space:nowrap;position:sticky;left:90px;background:${stickyBg};z-index:2">${escapeHtml(e.name||'')}${traineeBadge}${extraBadge}</td>
         <td style="padding:5px 6px;font-size:10px;color:var(--ink-dim);white-space:nowrap;position:sticky;left:200px;background:${stickyBg};z-index:2">${escapeHtml(deptName(e.deptId))}</td>
@@ -27437,12 +27433,14 @@ function _renderRosterGrid(container, isAdm){
       <td style="padding:4px 4px;text-align:center;font-size:12px;font-weight:800;color:var(--accent);font-family:'JetBrains Mono',monospace;background:rgba(212,165,116,.15);border:1px solid var(--border)">${deptTotalWork||''}</td>
     </tr>`;
 
-    // ＋ Thêm NV button per department (always show)
+    // ＋ Thêm NV button per department (always show, sticky left)
     if(did!=='_none'){
-      allRows += `<tr><td colspan="${totalCols}" style="padding:4px 12px;text-align:right;background:var(--bg-card)">
-        <button onclick="_rosterAddEmpToDept('${did}')" style="padding:5px 16px;font-size:11px;background:transparent;border:1px dashed var(--accent);border-radius:6px;color:var(--accent);cursor:pointer;transition:all .15s;font-weight:600"
-          onmouseenter="this.style.background='rgba(212,165,116,.1)'"
-          onmouseleave="this.style.background='transparent'">＋ Thêm NV</button>
+      allRows += `<tr class="_rosterAddRow"><td colspan="${totalCols}" style="padding:6px 12px;background:var(--bg-card);border-bottom:1px solid var(--border)">
+        <div style="position:sticky;left:12px;display:inline-block">
+          <button onclick="_rosterAddEmpToDept('${did}')" style="padding:6px 20px;font-size:11px;background:rgba(212,165,116,.08);border:1px dashed var(--accent);border-radius:6px;color:var(--accent);cursor:pointer;transition:all .15s;font-weight:600"
+            onmouseenter="this.style.background='rgba(212,165,116,.18)'"
+            onmouseleave="this.style.background='rgba(212,165,116,.08)'">＋ Thêm NV</button>
+        </div>
       </td></tr>`;
     }
   });
@@ -27470,6 +27468,7 @@ function _renderRosterGrid(container, isAdm){
   </div>`;
 
   container.innerHTML = `
+    <style>tr._rDragOver{outline:2px solid var(--accent);outline-offset:-2px;background:rgba(212,165,116,.12)!important}tr[data-roster-row]{cursor:grab}tr[data-roster-row]:active{cursor:grabbing}</style>
     <div class="card">
       <div class="card-head">
         <div><div class="card-title">📅 Bảng Ca — T${mo}/${yr}</div>
@@ -27690,60 +27689,63 @@ function _rosterFilterSCList(){
   });
 }
 
-function _rosterMoveEmp(empId, deptId, dir){
+// ── Drag & Drop reorder employees ──
+function _rDragStart(ev, empId, deptId){
+  ev.dataTransfer.setData('text/plain', empId+'|'+deptId);
+  ev.dataTransfer.effectAllowed = 'move';
+  ev.currentTarget.style.opacity = '0.4';
+  window._rDragDept = deptId;
+}
+function _rDragOver(ev, deptId){
+  if(window._rDragDept !== deptId) return;
+  ev.preventDefault();
+  ev.dataTransfer.dropEffect = 'move';
+  document.querySelectorAll('tr._rDragOver').forEach(r=>r.classList.remove('_rDragOver'));
+  ev.currentTarget.classList.add('_rDragOver');
+}
+function _rDrop(ev, targetEmpId, targetDeptId){
+  ev.preventDefault();
+  document.querySelectorAll('tr._rDragOver').forEach(r=>r.classList.remove('_rDragOver'));
+  const parts = ev.dataTransfer.getData('text/plain').split('|');
+  const srcEmpId = parts[0], srcDeptId = parts[1];
+  if(srcDeptId !== targetDeptId || srcEmpId === targetEmpId) return;
+
+  const srcRow = document.querySelector(`tr[data-roster-row="${srcEmpId}"][data-roster-dept="${srcDeptId}"]`);
+  const tgtRow = document.querySelector(`tr[data-roster-row="${targetEmpId}"][data-roster-dept="${targetDeptId}"]`);
+  if(!srcRow || !tgtRow) return;
+
+  // Insert src before target
+  tgtRow.parentNode.insertBefore(srcRow, tgtRow);
+
+  // Flash
+  srcRow.style.transition = 'background .3s';
+  srcRow.style.background = 'rgba(212,165,116,.2)';
+  setTimeout(()=>{ srcRow.style.background = ''; }, 500);
+
+  // Re-number STT for ALL rows
+  let idx = 0;
+  document.querySelectorAll('tr[data-roster-row] ._rNum').forEach(n=>{ idx++; n.textContent = idx; });
+
+  // Save order per dept from DOM
+  _rSaveOrderFromDOM(targetDeptId);
+}
+function _rDragEnd(ev){
+  ev.currentTarget.style.opacity = '1';
+  document.querySelectorAll('tr._rDragOver').forEach(r=>r.classList.remove('_rDragOver'));
+  window._rDragDept = null;
+}
+function _rSaveOrderFromDOM(deptId){
   const rf = window._rosterFilter;
   const key = rf.year+'_'+rf.month;
   if(!DB.rosterEmpOrder) DB.rosterEmpOrder = {};
   if(!DB.rosterEmpOrder[key]) DB.rosterEmpOrder[key] = {};
   const order = DB.rosterEmpOrder[key];
-  const curMonth = new Date().getMonth();
-
-  // Build current dept employee list in display order
-  const deptEmps = (DB.employees||[]).filter(e=>{
-    if(e.deptId !== deptId) return false;
-    const st = getEffectiveStatus(e);
-    if(st === 'active' || st === 'probation') return true;
-    if(st === 'exit'){
-      try {
-        if(typeof calcLeaveTotals === 'function'){
-          const alR = calcLeaveTotals(e.id, 'al', rf.year, curMonth).tonCuoiNam || 0;
-          const clR = calcLeaveTotals(e.id, 'cl', rf.year, curMonth).tonCuoiNam || 0;
-          if(alR > 0 || clR > 0) return true;
-        }
-      } catch(ex){}
-    }
-    return false;
+  const rows = document.querySelectorAll(`tr[data-roster-dept="${deptId}"]`);
+  rows.forEach((r,i)=>{
+    const eid = r.getAttribute('data-roster-row');
+    if(eid) order[deptId+'_'+eid] = i;
   });
-  // Add extras in this dept
-  const extraIds = (DB.rosterExtras||{})[key] || [];
-  extraIds.forEach(eid => {
-    if(deptEmps.find(e=>e.id===eid)) return;
-    const emp = (DB.employees||[]).find(e=>e.id===eid);
-    if(emp){
-      const overDept = ((DB.rosterDeptOverride||{})[key]||{})[eid];
-      if((overDept||emp.deptId) === deptId) deptEmps.push(emp);
-    }
-  });
-  // Sort by current order
-  deptEmps.sort((a,b)=>{
-    const oa = order[deptId+'_'+a.id]; const ob = order[deptId+'_'+b.id];
-    if(oa!=null && ob!=null) return oa - ob;
-    if(oa!=null) return -1; if(ob!=null) return 1;
-    return (a.name||'').localeCompare(b.name||'');
-  });
-
-  const idx = deptEmps.findIndex(e=>e.id===empId);
-  if(idx < 0) return;
-  const newIdx = idx + dir;
-  if(newIdx < 0 || newIdx >= deptEmps.length) return;
-
-  // Swap
-  [deptEmps[idx], deptEmps[newIdx]] = [deptEmps[newIdx], deptEmps[idx]];
-
-  // Save new order
-  deptEmps.forEach((e,i)=>{ order[deptId+'_'+e.id] = i; });
   saveData(['rosterEmpOrder']);
-  render();
 }
 
 // ══════════════════════════════════════════════════════════
@@ -27929,8 +27931,8 @@ function _renderTimesheetGrid(container, isAdm){
       }
       deptTotalWork += totalWork;
 
-      allRows += `<tr style="border-bottom:1px solid var(--border)">
-        <td style="padding:5px 6px;font-size:11px;text-align:center;position:sticky;left:0;background:${rowBg};z-index:2;border-right:2px solid var(--border-strong)">${globalIdx}</td>
+      allRows += `<tr data-roster-row="${e.id}" data-roster-dept="${e.deptId}" draggable="true" ondragstart="_rDragStart(event,'${e.id}','${e.deptId}')" ondragover="_rDragOver(event,'${e.deptId}')" ondrop="_rDrop(event,'${e.id}','${e.deptId}')" ondragend="_rDragEnd(event)" style="border-bottom:1px solid var(--border);cursor:grab">
+        <td class="_rStt" style="padding:5px 6px;font-size:11px;text-align:center;position:sticky;left:0;background:${rowBg};z-index:2;border-right:2px solid var(--border-strong)"><span class="_rNum">${globalIdx}</span></td>
         <td style="padding:5px 6px;font-size:11px;font-family:'JetBrains Mono',monospace;position:sticky;left:30px;background:${rowBg};z-index:2">${escapeHtml(e.code||'')}</td>
         <td style="padding:5px 6px;font-size:12px;${nameStyle};white-space:nowrap;position:sticky;left:90px;background:${rowBg};z-index:2">${escapeHtml(e.name||'')}${traineeBadge}${extraBadge}</td>
         <td style="padding:5px 6px;font-size:10px;color:var(--ink-dim);white-space:nowrap;position:sticky;left:200px;background:${rowBg};z-index:2">${escapeHtml(deptName(e.deptId))}</td>
@@ -27952,17 +27954,20 @@ function _renderTimesheetGrid(container, isAdm){
       <td style="padding:4px 4px;text-align:center;font-size:12px;font-weight:800;color:var(--accent);font-family:'JetBrains Mono',monospace;background:rgba(212,165,116,.15);border:1px solid var(--border)">${deptTotalWork||''}</td>
     </tr>`;
 
-    // ＋ Thêm NV button (always show)
+    // ＋ Thêm NV button (always show, sticky left)
     if(did!=='_none'){
-      allRows += `<tr><td colspan="${totalCols}" style="padding:4px 12px;text-align:right;background:var(--bg-card)">
-        <button onclick="_rosterAddEmpToDept('${did}')" style="padding:5px 16px;font-size:11px;background:transparent;border:1px dashed var(--accent);border-radius:6px;color:var(--accent);cursor:pointer;transition:all .15s;font-weight:600"
-          onmouseenter="this.style.background='rgba(212,165,116,.1)'"
-          onmouseleave="this.style.background='transparent'">＋ Thêm NV</button>
+      allRows += `<tr class="_rosterAddRow"><td colspan="${totalCols}" style="padding:6px 12px;background:var(--bg-card);border-bottom:1px solid var(--border)">
+        <div style="position:sticky;left:12px;display:inline-block">
+          <button onclick="_rosterAddEmpToDept('${did}')" style="padding:6px 20px;font-size:11px;background:rgba(212,165,116,.08);border:1px dashed var(--accent);border-radius:6px;color:var(--accent);cursor:pointer;transition:all .15s;font-weight:600"
+            onmouseenter="this.style.background='rgba(212,165,116,.18)'"
+            onmouseleave="this.style.background='rgba(212,165,116,.08)'">＋ Thêm NV</button>
+        </div>
       </td></tr>`;
     }
   });
 
   container.innerHTML = `
+    <style>tr._rDragOver{outline:2px solid var(--accent);outline-offset:-2px;background:rgba(212,165,116,.12)!important}tr[data-roster-row]{cursor:grab}tr[data-roster-row]:active{cursor:grabbing}</style>
     <div class="card">
       <div class="card-head">
         <div><div class="card-title">📊 Bảng Công — T${mo}/${yr}</div>
