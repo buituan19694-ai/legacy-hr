@@ -27316,7 +27316,6 @@ function _renderRosterGrid(container, isAdm){
   const scCodes = (DB.shiftCodes||[]).map(s=>s.code);
   // STT + MÃ NV + HỌ TÊN + BỘ PHẬN + CHỨC DANH + CÔNG TC + TỒN AL + TỒN CL = 8
   const fixedCols = 8;
-  const curMonth = new Date().getMonth(); // 0-based for calcLeaveTotals
   const totalCols = fixedCols + daysInMonth + scCodes.length + 1;
 
   deptOrder.forEach(did=>{
@@ -27405,7 +27404,7 @@ function _renderRosterGrid(container, isAdm){
 
       const moveUp = `<span onclick="_rosterMoveEmp('${e.id}','${e.deptId}',-1)" style="cursor:pointer;opacity:.4;font-size:9px;line-height:1" title="Di chuyển lên">▲</span>`;
       const moveDown = `<span onclick="_rosterMoveEmp('${e.id}','${e.deptId}',1)" style="cursor:pointer;opacity:.4;font-size:9px;line-height:1" title="Di chuyển xuống">▼</span>`;
-      const orderBtns = !isLocked && (isAdm || window.canDo('dutyRoster','edit')) ? `<span style="display:flex;flex-direction:column;gap:0;margin-left:3px">${moveUp}${moveDown}</span>` : '';
+      const orderBtns = `<span style="display:flex;flex-direction:column;gap:0;margin-left:3px">${moveUp}${moveDown}</span>`;
 
       allRows += `<tr style="border-bottom:1px solid var(--border)${e._isExtra?' ;background:rgba(220,53,69,.04)':''}">
         <td style="padding:5px 6px;font-size:11px;text-align:center;position:sticky;left:0;background:${stickyBg};z-index:2;border-right:2px solid var(--border-strong)"><div style="display:flex;align-items:center;justify-content:center;gap:1px">${globalIdx}${orderBtns}</div></td>
@@ -27438,12 +27437,12 @@ function _renderRosterGrid(container, isAdm){
       <td style="padding:4px 4px;text-align:center;font-size:12px;font-weight:800;color:var(--accent);font-family:'JetBrains Mono',monospace;background:rgba(212,165,116,.15);border:1px solid var(--border)">${deptTotalWork||''}</td>
     </tr>`;
 
-    // ＋ Thêm NV button per department
-    if(!isLocked && did!=='_none' && (isAdm || window.canDo('dutyRoster','edit'))){
+    // ＋ Thêm NV button per department (always show)
+    if(did!=='_none'){
       allRows += `<tr><td colspan="${totalCols}" style="padding:4px 12px;text-align:right;background:var(--bg-card)">
-        <button onclick="_rosterAddEmpToDept('${did}')" style="padding:4px 14px;font-size:10px;background:transparent;border:1px dashed var(--border);border-radius:6px;color:var(--ink-muted);cursor:pointer;transition:all .15s"
-          onmouseenter="this.style.color='var(--accent)';this.style.borderColor='var(--accent)'"
-          onmouseleave="this.style.color='var(--ink-muted)';this.style.borderColor='var(--border)'">＋ Thêm NV</button>
+        <button onclick="_rosterAddEmpToDept('${did}')" style="padding:5px 16px;font-size:11px;background:transparent;border:1px dashed var(--accent);border-radius:6px;color:var(--accent);cursor:pointer;transition:all .15s;font-weight:600"
+          onmouseenter="this.style.background='rgba(212,165,116,.1)'"
+          onmouseleave="this.style.background='transparent'">＋ Thêm NV</button>
       </td></tr>`;
     }
   });
@@ -27460,7 +27459,7 @@ function _renderRosterGrid(container, isAdm){
     return `<button onclick="window._rosterCopy={active:true,code:'${sc.code}'};render()" style="padding:3px 8px;border-radius:4px;font-size:11px;font-weight:700;font-family:'JetBrains Mono',monospace;cursor:pointer;border:${sel?'2px solid var(--accent)':'1px solid var(--border)'};background:${sc.color||'var(--bg-card)'};color:${sc.textColor||'var(--ink)'};${sel?'box-shadow:0 0 8px var(--accent);transform:scale(1.1)':''}" title="${sc.name||sc.code}">${sc.code}</button>`;
   }).join('');
   const moreCount = allSC.length - pinnedSC.length;
-  const moreBtnHTML = moreCount > 0 ? `<button onclick="_rosterShowAllSC()" style="padding:3px 10px;border-radius:4px;font-size:10px;cursor:pointer;border:1px dashed var(--border);background:var(--bg-card);color:var(--ink-muted)" title="Xem tất cả ${allSC.length} mã ca">⋯ +${moreCount}</button>` : '';
+  const moreBtnHTML = allSC.length > 0 ? `<button onclick="_rosterShowAllSC()" style="padding:3px 10px;border-radius:4px;font-size:10px;cursor:pointer;border:1px dashed var(--border);background:var(--bg-card);color:var(--ink-muted)" title="Xem tất cả ${allSC.length} mã ca">${moreCount > 0 ? '⋯ +'+moreCount : '📋 '+allSC.length}</button>` : '';
   const copyBar = `<div style="display:flex;align-items:center;gap:6px;padding:8px 12px;background:${copyActive?'rgba(212,165,116,.1)':'var(--bg-card)'};border:1px solid ${copyActive?'var(--accent)':'var(--border)'};border-radius:8px;margin-bottom:10px;flex-wrap:wrap">
     <span style="font-size:11px;font-weight:600;color:var(--ink-muted);white-space:nowrap">⚡ Quick Fill:</span>
     ${pinnedBtns}
@@ -27766,6 +27765,7 @@ function _renderTimesheetGrid(container, isAdm){
   const userDeptId = window.currentUserData?.deptId;
   const filterDeptId = canEditAll ? rf.deptId : (userDeptId||'all');
   const nowStr = new Date().toISOString().slice(0,10);
+  const curMonth = new Date().getMonth();
 
   let emps = (DB.employees||[]).filter(e=>{
     if(getEffectiveStatus(e) === 'active' || getEffectiveStatus(e) === 'probation') return true;
@@ -27870,7 +27870,6 @@ function _renderTimesheetGrid(container, isAdm){
   // STT + MÃ NV + HỌ TÊN + BỘ PHẬN + CHỨC DANH + CÔNG TC + TỒN AL + TỒN CL + days + TOTAL
   const fixedCols = 8;
   const totalCols = fixedCols + daysInMonth + 1;
-  const curMonth = new Date().getMonth();
 
   deptOrder.forEach(did=>{
     const deptEmps = deptGroups[did];
@@ -27953,12 +27952,12 @@ function _renderTimesheetGrid(container, isAdm){
       <td style="padding:4px 4px;text-align:center;font-size:12px;font-weight:800;color:var(--accent);font-family:'JetBrains Mono',monospace;background:rgba(212,165,116,.15);border:1px solid var(--border)">${deptTotalWork||''}</td>
     </tr>`;
 
-    // ＋ Thêm NV button
-    if(did!=='_none' && (isAdm || window.canDo('dutyRoster','edit'))){
+    // ＋ Thêm NV button (always show)
+    if(did!=='_none'){
       allRows += `<tr><td colspan="${totalCols}" style="padding:4px 12px;text-align:right;background:var(--bg-card)">
-        <button onclick="_rosterAddEmpToDept('${did}')" style="padding:4px 14px;font-size:10px;background:transparent;border:1px dashed var(--border);border-radius:6px;color:var(--ink-muted);cursor:pointer;transition:all .15s"
-          onmouseenter="this.style.color='var(--accent)';this.style.borderColor='var(--accent)'"
-          onmouseleave="this.style.color='var(--ink-muted)';this.style.borderColor='var(--border)'">＋ Thêm NV</button>
+        <button onclick="_rosterAddEmpToDept('${did}')" style="padding:5px 16px;font-size:11px;background:transparent;border:1px dashed var(--accent);border-radius:6px;color:var(--accent);cursor:pointer;transition:all .15s;font-weight:600"
+          onmouseenter="this.style.background='rgba(212,165,116,.1)'"
+          onmouseleave="this.style.background='transparent'">＋ Thêm NV</button>
       </td></tr>`;
     }
   });
