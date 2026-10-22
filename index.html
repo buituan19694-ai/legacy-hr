@@ -27362,7 +27362,7 @@ function _renderRosterGrid(container, isAdm){
             title="${val?(isAutoLeave?'Tự động từ phép':''):'Kéo chuột để điền nhanh'}">${val}</td>`;
         } else if(canEditThisRow){
           dayCells += `<td style="padding:0;border:1px solid var(--border);min-width:38px;text-align:center;${autoBorder}" title="${isAutoLeave?'Tự động từ phép duyệt':''}">
-            <select onchange="_rosterSetCell('${e.id}',${yr},${mo},${d},this.value)" style="width:100%;padding:4px 0;border:none;background:${bg};color:${fg};font-size:11px;font-weight:700;font-family:'JetBrains Mono',monospace;text-align:center;cursor:pointer;-webkit-appearance:none;appearance:none">
+            <select onchange="_rosterSetCell('${e.id}',${yr},${mo},${d},this.value)" onkeydown="if(event.key==='Delete'||event.key==='Backspace'){this.value='';_rosterSetCell('${e.id}',${yr},${mo},${d},'');event.preventDefault()}" style="width:100%;padding:4px 0;border:none;background:${bg};color:${fg};font-size:11px;font-weight:700;font-family:'JetBrains Mono',monospace;text-align:center;cursor:pointer;-webkit-appearance:none;appearance:none">
               <option value=""></option>${(DB.shiftCodes||[]).map(sc2=>`<option value="${sc2.code}" ${val===sc2.code?'selected':''}>${sc2.code}</option>`).join('')}
             </select>
           </td>`;
@@ -27388,7 +27388,7 @@ function _renderRosterGrid(container, isAdm){
         return `<td style="padding:4px 2px;text-align:center;font-size:10px;font-family:'JetBrains Mono',monospace;color:${cnt?'var(--ink)':'var(--ink-muted)'};font-weight:${cnt?'700':'400'};border:1px solid var(--border)">${cnt||''}</td>`;
       }).join('');
 
-      // CÔNG TC from employee custom data
+      // CÔNG TC from employee custom data (editable inline)
       const stdWD = cd.stdWorkDays || '';
       // AL/CL Tồn còn lại from Leave module (calcLeaveTotals)
       let alBal = 0, clBal = 0;
@@ -27401,6 +27401,7 @@ function _renderRosterGrid(container, isAdm){
       const traineeBadge = e._isTrainee ? `<span style="font-size:8px;padding:1px 4px;border-radius:3px;background:var(--accent);color:#000;margin-left:4px;font-weight:600">TTS</span>` : '';
       const extraBadge = e._isExtra ? `<span style="font-size:8px;padding:1px 4px;border-radius:3px;background:var(--danger);color:#fff;margin-left:4px;font-weight:600;cursor:pointer" onclick="_rosterRemoveExtra('${e.id}')" title="Click để bỏ khỏi bảng ca">✕</span>` : '';
       const stickyBg = e._isExtra ? 'rgba(220,53,69,.04)' : rowBg;
+      const stdWDCell = `<td data-stdwd="1" style="padding:5px 4px;font-size:10px;text-align:center;font-family:'JetBrains Mono',monospace;border:1px solid var(--border);cursor:pointer" onclick="_rosterEditStdWD('${e.id}')" title="Click để sửa Công TC">${stdWD||'<span style=&quot;color:var(--ink-muted);font-size:9px&quot;>—</span>'}</td>`;
 
       allRows += `<tr data-roster-row="${e.id}" data-roster-dept="${e.deptId}" draggable="true" ondragstart="_rDragStart(event,'${e.id}','${e.deptId}')" ondragover="_rDragOver(event,'${e.deptId}')" ondrop="_rDrop(event,'${e.id}','${e.deptId}')" ondragend="_rDragEnd(event)" style="border-bottom:1px solid var(--border);cursor:grab${e._isExtra?' ;background:rgba(220,53,69,.04)':''}">
         <td class="_rStt" style="padding:5px 6px;font-size:11px;text-align:center;position:sticky;left:0;background:${stickyBg};z-index:2;border-right:2px solid var(--border-strong)"><span class="_rNum">${globalIdx}</span></td>
@@ -27408,7 +27409,7 @@ function _renderRosterGrid(container, isAdm){
         <td style="padding:5px 6px;font-size:12px;${nameStyle};white-space:nowrap;position:sticky;left:90px;background:${stickyBg};z-index:2">${escapeHtml(e.name||'')}${traineeBadge}${extraBadge}</td>
         <td style="padding:5px 6px;font-size:10px;color:var(--ink-dim);white-space:nowrap;position:sticky;left:200px;background:${stickyBg};z-index:2">${escapeHtml(deptName(e.deptId))}</td>
         <td style="padding:5px 6px;font-size:10px;color:var(--ink-dim);white-space:nowrap;position:sticky;left:300px;background:${stickyBg};z-index:2">${escapeHtml(e.role||cd.position||'')}</td>
-        <td style="padding:5px 4px;font-size:10px;text-align:center;font-family:'JetBrains Mono',monospace;border:1px solid var(--border)">${stdWD}</td>
+        ${stdWDCell}
         <td style="padding:4px 4px;text-align:center;font-size:10px;font-weight:700;font-family:'JetBrains Mono',monospace;color:${alBal>0?'#2d6a4f':'var(--ink-muted)'};background:${alBal>0?'rgba(45,106,79,.08)':'transparent'};border:1px solid var(--border)">${alBal||'—'}</td>
         <td style="padding:4px 4px;text-align:center;font-size:10px;font-weight:700;font-family:'JetBrains Mono',monospace;color:${clBal>0?'#1d3557':'var(--ink-muted)'};background:${clBal>0?'rgba(29,53,87,.08)':'transparent'};border:1px solid var(--border);border-right:2px solid var(--accent)">${clBal||'—'}</td>
         ${dayCells}
@@ -27582,8 +27583,8 @@ function _rosterAddEmpToDept(deptId){
   });
   (DB.rosterExtras[key]||[]).forEach(id=>allShown.add(id));
 
-  // Show ALL employees not currently in roster — user can search across depts
-  const available = (DB.employees||[]).filter(e=>!allShown.has(e.id));
+  // Show only employees from this department not currently in roster
+  const available = (DB.employees||[]).filter(e=>!allShown.has(e.id) && e.deptId === deptId);
   if(!available.length){
     toast('Không có nhân viên nào để thêm','info');
     return;
@@ -27592,9 +27593,9 @@ function _rosterAddEmpToDept(deptId){
   const html = `<div id="_rosterAddModal" style="position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9999;display:flex;align-items:center;justify-content:center" onclick="if(event.target===this)this.remove()">
     <div style="background:var(--bg-card);border-radius:12px;padding:24px;width:420px;max-height:70vh;overflow-y:auto;border:1px solid var(--border)">
       <div style="font-size:14px;font-weight:700;color:var(--ink);margin-bottom:6px">＋ Thêm nhân viên vào Bảng Ca</div>
-      <div style="font-size:11px;color:var(--ink-muted);margin-bottom:14px">Thêm vào: <b>${escapeHtml(deptName(deptId))}</b> — T${rf.month}/${rf.year}</div>
-      <input id="_rosterAddSearch" oninput="_rosterFilterAddList()" placeholder="Tìm tên / mã NV / bộ phận..." style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg-elev);color:var(--ink);font-size:12px;margin-bottom:10px;box-sizing:border-box">
-      <div style="font-size:10px;color:var(--ink-dim);margin-bottom:8px">${available.length} nhân viên có thể thêm</div>
+      <div style="font-size:11px;color:var(--ink-muted);margin-bottom:14px">BP: <b>${escapeHtml(deptName(deptId))}</b> — T${rf.month}/${rf.year}</div>
+      <input id="_rosterAddSearch" oninput="_rosterFilterAddList()" placeholder="Tìm tên / mã NV..." style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg-elev);color:var(--ink);font-size:12px;margin-bottom:10px;box-sizing:border-box">
+      <div style="font-size:10px;color:var(--ink-dim);margin-bottom:8px">${available.length} nhân viên cùng BP có thể thêm</div>
       <div id="_rosterAddList" style="max-height:45vh;overflow-y:auto">${available.map(e=>`
         <div class="_rosterAddItem" data-name="${escapeHtml((e.name||'').toLowerCase())}" data-code="${escapeHtml((e.code||'').toLowerCase())}" data-dept="${escapeHtml((deptName(e.deptId)||'').toLowerCase())}" onclick="_rosterConfirmAddEmp('${e.id}','${key}','${deptId}')" style="padding:10px 12px;border:1px solid var(--border);border-radius:8px;margin-bottom:6px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;transition:all .15s"
           onmouseenter="this.style.background='var(--bg-elev)';this.style.borderColor='var(--accent)'"
@@ -27746,6 +27747,31 @@ function _rSaveOrderFromDOM(deptId){
     if(eid) order[deptId+'_'+eid] = i;
   });
   saveData(['rosterEmpOrder']);
+}
+
+// ── Edit CÔNG TC (Standard Workdays) inline ──
+function _rosterEditStdWD(empId){
+  if(!DB.customData) DB.customData = {};
+  const cd = DB.customData[empId] || {};
+  const cur = cd.stdWorkDays || '';
+  const v = prompt('Nhập số ngày CÔNG TC/tháng (VD: 26):', cur);
+  if(v === null) return;
+  const num = v.trim() === '' ? '' : parseFloat(v);
+  if(v.trim() !== '' && (isNaN(num) || num < 0 || num > 31)){
+    alert('Giá trị không hợp lệ (0-31)');
+    return;
+  }
+  if(!DB.customData[empId]) DB.customData[empId] = {};
+  if(v.trim() === ''){
+    delete DB.customData[empId].stdWorkDays;
+  } else {
+    DB.customData[empId].stdWorkDays = num;
+  }
+  saveData(['customData']);
+  // Update cell in-place
+  document.querySelectorAll(`tr[data-roster-row="${empId}"] td[data-stdwd]`).forEach(td=>{
+    td.innerHTML = num || '<span style="color:var(--ink-muted);font-size:9px">—</span>';
+  });
 }
 
 // ══════════════════════════════════════════════════════════
@@ -27937,7 +27963,7 @@ function _renderTimesheetGrid(container, isAdm){
         <td style="padding:5px 6px;font-size:12px;${nameStyle};white-space:nowrap;position:sticky;left:90px;background:${rowBg};z-index:2">${escapeHtml(e.name||'')}${traineeBadge}${extraBadge}</td>
         <td style="padding:5px 6px;font-size:10px;color:var(--ink-dim);white-space:nowrap;position:sticky;left:200px;background:${rowBg};z-index:2">${escapeHtml(deptName(e.deptId))}</td>
         <td style="padding:5px 6px;font-size:10px;color:var(--ink-dim);white-space:nowrap;position:sticky;left:300px;background:${rowBg};z-index:2">${escapeHtml(e.role||cd.position||'')}</td>
-        <td style="padding:4px 4px;text-align:center;font-size:10px;font-weight:700;font-family:'JetBrains Mono',monospace;color:var(--ink);background:rgba(212,165,116,.06);border:1px solid var(--border)">${stdWD||'—'}</td>
+        <td data-stdwd="1" style="padding:4px 4px;text-align:center;font-size:10px;font-weight:700;font-family:'JetBrains Mono',monospace;color:var(--ink);background:rgba(212,165,116,.06);border:1px solid var(--border);cursor:pointer" onclick="_rosterEditStdWD('${e.id}')" title="Click để sửa Công TC">${stdWD||'<span style="color:var(--ink-muted);font-size:9px">—</span>'}</td>
         <td style="padding:4px 4px;text-align:center;font-size:10px;font-weight:700;font-family:'JetBrains Mono',monospace;color:${alBal>0?'#2d6a4f':'var(--ink-muted)'};background:${alBal>0?'rgba(45,106,79,.08)':'transparent'};border:1px solid var(--border)">${alBal||'—'}</td>
         <td style="padding:4px 4px;text-align:center;font-size:10px;font-weight:700;font-family:'JetBrains Mono',monospace;color:${clBal>0?'#1d3557':'var(--ink-muted)'};background:${clBal>0?'rgba(29,53,87,.08)':'transparent'};border:1px solid var(--border);border-right:2px solid var(--accent)">${clBal||'—'}</td>
         ${dayCells}
