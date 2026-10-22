@@ -27205,7 +27205,8 @@ function _renderRosterGrid(container, isAdm){
     emps.push({
       id: 'tr_'+tr.id, code: tr.code||'', name: tr.name||'',
       deptId: tr.deptId||'', role: 'Thực tập sinh',
-      status: 'active', _isTrainee: true, _school: tr.school||''
+      status: 'active', _isTrainee: true, _school: tr.school||'',
+      _trStdWD: tr.stdWorkDays||''
     });
   });
 
@@ -27313,7 +27314,14 @@ function _renderRosterGrid(container, isAdm){
   // Build rows with department separators + subtotals
   let allRows = '';
   let globalIdx = 0;
-  const scCodes = (DB.shiftCodes||[]).map(s=>s.code);
+  const allScCodes = (DB.shiftCodes||[]).map(s=>s.code);
+  // Pre-scan: find which shift codes are actually used this month
+  const usedCodesSet = new Set();
+  emps.forEach(e=>{
+    const rd = rosterData[e.id]||{};
+    for(let d=1;d<=daysInMonth;d++){ if(rd[d]) usedCodesSet.add(rd[d]); }
+  });
+  const scCodes = allScCodes.filter(c=>usedCodesSet.has(c));
   // STT + MÃ NV + HỌ TÊN + BỘ PHẬN + CHỨC DANH + CÔNG TC + TỒN AL + TỒN CL = 8
   const fixedCols = 8;
   const totalCols = fixedCols + daysInMonth + scCodes.length + 1;
@@ -27383,13 +27391,13 @@ function _renderRosterGrid(container, isAdm){
           if(sc2){ totalWork += (sc2.workValue||0); deptTotalWork += (sc2.workValue||0); }
         }
       }
-      const countCells = scCodes.map(code=>{
+      const countCells = scCodes.map((code,i)=>{
         const cnt = counts[code]||0;
-        return `<td style="padding:4px 2px;text-align:center;font-size:10px;font-family:'JetBrains Mono',monospace;color:${cnt?'var(--ink)':'var(--ink-muted)'};font-weight:${cnt?'700':'400'};border:1px solid var(--border)">${cnt||''}</td>`;
+        return `<td style="padding:4px 2px;text-align:center;font-size:10px;font-family:'JetBrains Mono',monospace;color:${cnt?'var(--ink)':'var(--ink-muted)'};font-weight:${cnt?'700':'400'};border:1px solid var(--border)${i===0?';border-left:3px solid var(--accent)':''}">${cnt||''}</td>`;
       }).join('');
 
-      // CÔNG TC from employee custom data (editable inline)
-      const stdWD = cd.stdWorkDays || '';
+      // CÔNG TC: customData first, then trainee record fallback
+      const stdWD = cd.stdWorkDays || e._trStdWD || '';
       // AL/CL Tồn còn lại from Leave module (calcLeaveTotals)
       let alBal = 0, clBal = 0;
       try {
@@ -27414,14 +27422,14 @@ function _renderRosterGrid(container, isAdm){
         <td style="padding:4px 4px;text-align:center;font-size:10px;font-weight:700;font-family:'JetBrains Mono',monospace;color:${clBal>0?'#1d3557':'var(--ink-muted)'};background:${clBal>0?'rgba(29,53,87,.08)':'transparent'};border:1px solid var(--border);border-right:2px solid var(--accent)">${clBal||'—'}</td>
         ${dayCells}
         ${countCells}
-        <td style="padding:4px 4px;text-align:center;font-size:12px;font-weight:800;color:var(--accent);font-family:'JetBrains Mono',monospace;background:rgba(212,165,116,.08);border:1px solid var(--border)">${totalWork||''}</td>
+        <td style="padding:4px 4px;text-align:center;font-size:12px;font-weight:800;color:var(--accent);font-family:'JetBrains Mono',monospace;background:rgba(212,165,116,.08);border:3px solid var(--accent)">${totalWork||''}</td>
       </tr>`;
     });
 
     // ── Department subtotal row ──
-    const subCells = scCodes.map(code=>{
+    const subCells = scCodes.map((code,i)=>{
       const cnt = deptCounts[code]||0;
-      return `<td style="padding:4px 2px;text-align:center;font-size:10px;font-family:'JetBrains Mono',monospace;font-weight:700;color:${cnt?'var(--accent)':'var(--ink-muted)'};background:var(--bg-elev);border:1px solid var(--border)">${cnt||''}</td>`;
+      return `<td style="padding:4px 2px;text-align:center;font-size:10px;font-family:'JetBrains Mono',monospace;font-weight:700;color:${cnt?'var(--accent)':'var(--ink-muted)'};background:var(--bg-elev);border:1px solid var(--border)${i===0?';border-left:3px solid var(--accent)':''}">${cnt||''}</td>`;
     }).join('');
     // Empty day cells for subtotal
     let subDayCells = '';
@@ -27431,7 +27439,7 @@ function _renderRosterGrid(container, isAdm){
       <td colspan="${fixedCols}" style="padding:5px 12px;font-size:10px;font-weight:700;color:var(--accent);text-align:right;position:sticky;left:0;background:var(--bg-elev);z-index:2;border-right:2px solid var(--accent);letter-spacing:.05em">∑ ${escapeHtml(dn)}</td>
       ${subDayCells}
       ${subCells}
-      <td style="padding:4px 4px;text-align:center;font-size:12px;font-weight:800;color:var(--accent);font-family:'JetBrains Mono',monospace;background:rgba(212,165,116,.15);border:1px solid var(--border)">${deptTotalWork||''}</td>
+      <td style="padding:4px 4px;text-align:center;font-size:12px;font-weight:800;color:var(--accent);font-family:'JetBrains Mono',monospace;background:rgba(212,165,116,.15);border:3px solid var(--accent)">${deptTotalWork||''}</td>
     </tr>`;
 
     // ＋ Thêm NV button per department (always show, sticky left)
@@ -27446,8 +27454,12 @@ function _renderRosterGrid(container, isAdm){
     }
   });
 
-  // Summary column headers
-  const scSummaryHeaders = (DB.shiftCodes||[]).map(sc=>`<th style="padding:4px 2px;font-size:8px;font-weight:700;color:${sc.textColor||'var(--ink-muted)'};background:${sc.color||'var(--bg-elev)'};text-align:center;min-width:30px;border:1px solid var(--border)">${sc.code}</th>`).join('');
+  // Summary column headers — only used codes
+  const scMap2 = {}; (DB.shiftCodes||[]).forEach(sc=>{ scMap2[sc.code]=sc; });
+  const scSummaryHeaders = scCodes.map((code,i)=>{
+    const sc = scMap2[code]||{};
+    return `<th style="padding:4px 2px;font-size:8px;font-weight:700;color:${sc.textColor||'var(--ink-muted)'};background:${sc.color||'var(--bg-elev)'};text-align:center;min-width:30px;border:1px solid var(--border)${i===0?';border-left:3px solid var(--accent)':''}">${code}</th>`;
+  }).join('');
 
   // ── Copy toolbar (compact for 60+ shift codes) ──
   const allSC = DB.shiftCodes||[];
@@ -27483,7 +27495,14 @@ function _renderRosterGrid(container, isAdm){
         </div>
       </div>
       ${(!isLocked && (isAdm || window.canDo('dutyRoster','edit'))) ? copyBar : ''}
-      <div style="overflow-x:auto;max-height:80vh;overflow-y:auto">
+      <div style="display:flex;align-items:center;gap:6px;padding:4px 12px;border-bottom:1px solid var(--border);background:var(--bg-elev)">
+        <span style="font-size:10px;color:var(--ink-muted)">Zoom:</span>
+        <button onclick="_rosterZoom(-10)" style="width:24px;height:24px;border:1px solid var(--border);border-radius:4px;background:var(--bg-card);color:var(--ink);cursor:pointer;font-size:14px;display:flex;align-items:center;justify-content:center;padding:0" title="Thu nhỏ">−</button>
+        <span id="_rosterZoomLbl" style="font-size:10px;color:var(--ink);min-width:32px;text-align:center;font-family:'JetBrains Mono',monospace">${window._rosterZoom||100}%</span>
+        <button onclick="_rosterZoom(10)" style="width:24px;height:24px;border:1px solid var(--border);border-radius:4px;background:var(--bg-card);color:var(--ink);cursor:pointer;font-size:14px;display:flex;align-items:center;justify-content:center;padding:0" title="Phóng to">+</button>
+        <button onclick="_rosterZoom(0)" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg-card);color:var(--ink-muted);cursor:pointer" title="Reset 100%">Reset</button>
+      </div>
+      <div id="_rosterTableWrap" style="overflow-x:auto;max-height:80vh;overflow-y:auto">
         <table style="border-collapse:collapse;font-size:12px;min-width:100%">
           <thead>
             <tr style="background:var(--bg-elev);position:sticky;top:0;z-index:5">
@@ -27497,7 +27516,7 @@ function _renderRosterGrid(container, isAdm){
               <th style="padding:4px 4px;font-size:8px;font-weight:700;color:#1d3557;text-align:center;background:rgba(29,53,87,.08);min-width:36px;border:1px solid var(--border);border-right:2px solid var(--accent)">TỒN<br>CL</th>
               ${dayHeaders}
               ${scSummaryHeaders}
-              <th style="padding:4px 4px;font-size:9px;font-weight:800;color:var(--accent);text-align:center;background:rgba(212,165,116,.1);min-width:40px;border:1px solid var(--border)">TOTAL</th>
+              <th style="padding:4px 4px;font-size:9px;font-weight:800;color:var(--accent);text-align:center;background:rgba(212,165,116,.15);min-width:44px;border:3px solid var(--accent)">TOTAL</th>
             </tr>
           </thead>
           <tbody>${allRows || '<tr><td colspan="99" style="padding:30px;text-align:center;color:var(--ink-muted)">Chưa có nhân viên</td></tr>'}</tbody>
@@ -27505,6 +27524,11 @@ function _renderRosterGrid(container, isAdm){
       </div>
     </div>
   `;
+  // Apply saved zoom level
+  if(window._rosterZoom && window._rosterZoom !== 100){
+    const wrap = document.getElementById('_rosterTableWrap');
+    if(wrap){ wrap.style.transform=`scale(${window._rosterZoom/100})`;wrap.style.transformOrigin='top left';wrap.style.width=(10000/window._rosterZoom)+'%'; }
+  }
 }
 
 function _rosterSetCell(empId, year, month, day, shiftCode){
@@ -27690,6 +27714,21 @@ function _rosterFilterSCList(){
   });
 }
 
+// ── Zoom controls for roster table ──
+if(!window._rosterZoom) window._rosterZoom = 100;
+function _rosterZoom(delta){
+  if(delta === 0) window._rosterZoom = 100;
+  else window._rosterZoom = Math.max(50, Math.min(150, window._rosterZoom + delta));
+  const wrap = document.getElementById('_rosterTableWrap');
+  if(wrap){
+    wrap.style.transform = `scale(${window._rosterZoom/100})`;
+    wrap.style.transformOrigin = 'top left';
+    wrap.style.width = (10000/window._rosterZoom)+'%';
+  }
+  const lbl = document.getElementById('_rosterZoomLbl');
+  if(lbl) lbl.textContent = window._rosterZoom+'%';
+}
+
 // ── Drag & Drop reorder employees ──
 function _rDragStart(ev, empId, deptId){
   ev.dataTransfer.setData('text/plain', empId+'|'+deptId);
@@ -27751,9 +27790,16 @@ function _rSaveOrderFromDOM(deptId){
 
 // ── Edit CÔNG TC (Standard Workdays) inline ──
 function _rosterEditStdWD(empId){
-  if(!DB.customData) DB.customData = {};
-  const cd = DB.customData[empId] || {};
-  const cur = cd.stdWorkDays || '';
+  // For trainees, read from trainee record first
+  let cur = '';
+  const isTr = empId.startsWith('tr_');
+  if(isTr){
+    const trId = empId.slice(3);
+    const tr = (DB.trainees||[]).find(t=>t.id===trId);
+    cur = (tr && tr.stdWorkDays) || ((DB.customData||{})[empId]||{}).stdWorkDays || '';
+  } else {
+    cur = ((DB.customData||{})[empId]||{}).stdWorkDays || '';
+  }
   const v = prompt('Nhập số ngày CÔNG TC/tháng (VD: 26):', cur);
   if(v === null) return;
   const num = v.trim() === '' ? '' : parseFloat(v);
@@ -27761,13 +27807,23 @@ function _rosterEditStdWD(empId){
     alert('Giá trị không hợp lệ (0-31)');
     return;
   }
-  if(!DB.customData[empId]) DB.customData[empId] = {};
-  if(v.trim() === ''){
-    delete DB.customData[empId].stdWorkDays;
+  if(isTr){
+    // Save to trainee record
+    const trId = empId.slice(3);
+    const idx = (DB.trainees||[]).findIndex(t=>t.id===trId);
+    if(idx>=0){
+      if(v.trim()==='') delete DB.trainees[idx].stdWorkDays;
+      else DB.trainees[idx].stdWorkDays = num;
+      saveData(['trainees']);
+    }
   } else {
-    DB.customData[empId].stdWorkDays = num;
+    // Save to customData for regular employees
+    if(!DB.customData) DB.customData = {};
+    if(!DB.customData[empId]) DB.customData[empId] = {};
+    if(v.trim() === '') delete DB.customData[empId].stdWorkDays;
+    else DB.customData[empId].stdWorkDays = num;
+    saveData(['customData']);
   }
-  saveData(['customData']);
   // Update cell in-place
   document.querySelectorAll(`tr[data-roster-row="${empId}"] td[data-stdwd]`).forEach(td=>{
     td.innerHTML = num || '<span style="color:var(--ink-muted);font-size:9px">—</span>';
@@ -27813,7 +27869,7 @@ function _renderTimesheetGrid(container, isAdm){
   (DB.trainees||[]).forEach(tr=>{
     const isActive = tr.startDate && (!tr.endDate || tr.endDate >= nowStr);
     if(!isActive) return;
-    emps.push({id:'tr_'+tr.id, code:tr.code||'', name:tr.name||'', deptId:tr.deptId||'', role:'Thực tập sinh', status:'active', _isTrainee:true});
+    emps.push({id:'tr_'+tr.id, code:tr.code||'', name:tr.name||'', deptId:tr.deptId||'', role:'Thực tập sinh', status:'active', _isTrainee:true, _trStdWD:tr.stdWorkDays||''});
   });
 
   // Thêm NV đã nghỉ được add thủ công
@@ -27920,8 +27976,8 @@ function _renderTimesheetGrid(container, isAdm){
       const extraBadge = e._isExtra ? ` <span style="font-size:8px;padding:1px 4px;border-radius:3px;background:var(--danger);color:#fff;font-weight:600;cursor:pointer" onclick="_rosterRemoveExtra('${e.id}')" title="Bỏ khỏi bảng">✕</span>` : '';
       const rowBg = e._isExtra ? 'rgba(220,53,69,.04)' : 'var(--bg-card)';
 
-      // CÔNG TC from employee custom data
-      const stdWD = cd.stdWorkDays || '';
+      // CÔNG TC: customData first, then trainee record fallback
+      const stdWD = cd.stdWorkDays || e._trStdWD || '';
       // AL/CL Tồn còn lại from Leave module
       let alBal = 0, clBal = 0;
       try {
@@ -27967,7 +28023,7 @@ function _renderTimesheetGrid(container, isAdm){
         <td style="padding:4px 4px;text-align:center;font-size:10px;font-weight:700;font-family:'JetBrains Mono',monospace;color:${alBal>0?'#2d6a4f':'var(--ink-muted)'};background:${alBal>0?'rgba(45,106,79,.08)':'transparent'};border:1px solid var(--border)">${alBal||'—'}</td>
         <td style="padding:4px 4px;text-align:center;font-size:10px;font-weight:700;font-family:'JetBrains Mono',monospace;color:${clBal>0?'#1d3557':'var(--ink-muted)'};background:${clBal>0?'rgba(29,53,87,.08)':'transparent'};border:1px solid var(--border);border-right:2px solid var(--accent)">${clBal||'—'}</td>
         ${dayCells}
-        <td style="padding:5px 4px;text-align:center;font-size:12px;font-weight:800;color:var(--accent);font-family:'JetBrains Mono',monospace;background:rgba(212,165,116,.08);border:1px solid var(--border)">${totalWork||''}</td>
+        <td style="padding:5px 4px;text-align:center;font-size:12px;font-weight:800;color:var(--accent);font-family:'JetBrains Mono',monospace;background:rgba(212,165,116,.08);border:3px solid var(--accent)">${totalWork||''}</td>
       </tr>`;
     });
 
@@ -27977,7 +28033,7 @@ function _renderTimesheetGrid(container, isAdm){
     allRows += `<tr style="border-bottom:2px solid var(--accent);background:var(--bg-elev)">
       <td colspan="${fixedCols}" style="padding:5px 12px;font-size:10px;font-weight:700;color:var(--accent);text-align:right;position:sticky;left:0;background:var(--bg-elev);z-index:2;border-right:2px solid var(--accent)">∑ ${escapeHtml(dn)}</td>
       ${subDayCells}
-      <td style="padding:4px 4px;text-align:center;font-size:12px;font-weight:800;color:var(--accent);font-family:'JetBrains Mono',monospace;background:rgba(212,165,116,.15);border:1px solid var(--border)">${deptTotalWork||''}</td>
+      <td style="padding:4px 4px;text-align:center;font-size:12px;font-weight:800;color:var(--accent);font-family:'JetBrains Mono',monospace;background:rgba(212,165,116,.15);border:3px solid var(--accent)">${deptTotalWork||''}</td>
     </tr>`;
 
     // ＋ Thêm NV button (always show, sticky left)
@@ -28005,7 +28061,14 @@ function _renderTimesheetGrid(container, isAdm){
           ${canEditAll?`<select onchange="window._rosterFilter.deptId=this.value;render()" style="padding:6px 10px;background:var(--bg-card);border:1px solid var(--border);border-radius:6px;color:var(--ink);font-size:12px">${deptSelect}</select>`:''}
         </div>
       </div>
-      <div style="overflow-x:auto;max-height:80vh;overflow-y:auto">
+      <div style="display:flex;align-items:center;gap:6px;padding:4px 12px;border-bottom:1px solid var(--border);background:var(--bg-elev)">
+        <span style="font-size:10px;color:var(--ink-muted)">Zoom:</span>
+        <button onclick="_rosterZoom(-10)" style="width:24px;height:24px;border:1px solid var(--border);border-radius:4px;background:var(--bg-card);color:var(--ink);cursor:pointer;font-size:14px;display:flex;align-items:center;justify-content:center;padding:0" title="Thu nhỏ">−</button>
+        <span id="_rosterZoomLbl" style="font-size:10px;color:var(--ink);min-width:32px;text-align:center;font-family:'JetBrains Mono',monospace">${window._rosterZoom||100}%</span>
+        <button onclick="_rosterZoom(10)" style="width:24px;height:24px;border:1px solid var(--border);border-radius:4px;background:var(--bg-card);color:var(--ink);cursor:pointer;font-size:14px;display:flex;align-items:center;justify-content:center;padding:0" title="Phóng to">+</button>
+        <button onclick="_rosterZoom(0)" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg-card);color:var(--ink-muted);cursor:pointer" title="Reset 100%">Reset</button>
+      </div>
+      <div id="_rosterTableWrap" style="overflow-x:auto;max-height:80vh;overflow-y:auto">
         <table style="border-collapse:collapse;font-size:12px;min-width:100%">
           <thead>
             <tr style="background:var(--bg-elev);position:sticky;top:0;z-index:5">
@@ -28018,7 +28081,7 @@ function _renderTimesheetGrid(container, isAdm){
               <th style="padding:4px 4px;font-size:8px;font-weight:700;color:#2d6a4f;text-align:center;background:rgba(45,106,79,.08);min-width:36px;border:1px solid var(--border)">TỒN<br>AL</th>
               <th style="padding:4px 4px;font-size:8px;font-weight:700;color:#1d3557;text-align:center;background:rgba(29,53,87,.08);min-width:36px;border:1px solid var(--border);border-right:2px solid var(--accent)">TỒN<br>CL</th>
               ${dayHeaders}
-              <th style="padding:4px 4px;font-size:9px;font-weight:800;color:var(--accent);text-align:center;background:rgba(212,165,116,.1);min-width:40px;border:1px solid var(--border)">TOTAL</th>
+              <th style="padding:4px 4px;font-size:9px;font-weight:800;color:var(--accent);text-align:center;background:rgba(212,165,116,.15);min-width:44px;border:3px solid var(--accent)">TOTAL</th>
             </tr>
           </thead>
           <tbody>${allRows || '<tr><td colspan="99" style="padding:30px;text-align:center;color:var(--ink-muted)">Chưa có dữ liệu</td></tr>'}</tbody>
@@ -28026,6 +28089,11 @@ function _renderTimesheetGrid(container, isAdm){
       </div>
     </div>
   `;
+  // Apply saved zoom level
+  if(window._rosterZoom && window._rosterZoom !== 100){
+    const wrap = document.getElementById('_rosterTableWrap');
+    if(wrap){ wrap.style.transform=`scale(${window._rosterZoom/100})`;wrap.style.transformOrigin='top left';wrap.style.width=(10000/window._rosterZoom)+'%'; }
+  }
 }
 
 const PERM_LEVELS = ['none','view','edit','full'];
@@ -33494,6 +33562,7 @@ function viewTrainee(id){
       ${row('Số TK ngân hàng', tr.bank ? `<span style="font-family:'JetBrains Mono',monospace">${escapeHtml(tr.bank)}</span>` : '')}
       ${row((_lang==="en"?"Banking":"Ngân hàng"), escapeHtml(tr.bankName||''))}
       ${tr.salary ? row('Thù lao / Trợ cấp', new Intl.NumberFormat('vi-VN').format(tr.salary) + ' VNĐ') : ''}
+      ${tr.stdWorkDays ? row('Ngày công TC/tháng', tr.stdWorkDays + ' ngày') : ''}
       ${tr.workDays ? row('Ngày công thực tế', tr.workDays + ' ngày') : ''}
       ${tr.notes ? row((_lang==="en"?"Notes":"Ghi chú"), `<span style="color:var(--ink-muted);font-style:italic">${escapeHtml(tr.notes)}</span>`) : ''}
     </div>
@@ -33553,6 +33622,7 @@ function editTrainee(id){
       <div class="field"><label>Số tài khoản ngân hàng</label><input id="tr_bank" value="${escapeHtml(tr.bank||'')}" placeholder="Số tài khoản"></div>
       <div class="field"><label>Ngân hàng</label><input id="tr_bankName" value="${escapeHtml(tr.bankName||'')}" placeholder="VD: Vietcombank, BIDV..."></div>
       <div class="field"><label>Thù lao / Trợ cấp (VNĐ)</label><input type="number" id="tr_salary" value="${tr.salary||''}" placeholder="0" min="0" step="100000"></div>
+      <div class="field"><label>Ngày công TC/tháng</label><input type="number" id="tr_stdWorkDays" value="${tr.stdWorkDays||''}" placeholder="26" min="0" max="31" step="0.5" title="Số ngày công tiêu chuẩn / tháng (VD: 26)"></div>
       <div class="field"><label>Ngày công thực tế</label><input type="number" id="tr_workDays" value="${tr.workDays||''}" placeholder="0" min="0" step="0.5"></div>
       <div class="field"><label>Trạng thái</label>
         <select id="tr_status" onchange="(()=>{const v=this.value;const wrap=document.getElementById('tr_earlyExitWrap');if(wrap)wrap.style.display=v==='early_exit'?'':'none';})()">
@@ -33645,6 +33715,7 @@ function saveTrainee(id, isNew){
     bank:     $('#tr_bank').value.trim(),
     bankName: $('#tr_bankName').value.trim(),
     salary:   $sf('tr_salary'),
+    stdWorkDays: $sf('tr_stdWorkDays'),
     workDays: $sf('tr_workDays'),
     notes:    $('#tr_notes').value.trim(),
     status:   $s('tr_status') || '',  // '' = tự động theo endDate
@@ -33693,8 +33764,9 @@ function exportTraineeXLSX(){
     'Số TK ngân hàng',              // 16
     'Ngân hàng',                    // 17
     'Thù lao/Trợ cấp (VNĐ)',       // 18
-    'Ngày công',                    // 19
-    'Ghi chú',                      // 20
+    'Ngày công TC/tháng',           // 19
+    'Ngày công thực tế',            // 20
+    'Ghi chú',                      // 21
   ];
   // Apply screen filters
   const _tsf = window._traineeStatusFilter||'active';
@@ -33727,6 +33799,7 @@ function exportTraineeXLSX(){
     tr.bank||'',
     tr.bankName||'',
     tr.salary||'',
+    tr.stdWorkDays||'',
     tr.workDays||'',
     tr.notes||'',
   ]);
