@@ -1437,6 +1437,89 @@ function _pushDynamicKey(key, meta){
     return;
   }
 
+  // ── Duty Roster: shard theo year_month (roster_2026_10) ──
+  // Gom dutyRoster + rosterExtras + rosterEmpOrder + rosterDeptOverride vào cùng shard
+  const _rosterKeys = ['dutyRoster','rosterExtras','rosterEmpOrder','rosterDeptOverride'];
+  if(_rosterKeys.includes(key)){
+    window._selfSaveAt = Date.now();
+    const roster = DB.dutyRoster || [];
+    const extras = DB.rosterExtras || {};
+    const empOrder = DB.rosterEmpOrder || {};
+    const deptOverride = DB.rosterDeptOverride || {};
+
+    // Thu thập tất cả year_month shards cần lưu
+    const allShards = new Set();
+    roster.forEach(r => {
+      if(r.year && r.month !== undefined) allShards.add(`${r.year}_${String(r.month).padStart(2,'0')}`);
+    });
+    // Từ rosterExtras keys (format: deptId_YYYY_MM)
+    Object.keys(extras).forEach(k => {
+      const m = k.match(/(\d{4})_(\d{1,2})$/);
+      if(m) allShards.add(`${m[1]}_${String(parseInt(m[2])).padStart(2,'0')}`);
+    });
+    Object.keys(empOrder).forEach(k => {
+      const m = k.match(/(\d{4})_(\d{1,2})$/);
+      if(m) allShards.add(`${m[1]}_${String(parseInt(m[2])).padStart(2,'0')}`);
+    });
+    Object.keys(deptOverride).forEach(k => {
+      const m = k.match(/(\d{4})_(\d{1,2})$/);
+      if(m) allShards.add(`${m[1]}_${String(parseInt(m[2])).padStart(2,'0')}`);
+    });
+    // Đảm bảo tháng hiện tại luôn có shard
+    const _curYM = `${thisYear}_${String(new Date().getMonth()+1).padStart(2,'0')}`;
+    allShards.add(_curYM);
+
+    // Track known shards để xóa shard rỗng (chống resurrection)
+    if(!window._rosterKnownShards) window._rosterKnownShards = new Set();
+
+    allShards.forEach(ym => {
+      window._rosterKnownShards.add(ym);
+      const [yr, mo] = ym.split('_').map(Number);
+      const docId = `roster_${ym}`;
+
+      // Filter roster entries cho shard này
+      const shardRoster = roster.filter(r => r.year === yr && r.month === mo);
+
+      // Filter extras/empOrder/deptOverride keys thuộc shard này (key chứa YYYY_M hoặc YYYY_MM)
+      const _matchYM = (k) => {
+        const m1 = k.match(/(\d{4})_(\d{1,2})$/);
+        return m1 && parseInt(m1[1]) === yr && parseInt(m1[2]) === mo;
+      };
+      const shardExtras = {};
+      Object.entries(extras).forEach(([k,v]) => { if(_matchYM(k)) shardExtras[k] = v; });
+      const shardEmpOrder = {};
+      Object.entries(empOrder).forEach(([k,v]) => { if(_matchYM(k)) shardEmpOrder[k] = v; });
+      const shardDeptOverride = {};
+      Object.entries(deptOverride).forEach(([k,v]) => { if(_matchYM(k)) shardDeptOverride[k] = v; });
+
+      const payload = {
+        ...meta,
+        dutyRoster: shardRoster.map(r => _sanitizeForFirebase(r)),
+        rosterExtras: shardExtras,
+        rosterEmpOrder: shardEmpOrder,
+        rosterDeptOverride: shardDeptOverride,
+        _shard: ym
+      };
+
+      window.fbDb.collection('hrdata').doc(docId)
+        .set(payload, {merge: false})
+        .then(() => console.log(`[saveData] ✅ ${docId}: ${shardRoster.length} entries`))
+        .catch(err => console.error(`[saveData] ❌ ${docId}`, err.message));
+    });
+
+    // Xóa shard đã biết nhưng giờ rỗng
+    window._rosterKnownShards.forEach(ym => {
+      if(!allShards.has(ym)){
+        window.fbDb.collection('hrdata').doc(`roster_${ym}`)
+          .set({...meta, dutyRoster:[], rosterExtras:{}, rosterEmpOrder:{}, rosterDeptOverride:{}, _shard:ym, _deleted:true}, {merge:false})
+          .then(() => console.log(`[saveData] 🗑 Cleared roster shard roster_${ym}`))
+          .catch(() => {});
+        window._rosterKnownShards.delete(ym);
+      }
+    });
+    return;
+  }
+
   if(key === 'leaveSheet'){
     const sheet = DB.leaveSheet || {};
     const allYears = new Set([thisYear]);
@@ -1739,9 +1822,10 @@ function saveData(changedKeys=null){
 
     const dynamicToSave = !keys ? FS_DYNAMIC_KEYS : keys.filter(k=>FS_DYNAMIC_KEYS.includes(k));
     const leaveMetaKeys = ['leaveOpening','leavePlan','leavePlanLocked','salaryYears','trainingExtraYears','leaveExtraYears'];
+    const rosterGroupKeys = ['dutyRoster','rosterExtras','rosterEmpOrder','rosterDeptOverride'];
     const seen = new Set();
     dynamicToSave.forEach(k=>{
-      const canonical = leaveMetaKeys.includes(k) ? 'leaveOpening' : k;
+      const canonical = leaveMetaKeys.includes(k) ? 'leaveOpening' : (rosterGroupKeys.includes(k) ? 'dutyRoster' : k);
       if(!seen.has(canonical)){ seen.add(canonical); _pushDynamicKey(canonical, meta); }
     });
 
@@ -35048,7 +35132,8 @@ fbAuth.onAuthStateChanged(async user => {
             manningPlan:{}, manningActual:{},
             plRevenue:{}, plActionPlan:{}, // 🚨 v24: P&L Review data (bị mất vì cold-load thiếu nhánh pldata_)
             payrollData:{},
-            hrGardenPlan:{}
+            hrGardenPlan:{},
+            dutyRoster:[], rosterExtras:{}, rosterEmpOrder:{}, rosterDeptOverride:{}
           };
           // Precompute: valid jobIds (từ DB.jobs đã load) + tombstone Set
           // Dùng để: (1) filter candidates đã tombstone, (2) detect orphan cand_ shards
@@ -35191,6 +35276,23 @@ fbAuth.onAuthStateChanged(async user => {
                 });
               });
             }
+            // dutyRoster shards: roster_YYYY_MM
+            else if(id.startsWith('roster_') && !d._deleted){
+              if(!window._rosterKnownShards) window._rosterKnownShards = new Set();
+              window._rosterKnownShards.add(id.slice(7)); // e.g. "2026_10"
+              if(Array.isArray(d.dutyRoster)){
+                dynamicAccum.dutyRoster.push(...d.dutyRoster);
+              }
+              if(d.rosterExtras && typeof d.rosterExtras === 'object'){
+                Object.assign(dynamicAccum.rosterExtras, d.rosterExtras);
+              }
+              if(d.rosterEmpOrder && typeof d.rosterEmpOrder === 'object'){
+                Object.assign(dynamicAccum.rosterEmpOrder, d.rosterEmpOrder);
+              }
+              if(d.rosterDeptOverride && typeof d.rosterDeptOverride === 'object'){
+                Object.assign(dynamicAccum.rosterDeptOverride, d.rosterDeptOverride);
+              }
+            }
           });
           const _mergeArr = (key)=>{ if(dynamicAccum[key].length){ 
             // Dedup by id to prevent duplicates from multi-tab saves
@@ -35210,6 +35312,11 @@ fbAuth.onAuthStateChanged(async user => {
           // 🚨 v24: P&L Review data — merge từ pldata_YYYY shards
           if(Object.keys(dynamicAccum.plRevenue).length){ DB.plRevenue=dynamicAccum.plRevenue; hasCloud=true; }
           if(Object.keys(dynamicAccum.plActionPlan).length){ DB.plActionPlan=dynamicAccum.plActionPlan; hasCloud=true; }
+          // Duty Roster: merge từ roster_YYYY_MM shards
+          if(dynamicAccum.dutyRoster.length){ DB.dutyRoster=dynamicAccum.dutyRoster; hasCloud=true; }
+          if(Object.keys(dynamicAccum.rosterExtras).length){ DB.rosterExtras=dynamicAccum.rosterExtras; hasCloud=true; }
+          if(Object.keys(dynamicAccum.rosterEmpOrder).length){ DB.rosterEmpOrder=dynamicAccum.rosterEmpOrder; hasCloud=true; }
+          if(Object.keys(dynamicAccum.rosterDeptOverride).length){ DB.rosterDeptOverride=dynamicAccum.rosterDeptOverride; hasCloud=true; }
           // Migration: đọc doc 'manning' cũ (chưa shard) nếu chưa có data mới
           if(!Object.keys(dynamicAccum.manningPlan).length && !Object.keys(dynamicAccum.manningActual).length){
             try{
@@ -36221,6 +36328,7 @@ fbAuth.onAuthStateChanged(async user => {
           'leavesheet_':     '_leaveSheet',
           'leavemeta_':      '_leaveMeta',
           'pldata_':         '_plData',
+          'roster_':         '_roster',
         };
         const dynamicUnsub = window.fbDb.collection('hrdata')
           .onSnapshot(snap=>{
@@ -36498,12 +36606,58 @@ fbAuth.onAuthStateChanged(async user => {
                     changed = true;
                   });
                 });
+              } else if(key==='_roster'){
+                // roster_YYYY_MM: real-time merge dutyRoster + rosterExtras + rosterEmpOrder + rosterDeptOverride
+                const ym = d._shard; // e.g. "2026_10"
+                if(d._deleted){
+                  // Shard đã bị xóa → remove roster entries cho shard này
+                  if(ym){
+                    const [yr,mo] = ym.split('_').map(Number);
+                    DB.dutyRoster = (DB.dutyRoster||[]).filter(r => !(r.year===yr && r.month===mo));
+                    // Remove extras/empOrder/deptOverride keys thuộc shard
+                    const _matchYM = (k) => { const m=k.match(/(\d{4})_(\d{1,2})$/); return m && parseInt(m[1])===yr && parseInt(m[2])===mo; };
+                    Object.keys(DB.rosterExtras||{}).forEach(k => { if(_matchYM(k)) delete DB.rosterExtras[k]; });
+                    Object.keys(DB.rosterEmpOrder||{}).forEach(k => { if(_matchYM(k)) delete DB.rosterEmpOrder[k]; });
+                    Object.keys(DB.rosterDeptOverride||{}).forEach(k => { if(_matchYM(k)) delete DB.rosterDeptOverride[k]; });
+                  }
+                  changed = true;
+                } else if(ym){
+                  const [yr,mo] = ym.split('_').map(Number);
+                  // Merge dutyRoster: thay toàn bộ entries của shard year+month này
+                  if(Array.isArray(d.dutyRoster)){
+                    DB.dutyRoster = [
+                      ...(DB.dutyRoster||[]).filter(r => !(r.year===yr && r.month===mo)),
+                      ...d.dutyRoster
+                    ];
+                  }
+                  // Merge rosterExtras: replace keys thuộc shard, giữ keys khác
+                  if(d.rosterExtras && typeof d.rosterExtras === 'object'){
+                    // Xóa keys cũ thuộc shard
+                    const _matchYM = (k) => { const m=k.match(/(\d{4})_(\d{1,2})$/); return m && parseInt(m[1])===yr && parseInt(m[2])===mo; };
+                    if(!DB.rosterExtras) DB.rosterExtras = {};
+                    Object.keys(DB.rosterExtras).forEach(k => { if(_matchYM(k)) delete DB.rosterExtras[k]; });
+                    Object.assign(DB.rosterExtras, d.rosterExtras);
+                  }
+                  if(d.rosterEmpOrder && typeof d.rosterEmpOrder === 'object'){
+                    const _matchYM = (k) => { const m=k.match(/(\d{4})_(\d{1,2})$/); return m && parseInt(m[1])===yr && parseInt(m[2])===mo; };
+                    if(!DB.rosterEmpOrder) DB.rosterEmpOrder = {};
+                    Object.keys(DB.rosterEmpOrder).forEach(k => { if(_matchYM(k)) delete DB.rosterEmpOrder[k]; });
+                    Object.assign(DB.rosterEmpOrder, d.rosterEmpOrder);
+                  }
+                  if(d.rosterDeptOverride && typeof d.rosterDeptOverride === 'object'){
+                    const _matchYM = (k) => { const m=k.match(/(\d{4})_(\d{1,2})$/); return m && parseInt(m[1])===yr && parseInt(m[2])===mo; };
+                    if(!DB.rosterDeptOverride) DB.rosterDeptOverride = {};
+                    Object.keys(DB.rosterDeptOverride).forEach(k => { if(_matchYM(k)) delete DB.rosterDeptOverride[k]; });
+                    Object.assign(DB.rosterDeptOverride, d.rosterDeptOverride);
+                  }
+                  changed = true;
+                }
               }
             });
             if(!changed) return;
             clearTimeout(window._dynamicDebounce);
             window._dynamicDebounce = setTimeout(()=>{
-              const pages = ['awards','warnings','performance','leaves','recruitment','job-detail','dashboard','manning','analytics'];
+              const pages = ['awards','warnings','performance','leaves','recruitment','job-detail','dashboard','manning','analytics','dutyRoster'];
               const modalOpen = document.getElementById('modal')?.classList.contains('open');
               if(modalOpen){
                 if(!window._pendingRender) window._pendingRender={};
