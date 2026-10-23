@@ -6171,18 +6171,24 @@ function renderDashboard(main){
   if(!DB.dashboardConfig) DB.dashboardConfig = {kpis: [...DEFAULT_DASHBOARD_KPIS]};
   const cfg = DB.dashboardConfig;
 
-  // empPool: dùng toàn bộ NV, tính KPI từ đây
-  // Không filter pool theo status — chỉ dùng status filter để highlight/context
-  const allActive   = DB.employees.filter(e => ['active','leave'].includes(getEffectiveStatus(e)));
-  const allProbation= DB.employees.filter(e => getEffectiveStatus(e) === 'probation');
-  const allExit     = DB.employees.filter(e => getEffectiveStatus(e) === 'exit');
-  const allWorking  = DB.employees.filter(e => getEffectiveStatus(e) !== 'exit'); // active+probation+leave
+  // Per-department permission filter for Dashboard
+  const _dashDepts = window._dashAllowedDepts ? window._dashAllowedDepts() : [];
+  const _dashDeptFilter = _dashDepts.length > 0
+    ? (e => _dashDepts.includes(e.deptId))
+    : (e => true);
+  const _deptFilteredEmps = DB.employees.filter(_dashDeptFilter);
+
+  // empPool: dùng toàn bộ NV (đã lọc theo BP), tính KPI từ đây
+  const allActive   = _deptFilteredEmps.filter(e => ['active','leave'].includes(getEffectiveStatus(e)));
+  const allProbation= _deptFilteredEmps.filter(e => getEffectiveStatus(e) === 'probation');
+  const allExit     = _deptFilteredEmps.filter(e => getEffectiveStatus(e) === 'exit');
+  const allWorking  = _deptFilteredEmps.filter(e => getEffectiveStatus(e) !== 'exit'); // active+probation+leave
 
   // filteredPool theo status dropdown
   let filteredPool;
   if(p.status === 'exit')   filteredPool = allExit;
   else if(p.status === 'active') filteredPool = allWorking; // đang làm = active+probation+leave
-  else                      filteredPool = DB.employees;
+  else                      filteredPool = _deptFilteredEmps;
 
   // KPI cố định (luôn tính từ toàn bộ)
   const totalEmp    = allWorking.length;   // Tổng NV = đang làm + thử việc (không tính đã nghỉ)
@@ -6190,14 +6196,14 @@ function renderDashboard(main){
   const probationEmp= allProbation.length; // Thử việc
   const exitEmp     = allExit.length;      // Đã nghỉ
 
-  const newHires = DB.employees.filter(e => {
+  const newHires = _deptFilteredEmps.filter(e => {
     if(!e.joined) return false;
     const d = _parseAnyDate(e.joined);
     if(!d) return false;
     return d.getMonth() + 1 === p.month && d.getFullYear() === p.year;
   }).length;
 
-  const exits = DB.employees.filter(e => {
+  const exits = _deptFilteredEmps.filter(e => {
     if(e.status !== 'exit') return false;
     const cd = DB.customData[e.id] || {};
     if(!cd.exitDate) return false;
@@ -6285,7 +6291,7 @@ function renderDashboard(main){
   };
 
   const yearsSet = new Set([p.year, today.getFullYear()]);
-  DB.employees.forEach(e => {
+  _deptFilteredEmps.forEach(e => {
     if(e.joined) yearsSet.add(new Date(e.joined).getFullYear());
   });
   const yearsList = [...yearsSet].sort();
@@ -6314,7 +6320,7 @@ function renderDashboard(main){
       <div class="card-head">
         <div>
           <div class="card-title">🗓 Tổng quan <em>Legacy Yên Tử</em></div>
-          <div class="card-sub">Chọn tháng/năm để xem snapshot dữ liệu thời điểm đó</div>
+          <div class="card-sub">Chọn tháng/năm để xem snapshot dữ liệu thời điểm đó${_dashDepts.length>0 ? ' · <span style="color:var(--accent);font-weight:600">🔒 ' + _dashDepts.map(did=>(DB.departments||[]).find(d=>d.id===did)?.name||did).join(', ') + '</span>':''}</div>
         </div>
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
           <select class="filter-select" onchange="setDashPeriod('month', parseInt(this.value))">
@@ -6356,7 +6362,7 @@ function renderDashboard(main){
       ${(()=>{
         const _today = new Date(); _today.setHours(0,0,0,0);
         const _todayM = _today.getMonth()+1, _todayD = _today.getDate();
-        const working = DB.employees.filter(e=>getEffectiveStatus(e)!=='exit');
+        const working = _deptFilteredEmps.filter(e=>getEffectiveStatus(e)!=='exit');
         const getLvl = (e)=>{
           const cd = DB.customData[e.id]||{};
           const n = parseInt(cd.levelNum||e.level);
@@ -6436,7 +6442,7 @@ function renderDashboard(main){
       <!-- CONTRACT EXPIRY ALERT WIDGET -->
       ${(()=>{
         const _today = new Date(); _today.setHours(0,0,0,0);
-        const working = DB.employees.filter(e=>getEffectiveStatus(e)!=='exit');
+        const working = _deptFilteredEmps.filter(e=>getEffectiveStatus(e)!=='exit');
         const alerts = [];
 
         working.forEach(e=>{
@@ -6929,6 +6935,7 @@ function renderDashboard(main){
   `;
 
   window._dashFilteredPool = filteredPool;
+  window._dashDeptFilteredEmps = _deptFilteredEmps;
   window._dashAllEmps = DB.employees;
   setTimeout(()=>{ renderDashboardCharts(); setTimeout(renderKpiMiniCharts, 50); setTimeout(renderDashCombos, 60); }, 320);
 }
@@ -6960,21 +6967,22 @@ function renderKpiMiniCharts(){
     return '#7eb6e8';
   };
 
+  const _kpiEmps = window._dashDeptFilteredEmps || DB.employees;
   const buildData = (k) => {
     const yr = p.year;
     const mn = Array.from({length:12},(_,i)=>i+1);
     switch(k){
-      case 'newHires': return mn.map(m=>DB.employees.filter(e=>{ const d=_parseAnyDate(e.joined||''); return d&&d.getFullYear()===yr&&d.getMonth()+1===m; }).length);
-      case 'exits': return mn.map(m=>DB.employees.filter(e=>{ if(e.status!=='exit') return false; const cd=DB.customData[e.id]||{}; if(!cd.exitDate) return false; const d=_parseAnyDate(cd.exitDate); return d&&d.getFullYear()===yr&&d.getMonth()+1===m; }).length);
+      case 'newHires': return mn.map(m=>_kpiEmps.filter(e=>{ const d=_parseAnyDate(e.joined||''); return d&&d.getFullYear()===yr&&d.getMonth()+1===m; }).length);
+      case 'exits': return mn.map(m=>_kpiEmps.filter(e=>{ if(e.status!=='exit') return false; const cd=DB.customData[e.id]||{}; if(!cd.exitDate) return false; const d=_parseAnyDate(cd.exitDate); return d&&d.getFullYear()===yr&&d.getMonth()+1===m; }).length);
       case 'casualThisMonth': case 'casualYTD': return mn.map(m=>(DB.casuals||[]).filter(r=>r.year===yr&&r.month===m).reduce((s,r)=>s+(r.qty||0),0));
       case 'casualCostMonth': return mn.map(m=>Math.round((DB.casuals||[]).filter(r=>r.year===yr&&r.month===m).reduce((s,r)=>s+(r.total||0),0)/1e6));
       case 'newCandidates': return mn.map(m=>(DB.candidates||[]).filter(c=>{ const d=new Date(c.appliedDate||c.date||''); return d.getFullYear()===yr&&d.getMonth()+1===m; }).length);
       case 'hiredThisMonth': return mn.map(m=>(DB.candidates||[]).filter(c=>{ const d=new Date(c.hiredDate||''); return c.status==='hired'&&d.getFullYear()===yr&&d.getMonth()+1===m; }).length);
       case 'promotionsMonth': return mn.map(m=>(DB.promotions||[]).filter(pr=>{ const d=new Date(pr.effectiveDate||pr.date||''); return pr.status==='completed'&&d.getFullYear()===yr&&d.getMonth()+1===m; }).length);
       case 'traineeActive': return mn.map(m=>{ const ms=yr+'-'+String(m).padStart(2,'0')+'-15'; return (DB.traineeSchedules||[]).filter(s=>s.startDate<=ms&&(!s.endDate||s.endDate>=ms)).reduce((n,s)=>n+(parseInt(s.qty)||0),0); });
-      case 'totalSalary': return mn.map(m=>{ const pool=DB.employees.filter(e=>getEffectiveStatus(e)!=='exit'); return Math.round(pool.reduce((s,e)=>{ const cd=DB.customData[e.id]||{}; return s+(parseInt(cd.baseSalary)||0)+(parseInt(cd.bonusSalary)||0); },0)/1e6); });
-      case 'totalEmp': return mn.map(m=>DB.employees.filter(e=>{ if(!e.joined) return false; return new Date(e.joined)<=new Date(yr,m,0); }).length);
-      case 'birthMonth': return mn.map(m=>DB.employees.filter(e=>e.dob&&_parseDob(e.dob).getMonth()+1===m).length);
+      case 'totalSalary': return mn.map(m=>{ const pool=_kpiEmps.filter(e=>getEffectiveStatus(e)!=='exit'); return Math.round(pool.reduce((s,e)=>{ const cd=DB.customData[e.id]||{}; return s+(parseInt(cd.baseSalary)||0)+(parseInt(cd.bonusSalary)||0); },0)/1e6); });
+      case 'totalEmp': return mn.map(m=>_kpiEmps.filter(e=>{ if(!e.joined) return false; return new Date(e.joined)<=new Date(yr,m,0); }).length);
+      case 'birthMonth': return mn.map(m=>_kpiEmps.filter(e=>e.dob&&_parseDob(e.dob).getMonth()+1===m).length);
       default: return mn.map(()=>0);
     }
   };
@@ -7430,13 +7438,16 @@ function renderDashboardCharts(){
 
   const todaySnap = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
 
+  // Dùng _deptFilteredEmps cho biểu đồ biến động (lọc theo BP phân quyền)
+  const _chartEmps = window._dashDeptFilteredEmps || DB.employees;
+
   const headcountData = months.map(m=>{
     if(isFuture(m)) return null;
     const isCurrentMonth = m.getFullYear() === todayY && m.getMonth()+1 === todayM;
     const snap = isCurrentMonth
       ? todaySnap
       : new Date(m.getFullYear(), m.getMonth()+1, 0, 23, 59, 59); // ngày cuối tháng
-    return DB.employees.filter(e => {
+    return _chartEmps.filter(e => {
       if(!e.joined) return false;
       const _jd=_parseAnyDate(e.joined); if(!_jd||_jd > snap) return false;
       const exitD = getExitDate(e);
@@ -7448,7 +7459,7 @@ function renderDashboardCharts(){
 
   const newHiresData = months.map(m=>{
     if(isFuture(m)) return null;
-    return DB.employees.filter(e => {
+    return _chartEmps.filter(e => {
       if(!e.joined) return false;
       const d = _parseAnyDate(e.joined);
       if(!d) return false;
@@ -7458,7 +7469,7 @@ function renderDashboardCharts(){
 
   const exitsData = months.map(m=>{
     if(isFuture(m)) return null;
-    return DB.employees.filter(e => {
+    return _chartEmps.filter(e => {
       if(e.status !== 'exit') return false;
       const cd = DB.customData[e.id]||{};
       if(!cd.exitDate) return false;
@@ -7514,7 +7525,7 @@ function renderDashboardCharts(){
   });
 
   const pool    = window._dashFilteredPool || DB.employees;
-  const allEmps = DB.employees; // luôn dùng toàn bộ cho trend biến động
+  const allEmps = window._dashDeptFilteredEmps || DB.employees; // lọc theo BP phân quyền
 
   const deptCounts = DB.departments.map(d => pool.filter(e=>e.deptId===d.id).length);
   const deptLabels = DB.departments.map((d,i) => d.name + ' (' + deptCounts[i] + ')');
@@ -7725,7 +7736,7 @@ function renderDashboardCharts(){
     const ha_u25=[],ha_2529=[],ha_3049=[],ha_50=[];
     for(let m=1;m<=12;m++){
       let u25=0,a2529=0,a3049=0,a50p=0;
-      (DB.employees||[]).forEach(e=>{
+      (_chartEmps||[]).forEach(e=>{
         if(!e.joined) return;
         const jd=_parseAnyDate(e.joined); if(!jd||isNaN(jd)) return;
         if(jd.getFullYear()!==_yr || jd.getMonth()+1!==m) return;
@@ -8002,7 +8013,7 @@ function renderDashboardCharts(){
       if(isFut2(mi)) return null;
       const mEnd = new Date(yr2, mi+1, 0); // cuối tháng
       let total = 0;
-      (DB.employees||[]).forEach(e=>{
+      (_chartEmps||[]).forEach(e=>{
         // Consistent với Salary page: NV không có joined → vẫn tính (coi như đã có mặt)
         if(e.joined && new Date(e.joined) > mEnd) return;
         // Chỉ tính NV đang làm (status != exit)
@@ -8025,7 +8036,7 @@ function renderDashboardCharts(){
   if(salDeptAvgEl && !hiddenCharts.has('salaryDeptAvg')){
     if(Chart.getChart(salDeptAvgEl)) Chart.getChart(salDeptAvgEl).destroy();
     const deptAvg = DB.departments.map(d=>{
-      const emps = (DB.employees||[]).filter(e=>e.deptId===d.id&&getEffectiveStatus(e)!=='exit');
+      const emps = (_chartEmps||[]).filter(e=>e.deptId===d.id&&getEffectiveStatus(e)!=='exit');
       if(!emps.length) return {name:d.name, avg:0};
       const total = emps.reduce((s,e)=>{
         const cd = (DB.customData||{})[e.id]||{};
@@ -8125,7 +8136,7 @@ function renderDashboardCharts(){
       if(mi > _curMonth){ outData.push(null); transData.push(null); dormData.push(null); continue; }
       const mEnd = new Date(_p.year, mi+1, 0);
       let op=0,tr=0,dm=0;
-      DB.employees.forEach(e=>{
+      _chartEmps.forEach(e=>{
         const jd=_parseAnyDate(e.joined);
         if(!jd||jd>mEnd) return;
         if(e.status==='exit'){const ed=cd[e.id]||{};const xd=_parseAnyDate(ed.exitDate);if(xd&&xd<=mEnd)return;}
@@ -27781,6 +27792,19 @@ window._rosterCanAccessDept = function(deptId){
   return allowed.includes(deptId);
 };
 
+// Dashboard per-department permission helpers
+window._dashAllowedDepts = function(){
+  if(window.isAdmin()) return []; // empty = all
+  const perms = window.currentUserData?.permissions || {};
+  const dashPerm = perms.dashboard || 'none';
+  if(dashPerm === 'full') return []; // full = all depts
+  const deptList = perms.dashboardDepts;
+  if(Array.isArray(deptList) && deptList.length > 0) return deptList;
+  // No deptList and not full → fallback: user's own department
+  const ownDept = window.currentUserData?.deptId;
+  return ownDept ? [ownDept] : [];
+};
+
 // ── Drag & Drop reorder employees ──
 function _rDragStart(ev, empId, deptId){
   ev.dataTransfer.setData('text/plain', empId+'|'+deptId);
@@ -28445,6 +28469,24 @@ window.openAccountModal = async function(uid=null){
           </select>
         </td>
       </tr>` : '')
+    + (m.key==='dashboard' ? (()=>{
+      const deptsCur = DB.departments||[];
+      const savedDepts = perms.dashboardDepts || [];
+      const deptCheckboxes = deptsCur.map(d=>{
+        const checked = savedDepts.includes(d.id) ? 'checked' : '';
+        return `<label style="display:inline-flex;align-items:center;gap:4px;margin:3px 8px 3px 0;font-size:12px;cursor:pointer"><input type="checkbox" class="_permDashDeptCb" value="${d.id}" ${checked} onchange="document.getElementById('_permDashDeptAll').checked=document.querySelectorAll('._permDashDeptCb:not(:checked)').length===0" style="accent-color:var(--accent)"> ${escapeHtml(d.name)}</label>`;
+      }).join('');
+      const allChecked = deptsCur.length>0 && savedDepts.length>=deptsCur.length;
+      return `<tr id="dashboardDeptsRow" style="display:${cur==='none'||cur==='full'?'none':''}">
+        <td colspan="2" style="padding:8px 14px;padding-left:28px">
+          <div style="font-size:11px;color:var(--ink-muted);margin-bottom:6px">└ Phân quyền theo <strong>Bộ phận</strong> <span style="font-size:10px">(bỏ trống = xem tất cả BP)</span></div>
+          <div style="display:flex;flex-wrap:wrap;gap:2px;padding:6px 10px;background:var(--bg-elev);border-radius:6px;border:1px solid var(--border)">
+            <label style="display:inline-flex;align-items:center;gap:4px;margin:3px 10px 3px 0;font-size:12px;font-weight:600;cursor:pointer;color:var(--accent)"><input type="checkbox" id="_permDashDeptAll" ${allChecked?'checked':''} onchange="_toggleAllDashDeptCb(this.checked)" style="accent-color:var(--accent)"> Tất cả</label>
+            ${deptCheckboxes}
+          </div>
+        </td>
+      </tr>`;
+    })() : '')
     + (m.key==='dutyRoster' ? (()=>{
       const deptsCur = DB.departments||[];
       const savedDepts = perms.dutyRosterDepts || [];
@@ -28514,6 +28556,10 @@ window.onPermChange = function(module, val){
     const rrow = document.getElementById('recruitmentInfoRow');
     if(rrow) rrow.style.display = val==='none' ? 'none' : '';
   }
+  if(module === 'dashboard'){
+    const deptRow = document.getElementById('dashboardDeptsRow');
+    if(deptRow) deptRow.style.display = (val==='view'||val==='edit') ? '' : 'none';
+  }
   if(module === 'dutyRoster'){
     const deptRow = document.getElementById('dutyRosterDeptsRow');
     // Show dept checkboxes only for view/edit (not none, not full)
@@ -28525,6 +28571,9 @@ window.onPermChange = function(module, val){
 window._toggleAllDeptCb = function(checked){
   document.querySelectorAll('._permDeptCb').forEach(cb=>{ cb.checked = checked; });
 };
+window._toggleAllDashDeptCb = function(checked){
+  document.querySelectorAll('._permDashDeptCb').forEach(cb=>{ cb.checked = checked; });
+};
 
 window.saveAccount = async function(uid){
   const perms = {};
@@ -28535,6 +28584,11 @@ window.saveAccount = async function(uid){
   // perm_salary is now in MODULE_LIST, read via perm_salary select
   const recInfoEl = document.getElementById('perm_recruitmentInfo');
   if(recInfoEl) perms.recruitmentInfo = recInfoEl.value;
+  // Per-department permissions for Dashboard
+  const dashDeptCbs = document.querySelectorAll('._permDashDeptCb:checked');
+  const dashboardDepts = Array.from(dashDeptCbs).map(cb=>cb.value);
+  if(dashboardDepts.length > 0) perms.dashboardDepts = dashboardDepts;
+  else delete perms.dashboardDepts;
   // Per-department permissions for Duty Roster
   const deptCbs = document.querySelectorAll('._permDeptCb:checked');
   const dutyRosterDepts = Array.from(deptCbs).map(cb=>cb.value);
@@ -33793,6 +33847,34 @@ function viewTrainee(id){
   const daysTag = daysLeft!==null && daysLeft>=0 && daysLeft<=14
     ? `<span style="font-size:11px;color:var(--warning);margin-left:8px">⚠ còn ${daysLeft} ngày</span>` : '';
 
+  // --- Tính ngày công thực tế từ Duty Roster ---
+  const _trRosterId = 'tr_' + tr.id;
+  const _trScMap = {};
+  (DB.shiftCodes||[]).forEach(sc=>{ _trScMap[sc.code] = sc; });
+  const _trNow = new Date();
+  const _trMo = _trNow.getMonth() + 1, _trYr = _trNow.getFullYear();
+  const _trDaysInMonth = new Date(_trYr, _trMo, 0).getDate();
+  const _trRosterData = {};
+  (DB.dutyRoster||[]).forEach(r=>{
+    if(r.year===_trYr && r.month===_trMo && r.empId===_trRosterId){
+      _trRosterData[r.day] = r.shiftCode;
+    }
+  });
+  let _trActualWorkDays = 0;
+  for(let d=1; d<=_trDaysInMonth; d++){
+    const code = _trRosterData[d];
+    if(code){
+      const sc = _trScMap[code];
+      if(sc){
+        const wv = sc.workValue!=null ? parseFloat(sc.workValue) : (sc.hours ? parseFloat(sc.hours)/8 : 1);
+        _trActualWorkDays += wv || 0;
+      }
+    }
+  }
+  const _trWorkDaysDisplay = _trActualWorkDays > 0
+    ? _trActualWorkDays + ' ngày <span style="font-size:10px;color:var(--ink-muted)">(tháng ' + _trMo + '/' + _trYr + ' · từ Bảng Công)</span>'
+    : (tr.workDays ? tr.workDays + ' ngày <span style="font-size:10px;color:var(--ink-muted)">(nhập tay)</span>' : '');
+
   openModal(`
     <div class="modal-head" style="padding-bottom:0">
       <div style="display:flex;align-items:center;gap:14px;margin-bottom:14px">
@@ -33821,7 +33903,7 @@ function viewTrainee(id){
       ${row((_lang==="en"?"Banking":"Ngân hàng"), escapeHtml(tr.bankName||''))}
       ${tr.salary ? row('Thù lao / Trợ cấp', new Intl.NumberFormat('vi-VN').format(tr.salary) + ' VNĐ') : ''}
       ${tr.stdWorkDays ? row('Ngày công TC/tháng', tr.stdWorkDays + ' ngày') : ''}
-      ${tr.workDays ? row('Ngày công thực tế', tr.workDays + ' ngày') : ''}
+      ${_trWorkDaysDisplay ? row('Ngày công thực tế', _trWorkDaysDisplay) : ''}
       ${tr.notes ? row((_lang==="en"?"Notes":"Ghi chú"), `<span style="color:var(--ink-muted);font-style:italic">${escapeHtml(tr.notes)}</span>`) : ''}
     </div>
     <div class="modal-actions">
