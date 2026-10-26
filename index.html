@@ -6241,6 +6241,11 @@ window._plExportManningPNG = function(){
 };
 
 function renderDashboard(main){
+  // 🛡️ Permission check — ẩn Dashboard nếu user bị chặn quyền xem
+  if(!window.isAdmin() && (window.currentUserData?.permissions?.dashboard === 'none')){
+    main.innerHTML='<div class="topbar"><div class="topbar-left"><h1 class="page-title">Không có quyền truy cập</h1></div></div>';
+    return;
+  }
   const today = new Date();
 
   if(!window._dashPeriod){
@@ -27305,7 +27310,7 @@ function _renderRosterGrid(container, isAdm){
       id: 'tr_'+tr.id, code: tr.code||'', name: tr.name||'',
       deptId: tr.deptId||'', role: 'Thực tập sinh',
       status: 'active', _isTrainee: true, _school: tr.school||'',
-      _trStdWD: tr.stdWorkDays!=null && tr.stdWorkDays!==0 ? tr.stdWorkDays : ''
+      _trStdWD: (tr.stdWorkDays!=null && tr.stdWorkDays!=='' && tr.stdWorkDays!==0) ? parseFloat(tr.stdWorkDays)||'' : ''
     });
   });
 
@@ -27432,10 +27437,19 @@ function _renderRosterGrid(container, isAdm){
   let globalIdx = 0;
   const allScCodes = (DB.shiftCodes||[]).map(s=>s.code);
   // Pre-scan: find which shift codes are actually used this month
+  // Support compound codes: "X/OFF" → add both "X" and "OFF" as used
   const usedCodesSet = new Set();
   emps.forEach(e=>{
     const rd = rosterData[e.id]||{};
-    for(let d=1;d<=daysInMonth;d++){ if(rd[d]) usedCodesSet.add(rd[d]); }
+    for(let d=1;d<=daysInMonth;d++){
+      if(rd[d]){
+        if(rd[d].includes('/')){
+          rd[d].split('/').map(p=>p.trim()).filter(Boolean).forEach(p=>usedCodesSet.add(p));
+        } else {
+          usedCodesSet.add(rd[d]);
+        }
+      }
+    }
   });
   const scCodes = allScCodes.filter(c=>usedCodesSet.has(c));
   // STT + MÃ NV + HỌ TÊN + BỘ PHẬN + CHỨC DANH + CÔNG TC + TỒN AL + TỒN CL = 8
@@ -27469,12 +27483,8 @@ function _renderRosterGrid(container, isAdm){
       let dayCells = '';
       for(let d=1;d<=daysInMonth;d++){
         const val = rd[d] || '';
-        const sc = scMap[val];
-        let bg, fg;
-        if(sc){ bg=sc.color||'transparent'; fg=sc.textColor||'var(--ink)'; }
-        else if(val==='AL'){ bg='#2d6a4f'; fg='#b7e4c7'; }
-        else if(val==='CL'){ bg='#1d3557'; fg='#a8dadc'; }
-        else { bg='transparent'; fg='var(--ink-dim)'; }
+        const resolved = _scResolve(val, scMap);
+        const bg = resolved.bg, fg = resolved.fg;
         // Check if this is an auto-filled AL/CL from leave system
         const isAutoLeave = alClDays[e.id] && alClDays[e.id][d] && !((DB.dutyRoster||[]).find(r=>r.empId===e.id&&r.year===yr&&r.month===mo&&r.day===d));
         const autoBorder = isAutoLeave ? 'outline:1px dashed var(--accent);outline-offset:-1px;' : '';
@@ -27486,34 +27496,47 @@ function _renderRosterGrid(container, isAdm){
             title="${val?(isAutoLeave?'Tự động từ phép':''):'Kéo chuột để điền nhanh'}">${val}</td>`;
         } else if(canEditThisRow){
           dayCells += `<td style="padding:0;border:1px solid var(--border);min-width:38px;text-align:center;${autoBorder}" title="${isAutoLeave?'Tự động từ phép duyệt':''}">
-            <select onchange="_rosterSetCell('${e.id}',${yr},${mo},${d},this.value)" onkeydown="if(event.key==='Delete'||event.key==='Backspace'){this.value='';_rosterSetCell('${e.id}',${yr},${mo},${d},'');event.preventDefault()}" style="width:100%;padding:4px 0;border:none;background:${bg};color:${fg};font-size:11px;font-weight:700;font-family:'JetBrains Mono',monospace;text-align:center;cursor:pointer;-webkit-appearance:none;appearance:none">
-              <option value=""></option>${(DB.shiftCodes||[]).map(sc2=>`<option value="${sc2.code}" ${val===sc2.code?'selected':''}>${sc2.code}</option>`).join('')}
-            </select>
+            <input type="text" list="_scDataList" value="${escapeHtml(val)}"
+              onchange="_rosterSetCell('${e.id}',${yr},${mo},${d},this.value.toUpperCase().trim())"
+              onkeydown="if(event.key==='Enter'){this.blur()}"
+              style="width:100%;padding:4px 0;border:none;background:${bg};color:${fg};font-size:11px;font-weight:700;font-family:'JetBrains Mono',monospace;text-align:center;cursor:pointer;box-sizing:border-box;outline:none"
+              maxlength="15" autocomplete="off">
           </td>`;
         } else {
           dayCells += `<td style="padding:4px 2px;border:1px solid var(--border);min-width:38px;text-align:center;background:${bg};color:${fg};font-size:11px;font-weight:700;font-family:'JetBrains Mono',monospace;${autoBorder}">${val}</td>`;
         }
       }
 
-      // Summary per employee
+      // Summary per employee — compound codes split by "/"
       const counts = {};
       let totalWork = 0;
       for(let d=1;d<=daysInMonth;d++){
         const v = rd[d];
         if(v){
-          counts[v] = (counts[v]||0) + 1;
-          deptCounts[v] = (deptCounts[v]||0) + 1;
-          const sc2 = scMap[v];
-          if(sc2){ totalWork += (sc2.workValue||0); deptTotalWork += (sc2.workValue||0); }
+          const resolved = _scResolve(v, scMap);
+          totalWork += (resolved.workValue||0);
+          deptTotalWork += (resolved.workValue||0);
+          if(resolved.isCompound){
+            // Split compound: each part gets fractional count (1/N)
+            const fraction = 1 / resolved.parts.length;
+            resolved.parts.forEach(p=>{
+              counts[p] = (counts[p]||0) + fraction;
+              deptCounts[p] = (deptCounts[p]||0) + fraction;
+            });
+          } else {
+            counts[v] = (counts[v]||0) + 1;
+            deptCounts[v] = (deptCounts[v]||0) + 1;
+          }
         }
       }
       const countCells = scCodes.map((code,i)=>{
         const cnt = counts[code]||0;
-        return `<td style="padding:4px 2px;text-align:center;font-size:10px;font-family:'JetBrains Mono',monospace;color:${cnt?'var(--ink)':'var(--ink-muted)'};font-weight:${cnt?'700':'400'};border:1px solid var(--border)${i===0?';border-left:3px solid var(--accent)':''}">${cnt||''}</td>`;
+        const cntDisp = cnt ? (cnt%1 ? cnt.toFixed(1) : cnt) : '';
+        return `<td style="padding:4px 2px;text-align:center;font-size:10px;font-family:'JetBrains Mono',monospace;color:${cnt?'var(--ink)':'var(--ink-muted)'};font-weight:${cnt?'700':'400'};border:1px solid var(--border)${i===0?';border-left:3px solid var(--accent)':''}">${cntDisp}</td>`;
       }).join('');
 
       // CÔNG TC: customData first, then trainee record fallback
-      const stdWD = (cd.stdWorkDays!=null && cd.stdWorkDays!=='') ? cd.stdWorkDays : (e._trStdWD || '');
+      const stdWD = (cd.stdWorkDays!=null && cd.stdWorkDays!=='') ? (parseFloat(cd.stdWorkDays)||cd.stdWorkDays) : (e._trStdWD || '');
       // AL/CL Tồn còn lại from Leave module (calcLeaveTotals)
       let alBal = 0, clBal = 0;
       try {
@@ -27545,7 +27568,8 @@ function _renderRosterGrid(container, isAdm){
     // ── Department subtotal row ──
     const subCells = scCodes.map((code,i)=>{
       const cnt = deptCounts[code]||0;
-      return `<td style="padding:4px 2px;text-align:center;font-size:10px;font-family:'JetBrains Mono',monospace;font-weight:700;color:${cnt?'var(--accent)':'var(--ink-muted)'};background:var(--bg-elev);border:1px solid var(--border)${i===0?';border-left:3px solid var(--accent)':''}">${cnt||''}</td>`;
+      const cntDisp = cnt ? (cnt%1 ? cnt.toFixed(1) : cnt) : '';
+      return `<td style="padding:4px 2px;text-align:center;font-size:10px;font-family:'JetBrains Mono',monospace;font-weight:700;color:${cnt?'var(--accent)':'var(--ink-muted)'};background:var(--bg-elev);border:1px solid var(--border)${i===0?';border-left:3px solid var(--accent)':''}">${cntDisp}</td>`;
     }).join('');
     // Empty day cells for subtotal
     let subDayCells = '';
@@ -27592,7 +27616,8 @@ function _renderRosterGrid(container, isAdm){
     ${pinnedBtns}
     ${moreBtnHTML}
     <button onclick="window._rosterCopy={active:true,code:''};render()" style="padding:3px 8px;border-radius:4px;font-size:11px;cursor:pointer;border:1px solid var(--border);background:var(--bg-card);color:var(--ink-muted);margin-left:4px" title="Xóa mã ca">✕ Xóa</button>
-    ${copyActive?`<span style="font-size:11px;color:var(--accent);font-weight:700;margin-left:8px">🖊 Đang chọn: <span style="background:${scMap[copyCode]?.color||'var(--bg-elev)'};color:${scMap[copyCode]?.textColor||'var(--ink)'};padding:2px 8px;border-radius:4px;font-family:'JetBrains Mono',monospace">${copyCode||'⌫'}</span> — Click hoặc KÉO CHUỘT để điền</span>
+    <button onclick="_rosterCompoundFill()" style="padding:3px 8px;border-radius:4px;font-size:11px;cursor:pointer;border:1px dashed var(--accent);background:transparent;color:var(--accent);font-weight:600" title="Ghép 2 mã ca, vd: X/OFF">✂ Ghép ca</button>
+    ${copyActive?`<span style="font-size:11px;color:var(--accent);font-weight:700;margin-left:8px">🖊 Đang chọn: <span style="background:${(()=>{const r=_scResolve(copyCode,scMap);return r.bg;})()};color:${(()=>{const r=_scResolve(copyCode,scMap);return r.fg;})()};padding:2px 8px;border-radius:4px;font-family:'JetBrains Mono',monospace">${copyCode||'⌫'}</span> — Click hoặc KÉO CHUỘT để điền</span>
     <button onclick="window._rosterCopy={active:false,code:''};render()" style="padding:3px 10px;border-radius:4px;font-size:11px;cursor:pointer;border:1px solid var(--danger);background:transparent;color:var(--danger);margin-left:auto">Tắt</button>`:'<span style="font-size:10px;color:var(--ink-dim)">Chọn mã ca → click hoặc kéo chuột qua các ô để điền nhanh</span>'}
   </div>`;
 
@@ -27620,6 +27645,7 @@ function _renderRosterGrid(container, isAdm){
         <button onclick="_rosterDoZoom(0)" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg-card);color:var(--ink-muted);cursor:pointer" title="Reset 100%">Reset</button>
       </div>
       <div id="_rosterTableWrap" style="overflow-x:auto;max-height:80vh;overflow-y:auto">
+        <datalist id="_scDataList">${(DB.shiftCodes||[]).map(sc2=>`<option value="${sc2.code}">${sc2.code} — ${escapeHtml(sc2.name||'')}</option>`).join('')}</datalist>
         <table style="border-collapse:collapse;font-size:12px;min-width:100%">
           <thead>
             <tr style="background:var(--bg-elev);position:sticky;top:0;z-index:5">
@@ -27646,6 +27672,32 @@ function _renderRosterGrid(container, isAdm){
     const wrap = document.getElementById('_rosterTableWrap');
     if(wrap){ wrap.style.transform=`scale(${window._rosterZoomLvl/100})`;wrap.style.transformOrigin='top left';wrap.style.width=(10000/window._rosterZoomLvl)+'%'; }
   }
+}
+
+// ── Compound shift code resolver ──
+// Handles "X/OFF", "S/OFF", etc. — splits by "/" and averages workValue
+function _scResolve(val, scMap){
+  if(!val) return {bg:'transparent', fg:'var(--ink-dim)', workValue:0, parts:[], isCompound:false};
+  if(val.includes('/')){
+    const parts = val.split('/').map(p=>p.trim()).filter(Boolean);
+    if(parts.length >= 2){
+      let totalWV = 0, validParts = 0;
+      let bg1 = null, fg1 = null;
+      parts.forEach((p,i) => {
+        const sc = scMap[p];
+        if(sc){ totalWV += (sc.workValue||0); validParts++; if(!bg1){bg1=sc.color;fg1=sc.textColor;} }
+        else if(p==='AL'){ totalWV+=0; validParts++; if(!bg1){bg1='#2d6a4f';fg1='#b7e4c7';} }
+        else if(p==='CL'){ totalWV+=0; validParts++; if(!bg1){bg1='#1d3557';fg1='#a8dadc';} }
+        else if(p==='OFF'||p==='NGH'){ totalWV+=0; validParts++; }
+      });
+      return {bg:bg1||'transparent', fg:fg1||'var(--ink)', workValue: validParts?totalWV/parts.length:0, parts, isCompound:true};
+    }
+  }
+  const sc = scMap[val];
+  if(sc) return {bg:sc.color||'transparent', fg:sc.textColor||'var(--ink)', workValue:sc.workValue||0, parts:[val], isCompound:false};
+  if(val==='AL') return {bg:'#2d6a4f', fg:'#b7e4c7', workValue:0, parts:[val], isCompound:false};
+  if(val==='CL') return {bg:'#1d3557', fg:'#a8dadc', workValue:0, parts:[val], isCompound:false};
+  return {bg:'transparent', fg:'var(--ink-dim)', workValue:0, parts:[val], isCompound:false};
 }
 
 function _rosterSetCell(empId, year, month, day, shiftCode){
@@ -27685,18 +27737,46 @@ function _rosterQuickFill(td, empId, day){
   if(code) DB.dutyRoster.push({empId, year:rf.year, month:rf.month, day, shiftCode:code, _savedAt:Date.now()});
   const scMap = {};
   (DB.shiftCodes||[]).forEach(sc=>{ scMap[sc.code]=sc; });
-  const sc = scMap[code];
-  let bg, fg;
-  if(sc){ bg=sc.color||'transparent'; fg=sc.textColor||'var(--ink)'; }
-  else if(code==='AL'){ bg='#2d6a4f'; fg='#b7e4c7'; }
-  else if(code==='CL'){ bg='#1d3557'; fg='#a8dadc'; }
-  else { bg='transparent'; fg='var(--ink-dim)'; }
-  td.textContent = code;
-  td.style.background = bg;
-  td.style.color = fg;
-  td.style.fontWeight = code ? '700' : '400';
+  const resolved = _scResolve(code, scMap);
+  // Update cell — may be <input> or plain <td>
+  const inp = td.querySelector('input');
+  if(inp){
+    inp.value = code;
+    inp.style.background = resolved.bg;
+    inp.style.color = resolved.fg;
+    inp.style.fontWeight = code ? '700' : '400';
+  } else {
+    td.textContent = code;
+    td.style.background = resolved.bg;
+    td.style.color = resolved.fg;
+    td.style.fontWeight = code ? '700' : '400';
+  }
   clearTimeout(window._rosterSaveTimer);
   window._rosterSaveTimer = setTimeout(()=>saveData(['dutyRoster']),500);
+}
+
+// ── Compound Quick Fill: prompt for compound code like "X/OFF" ──
+function _rosterCompoundFill(){
+  const scMap = {};
+  (DB.shiftCodes||[]).forEach(sc=>{ scMap[sc.code]=sc; });
+  const allCodes = (DB.shiftCodes||[]).map(sc=>sc.code).join(', ');
+  const input = prompt('Nhập mã ghép ca (ví dụ: X/OFF, S/AL):\n\nCác mã có sẵn: ' + allCodes);
+  if(!input) return;
+  const code = input.toUpperCase().trim();
+  if(!code.includes('/')){
+    toast('⚠ Mã ghép ca phải có dấu "/" (ví dụ: X/OFF)', 'error');
+    return;
+  }
+  const parts = code.split('/').map(p=>p.trim()).filter(Boolean);
+  const unknown = parts.filter(p=>!scMap[p] && p!=='AL' && p!=='CL' && p!=='OFF' && p!=='NGH');
+  if(unknown.length){
+    toast('⚠ Mã không tồn tại: ' + unknown.join(', '), 'error');
+    return;
+  }
+  const resolved = _scResolve(code, scMap);
+  toast(`✂ Ghép ca: ${code} (giá trị: ${resolved.workValue})`, 'success');
+  window._rosterCopy = {active:true, code:code};
+  render();
 }
 
 // ── Add resigned employee to roster for a specific month ──
@@ -27956,7 +28036,7 @@ function _rosterEditStdWD(empId){
   if(isTr){
     const trId = empId.slice(3);
     const tr = (DB.trainees||[]).find(t=>t.id===trId);
-    cur = (tr && tr.stdWorkDays) || ((DB.customData||{})[empId]||{}).stdWorkDays || '';
+    cur = (tr && tr.stdWorkDays!=null && tr.stdWorkDays!==0) ? tr.stdWorkDays : (((DB.customData||{})[empId]||{}).stdWorkDays || '');
   } else {
     cur = ((DB.customData||{})[empId]||{}).stdWorkDays || '';
   }
@@ -28075,41 +28155,48 @@ window._rosterExportPDF = function(type){
     const stdWD = (cd.stdWorkDays!=null&&cd.stdWorkDays!=='')?cd.stdWorkDays:(e._trStdWD||'');
 
     if(type==='roster'){
-      // Bảng Ca: show shift codes
+      // Bảng Ca: show shift codes (compound codes displayed as-is)
       let cells = '';
       for(let d=1;d<=daysInMonth;d++){
         const code = rd[d]||'';
-        const sc = scMap[code];
-        const bg = sc?.color ? sc.color+'22' : '';
-        cells += `<td style="text-align:center;font-size:7.5pt;padding:2px 1px;${bg?'background:'+bg:''}${!code?'color:#ccc':''}">${code||'·'}</td>`;
+        const resolved = _scResolve(code, scMap);
+        const bg = resolved.bg!=='transparent' ? resolved.bg+'22' : '';
+        cells += `<td style="text-align:center;font-size:${code.length>4?'6pt':'7.5pt'};padding:2px 1px;${bg?'background:'+bg:''}${!code?'color:#ccc':''}">${code||'·'}</td>`;
       }
-      // Summary counts
+      // Summary counts — compound codes split fractionally
       const counts = {};
-      for(let d=1;d<=daysInMonth;d++){ const c=rd[d]; if(c) counts[c]=(counts[c]||0)+1; }
+      for(let d=1;d<=daysInMonth;d++){
+        const c=rd[d];
+        if(c){
+          const r2 = _scResolve(c, scMap);
+          if(r2.isCompound){
+            const frac = 1/r2.parts.length;
+            r2.parts.forEach(p=>{ counts[p]=(counts[p]||0)+frac; });
+          } else { counts[c]=(counts[c]||0)+1; }
+        }
+      }
       const total = Object.values(counts).reduce((s,n)=>s+n,0);
       rows += `<tr>
         <td style="font-size:8pt;text-align:center;padding:2px 3px">${stt}</td>
         <td style="font-size:8pt;padding:2px 4px;white-space:nowrap"><b>${escapeHtml(e.name)}</b></td>
         <td style="font-size:7.5pt;text-align:center;padding:2px 2px;color:#666">${stdWD||'—'}</td>
         ${cells}
-        <td style="font-size:8pt;text-align:center;font-weight:700;padding:2px 3px">${total}</td>
+        <td style="font-size:8pt;text-align:center;font-weight:700;padding:2px 3px">${total%1?total.toFixed(1):total}</td>
       </tr>`;
     } else {
-      // Bảng Công: show work hours/values
+      // Bảng Công: show work hours/values (compound codes use _scResolve)
       let cells = '';
       let totalVal = 0;
       for(let d=1;d<=daysInMonth;d++){
         const code = rd[d]||'';
-        const sc = scMap[code];
+        const resolved = _scResolve(code, scMap);
         let val = '';
-        if(sc){
-          if(sc.workValue!=null) val = sc.workValue;
-          else if(sc.hours) val = parseFloat(sc.hours)/8;
-          else val = 1;
+        if(code){
+          val = resolved.workValue;
           totalVal += parseFloat(val)||0;
         }
-        const bg = sc?.color ? sc.color+'22' : '';
-        cells += `<td style="text-align:center;font-size:7.5pt;padding:2px 1px;${bg?'background:'+bg:''}${!code?'color:#ccc':''}">${sc?val:'·'}</td>`;
+        const bg = resolved.bg!=='transparent' ? resolved.bg+'22' : '';
+        cells += `<td style="text-align:center;font-size:7.5pt;padding:2px 1px;${bg?'background:'+bg:''}${!code?'color:#ccc':''}">${code?val:'·'}</td>`;
       }
       rows += `<tr>
         <td style="font-size:8pt;text-align:center;padding:2px 3px">${stt}</td>
@@ -28186,7 +28273,7 @@ function _renderTimesheetGrid(container, isAdm){
   (DB.trainees||[]).forEach(tr=>{
     const isActive = tr.startDate && (!tr.endDate || tr.endDate >= nowStr);
     if(!isActive) return;
-    emps.push({id:'tr_'+tr.id, code:tr.code||'', name:tr.name||'', deptId:tr.deptId||'', role:'Thực tập sinh', status:'active', _isTrainee:true, _trStdWD:tr.stdWorkDays!=null && tr.stdWorkDays!==0 ? tr.stdWorkDays : ''});
+    emps.push({id:'tr_'+tr.id, code:tr.code||'', name:tr.name||'', deptId:tr.deptId||'', role:'Thực tập sinh', status:'active', _isTrainee:true, _trStdWD:(tr.stdWorkDays!=null && tr.stdWorkDays!=='' && tr.stdWorkDays!==0) ? parseFloat(tr.stdWorkDays)||'' : ''});
   });
 
   // Thêm NV đã nghỉ được add thủ công
@@ -28309,7 +28396,7 @@ function _renderTimesheetGrid(container, isAdm){
       const rowBg = e._isExtra ? 'rgba(220,53,69,.04)' : 'var(--bg-card)';
 
       // CÔNG TC: customData first, then trainee record fallback
-      const stdWD = (cd.stdWorkDays!=null && cd.stdWorkDays!=='') ? cd.stdWorkDays : (e._trStdWD || '');
+      const stdWD = (cd.stdWorkDays!=null && cd.stdWorkDays!=='') ? (parseFloat(cd.stdWorkDays)||cd.stdWorkDays) : (e._trStdWD || '');
       // AL/CL Tồn còn lại from Leave module
       let alBal = 0, clBal = 0;
       try {
@@ -28323,25 +28410,19 @@ function _renderTimesheetGrid(container, isAdm){
       let totalWork = 0;
       for(let d=1;d<=daysInMonth;d++){
         const shiftCode = rd[d]||'';
-        const sc = scMap[shiftCode];
+        const resolved = _scResolve(shiftCode, scMap);
         let workCode, workVal;
-        if(sc){
-          workCode = sc.workCode||'';
-          workVal = sc.workValue||0;
-        } else if(shiftCode==='AL'){
-          workCode = 'AL'; workVal = 0;
-        } else if(shiftCode==='CL'){
-          workCode = 'CL'; workVal = 0;
+        workVal = resolved.workValue;
+        if(resolved.isCompound){
+          // Compound: show combined workCode like "X/OFF"
+          workCode = resolved.parts.map(p=>{ const s=scMap[p]; return s?s.workCode||p:p; }).join('/');
         } else {
-          workCode = ''; workVal = 0;
+          const sc = scMap[shiftCode];
+          workCode = sc?sc.workCode||'':shiftCode==='AL'?'AL':shiftCode==='CL'?'CL':'';
         }
         totalWork += workVal;
 
-        let cellBg = 'transparent', cellFg = 'var(--ink)';
-        if(shiftCode==='AL'){ cellBg='#2d6a4f'; cellFg='#b7e4c7'; }
-        else if(shiftCode==='CL'){ cellBg='#1d3557'; cellFg='#a8dadc'; }
-
-        dayCells += `<td style="padding:4px 2px;text-align:center;font-size:10px;font-family:'JetBrains Mono',monospace;font-weight:600;color:${cellFg};background:${cellBg};border:1px solid var(--border)">${workCode}</td>`;
+        dayCells += `<td style="padding:4px 2px;text-align:center;font-size:${workCode.length>4?'8px':'10px'};font-family:'JetBrains Mono',monospace;font-weight:600;color:${resolved.fg};background:${resolved.bg};border:1px solid var(--border)">${workCode}</td>`;
       }
       deptTotalWork += totalWork;
 
@@ -33948,11 +34029,8 @@ function viewTrainee(id){
   for(let d=1; d<=_trDaysInMonth; d++){
     const code = _trRosterData[d];
     if(code){
-      const sc = _trScMap[code];
-      if(sc){
-        const wv = sc.workValue!=null ? parseFloat(sc.workValue) : (sc.hours ? parseFloat(sc.hours)/8 : 1);
-        _trActualWorkDays += wv || 0;
-      }
+      const resolved = _scResolve(code, _trScMap);
+      _trActualWorkDays += resolved.workValue || 0;
     }
   }
   const _trWorkDaysDisplay = _trActualWorkDays > 0
@@ -34139,7 +34217,7 @@ function saveTrainee(id, isNew){
     bank:     $('#tr_bank').value.trim(),
     bankName: $('#tr_bankName').value.trim(),
     salary:   $sf('tr_salary'),
-    stdWorkDays: $sf('tr_stdWorkDays'),
+    stdWorkDays: $('#tr_stdWorkDays').value.trim()!=='' ? (parseFloat($('#tr_stdWorkDays').value)||0) : null,
     workDays: $sf('tr_workDays'),
     notes:    $('#tr_notes').value.trim(),
     status:   $s('tr_status') || '',  // '' = tự động theo endDate
@@ -35563,7 +35641,8 @@ fbAuth.onAuthStateChanged(async user => {
         if(!isAdminUser && user.email !== ADMIN_EMAIL){
           document.querySelectorAll('.nav-item[data-page]').forEach(item=>{
             const pg = item.dataset.page;
-            if(pg==='dashboard'||pg==='settings'||pg==='accounts') return;
+            if(pg==='settings'||pg==='accounts') return;
+            if(pg==='dashboard'){ item.style.display = perms.dashboard==='none'?'none':''; return; }
             // Map data-page → permission key (nav uses data-page for routing, perms use module keys)
             const permKey = pg === 'analytics' ? 'plreview' : pg;
             const lvl = perms[permKey] || 'none';
