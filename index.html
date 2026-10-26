@@ -28255,6 +28255,38 @@ window._rosterExportPDF = function(type){
     dayHeaders+=`<th style="padding:3px 1px;font-size:7pt;text-align:center;min-width:22px;color:${isSun?'#c62828':isSat?'#1565c0':'#333'}">${d}<br><span style="font-size:6pt">${dayNames[dow]}</span></th>`;
   }
 
+  // Pre-scan work codes for timesheet PDF
+  let pdfWcArr = [];
+  if(type==='timesheet'){
+    const pdfWcSet = new Set();
+    emps.forEach(e => {
+      const rd = rosterData[e.id]||{};
+      for(let d=1;d<=daysInMonth;d++){
+        const v = rd[d]; if(!v) continue;
+        const resolved = _scResolve(v, scMap);
+        if(resolved.isCompound && resolved._definedCompound){
+          const dsc = scMap[v]; const wc = dsc?(dsc.workCode||v):v;
+          if(wc) pdfWcSet.add(wc);
+        } else if(resolved.isCompound){
+          resolved.parts.forEach(p=>{
+            const sc2 = scMap[p]; const wc = sc2?(sc2.workCode||p):(p==='AL'?'P':p==='CL'?'Bù':p);
+            if(wc) pdfWcSet.add(wc);
+          });
+        } else {
+          const sc2 = scMap[v]; const wc = sc2?(sc2.workCode||''):(v==='AL'?'P':v==='CL'?'Bù':'');
+          if(wc) pdfWcSet.add(wc);
+        }
+      }
+    });
+    const pdfWcSeen = new Set();
+    (DB.shiftCodes||[]).forEach(sc=>{
+      const wc = sc.workCode||sc.code;
+      if(!pdfWcSeen.has(wc) && pdfWcSet.has(wc)){ pdfWcSeen.add(wc); pdfWcArr.push(wc); }
+    });
+    pdfWcSet.forEach(wc=>{ if(!pdfWcSeen.has(wc)) pdfWcArr.push(wc); });
+  }
+  const pdfTotalCols = 3 + daysInMonth + (type==='timesheet' ? pdfWcArr.length : 0) + 1;
+
   // Build rows per department
   let curDept = '';
   let rows = '';
@@ -28263,7 +28295,7 @@ window._rosterExportPDF = function(type){
     const dName = depts.find(d=>d.id===e.deptId)?.name||'';
     if(dName!==curDept){
       curDept = dName;
-      rows += `<tr style="background:#e8eaf6"><td colspan="${daysInMonth+5}" style="font-weight:700;color:#1a237e;padding:5px 6px;font-size:9pt">📂 ${escapeHtml(dName)}</td></tr>`;
+      rows += `<tr style="background:#e8eaf6"><td colspan="${pdfTotalCols}" style="font-weight:700;color:#1a237e;padding:5px 6px;font-size:9pt">📂 ${escapeHtml(dName)}</td></tr>`;
       stt = 0;
     }
     stt++;
@@ -28287,7 +28319,6 @@ window._rosterExportPDF = function(type){
         if(c){
           const r2 = _scResolve(c, scMap);
           if(r2.isCompound && r2._definedCompound){
-            // Defined compound — count as 1 unit
             counts[c]=(counts[c]||0)+1;
           } else if(r2.isCompound){
             const frac = 1/r2.parts.length;
@@ -28304,9 +28335,10 @@ window._rosterExportPDF = function(type){
         <td style="font-size:8pt;text-align:center;font-weight:700;padding:2px 3px">${total%1?total.toFixed(1):total}</td>
       </tr>`;
     } else {
-      // Bảng Công: show work hours/values (compound codes use _scResolve)
+      // Bảng Công: show work values + work code count columns
       let cells = '';
       let totalVal = 0;
+      const wcCounts = {};
       for(let d=1;d<=daysInMonth;d++){
         const code = rd[d]||'';
         const resolved = _scResolve(code, scMap);
@@ -28314,15 +28346,36 @@ window._rosterExportPDF = function(type){
         if(code){
           val = resolved.workValue;
           totalVal += parseFloat(val)||0;
+          // Count work codes
+          if(resolved.isCompound && resolved._definedCompound){
+            const dsc = scMap[code]; const wc = dsc?dsc.workCode||code:code;
+            if(wc) wcCounts[wc] = (wcCounts[wc]||0) + resolved.workValue;
+          } else if(resolved.isCompound){
+            const fraction = 1/resolved.parts.length;
+            resolved.parts.forEach(p=>{
+              const sc2 = scMap[p]; const wc = sc2?(sc2.workCode||p):(p==='AL'?'P':p==='CL'?'Bù':p);
+              const wv = sc2?(sc2.workValue||0):0;
+              wcCounts[wc] = (wcCounts[wc]||0) + fraction * wv;
+            });
+          } else {
+            const sc2 = scMap[code]; const wc = sc2?(sc2.workCode||''):(code==='AL'?'P':code==='CL'?'Bù':'');
+            if(wc) wcCounts[wc] = (wcCounts[wc]||0) + resolved.workValue;
+          }
         }
         const bg = resolved.bg!=='transparent' ? resolved.bg+'22' : '';
         cells += `<td style="text-align:center;font-size:7.5pt;padding:2px 1px;${bg?'background:'+bg:''}${!code?'color:#ccc':''}">${code?val:'·'}</td>`;
       }
+      const wcCountCells = pdfWcArr.map(wc=>{
+        const cnt = wcCounts[wc]||0;
+        const cntDisp = cnt ? (cnt%1 ? cnt.toFixed(1) : cnt) : '';
+        return `<td style="text-align:center;font-size:7.5pt;font-weight:${cnt?'700':'400'};padding:2px 1px;${cnt?'':'color:#ccc'}">${cntDisp}</td>`;
+      }).join('');
       rows += `<tr>
         <td style="font-size:8pt;text-align:center;padding:2px 3px">${stt}</td>
         <td style="font-size:8pt;padding:2px 4px;white-space:nowrap"><b>${escapeHtml(e.name)}</b></td>
         <td style="font-size:7.5pt;text-align:center;padding:2px 2px;color:#666">${stdWD||'—'}</td>
         ${cells}
+        ${wcCountCells}
         <td style="font-size:8pt;text-align:center;font-weight:700;padding:2px 3px">${totalVal.toFixed(1)}</td>
       </tr>`;
     }
@@ -28332,15 +28385,17 @@ window._rosterExportPDF = function(type){
   const deptLabel = (!canSeeAll && allowedDepts.length>0) ? allowedDepts.map(did=>depts.find(d=>d.id===did)?.name||did).join(', ') : 'Tất cả bộ phận';
   const subtitle = `${emps.length} nhân viên · ${deptLabel}`;
 
-  const extraCss = `@page{size:landscape;margin:8mm}body{padding:10px 12px}table{font-size:8pt}th,td{padding:2px 2px}`;
+  // Work code summary headers for timesheet PDF
+  const wcHeaders = type==='timesheet' ? pdfWcArr.map(wc=>`<th style="padding:3px 1px;font-size:7pt;text-align:center;min-width:20px">${wc}</th>`).join('') : '';
 
   _openPDF(title,
-    `<table style="border-collapse:collapse;width:100%"><thead><tr style="background:#1a1a2e;color:#fff">
+    `<table style="border-collapse:collapse;width:100%"><thead><tr style="background:#e8eaf6;color:#1a237e">
       <th style="width:25px;padding:3px">#</th>
       <th style="text-align:left;padding:3px 4px;min-width:100px">Họ tên</th>
       <th style="width:30px;padding:3px">C.TC</th>
       ${dayHeaders}
-      <th style="width:35px;padding:3px;background:#2c2c54;color:#ffd700">TOTAL</th>
+      ${wcHeaders}
+      <th style="width:35px;padding:3px;background:#c5cae9;color:#1a237e;font-weight:700">TOTAL</th>
     </tr></thead><tbody>${rows}</tbody></table>`,
     subtitle
   );
@@ -40493,7 +40548,7 @@ function exportPLPDF(){
 
 function _openPDF(title, bodyHTML, subtitle, lang){
   const EN = (lang === 'en');
-  const css = `*{margin:0;padding:0;box-sizing:border-box}body{font-family:'Segoe UI',Arial,sans-serif;font-size:10.5pt;color:#1a1a2e;background:#fff;padding:18px 24px}h1{font-size:18pt;color:#1a1a2e;margin-bottom:3px}h2{font-size:13pt;color:#1a1a2e;margin:16px 0 8px;border-bottom:2px solid #e0e0e0;padding-bottom:4px}.sub{font-size:9.5pt;color:#666;margin-bottom:14px}table{width:100%;border-collapse:collapse;font-size:9.5pt}th{background:#1a1a2e;color:#fff;padding:6px 8px;text-align:left;font-size:9pt}td{padding:5px 8px;border-bottom:1px solid #f0f0f0}tr:nth-child(even) td{background:#fafafa}.badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:8pt;font-weight:600}.footer{margin-top:18px;font-size:8.5pt;color:#aaa;text-align:right;border-top:1px solid #eee;padding-top:6px}@media print{body{padding:0}@page{margin:12mm}}`;
+  const css = `*{margin:0;padding:0;box-sizing:border-box}body{font-family:'Segoe UI',Arial,sans-serif;font-size:10.5pt;color:#1a1a2e;background:#fff;padding:18px 24px}h1{font-size:18pt;color:#2c3e6b;margin-bottom:3px}h2{font-size:13pt;color:#2c3e6b;margin:16px 0 8px;border-bottom:2px solid #e0e0e0;padding-bottom:4px}.sub{font-size:9.5pt;color:#666;margin-bottom:14px}table{width:100%;border-collapse:collapse;font-size:9.5pt}th{background:#e8eaf6;color:#1a237e;padding:6px 8px;text-align:left;font-size:9pt;border-bottom:2px solid #7986cb}td{padding:5px 8px;border-bottom:1px solid #f0f0f0}tr:nth-child(even) td{background:#fafafa}.badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:8pt;font-weight:600}.footer{margin-top:18px;font-size:8.5pt;color:#aaa;text-align:right;border-top:1px solid #eee;padding-top:6px}@media print{body{padding:0}@page{margin:12mm}}`;
   const today = new Date().toLocaleDateString(EN ? 'en-GB' : 'vi-VN');
   const company = DB.company?.name || 'Legacy Yên Tử MGallery';
   const printedLabel = EN ? 'Printed on' : 'In ngày';
@@ -41269,7 +41324,7 @@ h1 em{font-style:normal;color:#c89564}
 .dept-banner .meta{font-size:11pt;opacity:.9}
 .notice{background:#fff8e1;border-left:4px solid #f9a825;padding:12px 16px;margin-bottom:14px;font-size:10pt;color:#5d4037}
 table{width:100%;border-collapse:collapse;font-size:9.5pt;margin-bottom:14px}
-th{background:#1a1a2e;color:#fff;padding:8px 6px;text-align:left;font-size:9pt;border:1px solid #2c2c4e}
+th{background:#e8eaf6;color:#1a237e;padding:8px 6px;text-align:left;font-size:9pt;border:1px solid #c5cae9}
 td{padding:6px;border-bottom:1px solid #eee;border-right:1px solid #f0f0f0}
 tr:nth-child(even) td{background:#fafafa}
 .legend{display:flex;gap:14px;font-size:9pt;color:#666;margin-top:8px;flex-wrap:wrap}
