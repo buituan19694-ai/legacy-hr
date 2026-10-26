@@ -28335,22 +28335,24 @@ window._rosterExportPDF = function(type){
         <td style="font-size:8pt;text-align:center;font-weight:700;padding:2px 3px">${total%1?total.toFixed(1):total}</td>
       </tr>`;
     } else {
-      // Bảng Công: show work values + work code count columns
+      // Bảng Công: show work codes (same as on-screen) + work code count columns
       let cells = '';
       let totalVal = 0;
       const wcCounts = {};
       for(let d=1;d<=daysInMonth;d++){
         const code = rd[d]||'';
         const resolved = _scResolve(code, scMap);
-        let val = '';
+        let displayCode = '';
         if(code){
-          val = resolved.workValue;
-          totalVal += parseFloat(val)||0;
-          // Count work codes
+          totalVal += parseFloat(resolved.workValue)||0;
+          // Determine display text: workCode, same as on-screen grid
           if(resolved.isCompound && resolved._definedCompound){
-            const dsc = scMap[code]; const wc = dsc?dsc.workCode||code:code;
+            const dsc = scMap[code];
+            displayCode = dsc?dsc.workCode||code:code;
+            const wc = displayCode;
             if(wc) wcCounts[wc] = (wcCounts[wc]||0) + resolved.workValue;
           } else if(resolved.isCompound){
+            displayCode = resolved.parts.map(p=>{ const s=scMap[p]; return s?s.workCode||p:p; }).join('/');
             const fraction = 1/resolved.parts.length;
             resolved.parts.forEach(p=>{
               const sc2 = scMap[p]; const wc = sc2?(sc2.workCode||p):(p==='AL'?'P':p==='CL'?'Bù':p);
@@ -28359,11 +28361,13 @@ window._rosterExportPDF = function(type){
             });
           } else {
             const sc2 = scMap[code]; const wc = sc2?(sc2.workCode||''):(code==='AL'?'P':code==='CL'?'Bù':'');
+            displayCode = wc;
             if(wc) wcCounts[wc] = (wcCounts[wc]||0) + resolved.workValue;
           }
         }
         const bg = resolved.bg!=='transparent' ? resolved.bg+'22' : '';
-        cells += `<td style="text-align:center;font-size:7.5pt;padding:2px 1px;${bg?'background:'+bg:''}${!code?'color:#ccc':''}">${code?val:'·'}</td>`;
+        const fs = displayCode.length>4?'6pt':'7.5pt';
+        cells += `<td style="text-align:center;font-size:${fs};padding:2px 1px;${bg?'background:'+bg:''}${!code?'color:#ccc':''}">${code?displayCode:'·'}</td>`;
       }
       const wcCountCells = pdfWcArr.map(wc=>{
         const cnt = wcCounts[wc]||0;
