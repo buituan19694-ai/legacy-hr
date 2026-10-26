@@ -27563,26 +27563,28 @@ function _renderRosterGrid(container, isAdm){
         }
       }
 
-      // Summary per employee — count shift codes
+      // Summary per employee — count by workValue
       const counts = {};
       for(let d=1;d<=daysInMonth;d++){
         const v = rd[d];
         if(v){
           const resolved = _scResolve(v, scMap);
           if(resolved.isCompound && resolved._definedCompound){
-            // Defined compound (e.g. X/OFF) — count as 1 unit under its own code
-            counts[v] = (counts[v]||0) + 1;
-            deptCounts[v] = (deptCounts[v]||0) + 1;
+            // Defined compound (e.g. X/OFF) — use its workValue
+            counts[v] = (counts[v]||0) + (resolved.workValue||0);
+            deptCounts[v] = (deptCounts[v]||0) + (resolved.workValue||0);
           } else if(resolved.isCompound){
-            // Ad-hoc compound — split fractionally
+            // Ad-hoc compound — split by workValue per part
             const fraction = 1 / resolved.parts.length;
             resolved.parts.forEach(p=>{
-              counts[p] = (counts[p]||0) + fraction;
-              deptCounts[p] = (deptCounts[p]||0) + fraction;
+              const sc = scMap[p];
+              const wv = sc?(sc.workValue||0):0;
+              counts[p] = (counts[p]||0) + fraction * wv;
+              deptCounts[p] = (deptCounts[p]||0) + fraction * wv;
             });
           } else {
-            counts[v] = (counts[v]||0) + 1;
-            deptCounts[v] = (deptCounts[v]||0) + 1;
+            counts[v] = (counts[v]||0) + (resolved.workValue||0);
+            deptCounts[v] = (deptCounts[v]||0) + (resolved.workValue||0);
           }
         }
       }
@@ -28312,18 +28314,18 @@ window._rosterExportPDF = function(type){
         const bg = resolved.bg!=='transparent' ? resolved.bg+'22' : '';
         cells += `<td style="text-align:center;font-size:${code.length>4?'6pt':'7.5pt'};padding:2px 1px;${bg?'background:'+bg:''}${!code?'color:#ccc':''}">${code||'·'}</td>`;
       }
-      // Summary counts
+      // Summary counts — by workValue
       const counts = {};
       for(let d=1;d<=daysInMonth;d++){
         const c=rd[d];
         if(c){
           const r2 = _scResolve(c, scMap);
           if(r2.isCompound && r2._definedCompound){
-            counts[c]=(counts[c]||0)+1;
+            counts[c]=(counts[c]||0)+(r2.workValue||0);
           } else if(r2.isCompound){
             const frac = 1/r2.parts.length;
-            r2.parts.forEach(p=>{ counts[p]=(counts[p]||0)+frac; });
-          } else { counts[c]=(counts[c]||0)+1; }
+            r2.parts.forEach(p=>{ const sc=scMap[p]; const wv=sc?(sc.workValue||0):0; counts[p]=(counts[p]||0)+frac*wv; });
+          } else { counts[c]=(counts[c]||0)+(r2.workValue||0); }
         }
       }
       const total = Object.values(counts).reduce((s,n)=>s+n,0);
