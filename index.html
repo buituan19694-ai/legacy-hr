@@ -27516,7 +27516,7 @@ function _renderRosterGrid(container, isAdm){
             <input type="text" list="_scDataList" value="${escapeHtml(val)}"
               onchange="_rosterSetCell('${e.id}',${yr},${mo},${d},this.value.toUpperCase().trim())"
               onkeydown="if(event.key==='Enter'){this.blur()}"
-              style="width:100%;padding:4px 0;border:none;background:${bg};color:${fg};font-size:11px;font-weight:700;font-family:'JetBrains Mono',monospace;text-align:center;cursor:pointer;box-sizing:border-box;outline:none"
+              style="width:100%;padding:4px 2px;border:none;background:${bg};color:${fg};font-size:11px;font-weight:700;font-family:'JetBrains Mono',monospace;text-align:center;cursor:pointer;box-sizing:border-box;outline:none"
               maxlength="15" autocomplete="off">
           </td>`;
         } else {
@@ -27633,7 +27633,6 @@ function _renderRosterGrid(container, isAdm){
     ${pinnedBtns}
     ${moreBtnHTML}
     <button onclick="window._rosterCopy={active:true,code:''};render()" style="padding:3px 8px;border-radius:4px;font-size:11px;cursor:pointer;border:1px solid var(--border);background:var(--bg-card);color:var(--ink-muted);margin-left:4px" title="Xóa mã ca">✕ Xóa</button>
-    <button onclick="_rosterCompoundFill()" style="padding:3px 8px;border-radius:4px;font-size:11px;cursor:pointer;border:1px dashed var(--accent);background:transparent;color:var(--accent);font-weight:600" title="Ghép 2 mã ca, vd: X/OFF">✂ Ghép ca</button>
     ${copyActive?`<span style="font-size:11px;color:var(--accent);font-weight:700;margin-left:8px">🖊 Đang chọn: <span style="background:${(()=>{const r=_scResolve(copyCode,scMap);return r.bg;})()};color:${(()=>{const r=_scResolve(copyCode,scMap);return r.fg;})()};padding:2px 8px;border-radius:4px;font-family:'JetBrains Mono',monospace">${copyCode||'⌫'}</span> — Click hoặc KÉO CHUỘT để điền</span>
     <button onclick="window._rosterCopy={active:false,code:''};render()" style="padding:3px 10px;border-radius:4px;font-size:11px;cursor:pointer;border:1px solid var(--danger);background:transparent;color:var(--danger);margin-left:auto">Tắt</button>`:'<span style="font-size:10px;color:var(--ink-dim)">Chọn mã ca → click hoặc kéo chuột qua các ô để điền nhanh</span>'}
   </div>`;
