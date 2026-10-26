@@ -27097,23 +27097,29 @@ function _renderShiftCodes(container, isAdm){
     return;
   }
 
-  const rows = codes.map((sc,i)=>`
-    <tr style="border-bottom:1px solid var(--border)">
+  const rows = codes.map((sc,i)=>{
+    const isHidden = sc.hidden === true;
+    return `
+    <tr style="border-bottom:1px solid var(--border);${isHidden?'opacity:.45':''}">
       <td style="padding:8px 12px;text-align:center;font-weight:700">${i+1}</td>
       <td style="padding:8px 12px"><span style="display:inline-block;padding:4px 14px;border-radius:6px;font-weight:700;font-size:13px;font-family:'JetBrains Mono',monospace;background:${sc.color||'var(--bg-elev)'};color:${sc.textColor||'var(--ink)'}">${escapeHtml(sc.code)}</span></td>
       <td style="padding:8px 12px;font-weight:500">${escapeHtml(sc.name)}</td>
       <td style="padding:8px 12px;text-align:center;font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--accent)">${sc.workCode??''}</td>
       <td style="padding:8px 12px;text-align:center;font-family:'JetBrains Mono',monospace">${sc.workValue??''}</td>
       <td style="padding:8px 12px;font-size:11px;color:var(--ink-dim)">${escapeHtml(sc.desc||'')}</td>
+      <td style="padding:8px 4px;text-align:center">
+        <button onclick="_toggleShiftCodeVis('${sc.id}')" title="${isHidden?'Hiện mã ca':'Ẩn mã ca'}" style="background:transparent;border:1px solid ${isHidden?'rgba(229,115,115,.3)':'var(--border)'};border-radius:4px;color:${isHidden?'var(--danger)':'var(--accent)'};font-size:13px;padding:3px 8px;cursor:pointer">${isHidden?'🚫':'👁️'}</button>
+      </td>
       ${isAdm?`<td style="padding:8px 4px;text-align:center">
         <button onclick="_editShiftCode('${sc.id}')" style="background:transparent;border:1px solid var(--border);border-radius:4px;color:var(--ink-dim);font-size:11px;padding:3px 8px;cursor:pointer;margin-right:4px">✏️</button>
         <button onclick="_deleteShiftCode('${sc.id}')" style="background:transparent;border:1px solid rgba(229,115,115,.3);border-radius:4px;color:var(--danger);font-size:11px;padding:3px 8px;cursor:pointer">✕</button>
       </td>`:''}
-    </tr>`).join('');
+    </tr>`;
+  }).join('');
 
   container.innerHTML = `
     <div class="card">
-      <div class="card-head"><div><div class="card-title">⚙️ Bảng Mã Ca / Công</div><div class="card-sub">${codes.length} mã ca · Quy đổi ca → công</div></div>
+      <div class="card-head"><div><div class="card-title">⚙️ Bảng Mã Ca / Công</div><div class="card-sub">${codes.length} mã ca${codes.filter(s=>s.hidden).length?' · <span style="color:var(--danger)">'+codes.filter(s=>s.hidden).length+' ẩn</span>':''} · Quy đổi ca → công</div></div>
         ${isAdm?`<div style="display:flex;gap:8px">
           <button class="btn btn-primary" onclick="_editShiftCode()" style="font-size:12px">+ Thêm mã ca</button>
         </div>`:''}
@@ -27127,6 +27133,7 @@ function _renderShiftCodes(container, isAdm){
             <th style="padding:8px 12px;font-size:10px;font-weight:700;color:var(--accent);text-align:center">MÃ CÔNG</th>
             <th style="padding:8px 12px;font-size:10px;font-weight:700;color:var(--accent);text-align:center">GIÁ TRỊ CÔNG</th>
             <th style="padding:8px 12px;font-size:10px;font-weight:700;color:var(--ink-muted);text-align:left">MÔ TẢ</th>
+            <th style="padding:8px 12px;font-size:10px;font-weight:700;color:var(--ink-muted);width:50px;text-align:center">HIỆN</th>
             ${isAdm?'<th style="padding:8px 12px;font-size:10px;font-weight:700;color:var(--ink-muted);width:80px"></th>':''}
           </tr></thead>
           <tbody>${rows}</tbody>
@@ -27176,7 +27183,7 @@ function _editShiftCode(id){
     </div>
     <div class="form-grid">
       <div class="field"><label>Mã Ca *</label>
-        <input id="_sc_code" value="${escapeHtml(sc.code||'')}" placeholder="VD: S, C, Đ, OFF" style="text-transform:uppercase;font-family:'JetBrains Mono',monospace;font-weight:700" maxlength="5">
+        <input id="_sc_code" value="${escapeHtml(sc.code||'')}" placeholder="VD: S, C, Đ, OFF" style="text-transform:uppercase;font-family:'JetBrains Mono',monospace;font-weight:700" maxlength="10">
       </div>
       <div class="field"><label>Tên Ca *</label>
         <input id="_sc_name" value="${escapeHtml(sc.name||'')}" placeholder="VD: Ca Sáng">
@@ -27261,6 +27268,14 @@ function _deleteShiftCode(id){
   DB.shiftCodes = DB.shiftCodes.filter(s=>s.id!==id);
   saveData(['shiftCodes']);
   toast('Đã xóa mã ca '+sc.code,'info');
+  render();
+}
+
+function _toggleShiftCodeVis(id){
+  const idx = (DB.shiftCodes||[]).findIndex(s=>s.id===id);
+  if(idx<0) return;
+  DB.shiftCodes[idx].hidden = !DB.shiftCodes[idx].hidden;
+  saveData(['shiftCodes']);
   render();
 }
 
@@ -27435,7 +27450,9 @@ function _renderRosterGrid(container, isAdm){
   // Build rows with department separators + subtotals
   let allRows = '';
   let globalIdx = 0;
-  const allScCodes = (DB.shiftCodes||[]).map(s=>s.code);
+  // Lọc mã ca: bỏ hidden, chỉ giữ mã đang dùng trong tháng
+  const hiddenScCodes = new Set((DB.shiftCodes||[]).filter(s=>s.hidden).map(s=>s.code));
+  const allScCodes = (DB.shiftCodes||[]).filter(s=>!s.hidden).map(s=>s.code);
   // Pre-scan: find which shift codes are actually used this month
   // Support compound codes: "X/OFF" → add both "X" and "OFF" as used
   const usedCodesSet = new Set();
