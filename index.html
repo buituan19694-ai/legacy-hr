@@ -15970,8 +15970,8 @@ window.toggleLeaveGroup = function(did){
 
                   </tr>`;
                 };
-                return (e._isTrainee ? '' : (showAL ? renderTypeRow('al',al,'AL / Phép năm','var(--success)','rgba(126,198,153,.07)','var(--accent)','rgba(212,165,116,.07)',true) : ''))
-                     + (showCL ? renderTypeRow('cl',cl,'CL / Nghỉ bù','var(--info)','rgba(126,182,232,.07)','var(--info)','rgba(126,182,232,.05)', e._isTrainee ? true : (!showAL)) : '')
+                return (showAL ? renderTypeRow('al',al,'AL / Phép năm','var(--success)','rgba(126,198,153,.07)','var(--accent)','rgba(212,165,116,.07)',true) : '')
+                     + (showCL ? renderTypeRow('cl',cl,'CL / Nghỉ bù','var(--info)','rgba(126,182,232,.07)','var(--info)','rgba(126,182,232,.05)', !showAL) : '')
                      + `<tr data-leave-dept="${did}" style="display:${isCollapsed?'none':''}"><td colspan="32" style="height:3px;background:rgba(255,255,255,.03)"></td></tr>`;
               }).join('');
 
@@ -27557,9 +27557,10 @@ function _renderRosterGrid(container, isAdm){
       // AL/CL Tồn còn lại from Leave module (calcLeaveTotals)
       let alBal = 0, clBal = 0;
       try {
-        if(typeof calcLeaveTotals === 'function' && !e._isTrainee){
-          alBal = calcLeaveTotals(e.id, 'al', yr, curMonth).tonCuoiNam || 0;
-          clBal = calcLeaveTotals(e.id, 'cl', yr, curMonth).tonCuoiNam || 0;
+        if(typeof calcLeaveTotals === 'function'){
+          const _leaveId = e._isTrainee ? e.id : e.id;
+          alBal = calcLeaveTotals(_leaveId, 'al', yr, curMonth).tonCuoiNam || 0;
+          clBal = calcLeaveTotals(_leaveId, 'cl', yr, curMonth).tonCuoiNam || 0;
         }
       } catch(ex){}
       const traineeBadge = e._isTrainee ? `<span style="font-size:8px;padding:1px 4px;border-radius:3px;background:var(--accent);color:#000;margin-left:4px;font-weight:600">TTS</span>` : '';
@@ -28116,7 +28117,7 @@ window._rosterExportPDF = function(type){
   (DB.trainees||[]).forEach(tr=>{
     const isActive = tr.startDate && (!tr.endDate || tr.endDate >= nowStr);
     if(!isActive) return;
-    emps.push({id:'tr_'+tr.id, code:tr.code||'', name:tr.name||'', deptId:tr.deptId||'', role:'Thực tập sinh', status:'active', _isTrainee:true, _trStdWD:tr.stdWorkDays!=null&&tr.stdWorkDays!==0?tr.stdWorkDays:''});
+    emps.push({id:'tr_'+tr.id, code:tr.code||'', name:tr.name||'', deptId:tr.deptId||'', role:'Thực tập sinh', status:'active', _isTrainee:true, _trStdWD:(tr.stdWorkDays!=null && tr.stdWorkDays!=='' && tr.stdWorkDays!==0) ? parseFloat(tr.stdWorkDays)||'' : ''});
   });
   // Add extras
   const extraKey = yr+'_'+mo;
@@ -28416,7 +28417,7 @@ function _renderTimesheetGrid(container, isAdm){
       // AL/CL Tồn còn lại from Leave module
       let alBal = 0, clBal = 0;
       try {
-        if(typeof calcLeaveTotals === 'function' && !e._isTrainee){
+        if(typeof calcLeaveTotals === 'function'){
           alBal = calcLeaveTotals(e.id, 'al', yr, curMonth).tonCuoiNam || 0;
           clBal = calcLeaveTotals(e.id, 'cl', yr, curMonth).tonCuoiNam || 0;
         }
@@ -34037,7 +34038,7 @@ function viewTrainee(id){
   const _trDaysInMonth = new Date(_trYr, _trMo, 0).getDate();
   const _trRosterData = {};
   (DB.dutyRoster||[]).forEach(r=>{
-    if(r.year===_trYr && r.month===_trMo && r.empId===_trRosterId){
+    if(parseInt(r.year)===_trYr && parseInt(r.month)===_trMo && r.empId===_trRosterId){
       _trRosterData[r.day] = r.shiftCode;
     }
   });
@@ -34052,6 +34053,15 @@ function viewTrainee(id){
   const _trWorkDaysDisplay = _trActualWorkDays > 0
     ? _trActualWorkDays + ' ngày <span style="font-size:10px;color:var(--ink-muted)">(tháng ' + _trMo + '/' + _trYr + ' · từ Bảng Công)</span>'
     : (tr.workDays ? tr.workDays + ' ngày <span style="font-size:10px;color:var(--ink-muted)">(nhập tay)</span>' : '');
+
+  // --- Tính AL/CL balance cho trainee ---
+  let _trALBal = 0, _trCLBal = 0;
+  try {
+    if(typeof calcLeaveTotals === 'function'){
+      _trALBal = calcLeaveTotals(_trRosterId, 'al', _trYr, _trMo).tonCuoiNam || 0;
+      _trCLBal = calcLeaveTotals(_trRosterId, 'cl', _trYr, _trMo).tonCuoiNam || 0;
+    }
+  } catch(ex){}
 
   openModal(`
     <div class="modal-head" style="padding-bottom:0">
@@ -34082,6 +34092,8 @@ function viewTrainee(id){
       ${tr.salary ? row('Thù lao / Trợ cấp', new Intl.NumberFormat('vi-VN').format(tr.salary) + ' VNĐ') : ''}
       ${tr.stdWorkDays ? row('Ngày công TC/tháng', tr.stdWorkDays + ' ngày') : ''}
       ${_trWorkDaysDisplay ? row('Ngày công thực tế', _trWorkDaysDisplay) : ''}
+      ${_trALBal ? row('Tồn AL (Phép năm)', `<span style="color:var(--success);font-weight:600">${_trALBal}</span> ngày`) : ''}
+      ${_trCLBal ? row('Tồn CL (Nghỉ bù)', `<span style="color:var(--info);font-weight:600">${_trCLBal}</span> ngày`) : ''}
       ${tr.notes ? row((_lang==="en"?"Notes":"Ghi chú"), `<span style="color:var(--ink-muted);font-style:italic">${escapeHtml(tr.notes)}</span>`) : ''}
     </div>
     <div class="modal-actions">
