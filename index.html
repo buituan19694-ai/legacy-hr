@@ -27142,7 +27142,10 @@ function _renderShiftCodes(container, isAdm){
   container.innerHTML = `
     <div class="card">
       <div class="card-head"><div><div class="card-title">⚙️ Bảng Mã Ca / Công</div><div class="card-sub">${codes.length} mã ca${codes.filter(s=>s.hidden).length?' · <span style="color:var(--danger)">'+codes.filter(s=>s.hidden).length+' ẩn</span>':''} · Quy đổi ca → công</div></div>
-        ${isAdm?`<div style="display:flex;gap:8px">
+        ${isAdm?`<div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn" onclick="_scExportExcel()" style="font-size:12px">📥 Xuất Excel</button>
+          <button class="btn" onclick="document.getElementById('_scImportFile').click()" style="font-size:12px">📤 Nhập Excel</button>
+          <input type="file" id="_scImportFile" accept=".xlsx,.xls" style="display:none" onchange="_scImportExcel(this.files[0]);this.value=''">
           <button class="btn btn-primary" onclick="_editShiftCode()" style="font-size:12px">+ Thêm mã ca</button>
         </div>`:''}
       </div>
@@ -27193,6 +27196,94 @@ function _shiftCodeDefaults(){
   saveData(['shiftCodes']);
   toast('✅ Đã tạo 12 mã ca mặc định','success');
   render();
+}
+
+// ── Xuất Excel Mã Ca ──
+function _scExportExcel(){
+  if(typeof XLSX === 'undefined'){ toast('SheetJS chưa tải, thử lại sau','error'); return; }
+  const codes = DB.shiftCodes || [];
+  if(!codes.length){ toast('Chưa có mã ca nào để xuất','warning'); return; }
+  const data = codes.map((sc,i)=>({
+    'STT': i+1,
+    'MÃ CA': sc.code||'',
+    'TÊN CA': sc.name||'',
+    'MÃ CÔNG': sc.workCode||'',
+    'GIÁ TRỊ CÔNG': sc.workValue??'',
+    'MÔ TẢ': sc.desc||'',
+    'MÀU NỀN': sc.color||'',
+    'MÀU CHỮ': sc.textColor||'',
+    'HIỆN': sc.hidden ? 'Ẩn' : 'Hiện'
+  }));
+  const ws = XLSX.utils.json_to_sheet(data);
+  // Column widths
+  ws['!cols'] = [{wch:5},{wch:10},{wch:25},{wch:10},{wch:14},{wch:30},{wch:10},{wch:10},{wch:8}];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'MaCaCong');
+  XLSX.writeFile(wb, 'MaCaCong_'+new Date().toISOString().slice(0,10)+'.xlsx');
+  toast('📥 Đã xuất file Excel','success');
+}
+
+// ── Nhập Excel Mã Ca ──
+function _scImportExcel(file){
+  if(!file) return;
+  if(typeof XLSX === 'undefined'){ toast('SheetJS chưa tải, thử lại sau','error'); return; }
+  const reader = new FileReader();
+  reader.onload = function(e){
+    try{
+      const wb = XLSX.read(e.target.result, {type:'array'});
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(ws, {defval:''});
+      if(!rows.length){ toast('File rỗng hoặc sai định dạng','error'); return; }
+      // Detect column names (support both VN and key-based)
+      const getVal = (row, keys) => { for(const k of keys){ if(row[k]!==undefined) return row[k]; } return ''; };
+      const existing = DB.shiftCodes || [];
+      const existMap = {};
+      existing.forEach(sc=>{ existMap[sc.code.toUpperCase()] = sc; });
+      let added=0, updated=0, skipped=0;
+      rows.forEach(row=>{
+        const code = String(getVal(row, ['MÃ CA','MA CA','Mã Ca','code','Code'])).trim().toUpperCase();
+        if(!code){ skipped++; return; }
+        const name = String(getVal(row, ['TÊN CA','TEN CA','Tên Ca','name','Name'])).trim();
+        const workCode = String(getVal(row, ['MÃ CÔNG','MA CONG','Mã Công','workCode','WorkCode'])).trim();
+        const workValueRaw = getVal(row, ['GIÁ TRỊ CÔNG','GIA TRI CONG','Giá Trị Công','workValue','WorkValue']);
+        const workValue = workValueRaw!=='' ? parseFloat(workValueRaw)||0 : 0;
+        const desc = String(getVal(row, ['MÔ TẢ','MO TA','Mô Tả','desc','Desc','Description'])).trim();
+        const color = String(getVal(row, ['MÀU NỀN','MAU NEN','Màu Nền','color','Color'])).trim();
+        const textColor = String(getVal(row, ['MÀU CHỮ','MAU CHU','Màu Chữ','textColor','TextColor'])).trim();
+        const visRaw = String(getVal(row, ['HIỆN','HIEN','Hiện','visible','Visible','hidden','Hidden'])).trim().toLowerCase();
+        const isHidden = visRaw==='ẩn' || visRaw==='an' || visRaw==='hidden' || visRaw==='0' || visRaw==='false';
+        if(existMap[code]){
+          // Update existing
+          const sc = existMap[code];
+          if(name) sc.name = name;
+          if(workCode) sc.workCode = workCode;
+          sc.workValue = workValue;
+          if(desc) sc.desc = desc;
+          if(color) sc.color = color;
+          if(textColor) sc.textColor = textColor;
+          sc.hidden = isHidden;
+          updated++;
+        } else {
+          // Add new
+          existing.push({
+            id: 'sc_'+Date.now()+'_'+Math.random().toString(36).slice(2,6),
+            code, name: name||code, workCode: workCode||code, workValue,
+            color: color||'#e3f2fd', textColor: textColor||'#1565c0',
+            desc, hidden: isHidden
+          });
+          added++;
+        }
+      });
+      DB.shiftCodes = existing;
+      saveData(['shiftCodes']);
+      toast(`✅ Nhập xong: ${added} thêm mới, ${updated} cập nhật${skipped?' · '+skipped+' bỏ qua (thiếu mã)':''}`, 'success');
+      render();
+    }catch(err){
+      console.error('Import shift codes error:', err);
+      toast('❌ Lỗi đọc file: '+err.message,'error');
+    }
+  };
+  reader.readAsArrayBuffer(file);
 }
 
 function _editShiftCode(id){
