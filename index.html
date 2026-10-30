@@ -27690,35 +27690,35 @@ function _renderRosterGrid(container, isAdm){
         }
       }
       // Track shift category per day (headcount)
-      // Match by name: Vietnamese (sáng/chiều/đêm/gãy) OR English (morning/afternoon/night/split)
-      const _isSang = nm => nm.includes('sáng')||nm.includes('morning');
-      const _isChieu = nm => nm.includes('chiều')||nm.includes('afternoon');
-      const _isDem = nm => nm.includes('đêm')||nm.includes('night');
-      const _isGay = nm => nm.includes('gãy')||nm.includes('split');
+      // Match by name (Vietnamese/English) AND by code letter as fallback
+      const _isSang = (nm,c) => nm.includes('sáng')||nm.includes('morning')||/^(s|m)$/i.test(c);
+      const _isChieu = (nm,c) => nm.includes('chiều')||nm.includes('afternoon')||/^(c|a)$/i.test(c);
+      const _isDem = (nm,c) => nm.includes('đêm')||nm.includes('night')||/^(đ|d|n)$/i.test(c);
+      const _isGay = (nm,c) => nm.includes('gãy')||nm.includes('split');
       for(let d=1;d<=daysInMonth;d++){
         const v = rd[d]; if(!v) continue;
         const resolved2 = _scResolve(v, scMap);
         if(resolved2.isCompound && resolved2._definedCompound){
           const sc2 = scMap[v]; const nm = (sc2&&sc2.name||'').toLowerCase();
-          if(_isSang(nm)) catDayCounts.sang[d]++;
-          if(_isChieu(nm)) catDayCounts.chieu[d]++;
-          if(_isDem(nm)) catDayCounts.dem[d]++;
-          if(_isGay(nm)) catDayCounts.gay[d]++;
+          if(_isSang(nm,v)) catDayCounts.sang[d]++;
+          if(_isChieu(nm,v)) catDayCounts.chieu[d]++;
+          if(_isDem(nm,v)) catDayCounts.dem[d]++;
+          if(_isGay(nm,v)) catDayCounts.gay[d]++;
         } else if(resolved2.isCompound){
           const matched = {};
           resolved2.parts.forEach(p=>{
             const sc2 = scMap[p]; const nm = (sc2&&sc2.name||'').toLowerCase();
-            if(_isSang(nm)&&!matched.s){ catDayCounts.sang[d]++; matched.s=1; }
-            if(_isChieu(nm)&&!matched.c){ catDayCounts.chieu[d]++; matched.c=1; }
-            if(_isDem(nm)&&!matched.d){ catDayCounts.dem[d]++; matched.d=1; }
-            if(_isGay(nm)&&!matched.g){ catDayCounts.gay[d]++; matched.g=1; }
+            if(_isSang(nm,p)&&!matched.s){ catDayCounts.sang[d]++; matched.s=1; }
+            if(_isChieu(nm,p)&&!matched.c){ catDayCounts.chieu[d]++; matched.c=1; }
+            if(_isDem(nm,p)&&!matched.d){ catDayCounts.dem[d]++; matched.d=1; }
+            if(_isGay(nm,p)&&!matched.g){ catDayCounts.gay[d]++; matched.g=1; }
           });
         } else {
           const sc2 = scMap[v]; const nm = (sc2&&sc2.name||'').toLowerCase();
-          if(_isSang(nm)) catDayCounts.sang[d]++;
-          if(_isChieu(nm)) catDayCounts.chieu[d]++;
-          if(_isDem(nm)) catDayCounts.dem[d]++;
-          if(_isGay(nm)) catDayCounts.gay[d]++;
+          if(_isSang(nm,v)) catDayCounts.sang[d]++;
+          if(_isChieu(nm,v)) catDayCounts.chieu[d]++;
+          if(_isDem(nm,v)) catDayCounts.dem[d]++;
+          if(_isGay(nm,v)) catDayCounts.gay[d]++;
         }
       }
 
@@ -28534,34 +28534,34 @@ window._rosterExportPDF = function(type){
       // Track shift category per day for PDF roster
       // Match: Vietnamese (sáng/chiều/đêm/gãy) OR English (morning/afternoon/night/split)
       if(pdfCatDC){
-        const _pS=n=>n.includes('sáng')||n.includes('morning');
-        const _pC=n=>n.includes('chiều')||n.includes('afternoon');
-        const _pD=n=>n.includes('đêm')||n.includes('night');
-        const _pG=n=>n.includes('gãy')||n.includes('split');
+        const _pS=(n,c)=>n.includes('sáng')||n.includes('morning')||/^(s|m)$/i.test(c);
+        const _pC=(n,c)=>n.includes('chiều')||n.includes('afternoon')||/^(c|a)$/i.test(c);
+        const _pD=(n,c)=>n.includes('đêm')||n.includes('night')||/^(đ|d|n)$/i.test(c);
+        const _pG=(n,c)=>n.includes('gãy')||n.includes('split');
         for(let d=1;d<=daysInMonth;d++){
           const c2=rd[d]; if(!c2) continue;
           const r3=_scResolve(c2,scMap);
           if(r3.isCompound && r3._definedCompound){
             const sc3=scMap[c2]; const nm3=(sc3&&sc3.name||'').toLowerCase();
-            if(_pS(nm3)) pdfCatDC.sang[d]++;
-            if(_pC(nm3)) pdfCatDC.chieu[d]++;
-            if(_pD(nm3)) pdfCatDC.dem[d]++;
-            if(_pG(nm3)) pdfCatDC.gay[d]++;
+            if(_pS(nm3,c2)) pdfCatDC.sang[d]++;
+            if(_pC(nm3,c2)) pdfCatDC.chieu[d]++;
+            if(_pD(nm3,c2)) pdfCatDC.dem[d]++;
+            if(_pG(nm3,c2)) pdfCatDC.gay[d]++;
           } else if(r3.isCompound){
             const m3={};
             r3.parts.forEach(p=>{
               const sc3=scMap[p]; const nm3=(sc3&&sc3.name||'').toLowerCase();
-              if(_pS(nm3)&&!m3.s){pdfCatDC.sang[d]++;m3.s=1;}
-              if(_pC(nm3)&&!m3.c){pdfCatDC.chieu[d]++;m3.c=1;}
-              if(_pD(nm3)&&!m3.d){pdfCatDC.dem[d]++;m3.d=1;}
-              if(_pG(nm3)&&!m3.g){pdfCatDC.gay[d]++;m3.g=1;}
+              if(_pS(nm3,p)&&!m3.s){pdfCatDC.sang[d]++;m3.s=1;}
+              if(_pC(nm3,p)&&!m3.c){pdfCatDC.chieu[d]++;m3.c=1;}
+              if(_pD(nm3,p)&&!m3.d){pdfCatDC.dem[d]++;m3.d=1;}
+              if(_pG(nm3,p)&&!m3.g){pdfCatDC.gay[d]++;m3.g=1;}
             });
           } else {
             const sc3=scMap[c2]; const nm3=(sc3&&sc3.name||'').toLowerCase();
-            if(_pS(nm3)) pdfCatDC.sang[d]++;
-            if(_pC(nm3)) pdfCatDC.chieu[d]++;
-            if(_pD(nm3)) pdfCatDC.dem[d]++;
-            if(_pG(nm3)) pdfCatDC.gay[d]++;
+            if(_pS(nm3,c2)) pdfCatDC.sang[d]++;
+            if(_pC(nm3,c2)) pdfCatDC.chieu[d]++;
+            if(_pD(nm3,c2)) pdfCatDC.dem[d]++;
+            if(_pG(nm3,c2)) pdfCatDC.gay[d]++;
           }
         }
       }
