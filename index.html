@@ -27618,6 +27618,9 @@ function _renderRosterGrid(container, isAdm){
     const deptCounts = {}; // code → total
     let deptTotalWork = 0;
 
+    // Department headcount per day (total employees with any shift)
+    const deptDayHC = new Array(daysInMonth+1).fill(0);
+
     // Shift category day counts — headcount per day per category
     const catDayCounts = {sang:[], chieu:[], dem:[], gay:[]};
     for(let d=0;d<=daysInMonth;d++){ catDayCounts.sang[d]=0; catDayCounts.chieu[d]=0; catDayCounts.dem[d]=0; catDayCounts.gay[d]=0; }
@@ -27657,6 +27660,9 @@ function _renderRosterGrid(container, isAdm){
           dayCells += `<td style="padding:4px 2px;border:1px solid var(--border);min-width:38px;text-align:center;background:${bg};color:${fg};font-size:11px;font-weight:700;font-family:'JetBrains Mono',monospace;${autoBorder}">${val}</td>`;
         }
       }
+
+      // Track headcount per day for dept subtotal
+      for(let d=1;d<=daysInMonth;d++){ if(rd[d]) deptDayHC[d]++; }
 
       // Summary per employee — count by workValue
       const counts = {};
@@ -27761,9 +27767,12 @@ function _renderRosterGrid(container, isAdm){
       const cntDisp = cnt ? (cnt%1 ? cnt.toFixed(1) : cnt) : '';
       return `<td style="padding:4px 2px;text-align:center;font-size:10px;font-family:'JetBrains Mono',monospace;font-weight:700;color:${cnt?'var(--accent)':'var(--ink-muted)'};background:var(--bg-elev);border:1px solid var(--border)${i===0?';border-left:3px solid var(--accent)':''}">${cntDisp}</td>`;
     }).join('');
-    // Empty day cells for subtotal
+    // Day headcount cells for subtotal
     let subDayCells = '';
-    for(let d=1;d<=daysInMonth;d++) subDayCells += `<td style="border:1px solid var(--border);background:var(--bg-elev)"></td>`;
+    for(let d=1;d<=daysInMonth;d++){
+      const hc = deptDayHC[d]||0;
+      subDayCells += `<td style="text-align:center;font-size:10px;font-family:'JetBrains Mono',monospace;font-weight:${hc?'700':'400'};color:${hc?'var(--accent)':'var(--ink-muted)'};background:var(--bg-elev);border:1px solid var(--border);padding:3px 2px">${hc||''}</td>`;
+    }
 
     const _catHid = !!(window._rosterCatHidden && window._rosterCatHidden[did]);
     allRows += `<tr style="border-bottom:2px solid var(--accent);background:var(--bg-elev)">
