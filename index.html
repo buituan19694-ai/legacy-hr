@@ -27618,6 +27618,10 @@ function _renderRosterGrid(container, isAdm){
     const deptCounts = {}; // code → total
     let deptTotalWork = 0;
 
+    // Shift category day counts — headcount per day per category
+    const catDayCounts = {sang:[], chieu:[], dem:[], gay:[]};
+    for(let d=0;d<=daysInMonth;d++){ catDayCounts.sang[d]=0; catDayCounts.chieu[d]=0; catDayCounts.dem[d]=0; catDayCounts.gay[d]=0; }
+
     deptEmps.forEach(e=>{
       globalIdx++;
       const cd = (DB.customData||{})[e.id]||{};
@@ -27679,6 +27683,39 @@ function _renderRosterGrid(container, isAdm){
           }
         }
       }
+      // Track shift category per day (headcount)
+      // Match by name: Vietnamese (sáng/chiều/đêm/gãy) OR English (morning/afternoon/night/split)
+      const _isSang = nm => nm.includes('sáng')||nm.includes('morning');
+      const _isChieu = nm => nm.includes('chiều')||nm.includes('afternoon');
+      const _isDem = nm => nm.includes('đêm')||nm.includes('night');
+      const _isGay = nm => nm.includes('gãy')||nm.includes('split');
+      for(let d=1;d<=daysInMonth;d++){
+        const v = rd[d]; if(!v) continue;
+        const resolved2 = _scResolve(v, scMap);
+        if(resolved2.isCompound && resolved2._definedCompound){
+          const sc2 = scMap[v]; const nm = (sc2&&sc2.name||'').toLowerCase();
+          if(_isSang(nm)) catDayCounts.sang[d]++;
+          if(_isChieu(nm)) catDayCounts.chieu[d]++;
+          if(_isDem(nm)) catDayCounts.dem[d]++;
+          if(_isGay(nm)) catDayCounts.gay[d]++;
+        } else if(resolved2.isCompound){
+          const matched = {};
+          resolved2.parts.forEach(p=>{
+            const sc2 = scMap[p]; const nm = (sc2&&sc2.name||'').toLowerCase();
+            if(_isSang(nm)&&!matched.s){ catDayCounts.sang[d]++; matched.s=1; }
+            if(_isChieu(nm)&&!matched.c){ catDayCounts.chieu[d]++; matched.c=1; }
+            if(_isDem(nm)&&!matched.d){ catDayCounts.dem[d]++; matched.d=1; }
+            if(_isGay(nm)&&!matched.g){ catDayCounts.gay[d]++; matched.g=1; }
+          });
+        } else {
+          const sc2 = scMap[v]; const nm = (sc2&&sc2.name||'').toLowerCase();
+          if(_isSang(nm)) catDayCounts.sang[d]++;
+          if(_isChieu(nm)) catDayCounts.chieu[d]++;
+          if(_isDem(nm)) catDayCounts.dem[d]++;
+          if(_isGay(nm)) catDayCounts.gay[d]++;
+        }
+      }
+
       const totalWork = Object.values(counts).reduce((s,v)=>s+v, 0);
       deptTotalWork += totalWork;
       const countCells = scCodes.map((code,i)=>{
@@ -27734,6 +27771,30 @@ function _renderRosterGrid(container, isAdm){
       ${subCells}
       <td style="padding:4px 4px;text-align:center;font-size:12px;font-weight:800;color:var(--accent);font-family:'JetBrains Mono',monospace;background:rgba(212,165,116,.15);border-left:3px solid var(--accent);border-right:3px solid var(--accent);border-top:1px solid var(--border);border-bottom:1px solid var(--border)">${deptTotalWork ? (deptTotalWork%1 ? deptTotalWork.toFixed(1) : deptTotalWork) : ''}</td>
     </tr>`;
+
+    // ── Shift category summary rows (Ca sáng / chiều / đêm / gãy) ──
+    const _catDefs = [
+      {key:'sang',  label:'Ca sáng',  icon:'☀️', bg:'#e3f2fd', fg:'#1565c0'},
+      {key:'chieu', label:'Ca chiều', icon:'🌤', bg:'#fff3e0', fg:'#e65100'},
+      {key:'dem',   label:'Ca đêm',   icon:'🌙', bg:'#e8eaf6', fg:'#283593'},
+      {key:'gay',   label:'Ca gãy',   icon:'🔀', bg:'#f3e5f5', fg:'#7b1fa2'}
+    ];
+    _catDefs.forEach(cat=>{
+      let catCells = '';
+      let catTotal = 0;
+      for(let d=1;d<=daysInMonth;d++){
+        const cnt = catDayCounts[cat.key][d]||0;
+        catTotal += cnt;
+        catCells += `<td style="text-align:center;font-size:10px;font-family:'JetBrains Mono',monospace;font-weight:${cnt?'700':'400'};color:${cnt?cat.fg:'var(--ink-muted)'};background:${cnt?cat.bg+'44':'transparent'};border:1px solid var(--border);padding:3px 2px">${cnt||''}</td>`;
+      }
+      const emptyScCells = scCodes.map(()=>`<td style="border:1px solid var(--border)"></td>`).join('');
+      allRows += `<tr style="background:var(--bg-card);border-bottom:1px dotted var(--border)">
+        <td colspan="${fixedCols}" style="padding:4px 12px;font-size:10px;font-weight:600;color:${cat.fg};text-align:right;position:sticky;left:0;background:var(--bg-card);z-index:2;border-right:2px solid var(--accent);white-space:nowrap">${cat.icon} ${cat.label}</td>
+        ${catCells}
+        ${emptyScCells}
+        <td style="text-align:center;font-size:10px;font-weight:700;font-family:'JetBrains Mono',monospace;color:${cat.fg};background:${catTotal?cat.bg+'22':'transparent'};border:1px solid var(--border);border-left:3px solid var(--accent);border-right:3px solid var(--accent);padding:3px">${catTotal||''}</td>
+      </tr>`;
+    });
 
     // ＋ Thêm NV button per department (always show, sticky left)
     if(did!=='_none'){
@@ -28384,10 +28445,32 @@ window._rosterExportPDF = function(type){
   let curDept = '';
   let rows = '';
   let stt = 0;
+  // Category tracking for PDF roster (per department)
+  let pdfCatDC = null;
+  const _pdfCatDefs = [
+    {key:'sang',  label:'☀️ Ca sáng',  fg:'#1565c0'},
+    {key:'chieu', label:'🌤 Ca chiều', fg:'#e65100'},
+    {key:'dem',   label:'🌙 Ca đêm',   fg:'#303f9f'},
+    {key:'gay',   label:'🔀 Ca gãy',   fg:'#7b1fa2'}
+  ];
+  function _pdfFlushCatRows(){
+    if(!pdfCatDC) return;
+    _pdfCatDefs.forEach(cat=>{
+      let cells2=''; let catT=0;
+      for(let d2=1;d2<=daysInMonth;d2++){
+        const cn=pdfCatDC[cat.key][d2]||0; catT+=cn;
+        cells2+=`<td style="text-align:center;font-size:7.5pt;font-weight:${cn?'700':'400'};color:${cn?cat.fg:'#ccc'};padding:2px 1px">${cn||''}</td>`;
+      }
+      rows+=`<tr style="background:#f5f5f5"><td colspan="3" style="font-size:7.5pt;text-align:right;padding:2px 4px;color:${cat.fg};font-weight:600">${cat.label}</td>${cells2}<td style="font-size:7.5pt;text-align:center;font-weight:700;color:${cat.fg}">${catT||''}</td></tr>`;
+    });
+  }
   emps.forEach(e=>{
     const dName = depts.find(d=>d.id===e.deptId)?.name||'';
     if(dName!==curDept){
+      // Flush category rows for previous department
+      if(type==='roster') _pdfFlushCatRows();
       curDept = dName;
+      if(type==='roster') pdfCatDC = {sang:new Array(daysInMonth+1).fill(0), chieu:new Array(daysInMonth+1).fill(0), dem:new Array(daysInMonth+1).fill(0), gay:new Array(daysInMonth+1).fill(0)};
       rows += `<tr style="background:#e8eaf6"><td colspan="${pdfTotalCols}" style="font-weight:700;color:#1a237e;padding:5px 6px;font-size:9pt">📂 ${escapeHtml(dName)}</td></tr>`;
       stt = 0;
     }
@@ -28427,6 +28510,40 @@ window._rosterExportPDF = function(type){
         ${cells}
         <td style="font-size:8pt;text-align:center;font-weight:700;padding:2px 3px">${total%1?total.toFixed(1):total}</td>
       </tr>`;
+      // Track shift category per day for PDF roster
+      // Match: Vietnamese (sáng/chiều/đêm/gãy) OR English (morning/afternoon/night/split)
+      if(pdfCatDC){
+        const _pS=n=>n.includes('sáng')||n.includes('morning');
+        const _pC=n=>n.includes('chiều')||n.includes('afternoon');
+        const _pD=n=>n.includes('đêm')||n.includes('night');
+        const _pG=n=>n.includes('gãy')||n.includes('split');
+        for(let d=1;d<=daysInMonth;d++){
+          const c2=rd[d]; if(!c2) continue;
+          const r3=_scResolve(c2,scMap);
+          if(r3.isCompound && r3._definedCompound){
+            const sc3=scMap[c2]; const nm3=(sc3&&sc3.name||'').toLowerCase();
+            if(_pS(nm3)) pdfCatDC.sang[d]++;
+            if(_pC(nm3)) pdfCatDC.chieu[d]++;
+            if(_pD(nm3)) pdfCatDC.dem[d]++;
+            if(_pG(nm3)) pdfCatDC.gay[d]++;
+          } else if(r3.isCompound){
+            const m3={};
+            r3.parts.forEach(p=>{
+              const sc3=scMap[p]; const nm3=(sc3&&sc3.name||'').toLowerCase();
+              if(_pS(nm3)&&!m3.s){pdfCatDC.sang[d]++;m3.s=1;}
+              if(_pC(nm3)&&!m3.c){pdfCatDC.chieu[d]++;m3.c=1;}
+              if(_pD(nm3)&&!m3.d){pdfCatDC.dem[d]++;m3.d=1;}
+              if(_pG(nm3)&&!m3.g){pdfCatDC.gay[d]++;m3.g=1;}
+            });
+          } else {
+            const sc3=scMap[c2]; const nm3=(sc3&&sc3.name||'').toLowerCase();
+            if(_pS(nm3)) pdfCatDC.sang[d]++;
+            if(_pC(nm3)) pdfCatDC.chieu[d]++;
+            if(_pD(nm3)) pdfCatDC.dem[d]++;
+            if(_pG(nm3)) pdfCatDC.gay[d]++;
+          }
+        }
+      }
     } else {
       // Bảng Công: show work codes (same as on-screen) + work code count columns
       let cells = '';
@@ -28477,6 +28594,8 @@ window._rosterExportPDF = function(type){
       </tr>`;
     }
   });
+  // Flush category rows for the last department (roster)
+  if(type==='roster') _pdfFlushCatRows();
 
   const title = type==='roster' ? `Bảng Ca — Tháng ${mo}/${yr}` : `Bảng Công — Tháng ${mo}/${yr}`;
   const deptLabel = (!canSeeAll && allowedDepts.length>0) ? allowedDepts.map(did=>depts.find(d=>d.id===did)?.name||did).join(', ') : 'Tất cả bộ phận';
