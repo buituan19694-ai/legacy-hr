@@ -27765,8 +27765,9 @@ function _renderRosterGrid(container, isAdm){
     let subDayCells = '';
     for(let d=1;d<=daysInMonth;d++) subDayCells += `<td style="border:1px solid var(--border);background:var(--bg-elev)"></td>`;
 
+    const _catHid = !!(window._rosterCatHidden && window._rosterCatHidden[did]);
     allRows += `<tr style="border-bottom:2px solid var(--accent);background:var(--bg-elev)">
-      <td colspan="${fixedCols}" style="padding:5px 12px;font-size:10px;font-weight:700;color:var(--accent);text-align:right;position:sticky;left:0;background:var(--bg-elev);z-index:2;border-right:2px solid var(--accent);letter-spacing:.05em">∑ ${escapeHtml(dn)}</td>
+      <td colspan="${fixedCols}" style="padding:5px 12px;font-size:10px;font-weight:700;color:var(--accent);text-align:right;position:sticky;left:0;background:var(--bg-elev);z-index:2;border-right:2px solid var(--accent);letter-spacing:.05em">∑ ${escapeHtml(dn)} <span id="_catBtn_${did}" onclick="_rosterToggleCat('${did}')" style="cursor:pointer;font-size:9px;color:var(--ink-dim);margin-left:6px;border:1px solid var(--border);border-radius:3px;padding:0 4px;background:var(--bg-card)" title="${_catHid?'Hiện ca sáng/chiều/đêm/gãy':'Ẩn ca sáng/chiều/đêm/gãy'}">${_catHid?'+':'−'}</span></td>
       ${subDayCells}
       ${subCells}
       <td style="padding:4px 4px;text-align:center;font-size:12px;font-weight:800;color:var(--accent);font-family:'JetBrains Mono',monospace;background:rgba(212,165,116,.15);border-left:3px solid var(--accent);border-right:3px solid var(--accent);border-top:1px solid var(--border);border-bottom:1px solid var(--border)">${deptTotalWork ? (deptTotalWork%1 ? deptTotalWork.toFixed(1) : deptTotalWork) : ''}</td>
@@ -27788,8 +27789,8 @@ function _renderRosterGrid(container, isAdm){
         catCells += `<td style="text-align:center;font-size:10px;font-family:'JetBrains Mono',monospace;font-weight:${cnt?'700':'400'};color:${cnt?cat.fg:'var(--ink-muted)'};background:${cnt?cat.bg+'44':'transparent'};border:1px solid var(--border);padding:3px 2px">${cnt||''}</td>`;
       }
       const emptyScCells = scCodes.map(()=>`<td style="border:1px solid var(--border)"></td>`).join('');
-      allRows += `<tr style="background:var(--bg-card);border-bottom:1px dotted var(--border)">
-        <td colspan="${fixedCols}" style="padding:4px 12px;font-size:10px;font-weight:600;color:${cat.fg};text-align:right;position:sticky;left:0;background:var(--bg-card);z-index:2;border-right:2px solid var(--accent);white-space:nowrap">${cat.icon} ${cat.label}</td>
+      allRows += `<tr data-cat-dept="${did}" style="background:var(--bg-card);border-bottom:1px dotted var(--border)${_catHid?';display:none':''}">
+        <td colspan="${fixedCols}" style="padding:4px 12px;font-size:10px;font-weight:600;color:${cat.fg};text-align:left;position:sticky;left:0;background:var(--bg-card);z-index:2;border-right:2px solid var(--accent);white-space:nowrap;padding-left:20px">${cat.icon} ${cat.label}</td>
         ${catCells}
         ${emptyScCells}
         <td style="text-align:center;font-size:10px;font-weight:700;font-family:'JetBrains Mono',monospace;color:${cat.fg};background:${catTotal?cat.bg+'22':'transparent'};border:1px solid var(--border);border-left:3px solid var(--accent);border-right:3px solid var(--accent);padding:3px">${catTotal||''}</td>
@@ -28190,6 +28191,17 @@ function _rosterToggleCol(colName){
   window._rosterHideCols[colName] = !window._rosterHideCols[colName];
   render();
 }
+
+// ── Toggle category summary rows per department ──
+if(!window._rosterCatHidden) window._rosterCatHidden = {};
+window._rosterToggleCat = function(did){
+  window._rosterCatHidden[did] = !window._rosterCatHidden[did];
+  document.querySelectorAll(`[data-cat-dept="${did}"]`).forEach(tr=>{
+    tr.style.display = window._rosterCatHidden[did] ? 'none' : '';
+  });
+  const btn = document.getElementById('_catBtn_'+did);
+  if(btn) btn.textContent = window._rosterCatHidden[did] ? '+' : '−';
+};
 
 // ── Per-department permission helper ──
 // Returns array of department IDs this user can access in Duty Roster
