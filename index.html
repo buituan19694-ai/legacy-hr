@@ -27543,6 +27543,10 @@ function _renderRosterGrid(container, isAdm){
   const visibleDepts = canEditAll ? depts : depts.filter(d=>allowedDepts.includes(d.id));
   const deptSelect = (visibleDepts.length>1?`<option value="all">-- Tất cả BP --</option>`:'')+visibleDepts.map(d=>`<option value="${d.id}" ${filterDeptId===d.id?'selected':''}>${escapeHtml(d.name)}</option>`).join('');
 
+  // Holiday days lookup for this month (needed before day headers)
+  const _holKey = `${yr}_${mo}`;
+  const holidayDays = new Set((DB.rosterHolidays||{})[_holKey] || []);
+
   // Day headers with weekday + holiday indicator
   const dayNames = ['CN','T2','T3','T4','T5','T6','T7'];
   let dayHeaders = '';
@@ -27581,10 +27585,6 @@ function _renderRosterGrid(container, isAdm){
   // Shift code lookup
   const scMap = {};
   (DB.shiftCodes||[]).forEach(sc=>{ scMap[sc.code] = sc; });
-
-  // Holiday days lookup for this month
-  const _holKey = `${yr}_${mo}`;
-  const holidayDays = new Set((DB.rosterHolidays||{})[_holKey] || []);
 
   // ── Copy mode state ──
   if(!window._rosterCopy) window._rosterCopy = {active:false, code:''};
