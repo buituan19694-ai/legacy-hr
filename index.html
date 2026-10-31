@@ -27854,9 +27854,20 @@ function _renderRosterGrid(container, isAdm){
     return `<th style="padding:4px 2px;font-size:8px;font-weight:700;color:${sc.textColor||'var(--ink-muted)'};background:${sc.color||'var(--bg-elev)'};text-align:center;min-width:30px;border:1px solid var(--border)${i===0?';border-left:3px solid var(--accent)':''}">${code}</th>`;
   }).join('');
 
-  // ── Copy toolbar (compact for 60+ shift codes) ──
+  // ── Copy toolbar — dynamic: most-used codes from this month's roster ──
   const allSC = DB.shiftCodes||[];
-  const pinCodes = ['S','C','Đ','HC','OFF','AL','CL','SL','ML','CT','TC','X'];
+  const _qfUsage = {};
+  Object.values(deptGroups).forEach(grp=>grp.forEach(e=>{
+    const rd = rosterData[e.id]||{};
+    for(let d=1;d<=daysInMonth;d++){
+      const v=rd[d]; if(!v) continue;
+      if(v.includes('/')){
+        v.split('/').forEach(p=>{ _qfUsage[p]=(_qfUsage[p]||0)+1; });
+      } else { _qfUsage[v]=(_qfUsage[v]||0)+1; }
+    }
+  }));
+  const _qfSorted = Object.entries(_qfUsage).sort((a,b)=>b[1]-a[1]).map(e=>e[0]);
+  const pinCodes = _qfSorted.length>=3 ? _qfSorted.slice(0,12) : ['S','C','Đ','HC','OFF','AL','CL','SL','ML','CT','TC','X'];
   const pinnedSC = pinCodes.map(c=>allSC.find(sc=>sc.code===c)).filter(Boolean);
   const pinnedBtns = pinnedSC.map(sc=>{
     const sel = copyActive && copyCode===sc.code;
