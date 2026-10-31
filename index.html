@@ -27921,7 +27921,7 @@ function _renderRosterGrid(container, isAdm){
             ${canEditAll?`<tr style="background:var(--bg-card)">
               <td colspan="${fixedCols}" style="padding:3px 8px;font-size:9px;font-weight:700;color:#c62828;text-align:right;position:sticky;left:0;background:var(--bg-card);z-index:4;border-right:2px solid var(--border-strong);white-space:nowrap">🎌 NGÀY LỄ</td>
               ${holidayRow}
-              <td colspan="${scSummaryCodes.length+1}" style="border:1px solid var(--border)"></td>
+              <td colspan="${scCodes.length+1}" style="border:1px solid var(--border)"></td>
             </tr>`:''}
           </thead>
           <tbody>${allRows || '<tr><td colspan="99" style="padding:30px;text-align:center;color:var(--ink-muted)">Chưa có nhân viên</td></tr>'}</tbody>
