@@ -27303,6 +27303,12 @@ function _scImportExcel(file){
         });
       });
       DB.shiftCodes = newList;
+      // 🚨 Force-flush localStorage NGAY (không chờ setTimeout trong saveData)
+      // Tránh: user refresh trước khi setTimeout kịp chạy → localStorage vẫn giữ mã cũ
+      try{
+        const raw = localStorage.getItem(STORE_KEY);
+        if(raw){ const d=JSON.parse(raw); d.shiftCodes=newList; d._lastSaved=Date.now(); localStorage.setItem(STORE_KEY, JSON.stringify(d)); }
+      }catch(_){}
       saveData(['shiftCodes']);
       toast(`✅ Nhập xong: ${newList.length} mã ca từ Excel (đã thay thế ${oldCount} mã cũ)${skipped?' · '+skipped+' bỏ qua (thiếu mã)':''}`, 'success');
       render();
@@ -36824,6 +36830,12 @@ fbAuth.onAuthStateChanged(async user => {
                     const cloudOrder = cloudFields.map(cf=>cf.key).filter(k=>byKey.has(k));
                     const rest = [...byKey.keys()].filter(k=>!cloudOrder.includes(k));
                     DB.customFields = [...cloudOrder, ...rest].map(k=>byKey.get(k));
+                  } else if(key === 'shiftCodes'){
+                    // 🚨 v52: shiftCodes dùng DIRECT REPLACEMENT, KHÔNG merge-by-id.
+                    // Lý do: Excel import xóa sạch mã cũ + thay bằng mã mới (IDs khác nhau hoàn toàn).
+                    // Merge-by-id sẽ giữ cả mã cũ (cloud) + mã mới (local) → mã cũ "hồi sinh".
+                    // shiftCodes do 1 admin quản lý → cloud luôn là bản mới nhất, replace trực tiếp.
+                    DB[key] = cloudData[key];
                   } else if(Array.isArray(cloudData[key]) && Array.isArray(DB[key])
                             && cloudData[key].length > 0
                             && cloudData[key][0] && typeof cloudData[key][0]==='object' && cloudData[key][0].id !== undefined){
