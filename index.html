@@ -35854,9 +35854,11 @@ fbAuth.onAuthStateChanged(async user => {
                   // Kiểm tra import guard (tồn tại trong localStorage qua refresh)
                   const _scGuardLS = parseInt(localStorage.getItem('_scImportGuard')||'0');
                   const _guardAge = _scGuardLS ? (Date.now() - _scGuardLS) : Infinity;
+                  let _localWins = false;
                   // Trong 5 phút sau import: trust local (cloud có thể chưa cập nhật)
                   if(_guardAge < 300000 && _lsc.length > 0){
                     DB[key] = _lsc;
+                    _localWins = true;
                     console.warn('[cold-load] shiftCodes: LOCAL wins (import guard ' + Math.round(_guardAge/1000) + 's ago, ' + _lsc.length + ' mã)');
                   } else {
                     // Ngoài 5 phút: so sánh timestamp
@@ -35864,11 +35866,27 @@ fbAuth.onAuthStateChanged(async user => {
                     const _cloudTS = data._lastSaved || 0;
                     if(_lsc.length > 0 && _localTS > _cloudTS){
                       DB[key] = _lsc;
+                      _localWins = true;
                       console.warn('[cold-load] shiftCodes: LOCAL wins (' + _lsc.length + ' mã, localTs=' + _localTS + ' > cloudTs=' + _cloudTS + ')');
                     } else {
                       DB[key] = _cloudSC;
                       console.warn('[cold-load] shiftCodes: CLOUD wins (' + _cloudSC.length + ' mã, cloudTs=' + _cloudTS + ' >= localTs=' + _localTS + ')');
                     }
+                  }
+                  // 🚨 v54 FIX: khi local thắng → BẢO VỆ khỏi onSnapshot đè bằng cloud cũ
+                  // onSnapshot sẽ fire SAU cold-load với data cloud (cũ/corrupt) → cần chặn
+                  if(_localWins){
+                    window._scColdLoadProtect = true;
+                    console.warn('[cold-load] shiftCodes: _scColdLoadProtect=true, sẽ re-save lên cloud sau 3s');
+                    // Re-save local lên cloud để sửa data corrupt trên Firestore
+                    setTimeout(() => {
+                      if(window._coldLoadDone){
+                        console.warn('[cold-load] shiftCodes: re-saving ' + (DB.shiftCodes||[]).length + ' mã lên cloud...');
+                        saveData(['shiftCodes']);
+                      }
+                      // Tắt protect sau khi save xong + buffer
+                      setTimeout(() => { window._scColdLoadProtect = false; console.warn('[cold-load] shiftCodes: _scColdLoadProtect=false'); }, 10000);
+                    }, 3000);
                   }
                   return; // skip merge-by-id — shiftCodes LUÔN full replacement
                 }
@@ -36867,13 +36885,17 @@ fbAuth.onAuthStateChanged(async user => {
                     const rest = [...byKey.keys()].filter(k=>!cloudOrder.includes(k));
                     DB.customFields = [...cloudOrder, ...rest].map(k=>byKey.get(k));
                   } else if(key === 'shiftCodes'){
-                    // 🚨 v52: shiftCodes KHÔNG dùng merge-by-id (tránh mã cũ hồi sinh khi import Excel).
-                    // Guard: trong 60s sau import Excel, BỎ QUA cloud hoàn toàn (cloud có thể vẫn chứa data cũ/corrupt).
-                    // Sau 60s: cloud đã sync bản mới → dùng cloud.
+                    // 🚨 v54: chặn onSnapshot đè cold-load result bằng cloud cũ/corrupt
+                    if(window._scColdLoadProtect){
+                      console.warn('[Listener] SKIP shiftCodes — cold-load protection active (cloud:', cloudData[key]?.length, 'local:', DB[key]?.length, ')');
+                      return;
+                    }
+                    // 🚨 v52+v54: shiftCodes KHÔNG dùng merge-by-id (tránh mã cũ hồi sinh khi import Excel).
+                    // Guard: trong 300s (5 phút) sau import Excel, BỎ QUA cloud hoàn toàn.
                     const _scGuard = window._scImportGuard || 0;
                     const _scGuardLS = parseInt(localStorage.getItem('_scImportGuard')||'0');
                     const _guardTs = Math.max(_scGuard, _scGuardLS);
-                    if(_guardTs && (Date.now() - _guardTs) < 60000){
+                    if(_guardTs && (Date.now() - _guardTs) < 300000){
                       console.warn('[Listener] SKIP shiftCodes — import guard active (cloud:', cloudData[key]?.length, 'local:', DB[key]?.length, ')');
                       return;
                     }
