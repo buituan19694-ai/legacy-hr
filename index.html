@@ -27249,11 +27249,11 @@ function _scImportExcel(file){
       if(!rows.length){ toast('File rỗng hoặc sai định dạng','error'); return; }
       // Detect column names (support both VN and key-based)
       const getVal = (row, keys) => { for(const k of keys){ if(row[k]!==undefined) return row[k]; } return ''; };
-      const existing = DB.shiftCodes || [];
-      const existMap = {};
-      existing.forEach(sc=>{ existMap[sc.code.toUpperCase()] = sc; });
-      let added=0, updated=0, skipped=0;
-      rows.forEach(row=>{
+      // Xóa sạch mã ca cũ — follow 100% theo file Excel
+      const oldCount = (DB.shiftCodes||[]).length;
+      const newList = [];
+      let skipped=0;
+      rows.forEach((row,idx)=>{
         const code = String(getVal(row, ['MÃ CA','MA CA','Mã Ca','code','Code'])).trim().toUpperCase();
         if(!code){ skipped++; return; }
         const name = String(getVal(row, ['TÊN CA','TEN CA','Tên Ca','name','Name'])).trim();
@@ -27266,32 +27266,16 @@ function _scImportExcel(file){
         const textColor = String(getVal(row, ['MÀU CHỮ','MAU CHU','Màu Chữ','textColor','TextColor'])).trim();
         const visRaw = String(getVal(row, ['HIỆN','HIEN','Hiện','visible','Visible','hidden','Hidden'])).trim().toLowerCase();
         const isHidden = visRaw==='ẩn' || visRaw==='an' || visRaw==='hidden' || visRaw==='0' || visRaw==='false';
-        if(existMap[code]){
-          // Update existing
-          const sc = existMap[code];
-          if(name) sc.name = name;
-          if(workCode) sc.workCode = workCode;
-          if(holidayWorkCode) sc.holidayWorkCode = holidayWorkCode;
-          sc.workValue = workValue;
-          if(desc) sc.desc = desc;
-          if(color) sc.color = color;
-          if(textColor) sc.textColor = textColor;
-          sc.hidden = isHidden;
-          updated++;
-        } else {
-          // Add new
-          existing.push({
-            id: 'sc_'+Date.now()+'_'+Math.random().toString(36).slice(2,6),
-            code, name: name||code, workCode: workCode||code, holidayWorkCode: holidayWorkCode||'', workValue,
-            color: color||'#e3f2fd', textColor: textColor||'#1565c0',
-            desc, hidden: isHidden
-          });
-          added++;
-        }
+        newList.push({
+          id: 'sc_'+Date.now()+'_'+idx+'_'+Math.random().toString(36).slice(2,6),
+          code, name: name||code, workCode: workCode||code, holidayWorkCode: holidayWorkCode||'', workValue,
+          color: color||'#e3f2fd', textColor: textColor||'#1565c0',
+          desc, hidden: isHidden
+        });
       });
-      DB.shiftCodes = existing;
+      DB.shiftCodes = newList;
       saveData(['shiftCodes']);
-      toast(`✅ Nhập xong: ${added} thêm mới, ${updated} cập nhật${skipped?' · '+skipped+' bỏ qua (thiếu mã)':''}`, 'success');
+      toast(`✅ Nhập xong: ${newList.length} mã ca từ Excel (đã thay thế ${oldCount} mã cũ)${skipped?' · '+skipped+' bỏ qua (thiếu mã)':''}`, 'success');
       render();
     }catch(err){
       console.error('Import shift codes error:', err);
@@ -27416,6 +27400,12 @@ function _toggleShiftCodeVis(id){
 // TAB 2: BẢNG CA (Roster Grid)
 // ══════════════════════════════════════════════════════════
 function _renderRosterGrid(container, isAdm){
+  // Deferred rendering: show loading state immediately, compute heavy grid in next frame
+  container.innerHTML = '<div class="card" style="padding:40px;text-align:center;color:var(--ink-muted);font-size:13px">⏳ Đang tải Bảng Ca...</div>';
+  cancelAnimationFrame(window._rosterRAF);
+  window._rosterRAF = requestAnimationFrame(() => _renderRosterGridCore(container, isAdm));
+}
+function _renderRosterGridCore(container, isAdm){
   const rf = window._rosterFilter;
   const yr = rf.year;
   const mo = rf.month;
@@ -27436,16 +27426,19 @@ function _renderRosterGrid(container, isAdm){
   // ── Employees + Trainees ──
   const nowStr = new Date().toISOString().slice(0,10);
   const curMonth = new Date().getMonth();
+  // ── Performance: cache calcLeaveTotals per employee (avoid 300+ redundant calls) ──
+  const _leaveBalCache = {};
+  const _getLeave = (eid) => {
+    if(_leaveBalCache[eid]) return _leaveBalCache[eid];
+    let al=0,cl=0;
+    try{if(typeof calcLeaveTotals==='function'){al=calcLeaveTotals(eid,'al',yr,curMonth).tonCuoiNam||0;cl=calcLeaveTotals(eid,'cl',yr,curMonth).tonCuoiNam||0;}}catch(ex){}
+    return (_leaveBalCache[eid]={al,cl});
+  };
   let emps = (DB.employees||[]).filter(e=>{
     if(getEffectiveStatus(e) === 'active' || getEffectiveStatus(e) === 'probation') return true;
     if(getEffectiveStatus(e) === 'exit'){
-      try {
-        if(typeof calcLeaveTotals === 'function'){
-          const alR = calcLeaveTotals(e.id, 'al', yr, curMonth).tonCuoiNam || 0;
-          const clR = calcLeaveTotals(e.id, 'cl', yr, curMonth).tonCuoiNam || 0;
-          if(alR > 0 || clR > 0) return true;
-        }
-      } catch(ex){}
+      const _lb = _getLeave(e.id);
+      if(_lb.al > 0 || _lb.cl > 0) return true;
     }
     return false;
   }).map(e=>({...e, _isTrainee:false}));
@@ -27568,10 +27561,13 @@ function _renderRosterGrid(container, isAdm){
 
   // Build roster data lookup: empId → {1: 'S', 2: 'OFF', ...}
   const rosterData = {};
+  // ── Performance: pre-index for O(1) isAutoLeave lookup (replaces O(n) .find() per cell) ──
+  const _rosterDirectSet = new Set();
   (DB.dutyRoster||[]).forEach(r=>{
     if(r.year===yr && r.month===mo){
       if(!rosterData[r.empId]) rosterData[r.empId]={};
       rosterData[r.empId][r.day] = r.shiftCode;
+      _rosterDirectSet.add(r.empId+'_'+r.day);
     }
   });
 
@@ -27638,6 +27634,10 @@ function _renderRosterGrid(container, isAdm){
   const grandCounts = {};
   let grandTotalWork = 0;
 
+  // ── Performance: cache _scResolve results (same shift code → same result, eliminates ~10k redundant calls) ──
+  const _rslvCache = {};
+  const _scRC = (v) => v ? (_rslvCache[v] || (_rslvCache[v] = _scResolve(v, scMap))) : {bg:'transparent',fg:'var(--ink-dim)',workValue:0,parts:[],isCompound:false,_definedCompound:false};
+
   deptOrder.forEach(did=>{
     const deptEmps = deptGroups[did];
     const dn = did==='_none' ? 'Chưa phân bổ' : deptName(did);
@@ -27672,10 +27672,10 @@ function _renderRosterGrid(container, isAdm){
       let dayCells = '';
       for(let d=1;d<=daysInMonth;d++){
         const val = rd[d] || '';
-        const resolved = _scResolve(val, scMap);
+        const resolved = _scRC(val);
         const bg = resolved.bg, fg = resolved.fg;
-        // Check if this is an auto-filled AL/CL from leave system
-        const isAutoLeave = alClDays[e.id] && alClDays[e.id][d] && !((DB.dutyRoster||[]).find(r=>r.empId===e.id&&r.year===yr&&r.month===mo&&r.day===d));
+        // Check if this is an auto-filled AL/CL from leave system (O(1) Set lookup)
+        const isAutoLeave = alClDays[e.id]?.[d] && !_rosterDirectSet.has(e.id+'_'+d);
         const autoBorder = isAutoLeave ? 'outline:1px dashed var(--accent);outline-offset:-1px;' : '';
         if(canEditThisRow && copyActive){
           // Quick Fill mode: plain cell, click or drag to fill
@@ -27704,7 +27704,7 @@ function _renderRosterGrid(container, isAdm){
       for(let d=1;d<=daysInMonth;d++){
         const v = rd[d];
         if(v){
-          const resolved = _scResolve(v, scMap);
+          const resolved = _scRC(v);
           if(resolved.isCompound && resolved._definedCompound){
             // Defined compound (e.g. X/OFF) — use its workValue
             counts[v] = (counts[v]||0) + (resolved.workValue||0);
@@ -27732,7 +27732,7 @@ function _renderRosterGrid(container, isAdm){
       const _isGay = (nm,c) => nm.includes('gãy')||nm.includes('split');
       for(let d=1;d<=daysInMonth;d++){
         const v = rd[d]; if(!v) continue;
-        const resolved2 = _scResolve(v, scMap);
+        const resolved2 = _scRC(v);
         if(resolved2.isCompound && resolved2._definedCompound){
           const sc2 = scMap[v]; const nm = (sc2&&sc2.name||'').toLowerCase();
           if(_isSang(nm,v)) catDayCounts.sang[d]++;
@@ -27767,15 +27767,9 @@ function _renderRosterGrid(container, isAdm){
 
       // CÔNG TC: customData first, then trainee record fallback
       const stdWD = (cd.stdWorkDays!=null && cd.stdWorkDays!=='') ? (parseFloat(cd.stdWorkDays)||cd.stdWorkDays) : (e._trStdWD || '');
-      // AL/CL Tồn còn lại from Leave module (calcLeaveTotals)
-      let alBal = 0, clBal = 0;
-      try {
-        if(typeof calcLeaveTotals === 'function'){
-          const _leaveId = e._isTrainee ? e.id : e.id;
-          alBal = calcLeaveTotals(_leaveId, 'al', yr, curMonth).tonCuoiNam || 0;
-          clBal = calcLeaveTotals(_leaveId, 'cl', yr, curMonth).tonCuoiNam || 0;
-        }
-      } catch(ex){}
+      // AL/CL Tồn còn lại from Leave module (cached)
+      const _lb = _getLeave(e.id);
+      const alBal = _lb.al, clBal = _lb.cl;
       const traineeBadge = e._isTrainee ? `<span style="font-size:8px;padding:1px 4px;border-radius:3px;background:var(--accent);color:#000;margin-left:4px;font-weight:600">TTS</span>` : '';
       const extraBadge = e._isExtra ? `<span style="font-size:8px;padding:1px 4px;border-radius:3px;background:var(--danger);color:#fff;margin-left:4px;font-weight:600;cursor:pointer" onclick="_rosterRemoveExtra('${e.id}')" title="Click để bỏ khỏi bảng ca">✕</span>` : '';
       const stickyBg = e._isExtra ? 'rgba(220,53,69,.04)' : rowBg;
@@ -27885,9 +27879,9 @@ function _renderRosterGrid(container, isAdm){
   }
 
   // Summary column headers — only used codes
-  const scMap2 = {}; (DB.shiftCodes||[]).forEach(sc=>{ scMap2[sc.code]=sc; });
+  // scMap already built above — reuse it (no redundant rebuild)
   const scSummaryHeaders = scCodes.map((code,i)=>{
-    const sc = scMap2[code]||{};
+    const sc = scMap[code]||{};
     return `<th style="padding:4px 2px;font-size:8px;font-weight:700;color:${sc.textColor||'var(--ink-muted)'};background:${sc.color||'var(--bg-elev)'};text-align:center;min-width:30px;border:1px solid var(--border)${i===0?';border-left:3px solid var(--accent)':''}">${code}</th>`;
   }).join('');
 
@@ -27917,7 +27911,7 @@ function _renderRosterGrid(container, isAdm){
     ${pinnedBtns}
     ${moreBtnHTML}
     <button onclick="window._rosterCopy={active:true,code:''};render()" style="padding:3px 8px;border-radius:4px;font-size:11px;cursor:pointer;border:1px solid var(--border);background:var(--bg-card);color:var(--ink-muted);margin-left:4px" title="Xóa mã ca">✕ Xóa</button>
-    ${copyActive?`<span style="font-size:11px;color:var(--accent);font-weight:700;margin-left:8px">🖊 Đang chọn: <span style="background:${(()=>{const r=_scResolve(copyCode,scMap);return r.bg;})()};color:${(()=>{const r=_scResolve(copyCode,scMap);return r.fg;})()};padding:2px 8px;border-radius:4px;font-family:'JetBrains Mono',monospace">${copyCode||'⌫'}</span> — Click hoặc KÉO CHUỘT để điền</span>
+    ${copyActive?`<span style="font-size:11px;color:var(--accent);font-weight:700;margin-left:8px">🖊 Đang chọn: <span style="background:${_scRC(copyCode).bg};color:${_scRC(copyCode).fg};padding:2px 8px;border-radius:4px;font-family:'JetBrains Mono',monospace">${copyCode||'⌫'}</span> — Click hoặc KÉO CHUỘT để điền</span>
     <button onclick="window._rosterCopy={active:false,code:''};render()" style="padding:3px 10px;border-radius:4px;font-size:11px;cursor:pointer;border:1px solid var(--danger);background:transparent;color:var(--danger);margin-left:auto">Tắt</button>`:'<span style="font-size:10px;color:var(--ink-dim)">Chọn mã ca → click hoặc kéo chuột qua các ô để điền nhanh</span>'}
   </div>`;
 
@@ -28759,6 +28753,12 @@ window._rosterExportPDF = function(type){
 // TAB 3: BẢNG CÔNG (Timesheet — auto từ Bảng Ca)
 // ══════════════════════════════════════════════════════════
 function _renderTimesheetGrid(container, isAdm){
+  // Deferred rendering: show loading state immediately, compute heavy grid in next frame
+  container.innerHTML = '<div class="card" style="padding:40px;text-align:center;color:var(--ink-muted);font-size:13px">⏳ Đang tải Bảng Công...</div>';
+  cancelAnimationFrame(window._tsRAF);
+  window._tsRAF = requestAnimationFrame(() => _renderTimesheetGridCore(container, isAdm));
+}
+function _renderTimesheetGridCore(container, isAdm){
   const rf = window._rosterFilter;
   const yr = rf.year;
   const mo = rf.month;
@@ -28778,17 +28778,20 @@ function _renderTimesheetGrid(container, isAdm){
   }
   const nowStr = new Date().toISOString().slice(0,10);
   const curMonth = new Date().getMonth();
+  // ── Performance: cache calcLeaveTotals per employee ──
+  const _leaveBalCache = {};
+  const _getLeave = (eid) => {
+    if(_leaveBalCache[eid]) return _leaveBalCache[eid];
+    let al=0,cl=0;
+    try{if(typeof calcLeaveTotals==='function'){al=calcLeaveTotals(eid,'al',yr,curMonth).tonCuoiNam||0;cl=calcLeaveTotals(eid,'cl',yr,curMonth).tonCuoiNam||0;}}catch(ex){}
+    return (_leaveBalCache[eid]={al,cl});
+  };
 
   let emps = (DB.employees||[]).filter(e=>{
     if(getEffectiveStatus(e) === 'active' || getEffectiveStatus(e) === 'probation') return true;
     if(getEffectiveStatus(e) === 'exit'){
-      try {
-        if(typeof calcLeaveTotals === 'function'){
-          const alR = calcLeaveTotals(e.id, 'al', yr, curMonth).tonCuoiNam || 0;
-          const clR = calcLeaveTotals(e.id, 'cl', yr, curMonth).tonCuoiNam || 0;
-          if(alR > 0 || clR > 0) return true;
-        }
-      } catch(ex){}
+      const _lb = _getLeave(e.id);
+      if(_lb.al > 0 || _lb.cl > 0) return true;
     }
     return false;
   }).map(e=>({...e, _isTrainee:false}));
@@ -28909,13 +28912,17 @@ function _renderTimesheetGrid(container, isAdm){
     deptGroups[did].push(e);
   });
 
+  // ── Performance: cache _scResolve results ──
+  const _rslvCache = {};
+  const _scRC = (v) => v ? (_rslvCache[v] || (_rslvCache[v] = _scResolve(v, scMap))) : {bg:'transparent',fg:'var(--ink-dim)',workValue:0,parts:[],isCompound:false,_definedCompound:false};
+
   // Collect all used work codes across all employees
   const usedWcSet = new Set();
   emps.forEach(e => {
     const rd = rosterData[e.id]||{};
     for(let d=1;d<=daysInMonth;d++){
       const v = rd[d]; if(!v) continue;
-      const resolved = _scResolve(v, scMap);
+      const resolved = _scRC(v);
       if(resolved.isCompound && resolved._definedCompound){
         // Defined compound — use its own workCode
         const dsc = scMap[v];
@@ -28983,14 +28990,9 @@ function _renderTimesheetGrid(container, isAdm){
 
       // CÔNG TC: customData first, then trainee record fallback
       const stdWD = (cd.stdWorkDays!=null && cd.stdWorkDays!=='') ? (parseFloat(cd.stdWorkDays)||cd.stdWorkDays) : (e._trStdWD || '');
-      // AL/CL Tồn còn lại from Leave module
-      let alBal = 0, clBal = 0;
-      try {
-        if(typeof calcLeaveTotals === 'function'){
-          alBal = calcLeaveTotals(e.id, 'al', yr, curMonth).tonCuoiNam || 0;
-          clBal = calcLeaveTotals(e.id, 'cl', yr, curMonth).tonCuoiNam || 0;
-        }
-      } catch(ex){}
+      // AL/CL Tồn còn lại from Leave module (cached)
+      const _lb = _getLeave(e.id);
+      const alBal = _lb.al, clBal = _lb.cl;
 
       let dayCells = '';
       let totalWork = 0;
@@ -28998,7 +29000,7 @@ function _renderTimesheetGrid(container, isAdm){
       let alUsed = 0, clUsed = 0;
       for(let d=1;d<=daysInMonth;d++){
         const shiftCode = rd[d]||'';
-        const resolved = _scResolve(shiftCode, scMap);
+        const resolved = _scRC(shiftCode);
         const _isHolDay = holidayDaysTS.has(d);
         let workCode, workVal;
         workVal = resolved.workValue;
