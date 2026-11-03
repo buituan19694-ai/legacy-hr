@@ -27303,8 +27303,10 @@ function _scImportExcel(file){
         });
       });
       DB.shiftCodes = newList;
+      // 🚨 Import guard: chặn onSnapshot cloud đè bản import trong 60s
+      window._scImportGuard = Date.now();
+      try{ localStorage.setItem('_scImportGuard', String(window._scImportGuard)); }catch(_){}
       // 🚨 Force-flush localStorage NGAY (không chờ setTimeout trong saveData)
-      // Tránh: user refresh trước khi setTimeout kịp chạy → localStorage vẫn giữ mã cũ
       try{
         const raw = localStorage.getItem(STORE_KEY);
         if(raw){ const d=JSON.parse(raw); d.shiftCodes=newList; d._lastSaved=Date.now(); localStorage.setItem(STORE_KEY, JSON.stringify(d)); }
@@ -36831,10 +36833,16 @@ fbAuth.onAuthStateChanged(async user => {
                     const rest = [...byKey.keys()].filter(k=>!cloudOrder.includes(k));
                     DB.customFields = [...cloudOrder, ...rest].map(k=>byKey.get(k));
                   } else if(key === 'shiftCodes'){
-                    // 🚨 v52: shiftCodes dùng DIRECT REPLACEMENT, KHÔNG merge-by-id.
-                    // Lý do: Excel import xóa sạch mã cũ + thay bằng mã mới (IDs khác nhau hoàn toàn).
-                    // Merge-by-id sẽ giữ cả mã cũ (cloud) + mã mới (local) → mã cũ "hồi sinh".
-                    // shiftCodes do 1 admin quản lý → cloud luôn là bản mới nhất, replace trực tiếp.
+                    // 🚨 v52: shiftCodes KHÔNG dùng merge-by-id (tránh mã cũ hồi sinh khi import Excel).
+                    // Guard: trong 60s sau import Excel, BỎ QUA cloud hoàn toàn (cloud có thể vẫn chứa data cũ/corrupt).
+                    // Sau 60s: cloud đã sync bản mới → dùng cloud.
+                    const _scGuard = window._scImportGuard || 0;
+                    const _scGuardLS = parseInt(localStorage.getItem('_scImportGuard')||'0');
+                    const _guardTs = Math.max(_scGuard, _scGuardLS);
+                    if(_guardTs && (Date.now() - _guardTs) < 60000){
+                      console.warn('[Listener] SKIP shiftCodes — import guard active (cloud:', cloudData[key]?.length, 'local:', DB[key]?.length, ')');
+                      return;
+                    }
                     DB[key] = cloudData[key];
                   } else if(Array.isArray(cloudData[key]) && Array.isArray(DB[key])
                             && cloudData[key].length > 0
