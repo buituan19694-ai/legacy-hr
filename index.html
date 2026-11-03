@@ -2694,7 +2694,13 @@ function _doRender(){
   requestAnimationFrame(()=>{
     updateBadges();
     const main = $('#mainContent');
-    main.innerHTML = '';
+    // 🚨 v68: chỉ clear main khi CHUYỂN PAGE (khác page trước).
+    // Cùng page re-render (vd onSnapshot update) → giữ nguyên DOM → không flash loading.
+    // Mỗi renderer tự chịu trách nhiệm update DOM của page mình.
+    if(window._lastRenderedPage !== currentPage){
+      main.innerHTML = '';
+      window._lastRenderedPage = currentPage;
+    }
     const renderers = {
       dashboard: renderDashboard,
       analytics: renderAnalytics,
@@ -27149,17 +27155,39 @@ function renderDutyRoster(main){
     {id:'roster',     icon:'📅', label:'Bảng Ca'},
     {id:'timesheet',  icon:'📊', label:'Bảng Công'},
   ];
-  const tabHtml = tabs.map(t=>`<button onclick="window._rosterFilter.tab='${t.id}';render()" style="padding:8px 18px;border-radius:8px;border:1px solid ${rf.tab===t.id?'var(--accent)':'var(--border)'};background:${rf.tab===t.id?'var(--accent)':'transparent'};color:${rf.tab===t.id?'var(--bg)':'var(--ink-dim)'};font-size:13px;font-weight:${rf.tab===t.id?'700':'400'};cursor:pointer">${t.icon} ${t.label}</button>`).join('');
 
-  main.innerHTML = `
-    <div class="topbar">
-      <div class="topbar-left"><h1 class="page-title">📅 Duty Roster</h1><div class="page-sub">Quản lý ca làm việc & chấm công</div></div>
-    </div>
-    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:16px">${tabHtml}</div>
-    <div id="_rosterContent"></div>
-  `;
+  // 🚨 v68: nếu frame đã tồn tại từ lần render trước → CHỈ update tab active state + content.
+  // KHÔNG rebuild topbar → container không bị phá → không flash loading.
+  let existingFrame = main.querySelector('[data-duty-frame="1"]');
+  let container;
+  if(existingFrame){
+    // Update tab buttons active state
+    main.querySelectorAll('[data-duty-tab]').forEach(btn => {
+      const tid = btn.getAttribute('data-duty-tab');
+      const active = tid === rf.tab;
+      btn.style.border = '1px solid ' + (active ? 'var(--accent)' : 'var(--border)');
+      btn.style.background = active ? 'var(--accent)' : 'transparent';
+      btn.style.color = active ? 'var(--bg)' : 'var(--ink-dim)';
+      btn.style.fontWeight = active ? '700' : '400';
+    });
+    container = document.getElementById('_rosterContent');
+    // Nếu đổi tab → clear container để renderer mới chạy fresh
+    if(container && container.getAttribute('data-tab') !== rf.tab){
+      container.innerHTML = '';
+      container.setAttribute('data-tab', rf.tab);
+    }
+  } else {
+    const tabHtml = tabs.map(t=>`<button data-duty-tab="${t.id}" onclick="window._rosterFilter.tab='${t.id}';render()" style="padding:8px 18px;border-radius:8px;border:1px solid ${rf.tab===t.id?'var(--accent)':'var(--border)'};background:${rf.tab===t.id?'var(--accent)':'transparent'};color:${rf.tab===t.id?'var(--bg)':'var(--ink-dim)'};font-size:13px;font-weight:${rf.tab===t.id?'700':'400'};cursor:pointer">${t.icon} ${t.label}</button>`).join('');
+    main.innerHTML = `
+      <div class="topbar" data-duty-frame="1">
+        <div class="topbar-left"><h1 class="page-title">📅 Duty Roster</h1><div class="page-sub">Quản lý ca làm việc & chấm công</div></div>
+      </div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:16px">${tabHtml}</div>
+      <div id="_rosterContent" data-tab="${rf.tab}"></div>
+    `;
+    container = document.getElementById('_rosterContent');
+  }
 
-  const container = document.getElementById('_rosterContent');
   if(rf.tab === 'shiftCodes') _renderShiftCodes(container, isAdm);
   else if(rf.tab === 'roster') _renderRosterGrid(container, isAdm);
   else if(rf.tab === 'timesheet') _renderTimesheetGrid(container, isAdm);
@@ -27527,11 +27555,61 @@ function _toggleShiftCodeVis(id){
 // TAB 2: BẢNG CA (Roster Grid)
 // ══════════════════════════════════════════════════════════
 function _renderRosterGrid(container, isAdm){
-  // Deferred rendering: show loading state immediately, compute heavy grid in next frame
-  container.innerHTML = '<div class="card" style="padding:40px;text-align:center;color:var(--ink-muted);font-size:13px">⏳ Đang tải Bảng Ca...</div>';
+  // 🚨 v68: CHỈ hiện loading khi lần đầu (container chưa có bảng).
+  // Re-render do onSnapshot (account khác sửa) → giữ nguyên nội dung cũ, update khi xong.
+  // → KHÔNG flash loading, user không bị gián đoạn thao tác đang làm.
+  const hasContent = container.querySelector('table') || container.querySelector('#_rosterTableWrap');
+  if(!hasContent){
+    container.innerHTML = '<div class="card" style="padding:40px;text-align:center;color:var(--ink-muted);font-size:13px">⏳ Đang tải Bảng Ca...</div>';
+  }
   cancelAnimationFrame(window._rosterRAF);
-  window._rosterRAF = requestAnimationFrame(() => _renderRosterGridCore(container, isAdm));
+  window._rosterRAF = requestAnimationFrame(() => {
+    // 🚨 v69: Signature check — nếu data VISIBLE với user này KHÔNG đổi → skip rebuild.
+    // Khi BP A sửa cell của BP A, BP B/C/D có cùng dutyRoster array mới (full) nhưng phần
+    // visible với họ (dept của họ) KHÔNG đổi → không cần rebuild bảng → tiết kiệm CPU + không
+    // mất focus cell đang edit. Chỉ rebuild nếu lần đầu, đổi filter, hoặc cells visible đổi.
+    try {
+      if(typeof window._computeRosterSig === 'function'){
+        const sig = window._computeRosterSig(isAdm, 'roster');
+        if(hasContent && window._lastRosterSig === sig){
+          // Không có gì thay đổi với view của user này → skip hoàn toàn
+          console.log('[roster] 🚀 Skip rebuild — data visible unchanged');
+          return;
+        }
+        window._lastRosterSig = sig;
+      }
+    } catch(_){ /* fallback: cứ render bình thường */ }
+    _renderRosterGridCore(container, isAdm);
+  });
 }
+// 🚨 v69: tính signature của data VISIBLE với user hiện tại
+// Nếu signature giống lần trước → không cần re-render
+window._computeRosterSig = function(isAdm, tab){
+  const rf = window._rosterFilter;
+  const yr = rf.year, mo = rf.month;
+  const allowedDepts = (typeof window._rosterAllowedDepts === 'function') ? window._rosterAllowedDepts() : [];
+  const canSeeAll = isAdm || (allowedDepts.length === 0);
+  const filterDept = rf.deptId;
+  // Lọc employees visible
+  const emps = (DB.employees||[])
+    .filter(e => canSeeAll || allowedDepts.includes(e.deptId))
+    .filter(e => !filterDept || filterDept==='all' || e.deptId===filterDept)
+    .map(e => e.id);
+  const empSet = new Set(emps);
+  // Lọc roster entries thuộc tháng + employees visible
+  const entries = (DB.dutyRoster||[])
+    .filter(r => r.year===yr && r.month===mo && empSet.has(r.empId))
+    .map(r => r.empId+':'+r.day+':'+r.shiftCode)
+    .sort()
+    .join('|');
+  // Thêm context: holiday days, locks, extras, mã ca list length (ảnh hưởng rendering)
+  const holKey = yr+'_'+mo;
+  const hol = ((DB.rosterHolidays||{})[holKey] || []).join(',');
+  const locked = (DB.rosterLocks||{})[holKey] ? '1' : '0';
+  const extras = ((DB.rosterExtras||{})[holKey]||[]).join(',');
+  const scLen = (DB.shiftCodes||[]).length;
+  return tab + '|' + yr + '|' + mo + '|' + filterDept + '|' + emps.join(',') + '|' + entries + '|hol:' + hol + '|lk:' + locked + '|ex:' + extras + '|sc:' + scLen;
+};
 function _renderRosterGridCore(container, isAdm){
   const rf = window._rosterFilter;
   const yr = rf.year;
@@ -27820,12 +27898,14 @@ function _renderRosterGridCore(container, isAdm){
             onmouseenter="if(window._rosterDrag)_rosterQuickFill(this,'${e.id}',${d})"
             title="${val?(isAutoLeave?'Tự động từ phép — '+escapeHtml(val):escapeHtml(val)):'Kéo chuột để điền nhanh'}">${_vDisp}</td>`;
         } else if(canEditThisRow){
-          // 🚨 v65: contenteditable div (wrap được) + nút ▾ nhỏ chọn mã từ dropdown (có search).
-          // Validation ở _rosterSetCell: chỉ chấp nhận mã có trong Bảng Mã Ca.
+          // 🚨 v67: contenteditable + nút ▾. Validation TRƯỚC KHI blur/Enter → không reset trang.
+          // Enter: nếu hợp lệ → save (blur). Nếu sai → toast + chặn, giữ user trong edit mode.
+          // Blur không Enter (click ra ngoài): hợp lệ → save, sai → restore giá trị cũ silently (no render).
+          const _origEsc = escapeHtml(val).replace(/'/g, "\\'").replace(/"/g, '&quot;');
           dayCells += `<td style="padding:0;border:1px solid var(--border);min-width:48px;width:48px;text-align:center;position:relative;${autoBorder}" title="${isAutoLeave?'Tự động từ phép duyệt':''}">
-            <div contenteditable="true" spellcheck="false"
-              onblur="_rosterSetCell('${e.id}',${yr},${mo},${d},(this.textContent||'').toUpperCase().trim())"
-              onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur();}"
+            <div contenteditable="true" spellcheck="false" data-orig="${_origEsc}"
+              onblur="(function(el){const t=(el.textContent||'').toUpperCase().trim();const o=el.dataset.orig||'';if(t===o) return;const v=window._rosterValidateCode(t);if(v.ok){_rosterSetCell('${e.id}',${yr},${mo},${d},t);el.dataset.orig=t;}else{el.textContent=o;toast('❌ Mã không hợp lệ: '+v.invalidParts.join(', '),'error',3000);}})(this)"
+              onkeydown="if(event.key==='Enter'){event.preventDefault();const t=(this.textContent||'').toUpperCase().trim();const v=window._rosterValidateCode(t);if(v.ok){this.blur();}else{toast('❌ Mã không hợp lệ: '+v.invalidParts.join(', ')+'. Giữ nguyên trong ô để sửa.','error',3000);}}"
               onpaste="event.preventDefault();const t=(event.clipboardData||window.clipboardData).getData('text')||'';document.execCommand('insertText',false,t.toUpperCase().trim());"
               style="width:100%;min-height:22px;padding:3px 10px 3px 1px;background:${bg};color:${fg};font-size:11px;line-height:1.15;font-weight:700;font-family:'JetBrains Mono',monospace;text-align:center;cursor:text;outline:none;word-break:break-all;overflow:hidden;box-sizing:border-box"
               title="${escapeHtml(val)}">${escapeHtml(val)}</div>
@@ -28155,25 +28235,29 @@ function _scResolve(val, scMap){
   return {bg:'transparent', fg:'var(--ink-dim)', workValue:0, parts:[val], isCompound:false};
 }
 
+// 🚨 v67: validator riêng — return {ok:bool, invalidParts:[]}, KHÔNG side-effect
+window._rosterValidateCode = function(code){
+  code = (code||'').toString().trim().toUpperCase();
+  if(!code) return {ok:true, invalidParts:[]}; // empty = clear cell, hợp lệ
+  const validCodes = new Set((DB.shiftCodes||[]).map(sc => (sc.code||'').toString().trim().toUpperCase()).filter(Boolean));
+  validCodes.add('AL'); validCodes.add('CL');
+  const parts = code.split('/').map(p => p.trim()).filter(Boolean);
+  const invalid = parts.filter(p => !validCodes.has(p));
+  return {ok: invalid.length === 0, invalidParts: invalid};
+};
 function _rosterSetCell(empId, year, month, day, shiftCode){
   const code = (shiftCode||'').toString().trim().toUpperCase();
-  // 🚨 v65: VALIDATION — chỉ chấp nhận mã có trong Bảng Mã Ca (hoặc AL/CL system codes)
+  // 🚨 v67: validation ở đây CHỈ check, không re-render.
+  // Nếu caller không validate trước, ta skip silently (giữ nguyên data cũ).
   if(code){
-    const validCodes = new Set((DB.shiftCodes||[]).map(sc => (sc.code||'').toString().trim().toUpperCase()).filter(Boolean));
-    validCodes.add('AL'); validCodes.add('CL'); // system leave codes
-    const parts = code.split('/').map(p => p.trim()).filter(Boolean);
-    const invalid = parts.filter(p => !validCodes.has(p));
-    if(invalid.length){
-      toast('❌ Mã không hợp lệ: ' + invalid.join(', ') + '. Chỉ dùng mã có trong Bảng Mã Ca.', 'error', 5000);
-      // Re-render để khôi phục giá trị cũ (contenteditable đã bị user sửa)
-      if(typeof render === 'function') render();
-      return;
+    const v = window._rosterValidateCode(code);
+    if(!v.ok){
+      toast('❌ Mã không hợp lệ: ' + v.invalidParts.join(', '), 'error', 3000);
+      return; // KHÔNG save, KHÔNG render
     }
   }
   if(!DB.dutyRoster) DB.dutyRoster = [];
-  // Remove existing entry
   DB.dutyRoster = DB.dutyRoster.filter(r=>!(r.empId===empId && r.year===year && r.month===month && r.day===day));
-  // Add new if not empty
   if(code){
     DB.dutyRoster.push({empId, year, month, day, shiftCode: code, _savedAt:Date.now()});
   }
@@ -28234,8 +28318,24 @@ window._rosterPickerSelect = function(empId, yr, mo, d, code){
   const p = document.getElementById('_scPickerPopup');
   if(p) p.remove();
   _rosterSetCell(empId, yr, mo, d, code);
-  // Re-render để UI cập nhật ngay (picker không trigger onblur contenteditable)
-  if(typeof render === 'function') render();
+  // 🚨 v67: cập nhật cell UI trực tiếp, KHÔNG render toàn trang (giữ scroll + edit context)
+  try {
+    const _c = (code||'').toString().trim().toUpperCase();
+    const scMap = {}; (DB.shiftCodes||[]).forEach(sc=>{ scMap[sc.code]=sc; });
+    const resolved = _scResolve(_c, scMap);
+    // Tìm div contenteditable của cell này
+    const divs = document.querySelectorAll('div[contenteditable="true"][data-orig]');
+    divs.forEach(div => {
+      // Match by onblur which includes empId, yr, mo, d
+      const ob = (div.getAttribute('onblur')||'');
+      if(ob.includes("'"+empId+"',"+yr+","+mo+","+d+",")){
+        div.textContent = _c;
+        div.dataset.orig = _c;
+        div.style.background = resolved.bg;
+        div.style.color = resolved.fg;
+      }
+    });
+  } catch(_){}
 };
 
 function _rosterToggleLock(year, month){
@@ -28981,10 +29081,26 @@ window._rosterExportPDF = function(type){
 // TAB 3: BẢNG CÔNG (Timesheet — auto từ Bảng Ca)
 // ══════════════════════════════════════════════════════════
 function _renderTimesheetGrid(container, isAdm){
-  // Deferred rendering: show loading state immediately, compute heavy grid in next frame
-  container.innerHTML = '<div class="card" style="padding:40px;text-align:center;color:var(--ink-muted);font-size:13px">⏳ Đang tải Bảng Công...</div>';
+  // 🚨 v68: CHỈ hiện loading lần đầu. Re-render → giữ nguyên nội dung cũ.
+  const hasContent = container.querySelector('table');
+  if(!hasContent){
+    container.innerHTML = '<div class="card" style="padding:40px;text-align:center;color:var(--ink-muted);font-size:13px">⏳ Đang tải Bảng Công...</div>';
+  }
   cancelAnimationFrame(window._tsRAF);
-  window._tsRAF = requestAnimationFrame(() => _renderTimesheetGridCore(container, isAdm));
+  window._tsRAF = requestAnimationFrame(() => {
+    // 🚨 v69: Signature check — skip rebuild nếu data visible không đổi
+    try {
+      if(typeof window._computeRosterSig === 'function'){
+        const sig = window._computeRosterSig(isAdm, 'timesheet');
+        if(hasContent && window._lastTimesheetSig === sig){
+          console.log('[timesheet] 🚀 Skip rebuild — data visible unchanged');
+          return;
+        }
+        window._lastTimesheetSig = sig;
+      }
+    } catch(_){ /* fallback */ }
+    _renderTimesheetGridCore(container, isAdm);
+  });
 }
 function _renderTimesheetGridCore(container, isAdm){
   const rf = window._rosterFilter;
