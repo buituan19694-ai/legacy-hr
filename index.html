@@ -1060,7 +1060,7 @@ const FS_DOC_MAP = {
                'dashboardConfig','brandConfig','customRecruitSources','docChecklistItems',
                'disciplineSeverityConfig','requiredFieldsConfig',
                'contractTemplates','quickFilterPrefs','recReportConfig','perfReportConfig','plConfig','trainingKpi',
-               'salaryStructure','shiftCodes','rosterLocks','cbVoucherReqFields',
+               'salaryStructure','shiftCodes','rosterLocks','rosterGuide','cbVoucherReqFields',
                '_rewardTypesV2','_levelReset2026','_removedProbationStatus','_normalizedDates2026','_cleanedCandYearShards','_backfillTraineeCodes'],
 };
 // manningPlan + manningActual được shard theo năm qua _pushDynamicKey → KHÔNG để trong FS_DOC_MAP
@@ -27115,16 +27115,23 @@ function _renderShiftCodes(container, isAdm){
   const codes = DB.shiftCodes || [];
 
   // Default shift codes nếu chưa có
-  if(!codes.length && isAdm){
-    container.innerHTML = `
-      <div class="card">
-        <div class="card-head"><div><div class="card-title">⚙️ Bảng Mã Ca / Công</div><div class="card-sub">Chưa có mã ca nào. Tạo mã ca mặc định hoặc thêm thủ công.</div></div>
-          <div style="display:flex;gap:8px">
-            <button class="btn btn-primary" onclick="_shiftCodeDefaults()" style="font-size:12px">🚀 Tạo mã mặc định</button>
-            <button class="btn" onclick="_editShiftCode()" style="font-size:12px">+ Thêm mã ca</button>
+  if(!codes.length){
+    if(isAdm){
+      container.innerHTML = `
+        <div class="card">
+          <div class="card-head"><div><div class="card-title">⚙️ Bảng Mã Ca / Công</div><div class="card-sub">Chưa có mã ca nào. Tạo mã ca mặc định hoặc thêm thủ công.</div></div>
+            <div style="display:flex;gap:8px">
+              <button class="btn btn-primary" onclick="_shiftCodeDefaults()" style="font-size:12px">🚀 Tạo mã mặc định</button>
+              <button class="btn" onclick="_editShiftCode()" style="font-size:12px">+ Thêm mã ca</button>
+            </div>
           </div>
-        </div>
-      </div>`;
+        </div>`;
+    } else {
+      container.innerHTML = `
+        <div class="card">
+          <div class="card-head"><div><div class="card-title">⚙️ Bảng Mã Ca / Công</div><div class="card-sub">Chưa có mã ca nào. Liên hệ Admin để thêm mã ca.</div></div></div>
+        </div>`;
+    }
     return;
   }
 
@@ -27178,14 +27185,10 @@ function _renderShiftCodes(container, isAdm){
     </div>
 
     <div class="card" style="margin-top:16px">
-      <div class="card-head"><div><div class="card-title">📖 Hướng dẫn</div></div></div>
-      <div style="padding:0 18px 16px;font-size:12px;color:var(--ink-dim);line-height:1.8">
-        <b>Mã Ca</b> = ký hiệu điền vào Bảng Ca (VD: S, C, Đ, OFF, AL...)<br>
-        <b>Mã Công</b> = mã tương ứng khi chuyển sang Bảng Công<br>
-        <b style="color:#c62828">Mã Công Lễ</b> = mã công áp dụng vào ngày lễ (VD: L, LĐ). Admin chọn ngày lễ ở Bảng Ca.<br>
-        <b>Giá trị Công</b> = số công quy đổi (VD: Ca Sáng = 1 công, Ca Đêm = 1.5 công)<br>
-        Trưởng bộ phận chỉ điền Mã Ca vào bảng. Khi bấm <em>"Chuyển sang Bảng Công"</em>, hệ thống tự quy đổi theo bảng này.
+      <div class="card-head"><div><div class="card-title">📖 Hướng dẫn</div></div>
+        ${window.currentUser?.email===ADMIN_EMAIL?'<button class="btn" onclick="_editRosterGuide()" style="font-size:11px">✏️ Sửa</button>':''}
       </div>
+      <div style="padding:0 18px 16px;font-size:12px;color:var(--ink-dim);line-height:1.8">${DB.rosterGuide||'<b>Mã Ca</b> = ký hiệu điền vào Bảng Ca (VD: S, C, Đ, OFF, AL...)<br><b>Mã Công</b> = mã tương ứng khi chuyển sang Bảng Công<br><b style="color:#c62828">Mã Công Lễ</b> = mã công áp dụng vào ngày lễ (VD: L, LĐ). Admin chọn ngày lễ ở Bảng Ca.<br><b>Giá trị Công</b> = số công quy đổi (VD: Ca Sáng = 1 công, Ca Đêm = 1.5 công)<br>Trưởng bộ phận chỉ điền Mã Ca vào bảng. Khi bấm <em>"Chuyển sang Bảng Công"</em>, hệ thống tự quy đổi theo bảng này.'}</div>
     </div>
   `;
 }
@@ -27207,6 +27210,32 @@ function _shiftCodeDefaults(){
   ];
   saveData(['shiftCodes']);
   toast('✅ Đã tạo 12 mã ca mặc định','success');
+  render();
+}
+
+// ── Edit Hướng dẫn (chỉ ADMIN) ──
+function _editRosterGuide(){
+  const defaultTxt = '<b>Mã Ca</b> = ký hiệu điền vào Bảng Ca (VD: S, C, Đ, OFF, AL...)<br>\n<b>Mã Công</b> = mã tương ứng khi chuyển sang Bảng Công<br>\n<b style="color:#c62828">Mã Công Lễ</b> = mã công áp dụng vào ngày lễ (VD: L, LĐ). Admin chọn ngày lễ ở Bảng Ca.<br>\n<b>Giá trị Công</b> = số công quy đổi (VD: Ca Sáng = 1 công, Ca Đêm = 1.5 công)<br>\nTrưởng bộ phận chỉ điền Mã Ca vào bảng. Khi bấm <em>"Chuyển sang Bảng Công"</em>, hệ thống tự quy đổi theo bảng này.';
+  const cur = DB.rosterGuide || defaultTxt;
+  openModal(`
+    <div class="modal-head"><div class="modal-title">✏️ Sửa Hướng dẫn</div><div class="modal-sub">Hỗ trợ HTML cơ bản: &lt;b&gt;, &lt;em&gt;, &lt;br&gt;, &lt;span style="..."&gt;</div></div>
+    <textarea id="_rgEdit" style="width:100%;min-height:200px;padding:12px;border:1px solid var(--border);border-radius:8px;background:var(--bg-elev);color:var(--ink);font-size:12px;line-height:1.8;font-family:inherit;resize:vertical;box-sizing:border-box">${cur.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</textarea>
+    <div style="margin-top:8px;padding:8px 12px;border:1px solid var(--border);border-radius:8px;background:var(--bg-card);font-size:12px;color:var(--ink-dim);line-height:1.8"><b>Xem trước:</b><div id="_rgPreview" style="margin-top:6px">${cur}</div></div>
+    <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end">
+      <button class="btn" onclick="closeModal()">Hủy</button>
+      <button class="btn btn-primary" onclick="_saveRosterGuide()">💾 Lưu</button>
+    </div>
+  `);
+  document.getElementById('_rgEdit').addEventListener('input', function(){
+    document.getElementById('_rgPreview').innerHTML = this.value;
+  });
+}
+function _saveRosterGuide(){
+  const val = document.getElementById('_rgEdit').value.trim();
+  DB.rosterGuide = val;
+  saveData(['rosterGuide']);
+  closeModal();
+  toast('✅ Đã lưu hướng dẫn','success');
   render();
 }
 
@@ -27935,7 +27964,7 @@ function _renderRosterGridCore(container, isAdm){
           <button class="btn" onclick="_rosterExportPDF('roster')" style="font-size:11px" title="Xuất PDF Bảng Ca">📄 PDF</button>
         </div>
       </div>
-      ${(!isLocked && (isAdm || window.canDo('dutyRoster','edit'))) ? copyBar : ''}
+      ${(!isLocked && (isAdm || window.canDo('dutyRoster','edit')) && allSC.length>0) ? copyBar : ''}
       <div style="display:flex;align-items:center;gap:6px;padding:4px 12px;border-bottom:1px solid var(--border);background:var(--bg-elev)">
         <span style="font-size:10px;color:var(--ink-muted)">Zoom:</span>
         <button onclick="_rosterDoZoom(-10)" style="width:24px;height:24px;border:1px solid var(--border);border-radius:4px;background:var(--bg-card);color:var(--ink);cursor:pointer;font-size:14px;display:flex;align-items:center;justify-content:center;padding:0" title="Thu nhỏ">−</button>
@@ -28731,6 +28760,20 @@ window._rosterExportPDF = function(type){
   // Work code summary headers for timesheet PDF
   const wcHeaders = type==='timesheet' ? pdfWcArr.map(wc=>`<th style="padding:3px 1px;font-size:7pt;text-align:center;min-width:20px">${wc}</th>`).join('') : '';
 
+  const signatureFooter = `
+    <div style="margin-top:32px;display:flex;justify-content:space-between;padding:0 40px;page-break-inside:avoid">
+      <div style="text-align:center;min-width:180px">
+        <div style="font-size:9pt;font-weight:700;color:#1a1a2e">Người lập</div>
+        <div style="font-size:8pt;color:#666;margin-top:2px">Prepared By</div>
+        <div style="margin-top:50px;border-top:1px solid #999;width:160px;display:inline-block"></div>
+      </div>
+      <div style="text-align:center;min-width:180px">
+        <div style="font-size:9pt;font-weight:700;color:#1a1a2e">Trưởng bộ phận</div>
+        <div style="font-size:8pt;color:#666;margin-top:2px">Head of Department</div>
+        <div style="margin-top:50px;border-top:1px solid #999;width:160px;display:inline-block"></div>
+      </div>
+    </div>`;
+
   _openPDF(title,
     `<table style="border-collapse:collapse;width:100%"><thead><tr style="background:#e8eaf6;color:#1a237e">
       <th style="width:25px;padding:3px">#</th>
@@ -28739,14 +28782,9 @@ window._rosterExportPDF = function(type){
       ${dayHeaders}
       ${wcHeaders}
       <th style="width:35px;padding:3px;background:#c5cae9;color:#1a237e;font-weight:700">TOTAL</th>
-    </tr></thead><tbody>${rows}</tbody></table>`,
-    subtitle
+    </tr></thead><tbody>${rows}</tbody></table>${signatureFooter}`,
+    subtitle, undefined, {landscape:true}
   );
-  // Override page CSS for landscape
-  setTimeout(()=>{
-    const frames = document.querySelectorAll('iframe');
-    // The PDF opens in a new window, inject landscape CSS
-  },100);
 };
 
 // ══════════════════════════════════════════════════════════
@@ -40912,9 +40950,10 @@ function exportPLPDF(){
   toast('📄 Đã mở cửa sổ in. Chọn "Save as PDF" để xuất file.','success');
 }
 
-function _openPDF(title, bodyHTML, subtitle, lang){
+function _openPDF(title, bodyHTML, subtitle, lang, opts){
   const EN = (lang === 'en');
-  const css = `*{margin:0;padding:0;box-sizing:border-box}body{font-family:'Segoe UI',Arial,sans-serif;font-size:10.5pt;color:#1a1a2e;background:#fff;padding:18px 24px}h1{font-size:18pt;color:#2c3e6b;margin-bottom:3px}h2{font-size:13pt;color:#2c3e6b;margin:16px 0 8px;border-bottom:2px solid #e0e0e0;padding-bottom:4px}.sub{font-size:9.5pt;color:#666;margin-bottom:14px}table{width:100%;border-collapse:collapse;font-size:9.5pt}th{background:#e8eaf6;color:#1a237e;padding:6px 8px;text-align:left;font-size:9pt;border-bottom:2px solid #7986cb}td{padding:5px 8px;border-bottom:1px solid #f0f0f0}tr:nth-child(even) td{background:#fafafa}.badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:8pt;font-weight:600}.footer{margin-top:18px;font-size:8.5pt;color:#aaa;text-align:right;border-top:1px solid #eee;padding-top:6px}@media print{body{padding:0}@page{margin:12mm}}`;
+  const pageCSS = (opts?.landscape) ? '@page{margin:10mm;size:landscape}' : '@page{margin:12mm}';
+  const css = `*{margin:0;padding:0;box-sizing:border-box}body{font-family:'Segoe UI',Arial,sans-serif;font-size:10.5pt;color:#1a1a2e;background:#fff;padding:18px 24px}h1{font-size:18pt;color:#2c3e6b;margin-bottom:3px}h2{font-size:13pt;color:#2c3e6b;margin:16px 0 8px;border-bottom:2px solid #e0e0e0;padding-bottom:4px}.sub{font-size:9.5pt;color:#666;margin-bottom:14px}table{width:100%;border-collapse:collapse;font-size:9.5pt}th{background:#e8eaf6;color:#1a237e;padding:6px 8px;text-align:left;font-size:9pt;border-bottom:2px solid #7986cb}td{padding:5px 8px;border-bottom:1px solid #f0f0f0}tr:nth-child(even) td{background:#fafafa}.badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:8pt;font-weight:600}.footer{margin-top:18px;font-size:8.5pt;color:#aaa;text-align:right;border-top:1px solid #eee;padding-top:6px}@media print{body{padding:0}${pageCSS}}`;
   const today = new Date().toLocaleDateString(EN ? 'en-GB' : 'vi-VN');
   const company = DB.company?.name || 'Legacy Yên Tử MGallery';
   const printedLabel = EN ? 'Printed on' : 'In ngày';
