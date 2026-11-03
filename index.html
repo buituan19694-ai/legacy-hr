@@ -27829,10 +27829,9 @@ function _renderRosterGridCore(container, isAdm){
               onpaste="event.preventDefault();const t=(event.clipboardData||window.clipboardData).getData('text')||'';document.execCommand('insertText',false,t.toUpperCase().trim());"
               style="width:100%;min-height:22px;padding:3px 10px 3px 1px;background:${bg};color:${fg};font-size:11px;line-height:1.15;font-weight:700;font-family:'JetBrains Mono',monospace;text-align:center;cursor:text;outline:none;word-break:break-all;overflow:hidden;box-sizing:border-box"
               title="${escapeHtml(val)}">${escapeHtml(val)}</div>
-            <button type="button" onclick="event.stopPropagation();_rosterShowCellPicker(this,'${e.id}',${yr},${mo},${d})"
-              style="position:absolute;top:1px;right:1px;width:9px;height:9px;padding:0;line-height:9px;font-size:8px;background:rgba(0,0,0,.08);color:var(--ink-dim);border:none;border-radius:2px;cursor:pointer;display:flex;align-items:center;justify-content:center;opacity:.5"
-              onmouseover="this.style.opacity='1';this.style.background='var(--accent)';this.style.color='#fff'"
-              onmouseout="this.style.opacity='.5';this.style.background='rgba(0,0,0,.08)';this.style.color='var(--ink-dim)'"
+            <button type="button" class="_scPickBtn"
+              onmousedown="event.preventDefault();event.stopPropagation();_rosterShowCellPicker(this,'${e.id}',${yr},${mo},${d})"
+              style="position:absolute;top:1px;right:1px;width:12px;height:12px;padding:0;line-height:10px;font-size:9px;background:var(--accent);color:#fff;border:none;border-radius:3px;cursor:pointer;display:flex;align-items:center;justify-content:center;font-weight:700"
               title="Chọn mã ca có sẵn">▾</button>
           </td>`;
         } else {
@@ -28064,7 +28063,10 @@ function _renderRosterGridCore(container, isAdm){
 #_rosterTableWrap::-webkit-scrollbar-track{background:var(--bg-elev);border-radius:3px}
 #_rosterTableWrap::-webkit-scrollbar-thumb{background:var(--accent);border-radius:3px;opacity:.6}
 #_rosterTableWrap::-webkit-scrollbar-thumb:hover{opacity:1}
-#_rosterTableWrap{scrollbar-width:thin;scrollbar-color:var(--accent) var(--bg-elev)}</style>
+#_rosterTableWrap{scrollbar-width:thin;scrollbar-color:var(--accent) var(--bg-elev)}
+/* 🚨 v66: nút ▾ mặc định ẨN HOÀN TOÀN, chỉ hiện khi cell được focus (user đang edit) */
+._scPickBtn{opacity:0!important;pointer-events:none!important;transition:opacity .15s}
+td:focus-within ._scPickBtn{opacity:1!important;pointer-events:auto!important}</style>
     <div class="card">
       <div class="card-head">
         <div><div class="card-title">📅 Bảng Ca — T${mo}/${yr}</div>
@@ -28232,6 +28234,8 @@ window._rosterPickerSelect = function(empId, yr, mo, d, code){
   const p = document.getElementById('_scPickerPopup');
   if(p) p.remove();
   _rosterSetCell(empId, yr, mo, d, code);
+  // Re-render để UI cập nhật ngay (picker không trigger onblur contenteditable)
+  if(typeof render === 'function') render();
 };
 
 function _rosterToggleLock(year, month){
