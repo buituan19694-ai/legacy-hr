@@ -35844,6 +35844,34 @@ fbAuth.onAuthStateChanged(async user => {
             const data = snap.data();
             FS_DOC_MAP[docIds[i]].forEach(key=>{
               if(data[key] !== undefined){
+                // 🚨 v53 FIX DOUBLE: shiftCodes = FULL REPLACEMENT (Excel import thay toàn bộ)
+                // KHÔNG merge-by-id (mã mới có ID khác mã cũ → bị coi là "local-only" → append → double)
+                // ROOT CAUSE: cold-load recovery cũ append 183 mã mới vào 1120 mã cũ → 1303 mã
+                // FIX: dùng import guard + timestamp để chọn local hoặc cloud, KHÔNG BAO GIỜ merge
+                if(key === 'shiftCodes'){
+                  const _lsc = _localBeforeCloud[key] || [];
+                  const _cloudSC = Array.isArray(data[key]) ? data[key] : [];
+                  // Kiểm tra import guard (tồn tại trong localStorage qua refresh)
+                  const _scGuardLS = parseInt(localStorage.getItem('_scImportGuard')||'0');
+                  const _guardAge = _scGuardLS ? (Date.now() - _scGuardLS) : Infinity;
+                  // Trong 5 phút sau import: trust local (cloud có thể chưa cập nhật)
+                  if(_guardAge < 300000 && _lsc.length > 0){
+                    DB[key] = _lsc;
+                    console.warn('[cold-load] shiftCodes: LOCAL wins (import guard ' + Math.round(_guardAge/1000) + 's ago, ' + _lsc.length + ' mã)');
+                  } else {
+                    // Ngoài 5 phút: so sánh timestamp
+                    const _localTS = DB._lastSaved || 0;
+                    const _cloudTS = data._lastSaved || 0;
+                    if(_lsc.length > 0 && _localTS > _cloudTS){
+                      DB[key] = _lsc;
+                      console.warn('[cold-load] shiftCodes: LOCAL wins (' + _lsc.length + ' mã, localTs=' + _localTS + ' > cloudTs=' + _cloudTS + ')');
+                    } else {
+                      DB[key] = _cloudSC;
+                      console.warn('[cold-load] shiftCodes: CLOUD wins (' + _cloudSC.length + ' mã, cloudTs=' + _cloudTS + ' >= localTs=' + _localTS + ')');
+                    }
+                  }
+                  return; // skip merge-by-id — shiftCodes LUÔN full replacement
+                }
                 // v17.2: filter items đã tombstone (xóa) — chống resurrection sau F5
                 if(Array.isArray(data[key])){
                   const _tomb = _gTombGetSetFor(key);
@@ -35880,6 +35908,10 @@ fbAuth.onAuthStateChanged(async user => {
           // Chống mất data kiểu Lương Huy Hoàng: nhập xong, save fail QUIC, cloud không có
           // → localStorage vẫn giữ → khôi phục + tự động re-save lên cloud
           _arrayKeys.forEach(key => {
+            // 🚨 v53: shiftCodes đã xử lý ở trên (full replacement, KHÔNG append local-only)
+            // Đây chính là ROOT CAUSE của bug double mã ca: 183 mã mới (ID khác) bị coi là "local-only"
+            // → append vào 1120 mã cũ trên cloud → 1303 mã → resave lên cloud → vòng lặp tăng mãi
+            if(key === 'shiftCodes') return;
             const localArr = _localBeforeCloud[key];
             if(!Array.isArray(localArr) || localArr.length === 0) return;
             const _kf2 = (key === 'manualBlacklist') ? 'empId' : (key === 'requiredFieldsConfig') ? 'key' : 'id';
