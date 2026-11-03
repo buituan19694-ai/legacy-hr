@@ -27820,15 +27820,20 @@ function _renderRosterGridCore(container, isAdm){
             onmouseenter="if(window._rosterDrag)_rosterQuickFill(this,'${e.id}',${d})"
             title="${val?(isAutoLeave?'Tự động từ phép — '+escapeHtml(val):escapeHtml(val)):'Kéo chuột để điền nhanh'}">${_vDisp}</td>`;
         } else if(canEditThisRow){
-          // 🚨 v64: thay <input> bằng contenteditable div để WRAP được mã dài.
-          // Giữ nguyên khả năng edit — click vào ô là sửa được. Dấu "/" được giữ nguyên.
-          dayCells += `<td style="padding:0;border:1px solid var(--border);min-width:48px;width:48px;text-align:center;${autoBorder}" title="${isAutoLeave?'Tự động từ phép duyệt':''}">
+          // 🚨 v65: contenteditable div (wrap được) + nút ▾ nhỏ chọn mã từ dropdown (có search).
+          // Validation ở _rosterSetCell: chỉ chấp nhận mã có trong Bảng Mã Ca.
+          dayCells += `<td style="padding:0;border:1px solid var(--border);min-width:48px;width:48px;text-align:center;position:relative;${autoBorder}" title="${isAutoLeave?'Tự động từ phép duyệt':''}">
             <div contenteditable="true" spellcheck="false"
               onblur="_rosterSetCell('${e.id}',${yr},${mo},${d},(this.textContent||'').toUpperCase().trim())"
               onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur();}"
               onpaste="event.preventDefault();const t=(event.clipboardData||window.clipboardData).getData('text')||'';document.execCommand('insertText',false,t.toUpperCase().trim());"
-              style="width:100%;min-height:22px;padding:3px 1px;background:${bg};color:${fg};font-size:11px;line-height:1.15;font-weight:700;font-family:'JetBrains Mono',monospace;text-align:center;cursor:text;outline:none;word-break:break-all;overflow:hidden;box-sizing:border-box"
+              style="width:100%;min-height:22px;padding:3px 10px 3px 1px;background:${bg};color:${fg};font-size:11px;line-height:1.15;font-weight:700;font-family:'JetBrains Mono',monospace;text-align:center;cursor:text;outline:none;word-break:break-all;overflow:hidden;box-sizing:border-box"
               title="${escapeHtml(val)}">${escapeHtml(val)}</div>
+            <button type="button" onclick="event.stopPropagation();_rosterShowCellPicker(this,'${e.id}',${yr},${mo},${d})"
+              style="position:absolute;top:1px;right:1px;width:9px;height:9px;padding:0;line-height:9px;font-size:8px;background:rgba(0,0,0,.08);color:var(--ink-dim);border:none;border-radius:2px;cursor:pointer;display:flex;align-items:center;justify-content:center;opacity:.5"
+              onmouseover="this.style.opacity='1';this.style.background='var(--accent)';this.style.color='#fff'"
+              onmouseout="this.style.opacity='.5';this.style.background='rgba(0,0,0,.08)';this.style.color='var(--ink-dim)'"
+              title="Chọn mã ca có sẵn">▾</button>
           </td>`;
         } else {
           dayCells += `<td style="padding:2px 1px;border:1px solid var(--border);min-width:48px;width:48px;text-align:center;background:${bg};color:${fg};font-size:11px;line-height:1.15;font-weight:700;font-family:'JetBrains Mono',monospace;overflow:hidden;word-break:break-all;${autoBorder}" title="${escapeHtml(val)}">${_vDisp}</td>`;
@@ -28149,15 +28154,85 @@ function _scResolve(val, scMap){
 }
 
 function _rosterSetCell(empId, year, month, day, shiftCode){
+  const code = (shiftCode||'').toString().trim().toUpperCase();
+  // 🚨 v65: VALIDATION — chỉ chấp nhận mã có trong Bảng Mã Ca (hoặc AL/CL system codes)
+  if(code){
+    const validCodes = new Set((DB.shiftCodes||[]).map(sc => (sc.code||'').toString().trim().toUpperCase()).filter(Boolean));
+    validCodes.add('AL'); validCodes.add('CL'); // system leave codes
+    const parts = code.split('/').map(p => p.trim()).filter(Boolean);
+    const invalid = parts.filter(p => !validCodes.has(p));
+    if(invalid.length){
+      toast('❌ Mã không hợp lệ: ' + invalid.join(', ') + '. Chỉ dùng mã có trong Bảng Mã Ca.', 'error', 5000);
+      // Re-render để khôi phục giá trị cũ (contenteditable đã bị user sửa)
+      if(typeof render === 'function') render();
+      return;
+    }
+  }
   if(!DB.dutyRoster) DB.dutyRoster = [];
   // Remove existing entry
   DB.dutyRoster = DB.dutyRoster.filter(r=>!(r.empId===empId && r.year===year && r.month===month && r.day===day));
   // Add new if not empty
-  if(shiftCode){
-    DB.dutyRoster.push({empId, year, month, day, shiftCode, _savedAt:Date.now()});
+  if(code){
+    DB.dutyRoster.push({empId, year, month, day, shiftCode: code, _savedAt:Date.now()});
   }
   saveData(['dutyRoster']);
 }
+
+// 🚨 v65: Dropdown chọn mã ca cho cell — mũi tên nhỏ ▾, không che mã.
+// Click arrow → floating popup với danh sách + search; click mã → điền vào cell.
+window._rosterShowCellPicker = function(btn, empId, yr, mo, d){
+  // Đóng picker cũ nếu có
+  const existing = document.getElementById('_scPickerPopup');
+  if(existing){ existing.remove(); if(existing.dataset.cell === empId+'_'+d){ return; } }
+  const codes = (DB.shiftCodes||[]).filter(sc => !sc.hidden && (sc.code||'').trim());
+  const rect = btn.getBoundingClientRect();
+  const popup = document.createElement('div');
+  popup.id = '_scPickerPopup';
+  popup.dataset.cell = empId+'_'+d;
+  popup.style.cssText = 'position:fixed;top:'+(rect.bottom+2)+'px;left:'+Math.min(rect.left, window.innerWidth-240)+'px;width:230px;max-height:320px;background:var(--bg-card);border:1px solid var(--border);border-radius:6px;box-shadow:0 4px 16px rgba(0,0,0,.15);z-index:9999;display:flex;flex-direction:column;font-family:system-ui,sans-serif';
+  popup.innerHTML = `
+    <div style="padding:6px;border-bottom:1px solid var(--border)">
+      <input type="text" id="_scPickerSearch" placeholder="🔍 Tìm mã..." autocomplete="off"
+        style="width:100%;padding:4px 8px;font-size:12px;border:1px solid var(--border);border-radius:4px;background:var(--bg-elev);color:var(--ink);outline:none;box-sizing:border-box">
+    </div>
+    <div id="_scPickerList" style="overflow-y:auto;flex:1;max-height:260px"></div>
+    <div style="padding:4px 8px;border-top:1px solid var(--border);display:flex;gap:4px">
+      <button onclick="_rosterPickerSelect('${empId}',${yr},${mo},${d},'')" style="flex:1;padding:4px;font-size:11px;background:var(--bg-elev);color:var(--ink-dim);border:1px solid var(--border);border-radius:4px;cursor:pointer">✕ Xóa</button>
+      <button onclick="document.getElementById('_scPickerPopup').remove()" style="flex:1;padding:4px;font-size:11px;background:var(--bg-elev);color:var(--ink-dim);border:1px solid var(--border);border-radius:4px;cursor:pointer">Đóng</button>
+    </div>`;
+  document.body.appendChild(popup);
+  const renderList = (filter) => {
+    const f = (filter||'').toUpperCase();
+    const list = document.getElementById('_scPickerList');
+    if(!list) return;
+    const items = codes.filter(sc => !f || (sc.code||'').toUpperCase().includes(f) || (sc.name||'').toUpperCase().includes(f));
+    list.innerHTML = items.length ? items.map(sc => `
+      <div onclick="_rosterPickerSelect('${empId}',${yr},${mo},${d},'${(sc.code||'').replace(/'/g,"\\'")}')"
+        style="padding:5px 8px;cursor:pointer;border-bottom:1px solid rgba(0,0,0,.04);display:flex;align-items:center;gap:6px"
+        onmouseover="this.style.background='rgba(212,165,116,.08)'" onmouseout="this.style.background=''">
+        <span style="min-width:40px;padding:2px 6px;background:${sc.color||'#eee'};color:${sc.textColor||'#333'};border-radius:3px;font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:700;text-align:center">${escapeHtml(sc.code||'')}</span>
+        <span style="font-size:11px;color:var(--ink);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(sc.name||'')}</span>
+      </div>`).join('') : '<div style="padding:12px;text-align:center;color:var(--ink-muted);font-size:11px">Không có mã khớp</div>';
+  };
+  renderList('');
+  const srch = document.getElementById('_scPickerSearch');
+  if(srch){ srch.focus(); srch.oninput = () => renderList(srch.value); }
+  // Click outside closes
+  setTimeout(() => {
+    const closeOnOutside = (ev) => {
+      if(!popup.contains(ev.target) && ev.target !== btn){
+        popup.remove();
+        document.removeEventListener('mousedown', closeOnOutside);
+      }
+    };
+    document.addEventListener('mousedown', closeOnOutside);
+  }, 0);
+};
+window._rosterPickerSelect = function(empId, yr, mo, d, code){
+  const p = document.getElementById('_scPickerPopup');
+  if(p) p.remove();
+  _rosterSetCell(empId, yr, mo, d, code);
+};
 
 function _rosterToggleLock(year, month){
   const key = year+'_'+month;
