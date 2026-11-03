@@ -35854,39 +35854,30 @@ fbAuth.onAuthStateChanged(async user => {
                   // Kiểm tra import guard (tồn tại trong localStorage qua refresh)
                   const _scGuardLS = parseInt(localStorage.getItem('_scImportGuard')||'0');
                   const _guardAge = _scGuardLS ? (Date.now() - _scGuardLS) : Infinity;
-                  let _localWins = false;
-                  // Trong 5 phút sau import: trust local (cloud có thể chưa cập nhật)
+                  // 🚨 v55 FIX: CHỈ import guard mới cho phép local thắng
+                  // KHÔNG dùng timestamp comparison — vì account phụ có thể có localStorage
+                  // cũ/corrupt (452 mã) với _lastSaved mới hơn cloud → local thắng → re-save
+                  // đẩy data corrupt lên Firestore → tất cả account bị nhiễm
+                  // Rule: CÓ import guard + trong 5 phút → local (đang import)
+                  //       KHÔNG có guard → LUÔN cloud (cloud là source of truth cho shiftCodes)
                   if(_guardAge < 300000 && _lsc.length > 0){
                     DB[key] = _lsc;
-                    _localWins = true;
                     console.warn('[cold-load] shiftCodes: LOCAL wins (import guard ' + Math.round(_guardAge/1000) + 's ago, ' + _lsc.length + ' mã)');
-                  } else {
-                    // Ngoài 5 phút: so sánh timestamp
-                    const _localTS = DB._lastSaved || 0;
-                    const _cloudTS = data._lastSaved || 0;
-                    if(_lsc.length > 0 && _localTS > _cloudTS){
-                      DB[key] = _lsc;
-                      _localWins = true;
-                      console.warn('[cold-load] shiftCodes: LOCAL wins (' + _lsc.length + ' mã, localTs=' + _localTS + ' > cloudTs=' + _cloudTS + ')');
-                    } else {
-                      DB[key] = _cloudSC;
-                      console.warn('[cold-load] shiftCodes: CLOUD wins (' + _cloudSC.length + ' mã, cloudTs=' + _cloudTS + ' >= localTs=' + _localTS + ')');
-                    }
-                  }
-                  // 🚨 v54 FIX: khi local thắng → BẢO VỆ khỏi onSnapshot đè bằng cloud cũ
-                  // onSnapshot sẽ fire SAU cold-load với data cloud (cũ/corrupt) → cần chặn
-                  if(_localWins){
+                    // Bảo vệ khỏi onSnapshot đè + re-save sửa cloud
                     window._scColdLoadProtect = true;
                     console.warn('[cold-load] shiftCodes: _scColdLoadProtect=true, sẽ re-save lên cloud sau 3s');
-                    // Re-save local lên cloud để sửa data corrupt trên Firestore
                     setTimeout(() => {
                       if(window._coldLoadDone){
                         console.warn('[cold-load] shiftCodes: re-saving ' + (DB.shiftCodes||[]).length + ' mã lên cloud...');
                         saveData(['shiftCodes']);
                       }
-                      // Tắt protect sau khi save xong + buffer
                       setTimeout(() => { window._scColdLoadProtect = false; console.warn('[cold-load] shiftCodes: _scColdLoadProtect=false'); }, 10000);
                     }, 3000);
+                  } else {
+                    // KHÔNG có import guard → CLOUD LUÔN THẮNG
+                    // Account phụ, hoặc admin không đang import → cloud là source of truth
+                    DB[key] = _cloudSC;
+                    console.warn('[cold-load] shiftCodes: CLOUD wins (no import guard, ' + _cloudSC.length + ' mã)');
                   }
                   return; // skip merge-by-id — shiftCodes LUÔN full replacement
                 }
