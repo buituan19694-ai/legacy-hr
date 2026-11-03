@@ -27804,12 +27804,12 @@ function _renderRosterGridCore(container, isAdm){
         // Check if this is an auto-filled AL/CL from leave system (O(1) Set lookup)
         const isAutoLeave = alClDays[e.id]?.[d] && !_rosterDirectSet.has(e.id+'_'+d);
         const autoBorder = isAutoLeave ? 'outline:1px dashed var(--accent);outline-offset:-1px;' : '';
-        // 🚨 v62: cùng CỠ CHỮ cho mọi mã (11px). Dài thì XUỐNG DÒNG, không giảm font.
-        // Compound "/" → tách thành nhiều dòng tại "/"
-        // Mã dài không có "/" → word-break để tự wrap
+        // 🚨 v64: cùng font 11px, GIỮ dấu "/" ở cuối dòng khi xuống dòng.
+        // "AD1/AL" → "AD1/" trên, "AL" dưới. "AL/OFF" → "AL/", "OFF".
         let _vDisp;
         if(val.includes('/')){
-          _vDisp = val.split('/').map(p => escapeHtml(p)).join('<br>');
+          const _vps = val.split('/');
+          _vDisp = _vps.map((p, i) => escapeHtml(p) + (i < _vps.length - 1 ? '/' : '')).join('<br>');
         } else {
           _vDisp = escapeHtml(val);
         }
@@ -27820,13 +27820,15 @@ function _renderRosterGridCore(container, isAdm){
             onmouseenter="if(window._rosterDrag)_rosterQuickFill(this,'${e.id}',${d})"
             title="${val?(isAutoLeave?'Tự động từ phép — '+escapeHtml(val):escapeHtml(val)):'Kéo chuột để điền nhanh'}">${_vDisp}</td>`;
         } else if(canEditThisRow){
-          // Editable input — single line (input không wrap được), font cố định 11px
+          // 🚨 v64: thay <input> bằng contenteditable div để WRAP được mã dài.
+          // Giữ nguyên khả năng edit — click vào ô là sửa được. Dấu "/" được giữ nguyên.
           dayCells += `<td style="padding:0;border:1px solid var(--border);min-width:48px;width:48px;text-align:center;${autoBorder}" title="${isAutoLeave?'Tự động từ phép duyệt':''}">
-            <input type="text" list="_scDataList" value="${escapeHtml(val)}"
-              onchange="_rosterSetCell('${e.id}',${yr},${mo},${d},this.value.toUpperCase().trim())"
-              onkeydown="if(event.key==='Enter'){this.blur()}"
-              style="width:100%;padding:4px 1px;border:none;background:${bg};color:${fg};font-size:11px;font-weight:700;font-family:'JetBrains Mono',monospace;text-align:center;cursor:pointer;box-sizing:border-box;outline:none"
-              maxlength="15" autocomplete="off" title="${escapeHtml(val)}">
+            <div contenteditable="true" spellcheck="false"
+              onblur="_rosterSetCell('${e.id}',${yr},${mo},${d},(this.textContent||'').toUpperCase().trim())"
+              onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur();}"
+              onpaste="event.preventDefault();const t=(event.clipboardData||window.clipboardData).getData('text')||'';document.execCommand('insertText',false,t.toUpperCase().trim());"
+              style="width:100%;min-height:22px;padding:3px 1px;background:${bg};color:${fg};font-size:11px;line-height:1.15;font-weight:700;font-family:'JetBrains Mono',monospace;text-align:center;cursor:text;outline:none;word-break:break-all;overflow:hidden;box-sizing:border-box"
+              title="${escapeHtml(val)}">${escapeHtml(val)}</div>
           </td>`;
         } else {
           dayCells += `<td style="padding:2px 1px;border:1px solid var(--border);min-width:48px;width:48px;text-align:center;background:${bg};color:${fg};font-size:11px;line-height:1.15;font-weight:700;font-family:'JetBrains Mono',monospace;overflow:hidden;word-break:break-all;${autoBorder}" title="${escapeHtml(val)}">${_vDisp}</td>`;
@@ -29181,10 +29183,12 @@ function _renderTimesheetGridCore(container, isAdm){
         totalWork += workVal;
         const _holBg = _isHolDay ? 'rgba(198,40,40,.08)' : '';
 
-        // 🚨 v63: cùng CỠ CHỮ 11px — khớp Bảng Ca. Dài thì XUỐNG DÒNG.
+        // 🚨 v64: cùng CỠ CHỮ 11px, GIỮ dấu "/" ở cuối dòng khi xuống dòng.
+        // "X/OFF" → "X/" trên, "OFF" dưới. "AL/CL" → "AL/", "CL".
         let _wcDisp;
         if(workCode.includes('/')){
-          _wcDisp = workCode.split('/').map(p => escapeHtml(p)).join('<br>');
+          const _wps = workCode.split('/');
+          _wcDisp = _wps.map((p, i) => escapeHtml(p) + (i < _wps.length - 1 ? '/' : '')).join('<br>');
         } else {
           _wcDisp = escapeHtml(workCode);
         }
