@@ -27112,7 +27112,9 @@ function renderDutyRoster(main){
 // TAB 1: MÃ CA / CÔNG  (config — chỉ admin sửa)
 // ══════════════════════════════════════════════════════════
 function _renderShiftCodes(container, isAdm){
-  const codes = DB.shiftCodes || [];
+  const allCodes = DB.shiftCodes || [];
+  // Non-admin chỉ thấy mã ca không ẩn
+  const codes = isAdm ? allCodes : allCodes.filter(s=>!s.hidden);
 
   // Default shift codes nếu chưa có
   if(!codes.length){
@@ -27158,7 +27160,7 @@ function _renderShiftCodes(container, isAdm){
 
   container.innerHTML = `
     <div class="card">
-      <div class="card-head"><div><div class="card-title">⚙️ Bảng Mã Ca / Công</div><div class="card-sub">${codes.length} mã ca${codes.filter(s=>s.hidden).length?' · <span style="color:var(--danger)">'+codes.filter(s=>s.hidden).length+' ẩn</span>':''} · Quy đổi ca → công</div></div>
+      <div class="card-head"><div><div class="card-title">⚙️ Bảng Mã Ca / Công</div><div class="card-sub">${codes.length} mã ca${isAdm&&allCodes.filter(s=>s.hidden).length?' · <span style="color:var(--danger)">'+allCodes.filter(s=>s.hidden).length+' ẩn</span>':''} · Quy đổi ca → công</div></div>
         ${isAdm?`<div style="display:flex;gap:8px;flex-wrap:wrap">
           <button class="btn" onclick="_scExportExcel()" style="font-size:12px">📥 Xuất Excel</button>
           <button class="btn" onclick="document.getElementById('_scImportFile').click()" style="font-size:12px">📤 Nhập Excel</button>
