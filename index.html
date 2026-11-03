@@ -1734,13 +1734,21 @@ function _pushDynamicKey(key, meta){
 // anywhere (merge bug, race condition, corruption), this cleans them up.
 // Keeps the item with highest _savedAt, or first occurrence if no timestamp.
 // Also removes items with empty code (invalid).
+// 🚨 v57: ALSO filter out tombstoned items (by ID AND by code)
 window._dedupeShiftCodes = function(arr){
   if(!Array.isArray(arr) || arr.length === 0) return arr || [];
+  // v57: get tombstone set for shiftCodes (contains both IDs and "code:XXX" markers)
+  const tomb = (typeof _gTombGetSetFor === 'function') ? _gTombGetSetFor('shiftCodes') : new Set();
   const byCode = new Map();
+  let tombSkipped = 0;
   arr.forEach(item => {
     if(!item || typeof item !== 'object') return;
     const code = (item.code || '').toString().trim().toUpperCase();
     if(!code) return; // skip invalid empty codes
+    // v57: skip tombstoned items — BY ID (specific items) OR BY CODE (all variants of that code)
+    // Chống bug double cũ: nếu user đã xóa code "TR" → mọi bản TR (dù ID khác) đều bị skip
+    if(item.id && tomb.has(item.id)){ tombSkipped++; return; }
+    if(tomb.has('code:' + code)){ tombSkipped++; return; }
     const existing = byCode.get(code);
     if(!existing){
       byCode.set(code, item);
@@ -1753,7 +1761,8 @@ window._dedupeShiftCodes = function(arr){
   });
   const result = [...byCode.values()];
   if(result.length < arr.length){
-    console.warn('[dedupeShiftCodes] 🧹 Removed ' + (arr.length - result.length) + ' duplicate/invalid shift codes (' + arr.length + ' → ' + result.length + ')');
+    const dupRemoved = arr.length - result.length - tombSkipped;
+    console.warn('[dedupeShiftCodes] 🧹 Cleaned: ' + arr.length + ' → ' + result.length + ' (dup:' + dupRemoved + ', tombstone:' + tombSkipped + ')');
   }
   return result;
 };
@@ -27353,6 +27362,14 @@ function _scImportExcel(file){
         });
       });
       DB.shiftCodes = newList;
+      // 🚨 v57: gỡ TẤT CẢ tombstone (import = reset hoàn toàn, codes mới không bị dedup xóa)
+      if(typeof _gTombRemove === 'function'){
+        newList.forEach(sc => {
+          const codeUp = (sc.code||'').toString().trim().toUpperCase();
+          if(codeUp) _gTombRemove('shiftCodes', 'code:' + codeUp);
+          if(sc.id) _gTombRemove('shiftCodes', sc.id);
+        });
+      }
       // 🚨 Import guard: chặn onSnapshot cloud đè bản import trong 60s
       window._scImportGuard = Date.now();
       try{ localStorage.setItem('_scImportGuard', String(window._scImportGuard)); }catch(_){}
@@ -27458,6 +27475,15 @@ function _saveShiftCode(id){
     DB.shiftCodes.push(data);
   }
 
+  // 🚨 v57: gỡ tombstone CODE (nếu user thêm lại code đã xóa trước đó)
+  // Nếu không: dedup sẽ xóa luôn mã mới vì tombstone 'code:XXX' còn
+  if(typeof _gTombRemove === 'function'){
+    const codeUp = code.toString().trim().toUpperCase();
+    _gTombRemove('shiftCodes', 'code:' + codeUp);
+    // Cũng gỡ tombstone theo ID (nếu đang edit)
+    if(id) _gTombRemove('shiftCodes', id);
+  }
+
   saveData(['shiftCodes']);
   closeModal();
   toast('✅ Đã lưu mã ca '+code,'success');
@@ -27468,10 +27494,24 @@ function _deleteShiftCode(id){
   const sc = DB.shiftCodes.find(s=>s.id===id);
   if(!sc) return;
   if(!confirm('Xóa mã ca "'+sc.code+' — '+sc.name+'"?')) return;
-  DB.shiftCodes = DB.shiftCodes.filter(s=>s.id!==id);
-  _gTombAdd('shiftCodes', id); // tombstone chống mã ca xóa hồi sinh sau merge
+  // 🚨 v57 FIX: xóa TẤT CẢ items có cùng `code` (chống bug double cũ sót lại duplicate IDs)
+  // Trước đây: chỉ tombstone 1 ID → các bản trùng với IDs khác vẫn còn trên cloud
+  // → refresh thấy mã quay lại (dedup giữ 1 bản còn sót)
+  const codeToDelete = (sc.code || '').toString().trim().toUpperCase();
+  const matchingIds = DB.shiftCodes
+    .filter(s => (s.code || '').toString().trim().toUpperCase() === codeToDelete)
+    .map(s => s.id)
+    .filter(Boolean);
+  DB.shiftCodes = DB.shiftCodes.filter(s => (s.code || '').toString().trim().toUpperCase() !== codeToDelete);
+  // Tombstone TẤT CẢ IDs trùng code
+  matchingIds.forEach(mId => _gTombAdd('shiftCodes', mId));
+  // Thêm tombstone đặc biệt theo code (chống item sau này có cùng code hồi sinh)
+  _gTombAdd('shiftCodes', 'code:' + codeToDelete);
+  if(matchingIds.length > 1){
+    console.warn('[deleteShiftCode] Xóa mã "' + codeToDelete + '" + ' + matchingIds.length + ' bản trùng ID (do bug double cũ)');
+  }
   saveData(['shiftCodes']);
-  toast('Đã xóa mã ca '+sc.code,'info');
+  toast('Đã xóa mã ca ' + sc.code + (matchingIds.length>1 ? ' (gồm '+matchingIds.length+' bản trùng)' : ''), 'info');
   render();
 }
 
