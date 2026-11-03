@@ -970,6 +970,15 @@ function loadData(){
       if(!data.bonusName) data.bonusName = {};
       if(!data.traineeSchedules) data.traineeSchedules = [];
       if(!data.shiftCodes) data.shiftCodes = [];
+      // 🚨 v56 SAFETY NET: dedupe shiftCodes khi load từ localStorage
+      // Chống localStorage cũ bị corrupt (duplicate codes) đẩy data lỗi lên cloud
+      if(Array.isArray(data.shiftCodes) && data.shiftCodes.length > 0 && typeof window._dedupeShiftCodes === 'function'){
+        const _before = data.shiftCodes.length;
+        data.shiftCodes = window._dedupeShiftCodes(data.shiftCodes);
+        if(data.shiftCodes.length < _before){
+          console.warn('[loadData] 🧹 localStorage shiftCodes CORRUPT (' + _before + ' → ' + data.shiftCodes.length + '), đã dedupe');
+        }
+      }
       if(!data.dutyRoster) data.dutyRoster = [];
       if(!data.rosterLocks) data.rosterLocks = {};
       if(!data._rewardTypesV2){
@@ -1720,6 +1729,35 @@ function _pushDynamicKey(key, meta){
   }
 }
 
+// 🚨 v56 SAFETY NET: Deduplicate shiftCodes array by `code` field.
+// Shift codes MUST be unique by code (S, C, Đ, OFF...). If duplicates appear
+// anywhere (merge bug, race condition, corruption), this cleans them up.
+// Keeps the item with highest _savedAt, or first occurrence if no timestamp.
+// Also removes items with empty code (invalid).
+window._dedupeShiftCodes = function(arr){
+  if(!Array.isArray(arr) || arr.length === 0) return arr || [];
+  const byCode = new Map();
+  arr.forEach(item => {
+    if(!item || typeof item !== 'object') return;
+    const code = (item.code || '').toString().trim().toUpperCase();
+    if(!code) return; // skip invalid empty codes
+    const existing = byCode.get(code);
+    if(!existing){
+      byCode.set(code, item);
+    } else {
+      // Keep item with higher _savedAt (newer); fallback: keep existing
+      const eSA = existing._savedAt || 0;
+      const iSA = item._savedAt || 0;
+      if(iSA > eSA) byCode.set(code, item);
+    }
+  });
+  const result = [...byCode.values()];
+  if(result.length < arr.length){
+    console.warn('[dedupeShiftCodes] 🧹 Removed ' + (arr.length - result.length) + ' duplicate/invalid shift codes (' + arr.length + ' → ' + result.length + ')');
+  }
+  return result;
+};
+
 function saveData(changedKeys=null){
   // 🚨 CRITICAL GUARD: chống bug "1-2 ngày data rollback"
   // Nếu cold-load CHƯA HOÀN THÀNH, DB local có thể chưa đầy đủ
@@ -1789,8 +1827,18 @@ function saveData(changedKeys=null){
       // Chỉ ghi các key được request — không ghi toàn bộ doc để tránh 1MB limit
       const keysToWrite = keys ? docKeys.filter(k=>keys.includes(k)) : docKeys;
       keysToWrite.forEach(k=>{
-        const val=DB[k];
+        let val=DB[k];
         if(val===undefined || (typeof val==='number'&&isNaN(val))) return;
+        // 🚨 v56 SAFETY NET: dedupe shiftCodes before writing to Firestore
+        // Chống bất kỳ bug nào tạo duplicate codes → push lên cloud → corrupt data
+        if(k === 'shiftCodes' && Array.isArray(val)){
+          const _deduped = window._dedupeShiftCodes(val);
+          if(_deduped.length !== val.length){
+            console.warn('[saveData] 🧹 Deduped shiftCodes before Firestore write: ' + val.length + ' → ' + _deduped.length);
+            DB.shiftCodes = _deduped; // cập nhật DB luôn
+            val = _deduped;
+          }
+        }
         if(Array.isArray(val)){
           // v17: stamp _savedAt = thời điểm save cho MỌI item
           // Vì user chỉ save khi vừa sửa → thời điểm save chính là "mới nhất"
@@ -35861,8 +35909,9 @@ fbAuth.onAuthStateChanged(async user => {
                   // Rule: CÓ import guard + trong 5 phút → local (đang import)
                   //       KHÔNG có guard → LUÔN cloud (cloud là source of truth cho shiftCodes)
                   if(_guardAge < 300000 && _lsc.length > 0){
-                    DB[key] = _lsc;
-                    console.warn('[cold-load] shiftCodes: LOCAL wins (import guard ' + Math.round(_guardAge/1000) + 's ago, ' + _lsc.length + ' mã)');
+                    // 🚨 v56: dedupe local trước khi set DB (phòng localStorage cũ bị corrupt)
+                    DB[key] = window._dedupeShiftCodes(_lsc);
+                    console.warn('[cold-load] shiftCodes: LOCAL wins (import guard ' + Math.round(_guardAge/1000) + 's ago, ' + DB[key].length + ' mã sau dedupe từ ' + _lsc.length + ')');
                     // Bảo vệ khỏi onSnapshot đè + re-save sửa cloud
                     window._scColdLoadProtect = true;
                     console.warn('[cold-load] shiftCodes: _scColdLoadProtect=true, sẽ re-save lên cloud sau 3s');
@@ -35876,8 +35925,22 @@ fbAuth.onAuthStateChanged(async user => {
                   } else {
                     // KHÔNG có import guard → CLOUD LUÔN THẮNG
                     // Account phụ, hoặc admin không đang import → cloud là source of truth
-                    DB[key] = _cloudSC;
-                    console.warn('[cold-load] shiftCodes: CLOUD wins (no import guard, ' + _cloudSC.length + ' mã)');
+                    // 🚨 v56: dedupe cloud (phòng cloud bị corrupt từ bug cũ)
+                    const _dedupedCloud = window._dedupeShiftCodes(_cloudSC);
+                    DB[key] = _dedupedCloud;
+                    console.warn('[cold-load] shiftCodes: CLOUD wins (no import guard, ' + _dedupedCloud.length + ' mã sau dedupe từ ' + _cloudSC.length + ')');
+                    // 🚨 v56: nếu cloud bị corrupt (có duplicate) → auto-fix bằng cách re-save sạch
+                    if(_dedupedCloud.length < _cloudSC.length){
+                      console.warn('[cold-load] shiftCodes: cloud corrupt (' + _cloudSC.length + ' → ' + _dedupedCloud.length + '), sẽ auto-fix sau 3s');
+                      window._scColdLoadProtect = true;
+                      setTimeout(() => {
+                        if(window._coldLoadDone){
+                          console.warn('[cold-load] shiftCodes: auto-fix saving ' + (DB.shiftCodes||[]).length + ' mã sạch lên cloud...');
+                          saveData(['shiftCodes']);
+                        }
+                        setTimeout(() => { window._scColdLoadProtect = false; }, 10000);
+                      }, 3000);
+                    }
                   }
                   return; // skip merge-by-id — shiftCodes LUÔN full replacement
                 }
@@ -36890,7 +36953,17 @@ fbAuth.onAuthStateChanged(async user => {
                       console.warn('[Listener] SKIP shiftCodes — import guard active (cloud:', cloudData[key]?.length, 'local:', DB[key]?.length, ')');
                       return;
                     }
-                    DB[key] = cloudData[key];
+                    // 🚨 v56 SAFETY NET: dedupe cloud trước khi áp vào DB (chống doubling)
+                    const _cloudSC = Array.isArray(cloudData[key]) ? cloudData[key] : [];
+                    const _deduped = window._dedupeShiftCodes(_cloudSC);
+                    DB[key] = _deduped;
+                    if(_deduped.length < _cloudSC.length){
+                      console.warn('[Listener] shiftCodes CLOUD DIRTY (' + _cloudSC.length + ' → ' + _deduped.length + '), auto-fix: re-saving sạch');
+                      // Nếu admin → auto re-save để fix cloud
+                      if(window.currentUser?.email === window.ADMIN_EMAIL){
+                        setTimeout(() => { try { saveData(['shiftCodes']); } catch(_){} }, 2000);
+                      }
+                    }
                   } else if(Array.isArray(cloudData[key]) && Array.isArray(DB[key])
                             && cloudData[key].length > 0
                             && cloudData[key][0] && typeof cloudData[key][0]==='object' && cloudData[key][0].id !== undefined){
