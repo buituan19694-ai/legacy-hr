@@ -17,16 +17,95 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300..900;1,9..144,300..900&family=Inter+Tight:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.4/jspdf.plugin.autotable.min.js"></script>
 
-<!-- Firebase SDK via CDN -->
-<script src="https://cdn.jsdelivr.net/npm/firebase@10.12.0/firebase-app-compat.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/firebase@10.12.0/firebase-auth-compat.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/firebase@10.12.0/firebase-firestore-compat.min.js"></script>
+<!-- 🚨 v70: critical UI functions ở top head — hoạt động được NGAY cả khi CDN chưa load xong -->
+<script>
+window.toggleDesktopSidebar = function(){
+  document.body.classList.toggle('sidebar-collapsed');
+  try{ localStorage.setItem('_sidebarCollapsed', document.body.classList.contains('sidebar-collapsed') ? '1' : ''); }catch(e){}
+};
+// 🚨 v70: CDN loader với fallback — thử CDN chính, fail thì thử CDN dự phòng.
+// Mạng ISP VN có thể chặn hoặc chậm 1 trong các CDN.
+window._cdnLoad = function(primary, fallback, name){
+  return new Promise((resolve) => {
+    const s = document.createElement('script');
+    s.async = false; // giữ thứ tự load
+    s.src = primary;
+    s.onload = () => resolve();
+    s.onerror = () => {
+      console.warn('[CDN] Primary fail (' + name + '), thử fallback...');
+      const s2 = document.createElement('script');
+      s2.async = false;
+      s2.src = fallback;
+      s2.onload = () => resolve();
+      s2.onerror = () => { console.error('[CDN] Fallback cũng fail: ' + name); resolve(); };
+      document.head.appendChild(s2);
+    };
+    document.head.appendChild(s);
+  });
+};
+// Load tất cả CDN songsong (nhưng theo thứ tự Firebase)
+window._cdnReady = (async function(){
+  const started = Date.now();
+  // Nhóm 1: libs independent — load songsong
+  await Promise.all([
+    window._cdnLoad('https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js',
+                   'https://unpkg.com/chart.js@4.4.0/dist/chart.umd.min.js', 'chart.js'),
+    window._cdnLoad('https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js',
+                   'https://unpkg.com/xlsx@0.18.5/dist/xlsx.full.min.js', 'xlsx'),
+    window._cdnLoad('https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js',
+                   'https://unpkg.com/jszip@3.10.1/dist/jszip.min.js', 'jszip'),
+    window._cdnLoad('https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js',
+                   'https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js', 'jspdf'),
+  ]);
+  await window._cdnLoad('https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.4/jspdf.plugin.autotable.min.js',
+                 'https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.4/dist/jspdf.plugin.autotable.min.js', 'jspdf-autotable');
+  // Nhóm 2: Firebase — PHẢI load theo thứ tự app → auth → firestore
+  await window._cdnLoad('https://cdn.jsdelivr.net/npm/firebase@10.12.0/firebase-app-compat.min.js',
+                 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js', 'firebase-app');
+  await Promise.all([
+    window._cdnLoad('https://cdn.jsdelivr.net/npm/firebase@10.12.0/firebase-auth-compat.min.js',
+                   'https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js', 'firebase-auth'),
+    window._cdnLoad('https://cdn.jsdelivr.net/npm/firebase@10.12.0/firebase-firestore-compat.min.js',
+                   'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js', 'firebase-firestore'),
+  ]);
+  console.log('[CDN] ✅ Tất cả scripts loaded trong ' + (Date.now() - started) + 'ms');
+})();
+
+// 🚨 v70: Loading overlay — hiện cho tới khi CDN + init xong, timeout 30s báo lỗi
+window.addEventListener('DOMContentLoaded', () => {
+  const overlay = document.createElement('div');
+  overlay.id = '_bootOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:#0d1117;color:#e6edf3;display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:99999;font-family:system-ui,sans-serif;transition:opacity .3s';
+  overlay.innerHTML = `
+    <div style="font-family:Georgia,serif;font-size:28px;color:#d4a574;font-style:italic;margin-bottom:8px">Legacy</div>
+    <div style="font-size:11px;color:#6e7681;letter-spacing:.2em;text-transform:uppercase;margin-bottom:32px">Yên Tử MGallery</div>
+    <div id="_bootSpinner" style="width:36px;height:36px;border:3px solid #252d38;border-top-color:#d4a574;border-radius:50%;animation:_bootSpin 1s linear infinite;margin-bottom:20px"></div>
+    <div id="_bootMsg" style="font-size:13px;color:#8b949e">Đang tải tài nguyên...</div>
+    <div id="_bootRetry" style="margin-top:24px;display:none">
+      <div style="font-size:12px;color:#e57373;max-width:360px;text-align:center;margin-bottom:16px">
+        ⚠️ Tải lâu hơn bình thường. Có thể mạng của bạn chậm hoặc chặn một số dịch vụ.
+      </div>
+      <button onclick="location.reload()" style="padding:10px 20px;background:#d4a574;color:#1a1a1a;border:none;border-radius:7px;font-weight:600;cursor:pointer">🔄 Tải lại trang</button>
+    </div>
+    <style>@keyframes _bootSpin{to{transform:rotate(360deg)}}</style>
+  `;
+  document.body.insertBefore(overlay, document.body.firstChild);
+  // Timeout 15s → hiện nút retry
+  window._bootTimer = setTimeout(() => {
+    const retry = document.getElementById('_bootRetry');
+    const msg = document.getElementById('_bootMsg');
+    if(retry) retry.style.display = 'block';
+    if(msg) msg.textContent = 'Đang chờ phản hồi từ máy chủ...';
+  }, 15000);
+});
+// Hàm ẩn overlay — gọi khi app đã init xong
+window._hideBootOverlay = function(){
+  if(window._bootTimer) clearTimeout(window._bootTimer);
+  const ov = document.getElementById('_bootOverlay');
+  if(ov){ ov.style.opacity = '0'; setTimeout(() => ov.remove(), 300); }
+};
+</script>
 <style>:root{--bg:#0d1117;--bg-elev:#161b22;--bg-card:#1a2028;--bg-card-hover:#1f2630;--border:#252d38;--border-strong:#3a4554;--ink:#e6edf3;--ink-dim:#8b949e;--ink-muted:#6e7681;--accent:#d4a574;--accent-bright:#e8b984;--accent-dim:#8b6a4a;--success:#7ec699;--warning:#e8b974;--danger:#e57373;--info:#7eb6e8;--purple:#b794d4;--teal:#7dd3c0;--gradient-amber:linear-gradient(135deg,#d4a574 0%,#8b6a4a 100%);--shadow-card:0 1px 2px rgba(0,0,0,.4),0 12px 32px rgba(0,0,0,.25)}body.light-mode{--bg:#f5f0eb;--bg-elev:#ede8e1;--bg-card:#ffffff;--bg-card-hover:#f9f5f0;--border:#ddd5c8;--border-strong:#c8b9a8;--ink:#1a1410;--ink-dim:#5c4f42;--ink-muted:#8a7968;--accent:#b8843a;--accent-bright:#d4a574;--accent-dim:#8b6a4a;--success:#2d7d4f;--warning:#b87a1a;--danger:#c0392b;--info:#2471a3;--purple:#7d4a9e;--teal:#1a8a78;--gradient-amber:linear-gradient(135deg,#d4a574 0%,#8b6a4a 100%);--shadow-card:0 1px 3px rgba(0,0,0,.08),0 8px 24px rgba(0,0,0,.08)}body.light-mode{background:radial-gradient(ellipse 80% 50% at 50% -20%,rgba(212,165,116,.12),transparent 70%),radial-gradient(ellipse 60% 40% at 100% 100%,rgba(126,182,232,.06),transparent 70%),var(--bg)}body.light-mode .tbl tbody tr:hover{background:rgba(0,0,0,.025)}body.light-mode input,body.light-mode select,body.light-mode textarea{background:var(--bg-card);color:var(--ink)}body.light-mode .tbl thead tr{background:var(--bg-elev)}body.light-mode .tbl tfoot tr{background:var(--bg-elev)}body.light-mode [style*="background:#1a2028"]{background:var(--bg-card) !important}body.light-mode [style*="background:#161b22"]{background:var(--bg-elev) !important}body.light-mode [style*="background:#0d1117"]{background:var(--bg) !important}body.light-mode [style*="color:#e6edf3"]{color:var(--ink) !important}body.light-mode [style*="color:#8b949e"]{color:var(--ink-dim) !important}input.date-vn{font-family:'JetBrains Mono',monospace;letter-spacing:.03em}#authScreen{position:fixed;inset:0;background:var(--bg);z-index:9999;display:flex;align-items:center;justify-content:center;flex-direction:column}.auth-card{background:var(--bg-card);border:1px solid var(--border);border-radius:16px;padding:40px 48px;width:420px;max-width:95vw;text-align:center}.auth-logo{font-size:36px;font-weight:700;margin-bottom:4px;letter-spacing:-.02em}.auth-logo em{color:var(--accent);font-style:italic}.auth-tag{font-size:12px;color:var(--ink-muted);letter-spacing:.15em;text-transform:uppercase;margin-bottom:32px}.auth-title{font-size:20px;font-weight:600;margin-bottom:6px;color:var(--ink)}.auth-sub{font-size:13px;color:var(--ink-muted);margin-bottom:28px}.auth-field{display:flex;flex-direction:column;gap:6px;margin-bottom:14px;text-align:left}.auth-field label{font-size:12px;font-weight:500;color:var(--ink-dim);letter-spacing:.05em;text-transform:uppercase}.auth-field input{padding:10px 14px;background:var(--bg-elev);border:1px solid var(--border);border-radius:8px;color:var(--ink);font-family:'Inter Tight','Be Vietnam Pro','Noto Sans',sans-serif;font-size:14px;outline:none;transition:border .15s}.auth-field input:focus{border-color:var(--accent)}.auth-btn{width:100%;padding:12px;background:var(--accent);color:#1a1a1a;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;margin-top:8px;font-family:'Inter Tight',sans-serif;transition:opacity .15s;user-select:none;-webkit-user-select:none}.auth-btn:hover{opacity:.9}.auth-btn:disabled{opacity:.5;cursor:not-allowed}.auth-error{color:var(--danger);font-size:12.5px;margin-top:10px;min-height:18px}.auth-footer{font-size:12px;color:var(--ink-muted);margin-top:20px}*{margin:0;padding:0;box-sizing:border-box}html,body{background:var(--bg);color:var(--ink);font-family:'Inter Tight',sans-serif;font-size:14px;line-height:1.5;overflow-x:hidden}body{background:radial-gradient(ellipse 80% 50% at 50% -20%,rgba(212,165,116,.08),transparent 70%),radial-gradient(ellipse 60% 40% at 100% 100%,rgba(126,182,232,.04),transparent 70%),var(--bg);min-height:100vh}.grain{position:fixed;inset:0;pointer-events:none;opacity:.025;z-index:1000;mix-blend-mode:overlay;background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E")}.app{min-height:100vh}.sidebar{background:var(--bg-elev);border-right:1px solid var(--border);padding:24px 0;position:fixed;top:0;left:0;width:240px;height:100vh;overflow-y:auto;z-index:50}.sidebar::-webkit-scrollbar{width:4px}.sidebar::-webkit-scrollbar-thumb{background:var(--border-strong);border-radius:2px}.brand{padding:0 24px 24px;border-bottom:1px solid var(--border);margin-bottom:20px}.brand-logo{display:flex;align-items:center;gap:10px;margin-bottom:6px}.brand-mark{width:40px;height:40px;background:var(--gradient-amber);border-radius:6px;display:grid;place-items:center;position:relative;overflow:hidden;flex-shrink:0;font-family:'Fraunces',serif;font-weight:700;color:var(--bg);font-size:20px;font-style:italic}.brand-mark img{width:100%;height:100%;object-fit:cover;border-radius:6px}.brand{cursor:pointer;transition:opacity .15s;user-select:none;-webkit-user-select:none}.brand:hover{opacity:.85}.brand-name{font-family:'Fraunces',serif;font-size:22px;font-weight:500;letter-spacing:-.02em}.brand-name em{font-style:italic;color:var(--accent);font-weight:400}.brand-tag{font-size:10px;color:var(--ink-muted);letter-spacing:.18em;text-transform:uppercase;font-weight:500;margin-left:42px;margin-top:-4px}.nav-section{padding:0 16px;margin-bottom:20px}.nav-label{font-size:10px;color:var(--ink-muted);letter-spacing:.2em;text-transform:uppercase;padding:0 12px 8px;font-weight:600;user-select:none;-webkit-user-select:none;cursor:default}.nav-item{display:flex;align-items:center;gap:12px;padding:9px 12px;border-radius:6px;color:var(--ink-dim);cursor:pointer;font-size:13.5px;transition:all .15s;font-weight:500;position:relative;margin-bottom:2px;user-select:none;-webkit-user-select:none}.nav-item:hover{background:var(--bg-card);color:var(--ink)}.nav-item.active{background:var(--bg-card);color:var(--accent)}.nav-item.active::before{content:"";position:absolute;left:-16px;top:50%;transform:translateY(-50%);width:3px;height:18px;background:var(--accent);border-radius:0 2px 2px 0}.nav-icon{width:16px;height:16px;stroke-width:1.8;flex-shrink:0}.nav-badge{margin-left:auto;font-size:10px;background:var(--accent);color:var(--bg);padding:2px 6px;border-radius:10px;font-weight:600;min-width:18px;text-align:center}.sidebar-footer{position:absolute;bottom:20px;left:16px;right:16px;padding:14px;background:var(--bg-card);border-radius:8px;border:1px solid var(--border)}.user-mini{display:flex;align-items:center;gap:10px}.avatar{width:32px;height:32px;border-radius:50%;background:var(--gradient-amber);display:grid;place-items:center;color:var(--bg);font-weight:600;font-size:12px;flex-shrink:0}.user-mini-name{font-size:12.5px;font-weight:600}.user-mini-role{font-size:10.5px;color:var(--ink-muted)}.main{padding:24px 32px 48px;max-width:1600px;width:auto;margin-left:240px;transition:margin-left .25s ease}
 /* Sidebar collapse on desktop */
 .sidebar{transition:transform .25s ease,width .25s ease}
@@ -35942,7 +36021,21 @@ function getBH(p, salCB, rate) {
   if(p.budgetBH !== undefined && p.budgetBH !== null && p.budgetBH !== '') return parseFloat(p.budgetBH)||0;
   return Math.round((parseFloat(salCB)||0) * (rate||0.235));
 }
-window.addEventListener('load', function() {
+window.addEventListener('load', async function() {
+// 🚨 v70: CHỜ CDN scripts load xong rồi mới init Firebase (chống race ở mạng chậm)
+try {
+  const msgEl = document.getElementById('_bootMsg');
+  if(msgEl) msgEl.textContent = 'Đang kết nối Firebase...';
+  if(window._cdnReady) await window._cdnReady;
+} catch(e){ console.warn('[CDN] load warning:', e); }
+// Nếu Firebase vẫn chưa có → hiển thị lỗi, không cố init tiếp
+if(typeof firebase === 'undefined'){
+  const msgEl = document.getElementById('_bootMsg');
+  const retry = document.getElementById('_bootRetry');
+  if(msgEl) msgEl.textContent = '❌ Không tải được Firebase. Kiểm tra mạng.';
+  if(retry) retry.style.display = 'block';
+  return;
+}
 const ADMIN_EMAIL = window.ADMIN_EMAIL || 'buituan19694@gmail.com';
 const firebaseConfig = {
   apiKey: "AIzaSyCYEa7B39FEpLWeFLjRGEmi2vvgteoqaUM",
@@ -36066,6 +36159,9 @@ window.currentUserData = null; // role, permissions, name
 })();
 
 fbAuth.onAuthStateChanged(async user => {
+  // 🚨 v70: khi auth state đã xác định (có user hoặc không), ẩn boot overlay
+  // Để auth screen hoặc main app hiện lên (chúng tự quản lý display)
+  if(!user && typeof window._hideBootOverlay === 'function') window._hideBootOverlay();
   if(user){
     try{
       let doc = await fbDb.collection('users').doc(user.uid).get();
@@ -36690,6 +36786,8 @@ fbAuth.onAuthStateChanged(async user => {
         // Auto-confirm resignations — sẽ được gọi SAU _coldLoadDone = true (xem bên dưới)
         document.getElementById('authScreen').style.display = 'none';
         document.getElementById('app').style.display = '';
+        // 🚨 v70: app đã sẵn sàng → ẩn boot overlay
+        if(typeof window._hideBootOverlay === 'function') window._hideBootOverlay();
         const nameEl = document.getElementById('sidebarUserName');
         if(nameEl) nameEl.textContent = doc.data().displayName || user.email;
         const roleEl = document.getElementById('sidebarUserRole');
