@@ -27804,39 +27804,32 @@ function _renderRosterGridCore(container, isAdm){
         // Check if this is an auto-filled AL/CL from leave system (O(1) Set lookup)
         const isAutoLeave = alClDays[e.id]?.[d] && !_rosterDirectSet.has(e.id+'_'+d);
         const autoBorder = isAutoLeave ? 'outline:1px dashed var(--accent);outline-offset:-1px;' : '';
-        // 🚨 v61: tự động giảm font + wrap xuống dòng ở "/" cho mã dài
-        // 1-3 ký tự: font 12px | 4-5: 11px | 6+: 10px
-        // Mã compound (có "/"): tách thành 2 dòng tại dấu "/" + font nhỏ hơn
-        const _vLen = val.length;
-        let _vFs, _vDisp;
+        // 🚨 v62: cùng CỠ CHỮ cho mọi mã (11px). Dài thì XUỐNG DÒNG, không giảm font.
+        // Compound "/" → tách thành nhiều dòng tại "/"
+        // Mã dài không có "/" → word-break để tự wrap
+        let _vDisp;
         if(val.includes('/')){
-          const _parts = val.split('/');
-          const _maxPart = Math.max(..._parts.map(p => p.length));
-          _vFs = _maxPart <= 2 ? 11 : _maxPart <= 3 ? 10 : _maxPart <= 4 ? 9 : 8;
-          _vDisp = _parts.map(p => escapeHtml(p)).join('<br>');
+          _vDisp = val.split('/').map(p => escapeHtml(p)).join('<br>');
         } else {
-          _vFs = _vLen <= 3 ? 12 : _vLen <= 5 ? 10 : _vLen <= 7 ? 9 : 8;
           _vDisp = escapeHtml(val);
         }
-        const _lh = val.includes('/') ? '1.05' : '1.2';
         if(canEditThisRow && copyActive){
           // Quick Fill mode: plain cell, click or drag to fill
-          dayCells += `<td style="padding:2px 1px;border:1px solid var(--border);min-width:48px;width:48px;text-align:center;background:${bg};color:${fg};font-size:${_vFs}px;line-height:${_lh};font-weight:700;font-family:'JetBrains Mono',monospace;cursor:crosshair;user-select:none;overflow:hidden;${autoBorder}"
+          dayCells += `<td style="padding:2px 1px;border:1px solid var(--border);min-width:48px;width:48px;text-align:center;background:${bg};color:${fg};font-size:11px;line-height:1.15;font-weight:700;font-family:'JetBrains Mono',monospace;cursor:crosshair;user-select:none;overflow:hidden;word-break:break-all;${autoBorder}"
             onmousedown="event.preventDefault();window._rosterDrag=true;_rosterQuickFill(this,'${e.id}',${d})"
             onmouseenter="if(window._rosterDrag)_rosterQuickFill(this,'${e.id}',${d})"
             title="${val?(isAutoLeave?'Tự động từ phép — '+escapeHtml(val):escapeHtml(val)):'Kéo chuột để điền nhanh'}">${_vDisp}</td>`;
         } else if(canEditThisRow){
-          // Editable input — single line only, font theo độ dài
-          const _inFs = _vLen <= 3 ? 12 : _vLen <= 5 ? 10 : _vLen <= 7 ? 9 : 8;
+          // Editable input — single line (input không wrap được), font cố định 11px
           dayCells += `<td style="padding:0;border:1px solid var(--border);min-width:48px;width:48px;text-align:center;${autoBorder}" title="${isAutoLeave?'Tự động từ phép duyệt':''}">
             <input type="text" list="_scDataList" value="${escapeHtml(val)}"
               onchange="_rosterSetCell('${e.id}',${yr},${mo},${d},this.value.toUpperCase().trim())"
               onkeydown="if(event.key==='Enter'){this.blur()}"
-              style="width:100%;padding:4px 1px;border:none;background:${bg};color:${fg};font-size:${_inFs}px;font-weight:700;font-family:'JetBrains Mono',monospace;text-align:center;cursor:pointer;box-sizing:border-box;outline:none"
+              style="width:100%;padding:4px 1px;border:none;background:${bg};color:${fg};font-size:11px;font-weight:700;font-family:'JetBrains Mono',monospace;text-align:center;cursor:pointer;box-sizing:border-box;outline:none"
               maxlength="15" autocomplete="off" title="${escapeHtml(val)}">
           </td>`;
         } else {
-          dayCells += `<td style="padding:2px 1px;border:1px solid var(--border);min-width:48px;width:48px;text-align:center;background:${bg};color:${fg};font-size:${_vFs}px;line-height:${_lh};font-weight:700;font-family:'JetBrains Mono',monospace;overflow:hidden;${autoBorder}" title="${escapeHtml(val)}">${_vDisp}</td>`;
+          dayCells += `<td style="padding:2px 1px;border:1px solid var(--border);min-width:48px;width:48px;text-align:center;background:${bg};color:${fg};font-size:11px;line-height:1.15;font-weight:700;font-family:'JetBrains Mono',monospace;overflow:hidden;word-break:break-all;${autoBorder}" title="${escapeHtml(val)}">${_vDisp}</td>`;
         }
       }
 
@@ -29188,20 +29181,14 @@ function _renderTimesheetGridCore(container, isAdm){
         totalWork += workVal;
         const _holBg = _isHolDay ? 'rgba(198,40,40,.08)' : '';
 
-        // 🚨 v61: tự giảm font + wrap tại "/" cho mã dài trong Bảng Công
-        let _wcFs, _wcDisp;
+        // 🚨 v63: cùng CỠ CHỮ 11px — khớp Bảng Ca. Dài thì XUỐNG DÒNG.
+        let _wcDisp;
         if(workCode.includes('/')){
-          const _wps = workCode.split('/');
-          const _mp = Math.max(..._wps.map(p => p.length));
-          _wcFs = _mp <= 2 ? 10 : _mp <= 3 ? 9 : _mp <= 4 ? 8 : 7;
-          _wcDisp = _wps.map(p => escapeHtml(p)).join('<br>');
+          _wcDisp = workCode.split('/').map(p => escapeHtml(p)).join('<br>');
         } else {
-          const _wl = workCode.length;
-          _wcFs = _wl <= 3 ? 10 : _wl <= 5 ? 9 : _wl <= 7 ? 8 : 7;
           _wcDisp = escapeHtml(workCode);
         }
-        const _wcLh = workCode.includes('/') ? '1.05' : '1.2';
-        dayCells += `<td style="padding:2px 1px;text-align:center;font-size:${_wcFs}px;line-height:${_wcLh};font-family:'JetBrains Mono',monospace;font-weight:600;color:${_isHolDay?'#c62828':resolved.fg};background:${_holBg||resolved.bg};border:1px solid var(--border);overflow:hidden" title="${escapeHtml(workCode)}">${_wcDisp}</td>`;
+        dayCells += `<td style="padding:2px 1px;text-align:center;font-size:11px;line-height:1.15;font-family:'JetBrains Mono',monospace;font-weight:600;color:${_isHolDay?'#c62828':resolved.fg};background:${_holBg||resolved.bg};border:1px solid var(--border);overflow:hidden;word-break:break-all" title="${escapeHtml(workCode)}">${_wcDisp}</td>`;
       }
       deptTotalWork += totalWork;
 
