@@ -27890,22 +27890,31 @@ function _renderRosterGridCore(container, isAdm){
   let globalIdx = 0;
   // Lọc mã ca: bỏ hidden, chỉ giữ mã đang dùng trong tháng
   const hiddenScCodes = new Set((DB.shiftCodes||[]).filter(s=>s.hidden).map(s=>s.code));
-  const allScCodes = (DB.shiftCodes||[]).filter(s=>!s.hidden).map(s=>s.code);
-  // Pre-scan: find which shift codes are actually used this month
+  // 🚨 v72: bỏ OFF/NGH khỏi danh sách cột summary — đã không count thì không tạo cột
+  const _isOffCodeSC = (code, sc) => {
+    const c = (code||'').toString().trim().toUpperCase();
+    if(c === 'OFF' || c === 'NGH' || c === 'NGHI') return true;
+    if(sc && (sc.workValue === 0 || sc.workValue === '0')) return true;
+    return false;
+  };
+  const allScCodes = (DB.shiftCodes||[])
+    .filter(s=>!s.hidden)
+    .filter(s=>!_isOffCodeSC(s.code, s)) // v72: skip OFF-like
+    .map(s=>s.code);
+  // Pre-scan: find which shift codes are actually used this month (LUÔN split "/" — consistent v59)
   const usedCodesSet = new Set();
   emps.forEach(e=>{
     const rd = rosterData[e.id]||{};
     for(let d=1;d<=daysInMonth;d++){
       if(rd[d]){
         const v = rd[d];
-        if(v.includes('/') && scMap[v]){
-          // Defined compound code (e.g. X/OFF) — treat as single code
-          usedCodesSet.add(v);
-        } else if(v.includes('/')){
-          // Ad-hoc compound — split into parts
-          v.split('/').map(p=>p.trim()).filter(Boolean).forEach(p=>usedCodesSet.add(p));
+        if(v.includes('/')){
+          // LUÔN tách parts — không treat compound defined như single code (consistent v59)
+          v.split('/').map(p=>p.trim()).filter(Boolean).forEach(p=>{
+            if(!_isOffCodeSC(p, scMap[p])) usedCodesSet.add(p);
+          });
         } else {
-          usedCodesSet.add(v);
+          if(!_isOffCodeSC(v, scMap[v])) usedCodesSet.add(v);
         }
       }
     }
@@ -31252,9 +31261,23 @@ function renderPayrollTab(){
     const bgCasual=_plGetCasualCost(pY,pM-1).total;
     const bgTotal=bgSal+bgBH+bgCasual;
 
-    // ── 2. Forecast (Total Salary theo hồ sơ NV × HC thực tế đang làm) ──
+    // ── 2. Forecast (Total Salary theo hồ sơ NV đang ACTIVE tại tháng này) ──
+    // 🚨 v73: trước đây chỉ tính nhân viên đã có data payroll tháng này → tháng chưa làm bảng lương = 0.
+    // Sửa: dùng TẤT CẢ NV đang active tại tháng pM/pY (chưa có exitDate hoặc exitDate > cuối tháng).
+    const _monthEnd = new Date(pY, pM, 0); // ngày cuối tháng
+    const forecastEmps = (DB.employees||[]).filter(e => {
+      const cd = (DB.customData||{})[e.id] || {};
+      const exit = cd.exitDate;
+      if(!exit) return true;
+      // Parse exitDate (ISO yyyy-mm-dd or dd/mm/yyyy)
+      let exitD;
+      if(/^\d{2}\/\d{2}\/\d{4}$/.test(exit)) exitD = new Date(exit.split('/').reverse().join('-'));
+      else exitD = new Date(exit);
+      if(isNaN(exitD.getTime())) return true;
+      return exitD >= _monthEnd; // vẫn active đến cuối tháng
+    });
     let fhHC=0,fhSal=0,fhBH=0;
-    allPool.forEach(e=>{
+    forecastEmps.forEach(e=>{
       const cd=DB.customData[e.id]||{};
       const baseSal=parseInt(cd.baseSalary)||0;
       const bonusSal=parseInt(cd.bonusSalary)||0;
@@ -31265,6 +31288,25 @@ function renderPayrollTab(){
     });
     const fhCasual=bgCasual;
     const fhTotal=fhSal+fhBH+fhCasual;
+
+    // 🚨 v73: Revenue tháng này (lấy từ P&L Revenue config)
+    const _rev = (typeof _plGetRevenueMonth === 'function') ? _plGetRevenueMonth(pY, pM) : {budget:0, actual:0};
+    const revBudget = _rev.budget || 0;
+    const revActual = _rev.actual || 0;
+    // % lương / revenue — dùng revActual nếu có, không thì revBudget
+    const revForPct = revActual > 0 ? revActual : revBudget;
+    const pctStr = (val, rev) => {
+      if(!rev || !val) return '—';
+      const p = (val/rev*100);
+      return (p%1 ? p.toFixed(1) : p.toFixed(0)) + '%';
+    };
+    const pctColor = (p) => {
+      if(!p || p === '—') return 'var(--ink-muted)';
+      const n = parseFloat(p);
+      if(n > 40) return 'var(--danger)';
+      if(n > 30) return 'var(--warning)';
+      return 'var(--success)';
+    };
 
     // ── 3. Actual (bảng lương bên dưới) ──
     // totActSum, totIns, totCasual, totGrand đã tính ở trên
@@ -31333,6 +31375,24 @@ function renderPayrollTab(){
             <td style="${ct};font-size:11px;font-weight:600;${diffBg(totIns,pvIns)}">${diffTxt(totIns,pvIns)}</td>
             <td style="${ct};font-size:11px;font-weight:600;${diffBg(totCasual,pvCasual)}">${diffTxt(totCasual,pvCasual)}</td>
             <td style="${ct};font-size:11px;font-weight:600;${diffBg(totGrand,pvTotal)}">${diffTxt(totGrand,pvTotal)}</td>
+          </tr>
+          <!-- 🚨 v73: Revenue row + % lương / doanh thu -->
+          <tr style="border-top:2px solid var(--border-strong);background:rgba(45,106,79,.05)">
+            <td style="padding:10px 12px;font-size:12px;font-weight:700;color:var(--success)">💰 Revenue — Doanh thu T${pM}/${pY}</td>
+            <td colspan="4" style="${ct};font-size:11px;color:var(--ink-muted);text-align:left;padding-left:12px">
+              Budget: <b style="color:var(--info)">${fmtV(revBudget)}</b>
+              &nbsp;·&nbsp; Actual: <b style="color:var(--success)">${fmtV(revActual)}</b>
+              ${revBudget===0 && revActual===0 ? ' <span style="color:var(--warning)">(chưa nhập — vào HR P&L Review để config)</span>' : ''}
+            </td>
+            <td style="${ct};font-weight:800;color:var(--success);font-size:13px">${fmtV(revForPct)}</td>
+          </tr>
+          <tr style="background:rgba(45,106,79,.03)">
+            <td style="padding:8px 12px;font-size:11px;color:var(--ink-muted);font-weight:600">📊 % Chi phí lương / Doanh thu ${revActual>0?'(Actual)':'(Budget)'}</td>
+            <td style="${ct};font-size:10px;color:var(--ink-muted)">—</td>
+            <td style="${ct};font-size:11px;font-weight:700;color:${pctColor(pctStr(bgTotal, revForPct))}" title="Budget / Revenue">Bg: ${pctStr(bgTotal, revForPct)}</td>
+            <td style="${ct};font-size:11px;font-weight:700;color:${pctColor(pctStr(fhTotal, revForPct))}" title="Forecast / Revenue">Fc: ${pctStr(fhTotal, revForPct)}</td>
+            <td style="${ct};font-size:11px;font-weight:700;color:${pctColor(pctStr(totGrand, revForPct))}" title="Actual / Revenue">Act: ${pctStr(totGrand, revForPct)}</td>
+            <td style="${ct};font-size:12px;font-weight:800;color:${pctColor(pctStr(totGrand, revForPct))}">${pctStr(totGrand, revForPct)}</td>
           </tr>
         </tbody></table></div>
     </div>
