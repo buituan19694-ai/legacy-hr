@@ -1329,6 +1329,26 @@ async function pushMissingEmpProfiles(){
   }
 }
 
+// 🚨 v75: Helper merge array by id + _savedAt — chống LOST UPDATE với mọi doc dùng merge:false.
+// Logic: đọc cloud trước, merge với local, item có _savedAt mới hơn thắng, bỏ tombstone.
+window._mergeArrayById = function(cloudArr, localArr, collKey){
+  const tomb = (typeof _gTombGetSetFor === 'function' && collKey) ? _gTombGetSetFor(collKey) : new Set();
+  const byId = new Map();
+  const noId = [];
+  const _add = (r) => {
+    if(!r || typeof r !== 'object') return;
+    if(!r.id){ noId.push(r); return; }
+    if(tomb.has(r.id)) return;
+    const prev = byId.get(r.id);
+    if(!prev){ byId.set(r.id, r); return; }
+    const pTs = prev._savedAt || 0, nTs = r._savedAt || 0;
+    if(nTs >= pTs) byId.set(r.id, r);
+  };
+  (cloudArr||[]).forEach(_add);
+  (localArr||[]).forEach(_add);
+  return [...byId.values(), ...noId];
+};
+
 function _pushDynamicKey(key, meta){
   if(!window.fbDb || !window.currentUser) return;
   const thisYear = new Date().getFullYear();
@@ -1347,12 +1367,43 @@ function _pushDynamicKey(key, meta){
     }
     const byYear = {};
     arr.forEach(r=>{ const y=_recYear(r); (byYear[y]=byYear[y]||[]).push(r); });
-    // v18: ghi các shard CÓ data
-    Object.entries(byYear).forEach(([yr,records])=>{
-      if(records.length === 0) return;
-      window.fbDb.collection('hrdata').doc(`${prefix}_${yr}`)
-        .set({...meta, [key]:records.map(r=>_sanitizeForFirebase(r)), _shard:parseInt(yr)}, {merge:false})
-        .catch(err=>console.error(`[saveData] ❌ ${prefix}_${yr}`, err.message));
+    // 🚨 v74: READ-THEN-MERGE by id (giữ _savedAt mới hơn) để tránh LOST UPDATE.
+    // Trước: merge:false ghi đè toàn bộ shard → user khác có stale local save sẽ revert status.
+    // Giờ: đọc cloud, merge by id (local vừa sửa có _savedAt mới nhất → thắng), ghi merged array.
+    const tomb = (typeof _gTombGetSetFor === 'function') ? _gTombGetSetFor(key) : new Set();
+    Object.entries(byYear).forEach(([yr,localRecords])=>{
+      if(localRecords.length === 0) return;
+      const docRef = window.fbDb.collection('hrdata').doc(`${prefix}_${yr}`);
+      docRef.get().then(snap => {
+        const cloudData = snap.exists ? (snap.data()||{}) : {};
+        const cloudRecords = Array.isArray(cloudData[key]) ? cloudData[key] : [];
+        // Merge by id — _savedAt mới nhất thắng; bỏ tombstone
+        const byId = new Map();
+        const addRec = (r) => {
+          if(!r || !r.id) return;
+          if(tomb.has(r.id)) return;
+          const prev = byId.get(r.id);
+          if(!prev){ byId.set(r.id, r); return; }
+          const pTs = prev._savedAt || 0, nTs = r._savedAt || 0;
+          if(nTs >= pTs) byId.set(r.id, r);
+        };
+        cloudRecords.forEach(addRec);
+        localRecords.forEach(addRec);
+        const merged = [...byId.values()];
+        if(merged.length === 0) return;
+        docRef.set({...meta, [key]:merged.map(r=>_sanitizeForFirebase(r)), _shard:parseInt(yr)}, {merge:false})
+          .then(()=>{
+            // Cập nhật DB local với bản merged (phòng listener không fire ngay)
+            const otherYearRecords = (DB[key]||[]).filter(r => _recYear(r) !== parseInt(yr));
+            DB[key] = [...otherYearRecords, ...merged];
+          })
+          .catch(err=>console.error(`[saveData] ❌ ${prefix}_${yr}`, err.message));
+      }).catch(err=>{
+        console.error(`[saveData] ❌ read ${prefix}_${yr} before merge:`, err.message);
+        // Fallback: ghi local (chấp nhận rủi ro lost update nếu read fail)
+        docRef.set({...meta, [key]:localRecords.map(r=>_sanitizeForFirebase(r)), _shard:parseInt(yr)}, {merge:false})
+          .catch(err2=>console.error(`[saveData] ❌ ${prefix}_${yr} fallback write:`, err2.message));
+      });
     });
     // 🚨 v18 FIX bug resurrection: nếu 1 NĂM từng có record trên cloud nhưng giờ arr KHÔNG còn record năm đó
     // → shard năm đó phải bị XÓA (nếu không F5 sẽ load lại records cũ)
@@ -1379,13 +1430,21 @@ function _pushDynamicKey(key, meta){
     const arr = DB.casuals || [];
     const byMonth = {};
     arr.forEach(r=>{ const m=_recMonth(r); (byMonth[m]=byMonth[m]||[]).push(r); });
-    // Ghi shards có data
+    // 🚨 v75: READ-THEN-MERGE casuals theo id, tránh 2 user cùng tháng ghi đè nhau
     Object.entries(byMonth).forEach(([mo,records])=>{
-      const totalWorkers = records.reduce((s,r)=>s+((r.workers||[]).length),0);
-      window.fbDb.collection('hrdata').doc(`casuals_${mo}`)
-        .set({...meta, casuals:records, _shard:mo}, {merge:false})
-        .then(()=>console.log(`[saveData] ✅ casuals_${mo}: ${records.length} recs, ${totalWorkers} workers`))
-        .catch(err=>console.error(`[saveData] ❌ casuals_${mo}`, err.message));
+      const ref = window.fbDb.collection('hrdata').doc(`casuals_${mo}`);
+      ref.get().then(snap => {
+        const cloudRecs = snap.exists ? (snap.data().casuals || []) : [];
+        const merged = window._mergeArrayById(cloudRecs, records, 'casuals');
+        const totalWorkers = merged.reduce((s,r)=>s+((r.workers||[]).length),0);
+        return ref.set({...meta, casuals:merged, _shard:mo}, {merge:false})
+          .then(()=>console.log(`[saveData] ✅ casuals_${mo}: ${merged.length} recs (${records.length} local + ${cloudRecs.length} cloud), ${totalWorkers} workers`));
+      }).catch(err=>{
+        console.error(`[saveData] ❌ casuals_${mo}`, err.message);
+        // Fallback: ghi local nếu read fail
+        ref.set({...meta, casuals:records, _shard:mo}, {merge:false})
+          .catch(e2=>console.error(`[saveData] ❌ casuals_${mo} fallback`, e2.message));
+      });
     });
     // Xóa shards đã biết nhưng giờ rỗng (user xóa hết records trong tháng)
     if(!window._casualsKnownShards) window._casualsKnownShards=new Set();
@@ -1421,9 +1480,14 @@ function _pushDynamicKey(key, meta){
     const emptyShards = window._candEmptyShards || new Set();
     window._candEmptyShards = new Set(); // clear sau khi dùng
     // Write các shard có candidates với retry
+    // 🚨 v75: READ-THEN-MERGE để tránh lost update khi 2 recruiter làm cùng job.
     const _saveCandShardWithRetry = (jid, records, attempt=1) => {
-      return window.fbDb.collection('hrdata').doc(`cand_${jid}`)
-        .set({...meta, candidates:records, _shard:jid}, {merge:false})
+      const ref = window.fbDb.collection('hrdata').doc(`cand_${jid}`);
+      return ref.get().then(snap => {
+        const cloudRecs = snap.exists ? (snap.data().candidates || []) : [];
+        const merged = window._mergeArrayById(cloudRecs, records, 'candidates').map(r => sanitize(r));
+        return ref.set({...meta, candidates:merged, _shard:jid}, {merge:false});
+      })
         .then(()=>{
           if(attempt>1 && typeof toast==='function'){
             toast(`✅ Đã lưu lại ứng viên (thử lần ${attempt})`, 'success', 3000);
@@ -1949,14 +2013,32 @@ function saveData(changedKeys=null){
           payload[k] = val;
         }
       });
+      // 🚨 v75: nếu doc này có array nhạy cảm status (resignations) → READ-THEN-MERGE
+      // để tránh lost update khi 2 user cùng thao tác (vd A approve, B edit khác → B save đè A)
+      const _doWrite = () => window.fbDb.collection('hrdata').doc(docId).set(payload,{merge:true});
+      const _mergeSensitiveArrs = () => {
+        const sensitiveArrs = [];
+        if(docId === 'resign' && Array.isArray(payload.resignations)) sensitiveArrs.push('resignations');
+        if(sensitiveArrs.length === 0) return _doWrite();
+        return window.fbDb.collection('hrdata').doc(docId).get().then(snap => {
+          if(!snap.exists) return _doWrite();
+          const cloud = snap.data() || {};
+          sensitiveArrs.forEach(arrKey => {
+            const cloudArr = Array.isArray(cloud[arrKey]) ? cloud[arrKey] : [];
+            const merged = window._mergeArrayById(cloudArr, payload[arrKey], arrKey);
+            payload[arrKey] = merged.map(r => _sanitizeForFirebase(r));
+          });
+          return _doWrite();
+        });
+      };
       const _saveDynWithRetry = (attempt=1)=>{
-        window.fbDb.collection('hrdata').doc(docId).set(payload,{merge:true})
+        _mergeSensitiveArrs()
           .then(()=>{
             if(attempt>1 && typeof toast==='function'){
               toast(`✅ Đã lưu lại ${docId} thành công (thử lần ${attempt})`, 'success', 3000);
             }
             if(docId==='resign'){
-              console.log('[saveData] ✅ resign saved:', (payload.resignations||[]).length, 'records');
+              console.log('[saveData] ✅ resign saved (merged):', (payload.resignations||[]).length, 'records');
               toast('✅ Đơn nghỉ đã lưu cloud ('+(payload.resignations||[]).length+' đơn)','success',2000);
             }
           })
@@ -19697,10 +19779,18 @@ function resignAction(rid, action){
     // Cập nhật cả workforce doc cũ để tránh migration restore lại
     if(window.fbDb && window.currentUser){
       const meta = { _syncBy: window.currentUser.uid, _syncAt: Date.now(), _lastSaved: Date.now() };
-      window.fbDb.collection('hrdata').doc('resign')
-        .set({...meta, resignations: DB.resignations.map(rec=>_sanitizeForFirebase(rec))}, {merge:false})
-        .then(()=>console.log('[resignAction] ✅ cancel saved to resign doc'))
-        .catch(err=>console.error('[resignAction] ❌ cancel save failed:', err.message));
+      // 🚨 v75: READ-THEN-MERGE để tránh user khác đang cập nhật resignation khác bị mất
+      const _resignRef = window.fbDb.collection('hrdata').doc('resign');
+      _resignRef.get().then(snap => {
+        const cloudResigns = snap.exists ? (snap.data().resignations || []) : [];
+        const merged = window._mergeArrayById(cloudResigns, DB.resignations, 'resignations').map(r=>_sanitizeForFirebase(r));
+        return _resignRef.set({...meta, resignations: merged}, {merge:false})
+          .then(()=>console.log('[resignAction] ✅ cancel saved (merged):', merged.length, 'records'));
+      }).catch(err=>{
+        console.error('[resignAction] ❌ merge save failed:', err.message);
+        _resignRef.set({...meta, resignations: DB.resignations.map(rec=>_sanitizeForFirebase(rec))}, {merge:false})
+          .catch(e2=>console.error('[resignAction] ❌ fallback failed:', e2.message));
+      });
       // Xóa luôn trong workforce doc cũ nếu có
       window.fbDb.collection('hrdata').doc('workforce').get().then(snap=>{
         if(snap.exists && (snap.data().resignations||[]).length){
@@ -20125,17 +20215,32 @@ function renderRecruitment(main){
 
   const today = new Date();
 
-  // Auto-fix: reset job status 'filled' → 'open' nếu chưa tuyển đủ
+  // Auto-fix 2 chiều: filled ↔ open theo số NV đã tuyển
+  // 🚨 v76: Thêm auto-set 'open' → 'filled' khi đã tuyển đủ (trước đây phải sửa thủ công)
+  let _autoFixed = 0;
   (DB.jobs||[]).forEach(j=>{
-    if(j.status === 'filled'){
-      const hired = getJobHired(j.id);
-      const positions = parseInt(j.positions)||1;
-      if(hired < positions){
-        j.status = 'open';
-        delete j.closedDate;
-      }
+    const hired = getJobHired(j.id);
+    const positions = parseInt(j.positions)||1;
+    // filled → open nếu chưa đủ
+    if(j.status === 'filled' && hired < positions){
+      j.status = 'open';
+      delete j.closedDate;
+      j._savedAt = Date.now();
+      _autoFixed++;
+    }
+    // 🚨 v76: open → filled nếu đã tuyển đủ
+    else if(j.status === 'open' && hired >= positions && positions > 0){
+      j.status = 'filled';
+      j.closedDate = j.closedDate || new Date().toISOString().slice(0,10);
+      j._savedAt = Date.now();
+      _autoFixed++;
     }
   });
+  if(_autoFixed > 0){
+    console.log('[recruitment] 🔧 Auto-synced status for ' + _autoFixed + ' job(s)');
+    // Silent save — không toast để tránh làm phiền
+    setTimeout(()=>{ try { saveData(['jobs']); } catch(_){} }, 500);
+  }
 
   const openJobs = DB.jobs.filter(j=>j.status==='open').length;
   const totalPositions = DB.jobs.reduce((s,j)=>s+(j.positions||0),0);
@@ -39464,10 +39569,18 @@ function _saveCBDocs(){
   try{ localStorage.setItem('_cbPackageDocs', JSON.stringify(DB.cbPackageDocs||[])); }catch(e){}
   if(!window.fbDb||!window.currentUser) return;
   const meta = {_syncBy:window.currentUser.uid, _syncAt:Date.now(), _lastSaved:Date.now()};
-  window.fbDb.collection('hrdata').doc('cb_package')
-    .set({...meta, cbPackageDocs: DB.cbPackageDocs||[]}, {merge:false})
-    .then(()=>console.log('[CB] ✅ Saved', (DB.cbPackageDocs||[]).length, 'docs'))
-    .catch(err=>console.error('[CB] ❌ Save failed:', err.message));
+  // 🚨 v75: READ-THEN-MERGE chống user khác đang edit doc khác bị mất
+  const ref = window.fbDb.collection('hrdata').doc('cb_package');
+  ref.get().then(snap => {
+    const cloud = snap.exists ? (snap.data().cbPackageDocs || []) : [];
+    const merged = window._mergeArrayById(cloud, DB.cbPackageDocs||[], 'cbPackageDocs');
+    return ref.set({...meta, cbPackageDocs: merged}, {merge:false})
+      .then(()=>console.log('[CB] ✅ Saved (merged):', merged.length, 'docs'));
+  }).catch(err=>{
+    console.error('[CB] ❌ merge fail, fallback:', err.message);
+    ref.set({...meta, cbPackageDocs: DB.cbPackageDocs||[]}, {merge:false})
+      .catch(e2=>console.error('[CB] ❌ fallback failed:', e2.message));
+  });
 }
 
 /* ═══════════════════════════════════════════
@@ -40034,10 +40147,18 @@ function _saveCBVouchers(){
   try{ localStorage.setItem('_cbVouchers', JSON.stringify(DB.cbVouchers||[])); localStorage.setItem('_cbVouchers_ts', String(ts)); }catch(e){}
   if(!window.fbDb||!window.currentUser) return;
   const meta = {_syncBy:window.currentUser.uid, _syncAt:ts, _lastSaved:ts};
-  window.fbDb.collection('hrdata').doc('cb_vouchers')
-    .set({...meta, cbVouchers: DB.cbVouchers||[]}, {merge:false})
-    .then(()=>console.log('[CB-V] ✅ Saved', (DB.cbVouchers||[]).length, 'vouchers at', ts))
-    .catch(err=>console.error('[CB-V] ❌ Save failed:', err.message));
+  // 🚨 v75: READ-THEN-MERGE chống voucher status/approval bị revert khi 2 user approve khác nhau
+  const ref = window.fbDb.collection('hrdata').doc('cb_vouchers');
+  ref.get().then(snap => {
+    const cloud = snap.exists ? (snap.data().cbVouchers || []) : [];
+    const merged = window._mergeArrayById(cloud, DB.cbVouchers||[], 'cbVouchers');
+    return ref.set({...meta, cbVouchers: merged}, {merge:false})
+      .then(()=>console.log('[CB-V] ✅ Saved (merged):', merged.length, 'vouchers at', ts));
+  }).catch(err=>{
+    console.error('[CB-V] ❌ merge fail, fallback:', err.message);
+    ref.set({...meta, cbVouchers: DB.cbVouchers||[]}, {merge:false})
+      .catch(e2=>console.error('[CB-V] ❌ fallback failed:', e2.message));
+  });
 }
 
 function renderManning(main){
