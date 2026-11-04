@@ -27669,25 +27669,27 @@ window._computeRosterSig = function(isAdm, tab){
   const allowedDepts = (typeof window._rosterAllowedDepts === 'function') ? window._rosterAllowedDepts() : [];
   const canSeeAll = isAdm || (allowedDepts.length === 0);
   const filterDept = rf.deptId;
-  // Lọc employees visible
   const emps = (DB.employees||[])
     .filter(e => canSeeAll || allowedDepts.includes(e.deptId))
     .filter(e => !filterDept || filterDept==='all' || e.deptId===filterDept)
     .map(e => e.id);
   const empSet = new Set(emps);
-  // Lọc roster entries thuộc tháng + employees visible
   const entries = (DB.dutyRoster||[])
     .filter(r => r.year===yr && r.month===mo && empSet.has(r.empId))
     .map(r => r.empId+':'+r.day+':'+r.shiftCode)
     .sort()
     .join('|');
-  // Thêm context: holiday days, locks, extras, mã ca list length (ảnh hưởng rendering)
   const holKey = yr+'_'+mo;
   const hol = ((DB.rosterHolidays||{})[holKey] || []).join(',');
   const locked = (DB.rosterLocks||{})[holKey] ? '1' : '0';
   const extras = ((DB.rosterExtras||{})[holKey]||[]).join(',');
   const scLen = (DB.shiftCodes||[]).length;
-  return tab + '|' + yr + '|' + mo + '|' + filterDept + '|' + emps.join(',') + '|' + entries + '|hol:' + hol + '|lk:' + locked + '|ex:' + extras + '|sc:' + scLen;
+  // 🚨 v71: include UI state — Quick Fill mode, hide cols, zoom level
+  // Nếu không có → ấn "✕ Xóa"/toggle quickfill không re-render cells.
+  const copyState = JSON.stringify(window._rosterCopy || {});
+  const hideCols = JSON.stringify(window._rosterHideCols || {});
+  const zoom = window._rosterZoomLvl || 100;
+  return tab + '|' + yr + '|' + mo + '|' + filterDept + '|' + emps.join(',') + '|' + entries + '|hol:' + hol + '|lk:' + locked + '|ex:' + extras + '|sc:' + scLen + '|cp:' + copyState + '|hc:' + hideCols + '|z:' + zoom;
 };
 function _renderRosterGridCore(container, isAdm){
   const rf = window._rosterFilter;
@@ -28003,23 +28005,32 @@ function _renderRosterGridCore(container, isAdm){
 
       // Summary per employee — count by workValue
       // 🚨 v59: LUÔN tách bởi "/" — không tạo cột compound như "X/OFF"
+      // 🚨 v70: OFF/NGH KHÔNG count trong Bảng Ca summary (bất kể workValue cấu hình).
+      const _isOffCodeC = (code, sc) => {
+        const c = (code||'').toString().trim().toUpperCase();
+        if(c === 'OFF' || c === 'NGH' || c === 'NGHI') return true;
+        if(sc && (sc.workValue === 0 || sc.workValue === '0')) return true;
+        return false;
+      };
       const counts = {};
       for(let d=1;d<=daysInMonth;d++){
         const v = rd[d];
         if(v){
           const resolved = _scRC(v);
           if(resolved.isCompound){
-            // Mọi compound (defined/ad-hoc) đều split theo workValue
             const fraction = 1 / resolved.parts.length;
             resolved.parts.forEach(p=>{
               const sc = scMap[p];
+              if(_isOffCodeC(p, sc)) return; // OFF → skip
               const wv = sc?(sc.workValue||0):0;
-              if(wv > 0){ // OFF (workValue=0) không count
+              if(wv > 0){
                 counts[p] = (counts[p]||0) + fraction * wv;
                 deptCounts[p] = (deptCounts[p]||0) + fraction * wv;
               }
             });
           } else {
+            const sc = scMap[v];
+            if(_isOffCodeC(v, sc)) continue; // OFF → không count
             counts[v] = (counts[v]||0) + (resolved.workValue||0);
             deptCounts[v] = (deptCounts[v]||0) + (resolved.workValue||0);
           }
@@ -28931,9 +28942,15 @@ window._rosterExportPDF = function(type){
 
   // Pre-scan work codes for timesheet PDF
   let pdfWcArr = [];
+  // 🚨 v70: OFF/NGH KHÔNG tạo cột trong PDF
+  const _isOffCodePDF = (code, sc) => {
+    const c = (code||'').toString().trim().toUpperCase();
+    if(c === 'OFF' || c === 'NGH' || c === 'NGHI') return true;
+    if(sc && (sc.workValue === 0 || sc.workValue === '0')) return true;
+    return false;
+  };
   if(type==='timesheet'){
     const pdfWcSet = new Set();
-    // 🚨 v59: LUÔN tách bởi "/" — không tạo cột compound "X/A", "X/OFF"
     emps.forEach(e => {
       const rd = rosterData[e.id]||{};
       for(let d=1;d<=daysInMonth;d++){
@@ -28941,15 +28958,19 @@ window._rosterExportPDF = function(type){
         const _isHolPdf = holidayDaysTS.has(d);
         const resolved = _scResolve(v, scMap);
         if(resolved.isCompound){
-          // LUÔN tách — bỏ qua _definedCompound branch
           resolved.parts.forEach(p=>{
-            const sc2 = scMap[p]; const wc = (_isHolPdf && sc2?.holidayWorkCode) ? sc2.holidayWorkCode : (sc2?(sc2.workCode||p):(p==='AL'?'P':p==='CL'?'Bù':p));
+            const sc2 = scMap[p];
+            if(_isOffCodePDF(p, sc2)) return;
+            const wc = (_isHolPdf && sc2?.holidayWorkCode) ? sc2.holidayWorkCode : (sc2?(sc2.workCode||p):(p==='AL'?'P':p==='CL'?'Bù':p));
             const wv = sc2?(sc2.workValue||0):0;
-            if(wc && wv > 0) pdfWcSet.add(wc); // bỏ OFF (workValue=0) khỏi danh sách cột
+            if(wc && wv > 0) pdfWcSet.add(wc);
           });
         } else {
-          const sc2 = scMap[v]; const wc = (_isHolPdf && sc2?.holidayWorkCode) ? sc2.holidayWorkCode : (sc2?(sc2.workCode||''):(v==='AL'?'P':v==='CL'?'Bù':''));
-          if(wc) pdfWcSet.add(wc);
+          const sc2 = scMap[v];
+          if(_isOffCodePDF(v, sc2)) continue;
+          const wc = (_isHolPdf && sc2?.holidayWorkCode) ? sc2.holidayWorkCode : (sc2?(sc2.workCode||''):(v==='AL'?'P':v==='CL'?'Bù':''));
+          const wv = sc2?(sc2.workValue||0):0;
+          if(wc && wv > 0) pdfWcSet.add(wc);
         }
       }
     });
@@ -29011,7 +29032,7 @@ window._rosterExportPDF = function(type){
         cells += `<td style="text-align:center;font-size:${code.length>4?'6pt':'7.5pt'};padding:2px 1px;${bg?'background:'+bg:''}${!code?'color:#ccc':''}">${code||'·'}</td>`;
       }
       // Summary counts — by workValue
-      // 🚨 v59: LUÔN tách bởi "/" — không tạo cột compound
+      // 🚨 v70: OFF/NGH KHÔNG count
       const counts = {};
       for(let d=1;d<=daysInMonth;d++){
         const c=rd[d];
@@ -29019,8 +29040,12 @@ window._rosterExportPDF = function(type){
           const r2 = _scResolve(c, scMap);
           if(r2.isCompound){
             const frac = 1/r2.parts.length;
-            r2.parts.forEach(p=>{ const sc=scMap[p]; const wv=sc?(sc.workValue||0):0; if(wv>0) counts[p]=(counts[p]||0)+frac*wv; });
-          } else { counts[c]=(counts[c]||0)+(r2.workValue||0); }
+            r2.parts.forEach(p=>{ const sc=scMap[p]; if(_isOffCodePDF(p, sc)) return; const wv=sc?(sc.workValue||0):0; if(wv>0) counts[p]=(counts[p]||0)+frac*wv; });
+          } else {
+            const sc = scMap[c];
+            if(_isOffCodePDF(c, sc)) continue;
+            counts[c]=(counts[c]||0)+(r2.workValue||0);
+          }
         }
       }
       const total = Object.values(counts).reduce((s,n)=>s+n,0);
@@ -29076,21 +29101,32 @@ window._rosterExportPDF = function(type){
         const _isHolPdf2 = holidayDaysTS.has(d);
         let displayCode = '';
         if(code){
-          totalVal += parseFloat(resolved.workValue)||0;
-          // 🚨 v59: LUÔN tách bởi "/" khi count — không tạo cột compound
+          // 🚨 v70: OFF KHÔNG count — totalVal cũng không cộng
           if(resolved.isCompound){
             displayCode = resolved.parts.map(p=>{ const s=scMap[p]; return (_isHolPdf2 && s?.holidayWorkCode) ? s.holidayWorkCode : (s?s.workCode||p:p); }).join('/');
             const fraction = 1/resolved.parts.length;
             resolved.parts.forEach(p=>{
-              const sc2 = scMap[p]; const wc = (_isHolPdf2 && sc2?.holidayWorkCode) ? sc2.holidayWorkCode : (sc2?(sc2.workCode||p):(p==='AL'?'P':p==='CL'?'Bù':p));
+              const sc2 = scMap[p];
+              if(_isOffCodePDF(p, sc2)) return;
+              const wc = (_isHolPdf2 && sc2?.holidayWorkCode) ? sc2.holidayWorkCode : (sc2?(sc2.workCode||p):(p==='AL'?'P':p==='CL'?'Bù':p));
               const wv = sc2?(sc2.workValue||0):0;
-              // Chỉ count nếu part có workValue>0 (OFF bỏ qua)
-              if(wc && wv > 0) wcCounts[wc] = (wcCounts[wc]||0) + fraction * wv;
+              if(wc && wv > 0){
+                wcCounts[wc] = (wcCounts[wc]||0) + fraction * wv;
+                totalVal += fraction * wv;
+              }
             });
           } else {
-            const sc2 = scMap[code]; const wc = (_isHolPdf2 && sc2?.holidayWorkCode) ? sc2.holidayWorkCode : (sc2?(sc2.workCode||''):(code==='AL'?'P':code==='CL'?'Bù':''));
-            displayCode = wc;
-            if(wc) wcCounts[wc] = (wcCounts[wc]||0) + resolved.workValue;
+            const sc2 = scMap[code];
+            if(!_isOffCodePDF(code, sc2)){
+              const wc = (_isHolPdf2 && sc2?.holidayWorkCode) ? sc2.holidayWorkCode : (sc2?(sc2.workCode||''):(code==='AL'?'P':code==='CL'?'Bù':''));
+              displayCode = wc;
+              if(wc){
+                wcCounts[wc] = (wcCounts[wc]||0) + resolved.workValue;
+                totalVal += parseFloat(resolved.workValue)||0;
+              }
+            } else {
+              displayCode = sc2 ? (sc2.workCode || code) : code; // hiển thị nhưng không count
+            }
           }
         }
         const bg = resolved.bg!=='transparent' ? resolved.bg+'22' : '';
@@ -29340,9 +29376,14 @@ function _renderTimesheetGridCore(container, isAdm){
   const _scRC = (v) => v ? (_rslvCache[v] || (_rslvCache[v] = _scResolve(v, scMap))) : {bg:'transparent',fg:'var(--ink-dim)',workValue:0,parts:[],isCompound:false,_definedCompound:false};
 
   // Collect all used work codes across all employees
-  // 🚨 v59: LUÔN tách bởi "/" (dù code có định nghĩa hay không).
-  // Logic: "X/A" → tách thành X và A, không tạo cột "X/A" riêng.
-  // "X/OFF" → tách X và OFF, OFF có workValue=0 nên không count nhưng vẫn hiện cột.
+  // 🚨 v70: OFF (workValue=0 hoặc code='OFF'/'NGH') KHÔNG tạo cột và KHÔNG count.
+  // Áp dụng cho CẢ compound VÀ non-compound.
+  const _isOffCode = (code, sc) => {
+    const c = (code||'').toString().trim().toUpperCase();
+    if(c === 'OFF' || c === 'NGH' || c === 'NGHI') return true;
+    if(sc && (sc.workValue === 0 || sc.workValue === '0')) return true;
+    return false;
+  };
   const usedWcSet = new Set();
   emps.forEach(e => {
     const rd = rosterData[e.id]||{};
@@ -29350,18 +29391,19 @@ function _renderTimesheetGridCore(container, isAdm){
       const v = rd[d]; if(!v) continue;
       const resolved = _scRC(v);
       if(resolved.isCompound){
-        // LUÔN tách — không phân biệt defined/undefined compound
         resolved.parts.forEach(p=>{
           const sc = scMap[p];
+          if(_isOffCode(p, sc)) return; // OFF-like: không tạo cột
           const wc = sc?(sc.workCode||p):(p==='AL'?'P':p==='CL'?'Bù':p);
           const wv = sc?(sc.workValue||0):0;
-          // Chỉ thêm cột nếu code CÓ work value > 0 (OFF/NGH không count → bỏ cột)
           if(wc && wv > 0) usedWcSet.add(wc);
         });
       } else {
         const sc = scMap[v];
+        if(_isOffCode(v, sc)) continue; // OFF-like: không tạo cột
         const wc = sc?(sc.workCode||''):(v==='AL'?'P':v==='CL'?'Bù':'');
-        if(wc) usedWcSet.add(wc);
+        const wv = sc?(sc.workValue||0):0;
+        if(wc && wv > 0) usedWcSet.add(wc);
       }
     }
   });
@@ -29428,19 +29470,16 @@ function _renderTimesheetGridCore(container, isAdm){
         const _isHolDay = holidayDaysTS.has(d);
         let workCode, workVal;
         workVal = resolved.workValue;
-        // 🚨 v59: LUÔN tách bởi "/" khi count (dù defined compound hay không).
-        // "X/A" → 0.5 X + 0.5 A. "X/OFF" → 0.5 X + 0 OFF (OFF không count vì workValue=0).
-        // KHÔNG tạo cột compound như "X/A" hay "X/OFF" nữa — chỉ các mã công chính.
+        // 🚨 v70: OFF KHÔNG count (bất kể workValue cấu hình thế nào).
+        // Áp dụng cho compound + non-compound.
         if(resolved.isCompound){
-          // Build display workCode (giữ nguyên hiển thị dấu "/")
           workCode = resolved.parts.map(p=>{ const s=scMap[p]; return (_isHolDay && s?.holidayWorkCode) ? s.holidayWorkCode : (s?s.workCode||p:p); }).join('/');
-          // Count: chia đều theo số parts, nhân với workValue của từng part
           const fraction = 1/resolved.parts.length;
           resolved.parts.forEach(p=>{
             const sc2 = scMap[p];
+            if(_isOffCode(p, sc2)) return; // OFF-like → skip
             const wc = (_isHolDay && sc2?.holidayWorkCode) ? sc2.holidayWorkCode : (sc2?(sc2.workCode||p):(p==='AL'?'P':p==='CL'?'Bù':p));
             const wv = sc2?(sc2.workValue||0):0;
-            // Chỉ count nếu part CÓ workValue > 0 (OFF/NGH bỏ qua)
             if(wc && wv > 0){
               wcCounts[wc] = (wcCounts[wc]||0) + fraction * wv;
               deptWcCounts[wc] = (deptWcCounts[wc]||0) + fraction * wv;
@@ -29449,7 +29488,10 @@ function _renderTimesheetGridCore(container, isAdm){
         } else {
           const sc = scMap[shiftCode];
           workCode = (_isHolDay && sc?.holidayWorkCode) ? sc.holidayWorkCode : (sc?sc.workCode||'':shiftCode==='AL'?'P':shiftCode==='CL'?'Bù':'');
-          if(shiftCode && workCode){
+          // OFF-like → không count, nhưng vẫn hiển thị trong cell (chỉ bỏ qua wcCounts + totalWork)
+          if(_isOffCode(shiftCode, sc)){
+            workVal = 0; // ép totalWork cũng không cộng
+          } else if(shiftCode && workCode){
             wcCounts[workCode] = (wcCounts[workCode]||0) + workVal;
             deptWcCounts[workCode] = (deptWcCounts[workCode]||0) + workVal;
           }
