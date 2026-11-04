@@ -36745,11 +36745,22 @@ fbAuth.onAuthStateChanged(async user => {
               }
             }
           });
-          const _mergeArr = (key)=>{ if(dynamicAccum[key].length){ 
-            // Dedup by id to prevent duplicates from multi-tab saves
-            const seen = new Set();
-            DB[key] = dynamicAccum[key].filter(r=>{ if(!r.id||seen.has(r.id)) return false; seen.add(r.id); return true; });
-            hasCloud=true; 
+          const _mergeArr = (key)=>{ if(dynamicAccum[key].length){
+            // 🚨 v77: Dedup by id với _savedAt — bản MỚI NHẤT thắng (trước đây first-wins có thể giữ bản CŨ)
+            // Bug cũ: nếu record X nằm ở 2 shard (vd year thay đổi) → first wins có thể trả version cũ
+            // → user duyệt rồi refresh thấy status cũ.
+            const byId = new Map();
+            const noId = [];
+            dynamicAccum[key].forEach(r => {
+              if(!r || typeof r !== 'object') return;
+              if(!r.id){ noId.push(r); return; }
+              const prev = byId.get(r.id);
+              if(!prev){ byId.set(r.id, r); return; }
+              const pTs = prev._savedAt || 0, nTs = r._savedAt || 0;
+              if(nTs >= pTs) byId.set(r.id, r); // bản mới hơn thắng
+            });
+            DB[key] = [...byId.values(), ...noId];
+            hasCloud=true;
           } };
           const _mergeObj = (key)=>{ if(Object.keys(dynamicAccum[key]).length){ DB[key]=dynamicAccum[key]; hasCloud=true; } };
           ['leaves','kpiReviews','rewardRecords','casuals','candidates','promotions','disciplineRecords'].forEach(_mergeArr);
@@ -37897,16 +37908,20 @@ fbAuth.onAuthStateChanged(async user => {
                 }
                 if(isMonthShard){
                   // casuals: YYYY_MM
-                  DB[key] = [
-                    ...(DB[key]||[]).filter(r=>_recMonth(r)!==String(shardId)),
-                    ...d[key]
-                  ];
+                  // 🚨 v77: merge-by-id với _savedAt — giữ bản newest (chống revert khi 2 user ghi đè)
+                  const _cloudArr = Array.isArray(d[key]) ? d[key] : [];
+                  const _localArr = (DB[key]||[]).filter(r=>_recMonth(r)!==String(shardId));
+                  const _localInShard = (DB[key]||[]).filter(r=>_recMonth(r)===String(shardId));
+                  const _merged = window._mergeArrayById ? window._mergeArrayById(_cloudArr, _localInShard, key) : _cloudArr;
+                  DB[key] = [..._localArr, ..._merged];
                 } else if(isYearShard){
-                  // leaves/kpi/rewards/etc: year
-                  DB[key] = [
-                    ...(DB[key]||[]).filter(r=>_recYear(r)!==parseInt(shardId)),
-                    ...d[key]
-                  ];
+                  // leaves/kpi/rewards/promotions/discipline: year
+                  // 🚨 v77: merge-by-id với _savedAt — fix bug duyệt xong revert
+                  const _cloudArr = Array.isArray(d[key]) ? d[key] : [];
+                  const _localArr = (DB[key]||[]).filter(r=>_recYear(r)!==parseInt(shardId));
+                  const _localInShard = (DB[key]||[]).filter(r=>_recYear(r)===parseInt(shardId));
+                  const _merged = window._mergeArrayById ? window._mergeArrayById(_cloudArr, _localInShard, key) : _cloudArr;
+                  DB[key] = [..._localArr, ..._merged];
                 } else {
                   // candidates: sharded by jobId — replace entire shard
                   // Guard 1: nếu shard này vừa bị xóa (đăng ký trong _candEmptyShards) → bỏ qua echo cũ
