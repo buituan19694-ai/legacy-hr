@@ -1367,40 +1367,46 @@ function _pushDynamicKey(key, meta){
     }
     const byYear = {};
     arr.forEach(r=>{ const y=_recYear(r); (byYear[y]=byYear[y]||[]).push(r); });
-    // 🚨 v74: READ-THEN-MERGE by id (giữ _savedAt mới hơn) để tránh LOST UPDATE.
-    // Trước: merge:false ghi đè toàn bộ shard → user khác có stale local save sẽ revert status.
-    // Giờ: đọc cloud, merge by id (local vừa sửa có _savedAt mới nhất → thắng), ghi merged array.
+    // 🚨 v78: FIRESTORE TRANSACTION — atomic read-modify-write, Firebase tự retry nếu conflict.
+    // Trước (v74): read-then-write riêng lẻ có race window → user khác save giữa read và write sẽ bị mất.
+    // Giờ: transaction đảm bảo không user nào có thể chen giữa → triệt để.
     const tomb = (typeof _gTombGetSetFor === 'function') ? _gTombGetSetFor(key) : new Set();
     Object.entries(byYear).forEach(([yr,localRecords])=>{
       if(localRecords.length === 0) return;
       const docRef = window.fbDb.collection('hrdata').doc(`${prefix}_${yr}`);
-      docRef.get().then(snap => {
-        const cloudData = snap.exists ? (snap.data()||{}) : {};
-        const cloudRecords = Array.isArray(cloudData[key]) ? cloudData[key] : [];
-        // Merge by id — _savedAt mới nhất thắng; bỏ tombstone
-        const byId = new Map();
-        const addRec = (r) => {
-          if(!r || !r.id) return;
-          if(tomb.has(r.id)) return;
-          const prev = byId.get(r.id);
-          if(!prev){ byId.set(r.id, r); return; }
-          const pTs = prev._savedAt || 0, nTs = r._savedAt || 0;
-          if(nTs >= pTs) byId.set(r.id, r);
-        };
-        cloudRecords.forEach(addRec);
-        localRecords.forEach(addRec);
-        const merged = [...byId.values()];
-        if(merged.length === 0) return;
-        docRef.set({...meta, [key]:merged.map(r=>_sanitizeForFirebase(r)), _shard:parseInt(yr)}, {merge:false})
-          .then(()=>{
-            // Cập nhật DB local với bản merged (phòng listener không fire ngay)
-            const otherYearRecords = (DB[key]||[]).filter(r => _recYear(r) !== parseInt(yr));
-            DB[key] = [...otherYearRecords, ...merged];
-          })
-          .catch(err=>console.error(`[saveData] ❌ ${prefix}_${yr}`, err.message));
+      window.fbDb.runTransaction(transaction => {
+        return transaction.get(docRef).then(snap => {
+          const cloudData = snap.exists ? (snap.data()||{}) : {};
+          const cloudRecords = Array.isArray(cloudData[key]) ? cloudData[key] : [];
+          // Merge by id — _savedAt mới nhất thắng; bỏ tombstone
+          const byId = new Map();
+          const addRec = (r) => {
+            if(!r || !r.id) return;
+            if(tomb.has(r.id)) return;
+            const prev = byId.get(r.id);
+            if(!prev){ byId.set(r.id, r); return; }
+            const pTs = prev._savedAt || 0, nTs = r._savedAt || 0;
+            if(nTs >= pTs) byId.set(r.id, r);
+          };
+          cloudRecords.forEach(addRec);
+          localRecords.forEach(addRec);
+          const merged = [...byId.values()];
+          if(merged.length === 0) return;
+          transaction.set(docRef, {...meta, [key]:merged.map(r=>_sanitizeForFirebase(r)), _shard:parseInt(yr)}, {merge:false});
+          // Lưu merged để dùng sau transaction
+          docRef._lastMerged = merged;
+        });
+      }).then(()=>{
+        // Cập nhật DB local với bản merged
+        if(docRef._lastMerged){
+          const otherYearRecords = (DB[key]||[]).filter(r => _recYear(r) !== parseInt(yr));
+          DB[key] = [...otherYearRecords, ...docRef._lastMerged];
+          delete docRef._lastMerged;
+          console.log(`[saveData] ✅ TXN ${prefix}_${yr} (merged ${(DB[key]||[]).length} total)`);
+        }
       }).catch(err=>{
-        console.error(`[saveData] ❌ read ${prefix}_${yr} before merge:`, err.message);
-        // Fallback: ghi local (chấp nhận rủi ro lost update nếu read fail)
+        console.error(`[saveData] ❌ TXN ${prefix}_${yr} failed:`, err.message);
+        // Fallback cuối cùng: ghi local (chấp nhận rủi ro nếu TXN liên tục fail do network)
         docRef.set({...meta, [key]:localRecords.map(r=>_sanitizeForFirebase(r)), _shard:parseInt(yr)}, {merge:false})
           .catch(err2=>console.error(`[saveData] ❌ ${prefix}_${yr} fallback write:`, err2.message));
       });
@@ -1542,24 +1548,27 @@ function _pushDynamicKey(key, meta){
       allYears.forEach(yr=>{
         const docId = `payroll_data_${yr}`;
         const ref = window.fbDb.collection('hrdata').doc(docId);
-        ref.get().then(snap=>{
-          const cloud = snap.exists ? (snap.data()||{}) : {};
-          const cloudYear = ((cloud.payrollData||{})[yr]) || {};
-          const localYear = obj[yr] || {};
-          // payrollData: {month: {empId: {...}}} — merge theo month→empId
-          const mergedYear = {};
-          const allMo = new Set([...Object.keys(cloudYear), ...Object.keys(localYear)]);
-          allMo.forEach(mo=>{
-            if(mo.startsWith('_')) return;
-            mergedYear[mo] = {...(cloudYear[mo]||{}), ...(localYear[mo]||{})};
+        // 🚨 v78: TRANSACTION atomic cho payrollData
+        window.fbDb.runTransaction(transaction => {
+          return transaction.get(ref).then(snap => {
+            const cloud = snap.exists ? (snap.data()||{}) : {};
+            const cloudYear = ((cloud.payrollData||{})[yr]) || {};
+            const localYear = obj[yr] || {};
+            const mergedYear = {};
+            const allMo = new Set([...Object.keys(cloudYear), ...Object.keys(localYear)]);
+            allMo.forEach(mo=>{
+              if(mo.startsWith('_')) return;
+              mergedYear[mo] = {...(cloudYear[mo]||{}), ...(localYear[mo]||{})};
+            });
+            const payload = {...meta, payrollData: {[yr]: mergedYear}, _shard: yr};
+            transaction.set(ref, payload, {merge:false});
           });
-          const payload = {...meta, payrollData: {[yr]: mergedYear}, _shard: yr};
-          return ref.set(payload, {merge:false});
-        }).catch(err=>{
-          console.error(`[saveData] ❌ ${docId}`, err.message);
-          const payload = {...meta, payrollData: {[yr]: obj[yr]||{}}, _shard: yr};
-          ref.set(payload, {merge:false}).catch(e2=>console.error(`[saveData] ❌ ${docId} fallback`, e2.message));
-        });
+        }).then(()=>console.log(`[saveData] ✅ TXN ${docId}`))
+          .catch(err=>{
+            console.error(`[saveData] ❌ TXN ${docId}:`, err.message);
+            const payload = {...meta, payrollData: {[yr]: obj[yr]||{}}, _shard: yr};
+            ref.set(payload, {merge:false}).catch(e2=>console.error(`[saveData] ❌ ${docId} fallback`, e2.message));
+          });
       });
       return;
     }
@@ -1571,34 +1580,34 @@ function _pushDynamicKey(key, meta){
     allYears.forEach(yr=>{
       const docId = isActual ? `manning_actual_${yr}` : `manning_plan_${yr}`;
       const ref = window.fbDb.collection('hrdata').doc(docId);
-      // 🚨 v38: đọc cloud TRƯỚC rồi merge — chống mất data khi 2 account sửa
-      // dept/tháng KHÁC nhau trong cùng năm (merge:false cũ ghi đè cả năm)
-      ref.get().then(snap=>{
-        const cloud = snap.exists ? (snap.data()||{}) : {};
-        const cloudYear = ((cloud[key]||{})[yr]) || {};
-        const localYear = obj[yr] || {};
-        let mergedYear;
-        if(isActual){
-          // manningActual: {month: {empId: {workDays}}} — merge theo month→empId
-          mergedYear = {};
-          const allMo = new Set([...Object.keys(cloudYear), ...Object.keys(localYear)]);
-          allMo.forEach(mo=>{
-            if(mo.startsWith('_')) return;
-            mergedYear[mo] = {...(cloudYear[mo]||{}), ...(localYear[mo]||{})};
-          });
-        } else {
-          // manningPlan: {depts: {deptId: {positions}}} — merge theo deptId
-          const cloudDepts = cloudYear.depts || {};
-          const localDepts = localYear.depts || {};
-          mergedYear = {...cloudYear, depts: {...cloudDepts, ...localDepts}};
-        }
-        const payload = {...meta, [key]: {[yr]: mergedYear}, _shard: yr};
-        return ref.set(payload, {merge:false});
-      }).catch(err=>{
-        console.error(`[saveData] ❌ ${docId} (merge fail, fallback)`, err.message);
-        const payload = {...meta, [key]: {[yr]: obj[yr]||{}}, _shard: yr};
-        ref.set(payload, {merge:false}).catch(e2=>console.error(`[saveData] ❌ ${docId} fallback`, e2.message));
-      });
+      // 🚨 v78: TRANSACTION atomic cho manning
+      window.fbDb.runTransaction(transaction => {
+        return transaction.get(ref).then(snap => {
+          const cloud = snap.exists ? (snap.data()||{}) : {};
+          const cloudYear = ((cloud[key]||{})[yr]) || {};
+          const localYear = obj[yr] || {};
+          let mergedYear;
+          if(isActual){
+            mergedYear = {};
+            const allMo = new Set([...Object.keys(cloudYear), ...Object.keys(localYear)]);
+            allMo.forEach(mo=>{
+              if(mo.startsWith('_')) return;
+              mergedYear[mo] = {...(cloudYear[mo]||{}), ...(localYear[mo]||{})};
+            });
+          } else {
+            const cloudDepts = cloudYear.depts || {};
+            const localDepts = localYear.depts || {};
+            mergedYear = {...cloudYear, depts: {...cloudDepts, ...localDepts}};
+          }
+          const payload = {...meta, [key]: {[yr]: mergedYear}, _shard: yr};
+          transaction.set(ref, payload, {merge:false});
+        });
+      }).then(()=>console.log(`[saveData] ✅ TXN ${docId}`))
+        .catch(err=>{
+          console.error(`[saveData] ❌ TXN ${docId}:`, err.message);
+          const payload = {...meta, [key]: {[yr]: obj[yr]||{}}, _shard: yr};
+          ref.set(payload, {merge:false}).catch(e2=>console.error(`[saveData] ❌ ${docId} fallback`, e2.message));
+        });
     });
     return;
   }
@@ -1758,36 +1767,46 @@ function _pushDynamicKey(key, meta){
     });
     allYears.forEach(yr=>{
       const ref = window.fbDb.collection('hrdata').doc(`pldata_${yr}`);
-      // 🚨 v24: đọc cloud TRƯỚC rồi deep-merge — chống mất data khi:
-      //  (1) 2 account sửa 2 tháng khác nhau trong cùng năm (merge:false cũ ghi đè lẫn nhau)
-      //  (2) local chưa load xong toàn bộ năm (guard cold-load đã chặn, đây là lớp bảo hiểm thêm)
-      ref.get().then(snap=>{
-        const cloud = snap.exists ? (snap.data()||{}) : {};
-        const payload={...meta, _shard:yr};
-        plDataKeys.forEach(k=>{
-          const localYear = (DB[k]||{})[yr] || {};      // {month: {...}} của local
-          const cloudYear = (cloud[k]||{})[yr] || {};    // {month: {...}} của cloud
-          const mergedYear = {...cloudYear};
-          Object.entries(localYear).forEach(([mo, moData])=>{
-            const cloudMo = cloudYear[mo];
-            if(k === 'plRevenue' && cloudMo && typeof cloudMo==='object' && typeof moData==='object'){
-              // Revenue: 1 object/tháng → so _ts, mới thắng
-              const lTs = moData._ts || 0, cTs = cloudMo._ts || 0;
-              mergedYear[mo] = (cTs > lTs) ? cloudMo : moData;
-            } else if(k === 'plActionPlan' && Array.isArray(moData)){
-              // 🚨 v28: Action Plan là ARRAY → merge-by-id (KHÔNG ghi đè cả tháng)
-              // Chống mất data khi 2 account thêm action khác nhau cùng tháng
-              mergedYear[mo] = _mergeActionArr(Array.isArray(cloudMo)?cloudMo:[], moData);
-            } else {
-              mergedYear[mo] = moData;
+      // 🚨 v78: FIRESTORE TRANSACTION — atomic read-modify-write cho pldata.
+      // Trước (v24): read-then-write riêng lẻ có race window → user khác save giữa chừng → mất data
+      window.fbDb.runTransaction(transaction => {
+        return transaction.get(ref).then(snap => {
+          const cloud = snap.exists ? (snap.data()||{}) : {};
+          const payload={...meta, _shard:yr};
+          plDataKeys.forEach(k=>{
+            const localYear = (DB[k]||{})[yr] || {};
+            const cloudYear = (cloud[k]||{})[yr] || {};
+            const mergedYear = {...cloudYear};
+            Object.entries(localYear).forEach(([mo, moData])=>{
+              const cloudMo = cloudYear[mo];
+              if(k === 'plRevenue' && cloudMo && typeof cloudMo==='object' && typeof moData==='object'){
+                // Revenue: 1 object/tháng → so _ts, mới thắng (local >= cloud)
+                const lTs = moData._ts || 0, cTs = cloudMo._ts || 0;
+                mergedYear[mo] = (lTs >= cTs) ? moData : cloudMo;
+              } else if(k === 'plActionPlan' && Array.isArray(moData)){
+                mergedYear[mo] = _mergeActionArr(Array.isArray(cloudMo)?cloudMo:[], moData);
+              } else {
+                mergedYear[mo] = moData;
+              }
+            });
+            payload[k] = {[yr]: mergedYear};
+          });
+          transaction.set(ref, payload, {merge:false});
+          ref._lastPayload = payload;
+        });
+      }).then(()=>{
+        if(ref._lastPayload){
+          plDataKeys.forEach(k=>{
+            if(ref._lastPayload[k] && ref._lastPayload[k][yr]){
+              if(!DB[k]) DB[k] = {};
+              DB[k][yr] = ref._lastPayload[k][yr];
             }
           });
-          payload[k] = {[yr]: mergedYear};
-        });
-        return ref.set(payload, {merge:false});
+          delete ref._lastPayload;
+          console.log(`[saveData] ✅ TXN pldata_${yr}`);
+        }
       }).catch(err=>{
-        console.error(`[saveData] ❌ pldata_${yr} (merge fail, fallback direct set)`, err.message);
-        // Fallback: nếu đọc cloud lỗi, vẫn ghi local (không để save thất bại hoàn toàn)
+        console.error(`[saveData] ❌ TXN pldata_${yr}:`, err.message);
         const payload={...meta, _shard:yr};
         plDataKeys.forEach(k=>{
           const obj=DB[k]||{};
