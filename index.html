@@ -1794,9 +1794,18 @@ function _pushDynamicKey(key, meta){
             Object.entries(localYear).forEach(([mo, moData])=>{
               const cloudMo = cloudYear[mo];
               if(k === 'plRevenue' && cloudMo && typeof cloudMo==='object' && typeof moData==='object'){
-                // Revenue: 1 object/tháng → so _ts, mới thắng (local >= cloud)
+                // 🚨 v81 CRITICAL FIX: MERGE FIELD-LEVEL (không replace cả object).
+                // Trước: lТs>=cTs → mergedYear[mo] = moData (REPLACE) → mất field cloud không có trong local
+                //   VD: user chỉ gõ actual → local = {actual: 500M} → ghi đè cloud = {budget: 11.8B} → MẤT budget!
+                // Giờ: merge từng field, local thắng field trùng, giữ field cloud không có trong local.
                 const lTs = moData._ts || 0, cTs = cloudMo._ts || 0;
-                mergedYear[mo] = (lTs >= cTs) ? moData : cloudMo;
+                if(lTs >= cTs){
+                  // Local mới hơn → local's fields override, cloud's extra fields preserved
+                  mergedYear[mo] = {...cloudMo, ...moData, _ts: lTs};
+                } else {
+                  // Cloud mới hơn → cloud's fields override, local's extra fields preserved
+                  mergedYear[mo] = {...moData, ...cloudMo, _ts: cTs};
+                }
               } else if(k === 'plActionPlan' && Array.isArray(moData)){
                 mergedYear[mo] = _mergeActionArr(Array.isArray(cloudMo)?cloudMo:[], moData);
               } else {
@@ -38112,9 +38121,16 @@ fbAuth.onAuthStateChanged(async user => {
                       const localMo = DB[pk][yr][mo];
                       if(pk==='plRevenue' && localMo && typeof localMo==='object' && typeof moData==='object'){
                         if(justSavedPL) return; // vừa nhập → giữ local
+                        // 🚨 v81: MERGE FIELD-LEVEL (không replace cả object)
+                        // Chống: cloud có {budget} → local có {actual} → replace cloud → mất actual (ngược lại cũng mất)
                         const lTs = localMo._ts || 0, cTs = moData._ts || 0;
-                        if(cTs >= lTs) DB[pk][yr][mo] = moData; // cloud mới hơn hoặc bằng → nhận
-                        // else giữ local (local mới hơn)
+                        if(cTs >= lTs){
+                          // Cloud mới hơn → merge cloud's fields over local, keep local-only fields
+                          DB[pk][yr][mo] = {...localMo, ...moData, _ts: cTs};
+                        } else {
+                          // Local mới hơn → merge local over cloud, keep cloud-only fields
+                          DB[pk][yr][mo] = {...moData, ...localMo, _ts: lTs};
+                        }
                       } else if(pk==='plActionPlan' && Array.isArray(moData)){
                         // 🚨 v28: Action Plan là array → merge-by-id (không ghi đè cả tháng)
                         // Kể cả vừa self-save vẫn merge (merge-by-id đã bảo toàn item local mới nhất qua _savedAt)
