@@ -31514,23 +31514,15 @@ function renderPayrollTab(){
             <td style="${ct};font-size:11px;font-weight:600;${diffBg(totCasual,pvCasual)}">${diffTxt(totCasual,pvCasual)}</td>
             <td style="${ct};font-size:11px;font-weight:600;${diffBg(totGrand,pvTotal)}">${diffTxt(totGrand,pvTotal)}</td>
           </tr>
-          <!-- 🚨 v73: Revenue row + % lương / doanh thu -->
-          <tr style="border-top:2px solid var(--border-strong);background:rgba(45,106,79,.05)">
-            <td style="padding:10px 12px;font-size:12px;font-weight:700;color:var(--success)">💰 Revenue — Doanh thu T${pM}/${pY}</td>
-            <td colspan="4" style="${ct};font-size:11px;color:var(--ink-muted);text-align:left;padding-left:12px">
-              Budget: <b style="color:var(--info)">${fmtV(revBudget)}</b>
-              &nbsp;·&nbsp; Actual: <b style="color:var(--success)">${fmtV(revActual)}</b>
-              ${revBudget===0 && revActual===0 ? ' <span style="color:var(--warning)">(chưa nhập — vào HR P&L Review để config)</span>' : ''}
+          <!-- 🚨 v80: CHỈ 1 dòng — Actual salary / Actual revenue (hiệu quả chi phí thực) -->
+          <tr style="border-top:2px solid var(--border-strong);background:rgba(212,165,116,.08)">
+            <td style="padding:10px 12px;font-size:12px;font-weight:800;color:var(--accent)" title="Chi phí lương thực tế trên doanh thu thực tế — chỉ số hiệu quả">✅ % Lương TT / Doanh thu TT T${pM}/${pY}</td>
+            <td colspan="4" style="${ct};font-size:11px;color:var(--ink-muted);text-align:right">
+              ${revActual>0
+                ? `Lương TT <b style="color:var(--warning)">${fmtV(totGrand)}</b> / Doanh thu TT <b style="color:var(--success)">${fmtV(revActual)}</b>`
+                : `<span style="color:var(--warning)">⚠ Chưa có Doanh thu thực tế — vào <a href="javascript:void(0)" onclick="if(typeof navigate==='function'){navigate('plreview');}else{currentPage='plreview';render();}" style="color:var(--info);text-decoration:underline;cursor:pointer">HR P&L Review</a> nhập Actual Revenue</span>`}
             </td>
-            <td style="${ct};font-weight:800;color:var(--success);font-size:13px">${fmtV(revForPct)}</td>
-          </tr>
-          <tr style="background:rgba(45,106,79,.03)">
-            <td style="padding:8px 12px;font-size:11px;color:var(--ink-muted);font-weight:600">📊 % Chi phí lương / Doanh thu ${revActual>0?'(Actual)':'(Budget)'}</td>
-            <td style="${ct};font-size:10px;color:var(--ink-muted)">—</td>
-            <td style="${ct};font-size:11px;font-weight:700;color:${pctColor(pctStr(bgTotal, revForPct))}" title="Budget / Revenue">Bg: ${pctStr(bgTotal, revForPct)}</td>
-            <td style="${ct};font-size:11px;font-weight:700;color:${pctColor(pctStr(fhTotal, revForPct))}" title="Forecast / Revenue">Fc: ${pctStr(fhTotal, revForPct)}</td>
-            <td style="${ct};font-size:11px;font-weight:700;color:${pctColor(pctStr(totGrand, revForPct))}" title="Actual / Revenue">Act: ${pctStr(totGrand, revForPct)}</td>
-            <td style="${ct};font-size:12px;font-weight:800;color:${pctColor(pctStr(totGrand, revForPct))}">${pctStr(totGrand, revForPct)}</td>
+            <td style="${ct};font-size:14px;font-weight:800;color:${revActual>0?pctColor(pctStr(totGrand, revActual)):'var(--ink-muted)'}">${revActual>0 ? pctStr(totGrand, revActual) : '—'}</td>
           </tr>
         </tbody></table></div>
     </div>
