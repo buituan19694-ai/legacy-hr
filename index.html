@@ -1367,48 +1367,62 @@ function _pushDynamicKey(key, meta){
     }
     const byYear = {};
     arr.forEach(r=>{ const y=_recYear(r); (byYear[y]=byYear[y]||[]).push(r); });
-    // 🚨 v78: FIRESTORE TRANSACTION — atomic read-modify-write, Firebase tự retry nếu conflict.
-    // Trước (v74): read-then-write riêng lẻ có race window → user khác save giữa read và write sẽ bị mất.
-    // Giờ: transaction đảm bảo không user nào có thể chen giữa → triệt để.
+    // 🚨 v79: TRANSACTION + comprehensive logging để debug revert bug
     const tomb = (typeof _gTombGetSetFor === 'function') ? _gTombGetSetFor(key) : new Set();
     Object.entries(byYear).forEach(([yr,localRecords])=>{
       if(localRecords.length === 0) return;
       const docRef = window.fbDb.collection('hrdata').doc(`${prefix}_${yr}`);
+      const _mergedStore = {}; // per-call storage (không dùng docRef property)
+      console.log(`[saveData] 🔄 TXN ${prefix}_${yr} start — local=${localRecords.length} records`);
       window.fbDb.runTransaction(transaction => {
         return transaction.get(docRef).then(snap => {
           const cloudData = snap.exists ? (snap.data()||{}) : {};
           const cloudRecords = Array.isArray(cloudData[key]) ? cloudData[key] : [];
+          console.log(`[saveData] 🔍 TXN ${prefix}_${yr} — cloud has ${cloudRecords.length} records`);
           // Merge by id — _savedAt mới nhất thắng; bỏ tombstone
           const byId = new Map();
-          const addRec = (r) => {
+          let conflictCount = 0, localWonCount = 0, cloudWonCount = 0;
+          const addRec = (r, source) => {
             if(!r || !r.id) return;
-            if(tomb.has(r.id)) return;
+            if(tomb.has(r.id)){ return; }
             const prev = byId.get(r.id);
             if(!prev){ byId.set(r.id, r); return; }
+            conflictCount++;
             const pTs = prev._savedAt || 0, nTs = r._savedAt || 0;
-            if(nTs >= pTs) byId.set(r.id, r);
+            if(nTs >= pTs){
+              byId.set(r.id, r);
+              if(source === 'local') localWonCount++; else cloudWonCount++;
+            } else {
+              if(source === 'cloud') cloudWonCount++; else localWonCount--;
+            }
           };
-          cloudRecords.forEach(addRec);
-          localRecords.forEach(addRec);
+          cloudRecords.forEach(r => addRec(r, 'cloud'));
+          localRecords.forEach(r => addRec(r, 'local'));
           const merged = [...byId.values()];
-          if(merged.length === 0) return;
+          console.log(`[saveData] 📊 TXN ${prefix}_${yr} — merged=${merged.length}, conflicts=${conflictCount}, localWon=${localWonCount}, cloudWon=${cloudWonCount}`);
+          if(merged.length === 0){
+            console.warn(`[saveData] ⚠️ TXN ${prefix}_${yr} — merged rỗng, skip write`);
+            return;
+          }
           transaction.set(docRef, {...meta, [key]:merged.map(r=>_sanitizeForFirebase(r)), _shard:parseInt(yr)}, {merge:false});
-          // Lưu merged để dùng sau transaction
-          docRef._lastMerged = merged;
+          _mergedStore.merged = merged;
         });
       }).then(()=>{
-        // Cập nhật DB local với bản merged
-        if(docRef._lastMerged){
+        if(_mergedStore.merged){
           const otherYearRecords = (DB[key]||[]).filter(r => _recYear(r) !== parseInt(yr));
-          DB[key] = [...otherYearRecords, ...docRef._lastMerged];
-          delete docRef._lastMerged;
-          console.log(`[saveData] ✅ TXN ${prefix}_${yr} (merged ${(DB[key]||[]).length} total)`);
+          DB[key] = [...otherYearRecords, ..._mergedStore.merged];
+          console.log(`[saveData] ✅ TXN ${prefix}_${yr} committed — DB.${key} now has ${(DB[key]||[]).length} records`);
+          // Ghi vào _dynamicLastSync để listener biết đây là bản mình vừa ghi
+          if(!window._dynamicLastSync) window._dynamicLastSync = {};
+          window._dynamicLastSync[`${prefix}_${yr}`] = Date.now();
         }
       }).catch(err=>{
-        console.error(`[saveData] ❌ TXN ${prefix}_${yr} failed:`, err.message);
-        // Fallback cuối cùng: ghi local (chấp nhận rủi ro nếu TXN liên tục fail do network)
+        console.error(`[saveData] ❌ TXN ${prefix}_${yr} FAILED:`, err.code, err.message);
+        // Fallback: direct write không merge
+        console.warn(`[saveData] 🔧 Fallback direct write ${prefix}_${yr}`);
         docRef.set({...meta, [key]:localRecords.map(r=>_sanitizeForFirebase(r)), _shard:parseInt(yr)}, {merge:false})
-          .catch(err2=>console.error(`[saveData] ❌ ${prefix}_${yr} fallback write:`, err2.message));
+          .then(()=>console.log(`[saveData] ✅ Fallback ${prefix}_${yr} written`))
+          .catch(err2=>console.error(`[saveData] ❌ ${prefix}_${yr} fallback write failed:`, err2.message));
       });
     });
     // 🚨 v18 FIX bug resurrection: nếu 1 NĂM từng có record trên cloud nhưng giờ arr KHÔNG còn record năm đó
