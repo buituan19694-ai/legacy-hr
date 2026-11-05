@@ -3638,6 +3638,36 @@ window._plFmtInput = function(n){
 window._plParseInput = function(s){
   return parseFloat(String(s||'').replace(/[^\d]/g,''))||0;
 };
+// 🚨 v82: Auto-save khi user đang gõ (debounced 800ms) — chống bug "chưa blur mà refresh → mất"
+window._plSaveTimers = window._plSaveTimers || {};
+window._plSaveBudget = function(year, month, rawValue){
+  const key = year+'_'+month+'_budget';
+  clearTimeout(window._plSaveTimers[key]);
+  window._plSaveTimers[key] = setTimeout(()=>{
+    const n = window._plParseInput(rawValue);
+    if(!DB.plRevenue[year]) DB.plRevenue[year] = {};
+    if(!DB.plRevenue[year][month]) DB.plRevenue[year][month] = {};
+    if(DB.plRevenue[year][month].budget !== n){
+      DB.plRevenue[year][month].budget = n;
+      DB.plRevenue[year][month]._ts = Date.now();
+      saveData(['plRevenue']);
+    }
+  }, 800);
+};
+window._plSaveActual = function(year, month, rawValue){
+  const key = year+'_'+month+'_actual';
+  clearTimeout(window._plSaveTimers[key]);
+  window._plSaveTimers[key] = setTimeout(()=>{
+    const n = window._plParseInput(rawValue);
+    if(!DB.plRevenue[year]) DB.plRevenue[year] = {};
+    if(!DB.plRevenue[year][month]) DB.plRevenue[year][month] = {};
+    if(DB.plRevenue[year][month].actual !== n){
+      DB.plRevenue[year][month].actual = n;
+      DB.plRevenue[year][month]._ts = Date.now();
+      saveData(['plRevenue']);
+    }
+  }, 800);
+};
 // Auto-format input on the fly
 window._plOnInputNum = function(input){
   const cursorAtEnd = input.selectionStart === input.value.length;
@@ -4957,18 +4987,21 @@ function _plRenderProductivity(el, year, month){
         <div>
           <label style="font-size:11px;color:var(--ink-muted);font-weight:600;text-transform:uppercase;letter-spacing:.04em">Revenue Budget</label>
           <input type="text" inputmode="numeric" value="${(parseFloat(rev.budget)||0).toLocaleString('vi-VN')}" placeholder="0"
-            oninput="window._plOnInputNum(this)"
+            oninput="window._plOnInputNum(this);window._plSaveBudget(${year},${month},this.value)"
             onchange="const n=window._plParseInput(this.value);if(!DB.plRevenue[${year}])DB.plRevenue[${year}]={};if(!DB.plRevenue[${year}][${month}])DB.plRevenue[${year}][${month}]={};DB.plRevenue[${year}][${month}].budget=n;DB.plRevenue[${year}][${month}]._ts=Date.now();saveData(['plRevenue']);render()"
+            onkeydown="if(event.key==='Enter')this.blur()"
             style="width:100%;background:var(--bg-card);border:1px solid var(--border);color:var(--ink);padding:8px 12px;border-radius:6px;font-family:'JetBrains Mono',monospace;font-size:14px;margin-top:4px;text-align:right">
           <div style="font-size:11px;color:var(--ink-dim);margin-top:4px">= ${_plFmtMoney(parseFloat(rev.budget)||0)}đ</div>
         </div>
         <div>
           <label style="font-size:11px;color:var(--ink-muted);font-weight:600;text-transform:uppercase;letter-spacing:.04em">Revenue Actual</label>
           <input type="text" inputmode="numeric" value="${(parseFloat(rev.actual)||0).toLocaleString('vi-VN')}" placeholder="0"
-            oninput="window._plOnInputNum(this)"
+            oninput="window._plOnInputNum(this);window._plSaveActual(${year},${month},this.value)"
             onchange="const n=window._plParseInput(this.value);if(!DB.plRevenue[${year}])DB.plRevenue[${year}]={};if(!DB.plRevenue[${year}][${month}])DB.plRevenue[${year}][${month}]={};DB.plRevenue[${year}][${month}].actual=n;DB.plRevenue[${year}][${month}]._ts=Date.now();saveData(['plRevenue']);render()"
+            onkeydown="if(event.key==='Enter')this.blur()"
+            onblur="this.dispatchEvent(new Event('change'))"
             style="width:100%;background:var(--bg-card);border:1px solid var(--border);color:var(--ink);padding:8px 12px;border-radius:6px;font-family:'JetBrains Mono',monospace;font-size:14px;margin-top:4px;text-align:right">
-          <div style="font-size:11px;color:var(--ink-dim);margin-top:4px">= ${_plFmtMoney(parseFloat(rev.actual)||0)}đ</div>
+          <div style="font-size:11px;color:var(--ink-dim);margin-top:4px">= ${_plFmtMoney(parseFloat(rev.actual)||0)}đ · <a href="javascript:void(0)" onclick="if(typeof navigate==='function'){navigate('salary');}else{currentPage='salary';render();}" style="color:var(--accent);text-decoration:underline;cursor:pointer">→ Sang Bảng Lương xem % chi phí/doanh thu</a></div>
         </div>
       </div>
     </div>
