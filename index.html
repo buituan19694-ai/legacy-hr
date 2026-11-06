@@ -16906,6 +16906,9 @@ function renderLeavePlan(main){
 }
 
 // Chốt số Tồn đầu tháng — capture snapshot tại thời điểm hiện tại để dùng vĩnh viễn
+// v88 FIX: Compute FRESH values trực tiếp từ calcLeaveTonCuoiNam (global).
+// Trước đây dùng getBalByDept (local const trong renderLeavePlan) → closure scope lỗi
+// → typeof getBalByDept === 'function' = false → snapshot toàn 0.
 window.lockLeavePlanMonth = function(year, mi){
   const monthName = `T${mi+1}/${year}`;
   if(!confirm(`Chốt số Tồn đầu tháng cho tháng ${monthName}?\n\n• Số Tồn đầu tháng hiện tại sẽ được lưu CỐ ĐỊNH cho tháng này\n• Sau khi chốt, dù số thực tế thay đổi (do duyệt phép, gộp data...), số Tồn của tháng này vẫn giữ nguyên\n• Các tháng KHÁC vẫn tự động cập nhật theo thực tế\n• Bạn có thể "Mở chốt" để quay lại dùng số động\n\nDùng để làm gì:\n→ Có data so sánh chuẩn tại thời điểm chốt KH\n→ Lịch sử tồn đầu tháng không bị mất khi data update`)) return;
@@ -16914,18 +16917,21 @@ window.lockLeavePlanMonth = function(year, mi){
   if(!DB.leavePlanLocked[year]) DB.leavePlanLocked[year] = {};
   if(!DB.leavePlanLocked[year][mi]) DB.leavePlanLocked[year][mi] = {};
 
-  // Capture số Tồn đầu tháng cho TẤT CẢ dept cùng cả AL và CL
+  // Compute fresh: cho TẤT CẢ active emp của mỗi dept → sum calcLeaveTonCuoiNam
+  // KHÔNG rely on _trackingTon cache hoặc getBalByDept (local scope).
+  const _activeEmps = (DB.employees||[]).filter(e => {
+    const st = (typeof getEffectiveStatus === 'function') ? getEffectiveStatus(e) : (e.status||'active');
+    return st !== 'exit';
+  });
+
   const snapshot = {};
   (DB.departments||[]).forEach(d => {
-    const al = (window._trackingTon && window._trackingTon[year] && window._trackingTon[year][d.id])
-      ? window._trackingTon[year][d.id].al || 0
-      : (typeof getBalByDept === 'function' ? getBalByDept(d.id, mi, 'al') : 0);
-    const cl = (window._trackingTon && window._trackingTon[year] && window._trackingTon[year][d.id])
-      ? window._trackingTon[year][d.id].cl || 0
-      : (typeof getBalByDept === 'function' ? getBalByDept(d.id, mi, 'cl') : 0);
+    const emps = _activeEmps.filter(e => e.deptId === d.id);
+    const alRaw = emps.reduce((s,e) => s + (calcLeaveTonCuoiNam(e.id, 'al', year)||0), 0);
+    const clRaw = emps.reduce((s,e) => s + (calcLeaveTonCuoiNam(e.id, 'cl', year)||0), 0);
     snapshot[d.id] = {
-      al: Math.round(al*100)/100,
-      cl: Math.round(cl*100)/100,
+      al: Math.round(alRaw*100)/100,
+      cl: Math.round(clRaw*100)/100,
     };
   });
 
