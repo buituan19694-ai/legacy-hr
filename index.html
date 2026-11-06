@@ -3638,36 +3638,58 @@ window._plFmtInput = function(n){
 window._plParseInput = function(s){
   return parseFloat(String(s||'').replace(/[^\d]/g,''))||0;
 };
-// 🚨 v82: Auto-save khi user đang gõ (debounced 800ms) — chống bug "chưa blur mà refresh → mất"
+// 🚨 v84: Auto-save instant + Firestore debounced + beforeunload flush
+// IMMEDIATE: update DB + localStorage NGAY mỗi keystroke → refresh cũng còn data
+// DEBOUNCED 300ms: ghi Firestore (chống spam cloud writes)
+// BEFOREUNLOAD: nếu còn pending Firestore save → flush ngay trước khi rời trang
 window._plSaveTimers = window._plSaveTimers || {};
-window._plSaveBudget = function(year, month, rawValue){
-  const key = year+'_'+month+'_budget';
-  clearTimeout(window._plSaveTimers[key]);
-  window._plSaveTimers[key] = setTimeout(()=>{
-    const n = window._plParseInput(rawValue);
-    if(!DB.plRevenue[year]) DB.plRevenue[year] = {};
-    if(!DB.plRevenue[year][month]) DB.plRevenue[year][month] = {};
-    if(DB.plRevenue[year][month].budget !== n){
-      DB.plRevenue[year][month].budget = n;
-      DB.plRevenue[year][month]._ts = Date.now();
+window._plPendingSaves = window._plPendingSaves || new Set();
+const _plUpdateDB = (year, month, field, n) => {
+  if(!DB.plRevenue || Array.isArray(DB.plRevenue)) DB.plRevenue = {};
+  if(!DB.plRevenue[year]) DB.plRevenue[year] = {};
+  if(!DB.plRevenue[year][month]) DB.plRevenue[year][month] = {};
+  if(DB.plRevenue[year][month][field] !== n){
+    DB.plRevenue[year][month][field] = n;
+    DB.plRevenue[year][month]._ts = Date.now();
+    // Backup NGAY vào localStorage (sync, không chờ saveData)
+    try {
+      const raw = localStorage.getItem(STORE_KEY);
+      const d = raw ? JSON.parse(raw) : {};
+      if(!d.plRevenue) d.plRevenue = {};
+      if(!d.plRevenue[year]) d.plRevenue[year] = {};
+      d.plRevenue[year][month] = DB.plRevenue[year][month];
+      d._lastSaved = Date.now();
+      localStorage.setItem(STORE_KEY, JSON.stringify(d));
+    } catch(_){}
+    return true;
+  }
+  return false;
+};
+const _plScheduleSave = (key) => {
+  window._plPendingSaves.add(key);
+  clearTimeout(window._plSaveTimers._flush);
+  window._plSaveTimers._flush = setTimeout(()=>{
+    if(window._plPendingSaves.size){
+      window._plPendingSaves.clear();
       saveData(['plRevenue']);
     }
-  }, 800);
+  }, 300);
+};
+window._plSaveBudget = function(year, month, rawValue){
+  const n = window._plParseInput(rawValue);
+  if(_plUpdateDB(year, month, 'budget', n)) _plScheduleSave(year+'_'+month+'_budget');
 };
 window._plSaveActual = function(year, month, rawValue){
-  const key = year+'_'+month+'_actual';
-  clearTimeout(window._plSaveTimers[key]);
-  window._plSaveTimers[key] = setTimeout(()=>{
-    const n = window._plParseInput(rawValue);
-    if(!DB.plRevenue[year]) DB.plRevenue[year] = {};
-    if(!DB.plRevenue[year][month]) DB.plRevenue[year][month] = {};
-    if(DB.plRevenue[year][month].actual !== n){
-      DB.plRevenue[year][month].actual = n;
-      DB.plRevenue[year][month]._ts = Date.now();
-      saveData(['plRevenue']);
-    }
-  }, 800);
+  const n = window._plParseInput(rawValue);
+  if(_plUpdateDB(year, month, 'actual', n)) _plScheduleSave(year+'_'+month+'_actual');
 };
+// Flush pending save khi rời trang/refresh → không mất data
+window.addEventListener('beforeunload', () => {
+  if(window._plPendingSaves && window._plPendingSaves.size){
+    clearTimeout(window._plSaveTimers._flush);
+    try { saveData(['plRevenue']); } catch(_){}
+  }
+});
 // Auto-format input on the fly
 window._plOnInputNum = function(input){
   const cursorAtEnd = input.selectionStart === input.value.length;
@@ -16626,15 +16648,19 @@ function renderLeavePlan(main){
       const typeRows = types.map((type,ti)=>{
         const isAL=type==='al';
         const col=isAL?'var(--success)':'var(--info)';
-        const ton  = Math.round(getTonDauThang(dept.id, mi, type)*10)/10;
+        // 🚨 v87: giữ GIÁ TRỊ GỐC (raw) để accumulate vào footer; display thì mới làm tròn.
+        // Trước đây làm tròn từng dept → cộng lên footer tích lũy sai số (vd 2646.9 vs 2647.03 thực).
+        const tonRaw = getTonDauThang(dept.id, mi, type);
+        const ton  = Math.round(tonRaw*10)/10;
         const kh   = (plan[mi]||{})[type]||0;
-        const conLaiNamCu = isAL ? Math.round(activeEmps.filter(e=>e.deptId===dept.id).reduce((s,e)=>{
+        const conLaiNamCuRaw = isAL ? activeEmps.filter(e=>e.deptId===dept.id).reduce((s,e)=>{
           const sh=((DB.leaveSheet[e.id]||{})[curYear]||{}).al||{};
           const te=(sh.carry||0)+(sh.entitle||[]).reduce((a,b)=>a+(b||0),0);
           const tu=(sh.taken||[]).reduce((a,b)=>a+(b||0),0);
           const ton=Math.round((te-tu)*100)/100;
           return s+(curMonth<ton ? ton-curMonth : 0);
-        },0)*10)/10 : null;
+        },0) : null;
+        const conLaiNamCu = conLaiNamCuRaw !== null ? Math.round(conLaiNamCuRaw*10)/10 : null;
         const real = getRealByDept(dept.id, mi, type);
         const duKien = (ton>0||kh>0) ? Math.round((ton-kh)*10)/10 : null;
         const duKienC= duKien!==null?(duKien>=0?'var(--success)':'var(--danger)'):'';
@@ -16644,8 +16670,9 @@ function renderLeavePlan(main){
         const datText = vsKH!==null?(vsKH<=0?'✅ Đạt':'❌ Vượt KH'):'—';
         const datColor= vsKH!==null?(vsKH<=0?'var(--success)':'var(--danger)'):'var(--ink-muted)';
 
-        if(isAL){ footAL.ton+=ton; footAL.kh+=kh; footAL.real+=real; footAL.conLai+=conLaiNamCu||0; }
-        else     { footCL.ton+=ton; footCL.kh+=kh; footCL.real+=real; footCL.conLai+=conLaiNamCu||0; }
+        // Accumulate RAW (không làm tròn) → footer sum chính xác
+        if(isAL){ footAL.ton+=tonRaw; footAL.kh+=kh; footAL.real+=real; footAL.conLai+=conLaiNamCuRaw||0; }
+        else     { footCL.ton+=tonRaw; footCL.kh+=kh; footCL.real+=real; footCL.conLai+=conLaiNamCuRaw||0; }
 
         dTon[type]=ton; dKh[type]=kh; dReal[type]=real; dDk[type]=duKien;
 
@@ -28361,21 +28388,21 @@ function _renderRosterGridCore(container, isAdm){
     let gtDayCells = '';
     for(let d=1;d<=daysInMonth;d++){
       const hc = grandDayHC[d]||0;
-      gtDayCells += `<td style="text-align:center;font-size:12px;min-width:48px;width:48px;font-family:'JetBrains Mono',monospace;font-weight:${hc?'800':'400'};color:${hc?'#fff':'var(--ink-muted)'};background:${hc?'var(--accent)':'var(--bg-elev)'};border:1px solid var(--border);padding:3px 2px">${hc||''}</td>`;
+      gtDayCells += `<td style="text-align:center;font-size:12px;min-width:48px;width:48px;font-family:'JetBrains Mono',monospace;font-weight:${hc?'700':'400'};color:${hc?'var(--accent)':'var(--ink-muted)'};background:var(--bg-elev);border:1px solid var(--border);padding:3px 2px">${hc||''}</td>`;
     }
     const gtScCells = scCodes.map((code,i)=>{
       const cnt = grandCounts[code]||0;
       const cntDisp = cnt ? (cnt%1 ? cnt.toFixed(1) : cnt) : '';
-      return `<td style="padding:4px 2px;text-align:center;font-size:11px;font-family:'JetBrains Mono',monospace;font-weight:800;color:${cnt?'#fff':'var(--ink-muted)'};background:${cnt?'var(--accent)':'var(--bg-elev)'};border:1px solid var(--border)${i===0?';border-left:3px solid var(--accent)':''}">${cntDisp}</td>`;
+      return `<td style="padding:4px 2px;text-align:center;font-size:11px;font-family:'JetBrains Mono',monospace;font-weight:700;color:${cnt?'var(--accent)':'var(--ink-muted)'};background:var(--bg-elev);border:1px solid var(--border)${i===0?';border-left:2px solid var(--accent)':''}">${cntDisp}</td>`;
     }).join('');
     const _gtLabelCols = 5;
     const _gtEmptyCols = fixedCols - _gtLabelCols;
-    allRows += `<tr style="border-top:3px solid var(--accent);border-bottom:3px solid var(--accent);background:var(--bg-elev)">
-      <td colspan="${_gtLabelCols}" style="padding:6px 8px;font-size:11px;font-weight:800;color:#fff;text-align:right;position:sticky;left:0;background:var(--accent);z-index:2;white-space:nowrap;letter-spacing:.03em">∑ TỔNG CỘNG</td>
+    allRows += `<tr style="border-top:2px solid var(--accent);background:var(--bg-elev)">
+      <td colspan="${_gtLabelCols}" style="padding:6px 8px;font-size:11px;font-weight:800;color:var(--accent);text-align:right;position:sticky;left:0;background:var(--bg-elev);z-index:2;white-space:nowrap;letter-spacing:.03em;border-right:2px solid var(--accent)">∑ TỔNG CỘNG</td>
       ${'<td style="background:var(--bg-elev);border:1px solid var(--border)"></td>'.repeat(_gtEmptyCols)}
       ${gtDayCells}
       ${gtScCells}
-      <td style="padding:4px 4px;text-align:center;font-size:13px;font-weight:900;color:#fff;font-family:'JetBrains Mono',monospace;background:var(--accent);border-left:3px solid var(--accent);border-right:3px solid var(--accent)">${grandTotalWork ? (grandTotalWork%1 ? grandTotalWork.toFixed(1) : grandTotalWork) : ''}</td>
+      <td style="padding:4px 4px;text-align:center;font-size:13px;font-weight:800;color:var(--accent);font-family:'JetBrains Mono',monospace;background:var(--bg-elev);border-left:2px solid var(--accent);border-right:2px solid var(--accent)">${grandTotalWork ? (grandTotalWork%1 ? grandTotalWork.toFixed(1) : grandTotalWork) : ''}</td>
     </tr>`;
   }
 
@@ -29616,6 +29643,11 @@ function _renderTimesheetGridCore(container, isAdm){
   const fixedCols = 8;
   const totalCols = fixedCols + daysInMonth + wcCodesArr.length + 1 + (isAdm ? 3 : 0);
 
+  // 🚨 v85: track grand totals across all depts for the FINAL "∑ TỔNG CỘNG" row
+  let grandTotalWork = 0;
+  const grandWcCounts = {};
+  let grandEmpCount = 0;
+
   deptOrder.forEach(did=>{
     const deptEmps = deptGroups[did];
     const dn = did==='_none' ? 'Chưa phân bổ' : deptName(did);
@@ -29765,7 +29797,32 @@ function _renderTimesheetGridCore(container, isAdm){
         </div>
       </td></tr>`;
     }
+    // 🚨 v85: accumulate grand totals sau mỗi dept
+    grandTotalWork += deptTotalWork;
+    Object.entries(deptWcCounts).forEach(([wc,v])=>{ grandWcCounts[wc]=(grandWcCounts[wc]||0)+v; });
+    grandEmpCount += deptEmps.length;
   });
+
+  // 🚨 v85/v86: GRAND TOTAL row — nhẹ nhàng, chỉ chữ accent sáng, không background chói
+  if(deptOrder.length > 1){
+    let gtDayCells = '';
+    for(let d=1;d<=daysInMonth;d++) gtDayCells += `<td style="border:1px solid var(--border);background:var(--bg-elev)"></td>`;
+    const gtWcCells = wcCodesArr.map((wc,i)=>{
+      const cnt = grandWcCounts[wc]||0;
+      const cntDisp = cnt ? (cnt%1 ? cnt.toFixed(1) : cnt) : '';
+      return `<td style="padding:4px 2px;text-align:center;font-size:11px;font-family:'JetBrains Mono',monospace;font-weight:700;color:${cnt?'var(--accent)':'var(--ink-muted)'};background:var(--bg-elev);border:1px solid var(--border)${i===0?';border-left:2px solid var(--accent)':''}">${cntDisp}</td>`;
+    }).join('');
+    const gtTotalDisp = grandTotalWork ? (grandTotalWork%1 ? grandTotalWork.toFixed(1) : grandTotalWork) : '';
+    allRows += `<tr style="border-top:2px solid var(--accent);background:var(--bg-elev)">
+      <td colspan="${fixedCols}" style="padding:7px 12px;font-size:12px;font-weight:800;color:var(--accent);text-align:right;position:sticky;left:0;background:var(--bg-elev);z-index:2;white-space:nowrap;letter-spacing:.04em;border-right:2px solid var(--accent)">∑ TỔNG CỘNG · ${grandEmpCount} NV</td>
+      ${gtDayCells}
+      ${gtWcCells}
+      <td style="padding:5px 4px;text-align:center;font-size:13px;font-weight:800;color:var(--accent);font-family:'JetBrains Mono',monospace;background:var(--bg-elev);border-left:2px solid var(--accent);border-right:2px solid var(--accent)">${gtTotalDisp}</td>
+      ${isAdm?`<td class="_admCol" style="background:var(--bg-elev);border:1px solid var(--border)"></td>
+      <td class="_admCol" style="background:var(--bg-elev);border:1px solid var(--border)"></td>
+      <td class="_admCol" style="background:var(--bg-elev);border:1px solid var(--border)"></td>`:''}
+    </tr>`;
+  }
 
   container.innerHTML = `
     <style>tr._rDragOver{outline:2px solid var(--accent);outline-offset:-2px;background:rgba(212,165,116,.12)!important}tr[data-roster-row]{cursor:grab}tr[data-roster-row]:active{cursor:grabbing}@media print{._admCol{display:none!important}}</style>
@@ -31469,8 +31526,11 @@ function renderPayrollTab(){
     const fhCasual=bgCasual;
     const fhTotal=fhSal+fhBH+fhCasual;
 
-    // 🚨 v73: Revenue tháng này (lấy từ P&L Revenue config)
-    const _rev = (typeof _plGetRevenueMonth === 'function') ? _plGetRevenueMonth(pY, pM) : {budget:0, actual:0};
+    // 🚨 v83: FIX month indexing bug.
+    // DB.plRevenue dùng 0-indexed (0=Jan, 11=Dec, giống Date.getMonth()).
+    // DB.payrollData dùng 1-indexed (1=Jan, 12=Dec).
+    // pM = payrollMonth = 1-indexed → cần pM-1 để đọc plRevenue đúng tháng.
+    const _rev = (typeof _plGetRevenueMonth === 'function') ? _plGetRevenueMonth(pY, pM - 1) : {budget:0, actual:0};
     const revBudget = _rev.budget || 0;
     const revActual = _rev.actual || 0;
     // % lương / revenue — dùng revActual nếu có, không thì revBudget
