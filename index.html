@@ -29203,9 +29203,9 @@ window._tsExportExcel = function(){
   });
   wcSet.forEach(wc=>{ if(!wcSeen.has(wc)) wcArr.push(wc); });
 
-  // Build AOA
+  // Build AOA — v95: bỏ C.TC
   const dayNames = ['CN','T2','T3','T4','T5','T6','T7'];
-  const hdr1 = ['STT','Họ tên','C.TC'];
+  const hdr1 = ['STT','Mã NV','Họ tên'];
   const hdr2 = ['','',''];
   for(let d=1;d<=daysInMonth;d++){
     const dow = new Date(yr,mo-1,d).getDay();
@@ -29228,7 +29228,7 @@ window._tsExportExcel = function(){
   let grandSum = {}, grandTotal = 0, grandCount = 0;
   const flushDept = (name) => {
     if(!deptCount) return;
-    const row = ['', `∑ ${name} (${deptCount} NV)`, ''];
+    const row = ['', '', `∑ ${name} (${deptCount} NV)`];
     for(let d=1;d<=daysInMonth;d++) row.push('');
     wcArr.forEach(wc=>{ const v = deptSum[wc]||0; row.push(v ? Math.round(v*10)/10 : ''); });
     row.push(Math.round(deptTotal*10)/10);
@@ -29246,9 +29246,7 @@ window._tsExportExcel = function(){
     }
     stt++;
     const rd = rosterData[e.id]||{};
-    const cd = (DB.customData||{})[e.id]||{};
-    const stdWD = (cd.stdWorkDays!=null&&cd.stdWorkDays!=='')?cd.stdWorkDays:(e._trStdWD||'');
-    const row = [stt, e.name, stdWD||''];
+    const row = [stt, e.code||'', e.name];
     let totalVal = 0;
     const wcCounts = {};
     for(let d=1;d<=daysInMonth;d++){
@@ -29300,23 +29298,23 @@ window._tsExportExcel = function(){
 
   // Grand total row
   if(grandCount){
-    const grow = ['', `🏨 TỔNG KHÁCH SẠN (${grandCount} NV)`, ''];
+    const grow = ['', '', `🏨 TỔNG KHÁCH SẠN (${grandCount} NV)`];
     for(let d=1;d<=daysInMonth;d++) grow.push('');
     wcArr.forEach(wc=>{ const v = grandSum[wc]||0; grow.push(v ? Math.round(v*10)/10 : ''); });
     grow.push(Math.round(grandTotal*10)/10);
     aoa.push(grow);
   }
 
-  // Build workbook
+  // Build workbook — v95: bỏ cột C.TC
   const wb = XLSX.utils.book_new();
   const ws = XLSX.utils.aoa_to_sheet(aoa);
-  // Column widths
-  const cols = [{wch:5},{wch:28},{wch:7}];
+  // Column widths: STT | Mã NV | Họ tên | days | wc | TOTAL
+  const cols = [{wch:5},{wch:10},{wch:28}];
   for(let d=1;d<=daysInMonth;d++) cols.push({wch:5});
   wcArr.forEach(()=>cols.push({wch:7}));
   cols.push({wch:8});
   ws['!cols'] = cols;
-  // Merge title rows
+  // Merge title rows — v95: total cols = 3 + days + wc
   ws['!merges'] = [
     {s:{r:0,c:0},e:{r:0,c: 3+daysInMonth+wcArr.length}},
     {s:{r:1,c:0},e:{r:1,c: 3+daysInMonth+wcArr.length}},
@@ -29480,6 +29478,7 @@ window._rosterExportPDF = function(type){
     scUsedSet.forEach(c=>{ if(!scSeen.has(c)) pdfScArr.push(c); });
   }
 
+  // v95: fixed cols = 3 (# | Mã NV | Họ tên) — đã bỏ C.TC
   const pdfTotalCols = 3 + daysInMonth + (type==='timesheet' ? pdfWcArr.length : (type==='roster' ? pdfScArr.length : 0)) + 1;
 
   // Build rows per department
@@ -29518,8 +29517,6 @@ window._rosterExportPDF = function(type){
     }
     stt++;
     const rd = rosterData[e.id]||{};
-    const cd = (DB.customData||{})[e.id]||{};
-    const stdWD = (cd.stdWorkDays!=null&&cd.stdWorkDays!=='')?cd.stdWorkDays:(e._trStdWD||'');
 
     if(type==='roster'){
       // Bảng Ca: show shift codes (compound codes displayed as-is)
@@ -29557,8 +29554,8 @@ window._rosterExportPDF = function(type){
       }).join('');
       rows += `<tr>
         <td style="font-size:8pt;text-align:center;padding:2px 3px">${stt}</td>
+        <td style="font-size:7.5pt;text-align:center;padding:2px 3px;color:#555;font-family:monospace">${escapeHtml(e.code||'')}</td>
         <td style="font-size:8pt;padding:2px 4px;white-space:nowrap"><b>${escapeHtml(e.name)}</b></td>
-        <td style="font-size:7.5pt;text-align:center;padding:2px 2px;color:#666">${stdWD||'—'}</td>
         ${cells}
         ${scCountCells}
         <td style="font-size:8pt;text-align:center;font-weight:700;padding:2px 3px">${total%1?total.toFixed(1):total}</td>
@@ -29621,8 +29618,8 @@ window._rosterExportPDF = function(type){
       }).join('');
       rows += `<tr>
         <td style="font-size:8pt;text-align:center;padding:2px 3px">${stt}</td>
+        <td style="font-size:7.5pt;text-align:center;padding:2px 3px;color:#555;font-family:monospace">${escapeHtml(e.code||'')}</td>
         <td style="font-size:8pt;padding:2px 4px;white-space:nowrap"><b>${escapeHtml(e.name)}</b></td>
-        <td style="font-size:7.5pt;text-align:center;padding:2px 2px;color:#666">${stdWD||'—'}</td>
         ${cells}
         ${wcCountCells}
         <td style="font-size:8pt;text-align:center;font-weight:700;padding:2px 3px">${totalVal.toFixed(1)}</td>
@@ -29686,8 +29683,8 @@ window._rosterExportPDF = function(type){
   _openPDF(title,
     `<table style="border-collapse:collapse;width:100%"><thead><tr style="background:#e8eaf6;color:#1a237e">
       <th style="width:25px;padding:3px">#</th>
+      <th style="width:55px;padding:3px">Mã NV</th>
       <th style="text-align:left;padding:3px 4px;min-width:100px">Họ tên</th>
-      <th style="width:30px;padding:3px">C.TC</th>
       ${dayHeaders}
       ${wcHeaders}
       ${scHeaders}
