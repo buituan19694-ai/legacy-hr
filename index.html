@@ -21831,15 +21831,22 @@ async function _gTombPullCloud(){
     if(!snap || !snap.exists) return;
     const cloudTombs = (snap.data()||{}).tombs || {};
     const localTombs = _gTombRead();
-    // v98 safety: đọc dấu import guard shiftCodes — nếu vừa import gần đây, bỏ qua mọi cloud tombstone 'shiftCodes:code:XXX'
-    // (có thể chúng được xóa local nhưng cloud chưa kịp nhận FieldValue.delete)
     const _scGuardTs = parseInt(localStorage.getItem('_scImportGuard')||'0');
     const _scGuardFresh = _scGuardTs && (Date.now() - _scGuardTs) < 300000;
-    // Gộp: giữ timestamp mới nhất giữa local và cloud cho mỗi key
     let changed = false;
+    // v101: TRUST CLOUD cho shiftCodes:* → xóa local tombs mà cloud không có nữa.
+    // Bug: máy B có localStorage stale (tombstone từ trước v99). Máy A chạy v99 → xóa khỏi cloud.
+    // Máy B pull → merge chỉ add, local stale còn → dedupe filter sạch mã ca → mất đồng bộ.
+    // Fix: với prefix 'shiftCodes:', cloud là canonical. Local có mà cloud không có → xóa local.
+    Object.keys(localTombs).forEach(k => {
+      if(k.startsWith('shiftCodes:') && !cloudTombs[k]){
+        delete localTombs[k];
+        changed = true;
+      }
+    });
+    // Gộp add: cloud→local (giữ fix v98 skip resurrect khi guard fresh)
     Object.keys(cloudTombs).forEach(k => {
-      // v98: nếu local KHÔNG CÓ key này + đang trong import guard shiftCodes + là tombstone shiftCodes → SKIP resurrection
-      if(_scGuardFresh && !localTombs[k] && k.startsWith('shiftCodes:code:')){
+      if(_scGuardFresh && !localTombs[k] && k.startsWith('shiftCodes:')){
         return;
       }
       if(!localTombs[k] || cloudTombs[k] > localTombs[k]){ localTombs[k] = cloudTombs[k]; changed = true; }
@@ -21848,7 +21855,7 @@ async function _gTombPullCloud(){
       const now = Date.now();
       Object.keys(localTombs).forEach(k => { if(!localTombs[k] || (now - localTombs[k]) > _CTOMB_TTL_MS) delete localTombs[k]; });
       localStorage.setItem(_GTOMB_KEY, JSON.stringify(localTombs));
-      console.log('[tombstone] ✅ Đã đồng bộ tombstone từ cloud:', Object.keys(cloudTombs).length, 'mục');
+      console.log('[tombstone] ✅ Đã đồng bộ tombstone từ cloud:', Object.keys(cloudTombs).length, 'mục (sync shiftCodes canonical)');
     }
   } catch(e){ console.warn('[tombstone] pull cloud fail:', e); }
 }
@@ -38347,18 +38354,18 @@ fbAuth.onAuthStateChanged(async user => {
                 try {
                   const cloudTombs = (change.doc.data()||{}).tombs || {};
                   const localTombs = _gTombRead();
-                  // v100: SAME GUARD AS _gTombPullCloud — chặn resurrection shiftCodes:code:XXX khi đang trong import guard 5 phút.
-                  // Bug chí mạng: listener này fire LIÊN TỤC (onSnapshot của cả collection), re-merge tombs từ cloud sau cold-load.
-                  // Nếu không chặn, sau cold-load set DB.shiftCodes=180, listener fire, pull tombs về → 3s sau dedupe filter sạch → re-save 0 mã → cloud bị xóa.
                   const _scGuardTs = parseInt(localStorage.getItem('_scImportGuard')||'0');
                   const _scGuardFresh = _scGuardTs && (Date.now() - _scGuardTs) < 300000;
                   let tChanged = false;
-                  Object.keys(cloudTombs).forEach(k => {
-                    // v100: skip resurrect shiftCodes:code:XXX khi đang guard
-                    if(_scGuardFresh && !localTombs[k] && k.startsWith('shiftCodes:code:')){
-                      return;
+                  // v101: TRUST CLOUD cho shiftCodes:* — xóa local tombs mà cloud không còn (cross-machine sync)
+                  Object.keys(localTombs).forEach(k => {
+                    if(k.startsWith('shiftCodes:') && !cloudTombs[k]){
+                      delete localTombs[k];
+                      tChanged = true;
                     }
-                    // v100: skip resurrect bất kỳ shiftCodes:* khi đang guard (rộng hơn để bao cả ID-based)
+                  });
+                  Object.keys(cloudTombs).forEach(k => {
+                    // v100: skip resurrect shiftCodes:* khi đang guard import (máy A vừa import)
                     if(_scGuardFresh && !localTombs[k] && k.startsWith('shiftCodes:')){
                       return;
                     }
