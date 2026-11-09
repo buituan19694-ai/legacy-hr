@@ -36960,11 +36960,40 @@ fbAuth.onAuthStateChanged(async user => {
                     console.warn('[cold-load] shiftCodes: LOCAL wins (import guard ' + Math.round(_guardAge/1000) + 's ago, ' + DB[key].length + ' mã sau dedupe từ ' + _lsc.length + ')');
                     // Bảo vệ khỏi onSnapshot đè + re-save sửa cloud
                     window._scColdLoadProtect = true;
-                    console.warn('[cold-load] shiftCodes: _scColdLoadProtect=true, sẽ re-save lên cloud sau 3s');
+                    // v100: snapshot số code lúc này để so sánh trước khi re-save
+                    const _scLockedCount = (DB.shiftCodes||[]).length;
+                    console.warn('[cold-load] shiftCodes: _scColdLoadProtect=true, sẽ re-save lên cloud sau 3s (locked='+_scLockedCount+')');
                     setTimeout(() => {
                       if(window._coldLoadDone){
+                        const _nowCount = (DB.shiftCodes||[]).length;
+                        // v100 SAFETY: nếu DB.shiftCodes đã bị shrink (tombstone resurrect từ listener) → RỀ-SET về bản gốc
+                        if(_nowCount < _scLockedCount){
+                          console.warn('[cold-load] shiftCodes: ⚠️ DB.shiftCodes bị shrink ('+_scLockedCount+' → '+_nowCount+'), KHÔI PHỤC từ localStorage trước khi re-save');
+                          // Khôi phục từ localStorage (đã có bản import đầy đủ)
+                          try {
+                            const raw = localStorage.getItem(STORE_KEY);
+                            if(raw){
+                              const d = JSON.parse(raw);
+                              if(Array.isArray(d.shiftCodes) && d.shiftCodes.length >= _scLockedCount){
+                                // Clear sạch tombstones shiftCodes trước khi restore (chống dedupe filter lại)
+                                try {
+                                  const t = _gTombRead();
+                                  Object.keys(t).forEach(k => { if(k.startsWith('shiftCodes:')) delete t[k]; });
+                                  localStorage.setItem(_GTOMB_KEY, JSON.stringify(t));
+                                } catch(_){}
+                                DB.shiftCodes = d.shiftCodes.slice();
+                                console.warn('[cold-load] shiftCodes: ✅ Đã khôi phục '+DB.shiftCodes.length+' mã từ localStorage');
+                              }
+                            }
+                          } catch(_){}
+                        }
                         console.warn('[cold-load] shiftCodes: re-saving ' + (DB.shiftCodes||[]).length + ' mã lên cloud...');
-                        saveData(['shiftCodes']);
+                        // v100: nếu vẫn 0 mã sau khôi phục → SKIP re-save để KHÔNG WIPE cloud
+                        if((DB.shiftCodes||[]).length === 0 && _scLockedCount > 0){
+                          console.error('[cold-load] shiftCodes: ❌ SKIP re-save — DB rỗng sau khi khôi phục (bất thường), không ghi đè cloud');
+                        } else {
+                          saveData(['shiftCodes']);
+                        }
                       }
                       setTimeout(() => { window._scColdLoadProtect = false; console.warn('[cold-load] shiftCodes: _scColdLoadProtect=false'); }, 10000);
                     }, 3000);
@@ -38318,8 +38347,21 @@ fbAuth.onAuthStateChanged(async user => {
                 try {
                   const cloudTombs = (change.doc.data()||{}).tombs || {};
                   const localTombs = _gTombRead();
+                  // v100: SAME GUARD AS _gTombPullCloud — chặn resurrection shiftCodes:code:XXX khi đang trong import guard 5 phút.
+                  // Bug chí mạng: listener này fire LIÊN TỤC (onSnapshot của cả collection), re-merge tombs từ cloud sau cold-load.
+                  // Nếu không chặn, sau cold-load set DB.shiftCodes=180, listener fire, pull tombs về → 3s sau dedupe filter sạch → re-save 0 mã → cloud bị xóa.
+                  const _scGuardTs = parseInt(localStorage.getItem('_scImportGuard')||'0');
+                  const _scGuardFresh = _scGuardTs && (Date.now() - _scGuardTs) < 300000;
                   let tChanged = false;
                   Object.keys(cloudTombs).forEach(k => {
+                    // v100: skip resurrect shiftCodes:code:XXX khi đang guard
+                    if(_scGuardFresh && !localTombs[k] && k.startsWith('shiftCodes:code:')){
+                      return;
+                    }
+                    // v100: skip resurrect bất kỳ shiftCodes:* khi đang guard (rộng hơn để bao cả ID-based)
+                    if(_scGuardFresh && !localTombs[k] && k.startsWith('shiftCodes:')){
+                      return;
+                    }
                     if(!localTombs[k] || cloudTombs[k] > localTombs[k]){ localTombs[k] = cloudTombs[k]; tChanged = true; }
                   });
                   if(tChanged){
