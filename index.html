@@ -37018,19 +37018,55 @@ fbAuth.onAuthStateChanged(async user => {
                     // Account phụ, hoặc admin không đang import → cloud là source of truth
                     // 🚨 v56: dedupe cloud (phòng cloud bị corrupt từ bug cũ)
                     const _dedupedCloud = window._dedupeShiftCodes(_cloudSC);
-                    DB[key] = _dedupedCloud;
-                    console.warn('[cold-load] shiftCodes: CLOUD wins (no import guard, ' + _dedupedCloud.length + ' mã sau dedupe từ ' + _cloudSC.length + ')');
-                    // 🚨 v56: nếu cloud bị corrupt (có duplicate) → auto-fix bằng cách re-save sạch
-                    if(_dedupedCloud.length < _cloudSC.length){
-                      console.warn('[cold-load] shiftCodes: cloud corrupt (' + _cloudSC.length + ' → ' + _dedupedCloud.length + '), sẽ auto-fix sau 3s');
-                      window._scColdLoadProtect = true;
-                      setTimeout(() => {
-                        if(window._coldLoadDone){
-                          console.warn('[cold-load] shiftCodes: auto-fix saving ' + (DB.shiftCodes||[]).length + ' mã sạch lên cloud...');
-                          saveData(['shiftCodes']);
+
+                    // 🚨 v103: CHỐNG SELF-DESTRUCT — nếu dedupe làm RỖNG trong khi cloud có nhiều mã
+                    // → không phải cloud corrupt, mà do local tombs stale filter sạch
+                    // → KHÔNG set DB=0 + KHÔNG auto-fix ghi 0 lên cloud (wipe tất cả máy)
+                    // → thay vào đó: CLEAR hết local tombs shiftCodes:* + dùng cloud nguyên bản
+                    if(_cloudSC.length > 0 && _dedupedCloud.length === 0){
+                      console.warn('[cold-load] shiftCodes: ⚠️ dedupe wipe sạch '+_cloudSC.length+' cloud mã → chắc chắn local tombs STALE, CLEAR local tombs + dùng cloud nguyên');
+                      try {
+                        const t = _gTombRead();
+                        let cleaned = 0;
+                        Object.keys(t).forEach(k => { if(k.startsWith('shiftCodes:')){ delete t[k]; cleaned++; } });
+                        localStorage.setItem(_GTOMB_KEY, JSON.stringify(t));
+                        console.warn('[cold-load] shiftCodes: đã clear '+cleaned+' local tombs stale, re-dedupe cloud');
+                        // Push FieldValue.delete cho các keys đã clear lên cloud (admin máy A sẽ clean cloud)
+                        if(window.fbDb && window.firebase && window.firebase.firestore && cleaned > 0){
+                          const _origTombs = _gTombRead(); // (giờ đã clean)
+                          // Chúng ta không biết chính xác keys nào; re-dedupe trước đã
                         }
-                        setTimeout(() => { window._scColdLoadProtect = false; }, 10000);
-                      }, 3000);
+                      } catch(_){}
+                      // Re-dedupe với tombs đã clean
+                      const _reDedup = window._dedupeShiftCodes(_cloudSC);
+                      DB[key] = _reDedup.length > 0 ? _reDedup : _cloudSC.slice();
+                      console.warn('[cold-load] shiftCodes: CLOUD wins SAU khi clear stale tombs: '+DB[key].length+' mã');
+                    } else {
+                      DB[key] = _dedupedCloud;
+                      console.warn('[cold-load] shiftCodes: CLOUD wins (no import guard, ' + _dedupedCloud.length + ' mã sau dedupe từ ' + _cloudSC.length + ')');
+                      // 🚨 v103 FIX: CHỈ auto-fix khi dedupe LÀM MẤT < 50% (bug double thực sự), và kết quả vẫn > 0
+                      // Nếu dedupe lọc nhiều hơn 50% hoặc kết quả = 0 → KHÔNG wipe cloud
+                      const _lostRatio = _cloudSC.length > 0 ? (1 - _dedupedCloud.length/_cloudSC.length) : 0;
+                      if(_dedupedCloud.length < _cloudSC.length && _dedupedCloud.length > 0 && _lostRatio < 0.5){
+                        console.warn('[cold-load] shiftCodes: cloud corrupt (' + _cloudSC.length + ' → ' + _dedupedCloud.length + '), sẽ auto-fix sau 3s');
+                        window._scColdLoadProtect = true;
+                        const _autoFixLocked = _dedupedCloud.length;
+                        setTimeout(() => {
+                          if(window._coldLoadDone){
+                            const _nowLen = (DB.shiftCodes||[]).length;
+                            // v103 SAFETY: chỉ auto-fix nếu DB còn > 0 VÀ bằng hoặc hơn _autoFixLocked
+                            if(_nowLen > 0 && _nowLen >= _autoFixLocked){
+                              console.warn('[cold-load] shiftCodes: auto-fix saving ' + _nowLen + ' mã sạch lên cloud...');
+                              saveData(['shiftCodes']);
+                            } else {
+                              console.error('[cold-load] shiftCodes: ❌ SKIP auto-fix — DB='+_nowLen+' < locked='+_autoFixLocked+', không wipe cloud');
+                            }
+                          }
+                          setTimeout(() => { window._scColdLoadProtect = false; }, 10000);
+                        }, 3000);
+                      } else if(_dedupedCloud.length < _cloudSC.length){
+                        console.warn('[cold-load] shiftCodes: dedupe lọc '+(_cloudSC.length-_dedupedCloud.length)+'/'+_cloudSC.length+' ('+Math.round(_lostRatio*100)+'%) → KHÔNG auto-fix (chống self-destruct cross-machine)');
+                      }
                     }
                   }
                   return; // skip merge-by-id — shiftCodes LUÔN full replacement
