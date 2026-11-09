@@ -2027,11 +2027,23 @@ function saveData(changedKeys=null){
         // 🚨 v56 SAFETY NET: dedupe shiftCodes before writing to Firestore
         // Chống bất kỳ bug nào tạo duplicate codes → push lên cloud → corrupt data
         if(k === 'shiftCodes' && Array.isArray(val)){
+          // 🚨 v108 CRITICAL SAFETY: NEVER WIPE CLOUD shiftCodes = [] accidentally
+          // Chống bug chéo máy: máy B có DB.shiftCodes=0 (do v102 re-dedupe pollute) → saveData → wipe cloud
+          // Chỉ cho phép ghi rỗng khi user chủ động clear (window._scClearAllFlag=true, set trong _scClearAll).
+          if(val.length === 0 && !window._scClearAllFlag){
+            console.error('[saveData] 🛡️ BLOCKED — chặn ghi shiftCodes=[] lên cloud (có thể do tombs pollute local). Dùng _scClearAll() nếu thực sự muốn xóa hết.');
+            return; // skip ghi key này — các key khác trong docKeys vẫn ghi bình thường
+          }
           const _deduped = window._dedupeShiftCodes(val);
           if(_deduped.length !== val.length){
-            console.warn('[saveData] 🧹 Deduped shiftCodes before Firestore write: ' + val.length + ' → ' + _deduped.length);
-            DB.shiftCodes = _deduped; // cập nhật DB luôn
-            val = _deduped;
+            // v108: KHÔNG dedupe xuống 0 — nếu dedupe làm rỗng, giữ nguyên val (tombs có thể stale)
+            if(_deduped.length === 0 && val.length > 0){
+              console.warn('[saveData] 🛡️ dedupe làm RỖNG '+val.length+' mã → tombs stale, giữ nguyên bản gốc, KHÔNG dedupe');
+            } else {
+              console.warn('[saveData] 🧹 Deduped shiftCodes before Firestore write: ' + val.length + ' → ' + _deduped.length);
+              DB.shiftCodes = _deduped;
+              val = _deduped;
+            }
           }
         }
         if(Array.isArray(val)){
@@ -27663,7 +27675,11 @@ window._scClearAll = function(){
   window._scImportGuard = Date.now();
   try{ localStorage.setItem('_scImportGuard', String(window._scImportGuard)); }catch(_){}
 
+  // v108: flag báo saveData rằng việc ghi [] là CHỦ ĐỘNG (bypass safety block)
+  window._scClearAllFlag = true;
   saveData(['shiftCodes']);
+  setTimeout(() => { window._scClearAllFlag = false; }, 5000); // tắt flag sau 5s
+
   if(typeof toast === 'function') toast(`🗑 Đã xóa ${total} mã ca (tombstoned)`, 'success');
   render();
 };
@@ -37184,32 +37200,42 @@ fbAuth.onAuthStateChanged(async user => {
           // Nếu không, máy này sẽ hồi sinh item mà máy khác đã xoá (vì không biết nó đã bị xoá).
           await _gTombPullCloud();
 
-          // 🚨 v102: RE-DEDUPE shiftCodes sau khi pull cloud tombs (v101 vừa clean local tombs).
-          // Bug: snapshot processing (ở trên) dùng local tombs STALE → filter sai.
-          // Giờ local tombs đã sync với cloud → re-dedupe để lấy đúng codes.
+          // 🚨 v107: SAU khi _gTombPullCloud kéo cloud tombs, kiểm tra xem tombs mới có pollute DB.shiftCodes KHÔNG.
+          // Bug v102 cũ: re-dedupe với tombs polluted sẽ filter sạch DB → tự diệt.
+          // Fix: nếu dedupe với tombs mới làm shrink → CLEAR local shiftCodes:* tombs + push lên cloud (dọn rác).
           if(Array.isArray(DB.shiftCodes) && DB.shiftCodes.length > 0 && typeof window._dedupeShiftCodes === 'function'){
             const _before = DB.shiftCodes.length;
-            const _redup = window._dedupeShiftCodes(DB.shiftCodes);
-            if(_redup.length !== _before){
-              console.warn('[cold-load] shiftCodes: re-dedupe sau khi sync tombs: ' + _before + ' → ' + _redup.length);
-              DB.shiftCodes = _redup;
-            }
-          }
-          // v102: Nếu DB.shiftCodes TRỐNG mà cloud snapshot CÓ data → re-fetch và re-dedupe với local tombs đã clean
-          if((!DB.shiftCodes || DB.shiftCodes.length === 0) && snaps){
-            try {
-              const _configSnap = snaps[Object.keys(FS_DOC_MAP).indexOf('config')];
-              if(_configSnap && _configSnap.exists){
-                const _cloudSC = (_configSnap.data()||{}).shiftCodes;
-                if(Array.isArray(_cloudSC) && _cloudSC.length > 0){
-                  const _recov = window._dedupeShiftCodes(_cloudSC);
-                  if(_recov.length > 0){
-                    console.warn('[cold-load] shiftCodes: khôi phục '+_recov.length+' mã từ cloud (sau khi tombs đã clean)');
-                    DB.shiftCodes = _recov;
+            const _testDedup = window._dedupeShiftCodes(DB.shiftCodes);
+            if(_testDedup.length < _before){
+              // Tombs từ cloud pull đã pollute → KHÔNG dùng _testDedup (sẽ shrink)
+              // Thay vào đó: CLEAR cloud tombs shiftCodes:* để chúng không bao giờ filter nữa
+              const _shrinkLost = _before - _testDedup.length;
+              console.warn('[cold-load] shiftCodes: ⚠️ cloud tombs pollute → sẽ shrink '+_shrinkLost+' mã. CLEAR local+cloud tombs shiftCodes:* để giữ nguyên DB='+_before);
+              try {
+                const t = _gTombRead();
+                const _cleaned = [];
+                Object.keys(t).forEach(k => {
+                  if(k.startsWith('shiftCodes:')){
+                    _cleaned.push(k);
+                    delete t[k];
                   }
+                });
+                localStorage.setItem(_GTOMB_KEY, JSON.stringify(t));
+                console.warn('[cold-load] shiftCodes: đã clear '+_cleaned.length+' local tombs');
+                // Push FieldValue.delete lên cloud (tất cả máy sẽ clean theo)
+                if(_cleaned.length && window.fbDb && window.firebase && window.firebase.firestore){
+                  const batch = { _updatedAt: Date.now() };
+                  _cleaned.forEach(k => { batch['tombs.' + k] = window.firebase.firestore.FieldValue.delete(); });
+                  setTimeout(() => {
+                    window.fbDb.collection('hrdata').doc('_tombstones')
+                      .set(batch, { merge: true })
+                      .then(() => console.log('[cold-load] ✅ Push '+_cleaned.length+' FieldValue.delete tombs lên cloud'))
+                      .catch(e => console.warn('[cold-load] tombs delete cloud fail:', e && e.code));
+                  }, 2000);
                 }
-              }
-            } catch(e){ console.warn('[cold-load] shiftCodes recovery fail:', e); }
+              } catch(_){}
+              // KHÔNG re-dedupe, giữ nguyên DB.shiftCodes như ban đầu (185 mã)
+            }
           }
 
           // v17.3: MERGE lại item chỉ có trong localStorage (cloud thiếu = save fail lúc trước)
