@@ -27758,16 +27758,24 @@ function _scImportExcel(file){
         });
       });
       DB.shiftCodes = newList;
-      // 🚨 v102: CLEAR ALL shiftCodes:* tombstones (local + cloud INCLUDING those from OTHER machines)
-      // Bug v99: chỉ xóa tombs có TRONG LOCAL → tombs ở cloud (từ máy B, C) vẫn còn → máy khác pull về → filter sạch
-      // v102: GET cloud tombs trước, union với local, DELETE tất cả shiftCodes:* khỏi cả local lẫn cloud
+      // 🚨 v104: CLEAR local tombs SYNCHRONOUSLY trước saveData (nếu không, dedupe filter → wipe cloud = 0)
+      // v102 bug: wrap async → local tombs chưa clear khi saveData chạy → dedupe 185→0 → ghi 0 lên cloud.
+      const _localTombsBeforeClear = [];
+      try {
+        const t = _gTombRead();
+        Object.keys(t).forEach(k => {
+          if(k.startsWith('shiftCodes:')){
+            _localTombsBeforeClear.push(k);
+            delete t[k];
+          }
+        });
+        localStorage.setItem(_GTOMB_KEY, JSON.stringify(t));
+        console.log('[import] ✅ Đã xóa SYNC', _localTombsBeforeClear.length, 'tombstone shiftCodes khỏi LOCAL (trước saveData)');
+      } catch(err){ console.warn('[import] clear local tombs sync fail:', err); }
+      // Phần cloud clear chạy ASYNC (không chặn flow import). Gom thêm cloud tombs rồi FieldValue.delete.
       (async () => {
         try {
-          const _allShiftTombKeys = new Set();
-          // 1. Collect từ local
-          const t = _gTombRead();
-          Object.keys(t).forEach(k => { if(k.startsWith('shiftCodes:')) _allShiftTombKeys.add(k); });
-          // 2. Collect từ cloud (nếu có network + đã cold-load)
+          const _allShiftTombKeys = new Set(_localTombsBeforeClear);
           if(window.fbDb && window._coldLoadDone){
             try {
               const snap = await window.fbDb.collection('hrdata').doc('_tombstones').get({ source:'server' });
@@ -27778,18 +27786,14 @@ function _scImportExcel(file){
             } catch(e){ console.warn('[import] fetch cloud tombs fail:', e && e.code); }
           }
           const toDeleteKeys = [...(_allShiftTombKeys)];
-          // 3. Xóa khỏi local
-          toDeleteKeys.forEach(k => { delete t[k]; });
-          localStorage.setItem(_GTOMB_KEY, JSON.stringify(t));
-          // 4. Push FieldValue.delete() cho TẤT CẢ keys đã gom (cả local + cloud) lên cloud
           if(toDeleteKeys.length && window.fbDb && window._coldLoadDone && window.firebase && window.firebase.firestore){
             const batch = { _updatedAt: Date.now() };
             toDeleteKeys.forEach(k => { batch['tombs.' + k] = window.firebase.firestore.FieldValue.delete(); });
             await window.fbDb.collection('hrdata').doc('_tombstones')
               .set(batch, { merge: true });
-            console.log('[import] ✅ Đã xóa', toDeleteKeys.length, 'tombstone shiftCodes khỏi cloud (gồm cả từ máy khác)');
+            console.log('[import] ✅ Đã xóa', toDeleteKeys.length, 'tombstone shiftCodes khỏi CLOUD (gồm cả từ máy khác)');
           }
-        } catch(err){ console.warn('[import] clear shiftCodes tombstones fail:', err); }
+        } catch(err){ console.warn('[import] clear cloud tombs fail:', err); }
       })();
       // 🚨 Import guard: chặn onSnapshot cloud đè bản import trong 60s
       window._scImportGuard = Date.now();
