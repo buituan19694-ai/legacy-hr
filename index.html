@@ -27751,14 +27751,30 @@ function _scImportExcel(file){
         });
       });
       DB.shiftCodes = newList;
-      // 🚨 v57: gỡ TẤT CẢ tombstone (import = reset hoàn toàn, codes mới không bị dedup xóa)
-      if(typeof _gTombRemove === 'function'){
-        newList.forEach(sc => {
-          const codeUp = (sc.code||'').toString().trim().toUpperCase();
-          if(codeUp) _gTombRemove('shiftCodes', 'code:' + codeUp);
-          if(sc.id) _gTombRemove('shiftCodes', sc.id);
+      // 🚨 v99: XÓA SẠCH TẤT CẢ tombstone shiftCodes (local + cloud) — Excel là nguồn chân lý duy nhất
+      // v57 chỉ xóa tombstone của codes được import → nếu code cũ bị tombstone mà Excel ko có,
+      // tombstone vẫn ở cloud → F5 kéo về → import lại code đó trong tương lai sẽ bị filter → MẤT.
+      // Fix: khi import = reset hoàn toàn → clear sạch 100% tombstone shiftCodes khỏi cả local lẫn cloud.
+      try {
+        const t = _gTombRead();
+        const toDeleteKeys = [];
+        Object.keys(t).forEach(k => {
+          if(k.startsWith('shiftCodes:')){
+            toDeleteKeys.push(k);
+            delete t[k];
+          }
         });
-      }
+        localStorage.setItem(_GTOMB_KEY, JSON.stringify(t));
+        // Push FieldValue.delete() lên cloud cho từng tombstone key
+        if(toDeleteKeys.length && window.fbDb && window._coldLoadDone && window.firebase && window.firebase.firestore){
+          const batch = { _updatedAt: Date.now() };
+          toDeleteKeys.forEach(k => { batch['tombs.' + k] = window.firebase.firestore.FieldValue.delete(); });
+          window.fbDb.collection('hrdata').doc('_tombstones')
+            .set(batch, { merge: true })
+            .then(() => console.log('[import] ✅ Đã xóa', toDeleteKeys.length, 'tombstone shiftCodes khỏi cloud'))
+            .catch(e => console.warn('[import] tombstone cloud clear fail:', e && e.code));
+        }
+      } catch(err){ console.warn('[import] clear shiftCodes tombstones fail:', err); }
       // 🚨 Import guard: chặn onSnapshot cloud đè bản import trong 60s
       window._scImportGuard = Date.now();
       try{ localStorage.setItem('_scImportGuard', String(window._scImportGuard)); }catch(_){}
