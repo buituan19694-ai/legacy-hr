@@ -21831,9 +21831,17 @@ async function _gTombPullCloud(){
     if(!snap || !snap.exists) return;
     const cloudTombs = (snap.data()||{}).tombs || {};
     const localTombs = _gTombRead();
+    // v98 safety: đọc dấu import guard shiftCodes — nếu vừa import gần đây, bỏ qua mọi cloud tombstone 'shiftCodes:code:XXX'
+    // (có thể chúng được xóa local nhưng cloud chưa kịp nhận FieldValue.delete)
+    const _scGuardTs = parseInt(localStorage.getItem('_scImportGuard')||'0');
+    const _scGuardFresh = _scGuardTs && (Date.now() - _scGuardTs) < 300000;
     // Gộp: giữ timestamp mới nhất giữa local và cloud cho mỗi key
     let changed = false;
     Object.keys(cloudTombs).forEach(k => {
+      // v98: nếu local KHÔNG CÓ key này + đang trong import guard shiftCodes + là tombstone shiftCodes → SKIP resurrection
+      if(_scGuardFresh && !localTombs[k] && k.startsWith('shiftCodes:code:')){
+        return;
+      }
       if(!localTombs[k] || cloudTombs[k] > localTombs[k]){ localTombs[k] = cloudTombs[k]; changed = true; }
     });
     if(changed){
@@ -21862,7 +21870,33 @@ function _gTombGetSetFor(collKey){
 }
 function _gTombRemove(collKey, id){
   if(!collKey || !id) return;
-  const t = _gTombRead(); delete t[collKey+':'+id]; _gTombWrite(t);
+  const t = _gTombRead();
+  const k = collKey+':'+id;
+  delete t[k];
+  // v98: ghi local KHÔNG dùng _gTombWrite vì _gTombPushCloud chỉ merge:true (không xóa được key cloud).
+  // Thay vào đó push riêng FieldValue.delete() cho key đã xóa → cloud sẽ thực sự mất key.
+  try {
+    const now = Date.now();
+    Object.keys(t).forEach(x => { if(!t[x] || (now - t[x]) > _CTOMB_TTL_MS) delete t[x]; });
+    localStorage.setItem(_GTOMB_KEY, JSON.stringify(t));
+  } catch(_){}
+  // Debounced batch delete lên cloud — gom nhiều lần remove liên tiếp thành 1 write
+  try {
+    if(window.fbDb && window._coldLoadDone && window.firebase && window.firebase.firestore){
+      if(!window._gTombDelBatch) window._gTombDelBatch = {};
+      window._gTombDelBatch['tombs.' + k] = window.firebase.firestore.FieldValue.delete();
+      clearTimeout(window._gTombDelTimer);
+      window._gTombDelTimer = setTimeout(() => {
+        const batch = window._gTombDelBatch || {};
+        window._gTombDelBatch = {};
+        if(!Object.keys(batch).length) return;
+        batch._updatedAt = Date.now();
+        window.fbDb.collection('hrdata').doc('_tombstones')
+          .set(batch, { merge: true })
+          .catch(e => console.warn('[tombstone] delete cloud fail:', e && e.code));
+      }, 1500);
+    }
+  } catch(_){}
 }
 
 // 🚨 FIX TRIỆT ĐỂ ĐỒNG BỘ XOÁ: quét toàn bộ DB, gỡ mọi item đã tombstone.
