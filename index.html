@@ -3044,6 +3044,19 @@ function renderBrand(){
     tagEl.style.fontSize = (b.tagSize || 10) + 'px';
   }
 
+  // v97: khóa brand box cho non-admin — bỏ cursor:pointer + title để không gợi ý sửa
+  const brandBoxEl = document.getElementById('brandBox');
+  if(brandBoxEl){
+    const _isAdmNow = (typeof window.isAdmin === 'function') ? window.isAdmin() : false;
+    if(_isAdmNow){
+      brandBoxEl.style.cursor = 'pointer';
+      brandBoxEl.title = 'Click để chỉnh logo & tên';
+    } else {
+      brandBoxEl.style.cursor = 'default';
+      brandBoxEl.removeAttribute('title');
+    }
+  }
+
   if(b.name && document.title.startsWith('Legacy')){
     document.title = `${b.name}${b.nameAccent||''} HR — Human Capital Intelligence`;
   }
@@ -3082,6 +3095,11 @@ function renderBrand(){
    BRAND EDITOR — User tự đổi logo, tên, tag
    ========================================================= */
 function openBrandEditor(){
+  // v97: chỉ ADMIN được sửa brand (logo + tên + tagline). Account khác bị khóa.
+  if(typeof window.isAdmin === 'function' && !window.isAdmin()){
+    if(typeof toast === 'function') toast('🔒 Chỉ Admin được quyền chỉnh thương hiệu','warning');
+    return;
+  }
   if(!DB.brandConfig) DB.brandConfig = JSON.parse(JSON.stringify(DEFAULT_BRAND_CONFIG));
   const b = DB.brandConfig;
   window._brandTemp = {...b};
