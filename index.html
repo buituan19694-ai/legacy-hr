@@ -1152,9 +1152,10 @@ const FS_DOC_MAP = {
                '_rewardTypesV2','_levelReset2026','_removedProbationStatus','_normalizedDates2026','_cleanedCandYearShards','_backfillTraineeCodes'],
 };
 // manningPlan + manningActual được shard theo năm qua _pushDynamicKey → KHÔNG để trong FS_DOC_MAP
+// 🚨 v96: THÊM 'rosterHolidays' — trước đây thiếu → saveData(['rosterHolidays']) không được route vào _pushDynamicKey → ngày lễ KHÔNG được ghi cloud → F5 là mất.
 const FS_DYNAMIC_KEYS = ['leaves','kpiReviews','rewardRecords','casuals','candidates',
                           'promotions','disciplineRecords','leaveSheet','leaveOpening','leavePlan','leavePlanLocked',
-                          'manningPlan','manningActual','plRevenue','plActionPlan','payrollData','hrGardenPlan','dutyRoster','rosterExtras','rosterEmpOrder','rosterDeptOverride'];
+                          'manningPlan','manningActual','plRevenue','plActionPlan','payrollData','hrGardenPlan','dutyRoster','rosterExtras','rosterEmpOrder','rosterDeptOverride','rosterHolidays'];
 
 function _recYear(r){
   const d = r.startDate||r.date||r.effectiveDate||r.period||r.appliedDate||r.createdAt||'';
@@ -2104,7 +2105,8 @@ function saveData(changedKeys=null){
 
     const dynamicToSave = !keys ? FS_DYNAMIC_KEYS : keys.filter(k=>FS_DYNAMIC_KEYS.includes(k));
     const leaveMetaKeys = ['leaveOpening','leavePlan','leavePlanLocked','salaryYears','trainingExtraYears','leaveExtraYears'];
-    const rosterGroupKeys = ['dutyRoster','rosterExtras','rosterEmpOrder','rosterDeptOverride'];
+    // 🚨 v96: THÊM 'rosterHolidays' → route chung với nhóm dutyRoster → vào đúng nhánh save shard
+    const rosterGroupKeys = ['dutyRoster','rosterExtras','rosterEmpOrder','rosterDeptOverride','rosterHolidays'];
     const seen = new Set();
     dynamicToSave.forEach(k=>{
       const canonical = leaveMetaKeys.includes(k) ? 'leaveOpening' : (rosterGroupKeys.includes(k) ? 'dutyRoster' : k);
@@ -29298,7 +29300,7 @@ window._tsExportExcel = function(){
 
   // Grand total row
   if(grandCount){
-    const grow = ['', '', `🏨 TỔNG KHÁCH SẠN (${grandCount} NV)`];
+    const grow = ['', '', 'TOTAL'];
     for(let d=1;d<=daysInMonth;d++) grow.push('');
     wcArr.forEach(wc=>{ const v = grandSum[wc]||0; grow.push(v ? Math.round(v*10)/10 : ''); });
     grow.push(Math.round(grandTotal*10)/10);
@@ -29640,14 +29642,14 @@ window._rosterExportPDF = function(type){
     const grandSumCells = sumColsKeys.map(k=>{
       const cnt = pdfGrandSum[k]||0;
       const cntDisp = cnt ? (cnt%1 ? cnt.toFixed(1) : cnt) : '';
-      return `<td style="text-align:center;font-size:8pt;font-weight:700;padding:4px 1px;color:#fff;background:#1a237e">${cntDisp}</td>`;
+      return `<td style="text-align:center;font-size:8pt;font-weight:800;padding:4px 1px">${cntDisp}</td>`;
     }).join('');
-    const grandDayBlank = new Array(daysInMonth).fill(`<td style="background:#1a237e"></td>`).join('');
-    rows += `<tr style="background:#1a237e;color:#fff;border-top:2px solid #0d1444">
-      <td colspan="3" style="font-size:9pt;font-weight:800;color:#fff;padding:5px 8px;text-align:right;letter-spacing:.05em">🏨 TỔNG KHÁCH SẠN (${pdfGrandCount} NV)</td>
+    const grandDayBlank = new Array(daysInMonth).fill(`<td></td>`).join('');
+    rows += `<tr style="border-top:1.5px solid #333">
+      <td colspan="3" style="font-size:9pt;font-weight:800;padding:5px 8px;text-align:right">TOTAL</td>
       ${grandDayBlank}
       ${grandSumCells}
-      <td style="font-size:9.5pt;text-align:center;font-weight:800;color:#1a237e;padding:5px;background:#ffd54f">${pdfGrandTotal.toFixed(1)}</td>
+      <td style="font-size:9pt;text-align:center;font-weight:800;padding:5px">${pdfGrandTotal.toFixed(1)}</td>
     </tr>`;
   }
 
