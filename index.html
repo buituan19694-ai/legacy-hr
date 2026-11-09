@@ -37106,7 +37106,26 @@ fbAuth.onAuthStateChanged(async user => {
                   } else {
                     // KHÔNG có import guard → CLOUD LUÔN THẮNG
                     // Account phụ, hoặc admin không đang import → cloud là source of truth
-                    // 🚨 v56: dedupe cloud (phòng cloud bị corrupt từ bug cũ)
+                    // 🚨 v109 RECOVERY: nếu cloud=0 MÀ localStorage có nhiều codes → chắc chắn cloud đã bị wipe,
+                    // dùng local làm nguồn + re-save lên cloud (chỉ admin)
+                    if(_cloudSC.length === 0 && _lsc.length > 0 && window.isAdmin && window.isAdmin()){
+                      console.warn('[cold-load] shiftCodes: ⚠️ CLOUD=0 nhưng LOCAL='+_lsc.length+' mã → RESCUE: dùng local + re-save lên cloud (admin)');
+                      DB[key] = window._dedupeShiftCodes(_lsc);
+                      if(DB[key].length === 0 && _lsc.length > 0){
+                        // dedupe wipe → giữ nguyên _lsc không dedupe
+                        DB[key] = _lsc.slice();
+                      }
+                      window._scColdLoadProtect = true;
+                      setTimeout(() => {
+                        if(window._coldLoadDone && (DB.shiftCodes||[]).length > 0){
+                          console.warn('[cold-load] shiftCodes: RESCUE saving '+DB.shiftCodes.length+' mã lên cloud...');
+                          // v108 flag bypass — cho phép ghi ngay cả khi cloud rỗng
+                          saveData(['shiftCodes']);
+                        }
+                        setTimeout(() => { window._scColdLoadProtect = false; }, 10000);
+                      }, 3000);
+                      return;
+                    }
                     const _dedupedCloud = window._dedupeShiftCodes(_cloudSC);
 
                     // 🚨 v105: Khi dedupe filter QUÁ NHIỀU (>30%) → chắc chắn local tombs STALE
