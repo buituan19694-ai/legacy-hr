@@ -188,17 +188,36 @@ body.sidebar-collapsed #sidebarToggle svg{transform:rotate(180deg)}
   .toast{left:12px;right:12px;bottom:16px;max-width:none}
 }.rec-tabs{display:inline-flex;gap:4px;padding:4px;background:var(--bg-card);border:1px solid var(--border);border-radius:10px;margin-bottom:20px}.rec-tab{padding:8px 18px;border-radius:7px;border:none;background:transparent;color:var(--ink-dim);font-family:inherit;font-size:13px;font-weight:500;cursor:pointer;transition:all .15s;display:inline-flex;align-items:center;gap:6px;user-select:none;-webkit-user-select:none}.rec-tab:hover{color:var(--ink);background:var(--bg-card-hover)}.rec-tab.active{background:var(--accent);color:var(--bg);font-weight:600}.rec-tab.active:hover{background:var(--accent-bright)}.period-chips{display:flex;flex-wrap:wrap;gap:6px;align-items:center}.period-chip{padding:7px 14px;border-radius:7px;border:1px solid var(--border);background:var(--bg-card);color:var(--ink-dim);font-family:inherit;font-size:12.5px;font-weight:500;cursor:pointer;transition:all .15s;user-select:none;-webkit-user-select:none}.period-chip:hover{border-color:var(--border-strong);color:var(--ink)}.period-chip.active{background:var(--accent);border-color:var(--accent);color:var(--bg);font-weight:600}.funnel-row{display:grid;grid-template-columns:140px 1fr 90px;gap:14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--border)}.funnel-row:last-child{border-bottom:none}.funnel-label{font-size:13px;font-weight:500;display:flex;align-items:center;gap:8px}.funnel-bar{height:24px;background:var(--bg-elev);border-radius:6px;overflow:hidden;position:relative}.funnel-bar-fill{height:100%;border-radius:6px;display:flex;align-items:center;padding-left:10px;color:var(--bg);font-size:12px;font-weight:600;font-family:'JetBrains Mono',monospace;transition:width .6s ease}.funnel-conv{font-size:11.5px;color:var(--ink-muted);font-family:'JetBrains Mono',monospace;text-align:right}.sal-bar{position:relative;height:22px;background:var(--bg-elev);border-radius:6px;min-width:180px}.sal-bar-range{position:absolute;top:5px;bottom:5px;background:linear-gradient(90deg,rgba(212,165,116,.35),rgba(212,165,116,.75));border-radius:3px}.sal-bar-budget{position:absolute;top:-3px;bottom:-3px;width:2px;background:var(--info);box-shadow:0 0 6px rgba(126,182,232,.6);z-index:2}.sal-bar-budget::before{content:"";position:absolute;top:-4px;left:-3px;width:0;height:0;border-left:4px solid transparent;border-right:4px solid transparent;border-top:5px solid var(--info)}.sal-bar-avg{position:absolute;top:50%;transform:translate(-50%,-50%);width:10px;height:10px;background:var(--ink);border:2px solid var(--bg-card);border-radius:50%;z-index:3}.sal-bar-median{position:absolute;top:50%;transform:translate(-50%,-50%);width:8px;height:14px;background:var(--accent);border-radius:2px;z-index:1;opacity:.85}.sal-legend{display:flex;flex-wrap:wrap;gap:14px;font-size:11px;color:var(--ink-muted);padding:8px 0 14px}.sal-legend-item{display:inline-flex;align-items:center;gap:5px}.sal-legend-swatch{display:inline-block;width:10px;height:10px;border-radius:2px}.insight-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}.insight-tile{background:var(--bg-elev);border:1px solid var(--border);border-radius:10px;padding:16px}.insight-tile-label{font-size:10.5px;color:var(--ink-muted);letter-spacing:.15em;text-transform:uppercase;font-weight:600;margin-bottom:6px}.insight-tile-value{font-family:'Fraunces',serif;font-size:26px;font-weight:500;letter-spacing:-.02em;color:var(--accent)}.insight-tile-sub{font-size:11.5px;color:var(--ink-dim);margin-top:4px}@media (max-width:860px){.insight-grid{grid-template-columns:1fr}}.kpi-delta{display:inline-flex;align-items:center;gap:3px;font-size:11.5px;font-weight:600;font-family:'JetBrains Mono',monospace;padding:2px 6px;border-radius:4px}.kpi-delta.up{color:var(--success);background:rgba(126,198,153,.1)}.kpi-delta.down{color:var(--danger);background:rgba(229,115,115,.1)}.kpi-delta.flat{color:var(--ink-muted);background:var(--bg-elev)}@media print{@page{size:A4;margin:12mm}*{print-color-adjust:exact !important;-webkit-print-color-adjust:exact !important}body{background:#fff !important;color:#1a1a1a !important}.grain,.sidebar,.modal,.toast-container,.topbar-actions,.rec-tabs,.row-actions,.btn,.btn-icon,.nav-icon,.list-actions,.search-box,.filters,.status-chips,.table-actions th:last-child,.tbl td:last-child .btn{display:none !important}.main{margin-left:0 !important;padding:0 !important;max-width:100% !important}.card,.kpi,.insight-tile{background:#fff !important;border:1px solid #d0d0d0 !important;box-shadow:none !important;break-inside:avoid;page-break-inside:avoid}.card-title,.page-title,.kpi-value,.insight-tile-value,.funnel-label,td,th{color:#1a1a1a !important}.card-title em,.page-title em,.kpi-value em{color:#a67847 !important}.crumb,.page-sub,.card-sub,.kpi-label,.kpi-meta,.insight-tile-label,.insight-tile-sub,.funnel-conv{color:#666 !important}.funnel-bar{background:#eee !important}.sal-bar{background:#eee !important;min-width:140px !important}.sal-bar-budget{background:#3a78b8 !important;box-shadow:none !important}.sal-bar-budget::before{border-top-color:#3a78b8 !important}.sal-bar-avg{background:#222 !important;border-color:#fff !important}.sal-bar-median{background:#a67847 !important}.sal-bar-range{background:linear-gradient(90deg,#e8d5b8,#a67847) !important}.tbl thead th{background:#f5f5f5 !important;color:#1a1a1a !important;border-bottom:1px solid #999 !important}.tbl td,.tbl th{border-color:#ddd !important}.topbar{border-bottom:1px solid #999 !important;padding-bottom:10px;margin-bottom:14px}.kpi-grid,.chart-wrap,.card,.row,.insight-grid{page-break-inside:avoid}.chart-wrap{height:200px !important}.report-print-header{display:block !important;border-bottom:2px solid #a67847;padding-bottom:8px;margin-bottom:16px}}.report-print-header{display:none}</style>
 <script>
-// PWA Service Worker — bắt buộc có để Chrome cho phép "Install" thật (không chỉ shortcut)
-if('serviceWorker' in navigator){
-  window.addEventListener('load', function(){
-    const swCode = "self.addEventListener('install',function(e){self.skipWaiting();});self.addEventListener('activate',function(e){e.waitUntil(self.clients.claim());});self.addEventListener('fetch',function(e){return;});";
-    const blob = new Blob([swCode], {type: 'application/javascript'});
-    const swUrl = URL.createObjectURL(blob);
-    navigator.serviceWorker.register(swUrl, {scope: '/'})
-      .then(function(reg){ console.log('[PWA] Service Worker registered'); })
-      .catch(function(err){ console.warn('[PWA] SW registration failed:', err); });
-  });
-}
+// v116: PWA install CHỈ cho mobile — desktop bỏ hoàn toàn (không SW, không manifest)
+// → Chrome desktop không hiện nút "Cài ứng dụng" trong URL bar
+(function(){
+  const _ua = navigator.userAgent;
+  const _isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(_ua);
+
+  if(!_isMobile){
+    // Desktop: xoá manifest link → Chrome không có đủ tiêu chuẩn PWA → không hiện install
+    const manifestLink = document.querySelector('link[rel="manifest"]');
+    if(manifestLink) manifestLink.remove();
+    // KHÔNG register service worker
+    console.log('[PWA] Desktop — đã bỏ PWA install');
+    return;
+  }
+
+  // Mobile: register SW từ /sw.js
+  if('serviceWorker' in navigator){
+    window.addEventListener('load', function(){
+      navigator.serviceWorker.register('/sw.js', {scope: '/'})
+        .then(function(reg){ console.log('[PWA] ✅ Service Worker registered từ /sw.js'); })
+        .catch(function(err){
+          console.warn('[PWA] SW /sw.js lỗi — fallback blob (sẽ không install được):', err);
+          const swCode = "self.addEventListener('install',function(e){self.skipWaiting();});self.addEventListener('activate',function(e){e.waitUntil(self.clients.claim());});self.addEventListener('fetch',function(e){return;});";
+          const blob = new Blob([swCode], {type: 'application/javascript'});
+          navigator.serviceWorker.register(URL.createObjectURL(blob), {scope: '/'})
+            .catch(e2 => console.warn('[PWA] Fallback SW failed:', e2));
+        });
+    });
+  }
+})();
 </script>
 </head>
 <body>
@@ -36344,56 +36363,175 @@ try { renderBrand(); } catch(e){ console.warn('Brand render error', e); }
 render();
 
 // ══════════════════════════════════════════════════════════
-// v112 PWA INSTALL — Cho phép cài web app như 1 ứng dụng native
+// v115 FULLSCREEN API — tạm thời ẩn URL bar mobile không cần sw.js
+// (Tap nút → fullscreen; tap Back hoặc swipe xuống để thoát)
 // ══════════════════════════════════════════════════════════
 (function(){
-  // Check already installed (running in standalone mode)
+  const isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
+  const isStandalone = window.matchMedia('(display-mode: standalone)').matches
+    || window.navigator.standalone === true;
+  if(!isMobile || isStandalone) return;
+
+  // Nút fullscreen nhỏ, vị trí cố định góc dưới-phải, ẩn/hiện qua long-press
+  const btn = document.createElement('button');
+  btn.id = 'fsToggleBtn';
+  btn.title = 'Toàn màn hình (ẩn thanh địa chỉ)';
+  btn.innerHTML = `
+    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M8 3H5a2 2 0 0 0-2 2v3"/>
+      <path d="M21 8V5a2 2 0 0 0-2-2h-3"/>
+      <path d="M3 16v3a2 2 0 0 0 2 2h3"/>
+      <path d="M16 21h3a2 2 0 0 0 2-2v-3"/>
+    </svg>`;
+  btn.style.cssText = `
+    position:fixed;
+    right:14px;
+    bottom:14px;
+    width:42px;height:42px;
+    background:rgba(26,32,40,.85);
+    border:1px solid rgba(212,165,116,.4);
+    border-radius:50%;
+    color:#d4a574;
+    display:grid;place-items:center;
+    cursor:pointer;
+    z-index:99997;
+    backdrop-filter:blur(8px);
+    -webkit-backdrop-filter:blur(8px);
+    box-shadow:0 4px 16px rgba(0,0,0,.4);
+    padding:0;
+    transition:transform .2s;
+  `;
+  btn.addEventListener('click', ()=>{
+    const el = document.documentElement;
+    if(document.fullscreenElement){
+      document.exitFullscreen && document.exitFullscreen();
+    } else {
+      const req = el.requestFullscreen || el.webkitRequestFullscreen || el.mozRequestFullScreen;
+      if(req){
+        req.call(el, { navigationUI: 'hide' }).catch(e => console.warn('[FS] fail:', e));
+      }
+    }
+  });
+
+  // Chỉ gắn khi app đã login (sau khi #app hiện)
+  const tryMount = () => {
+    const app = document.getElementById('app');
+    if(app && app.style.display !== 'none'){
+      if(!document.getElementById('fsToggleBtn')) document.body.appendChild(btn);
+    }
+  };
+  setTimeout(tryMount, 1500);
+  // Re-check mỗi lần user action
+  document.addEventListener('click', tryMount, { capture:true });
+
+  // Đổi icon khi vào/thoát fullscreen
+  const onChange = ()=>{
+    if(document.fullscreenElement){
+      btn.innerHTML = `
+        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M8 3v3a2 2 0 0 1-2 2H3"/>
+          <path d="M21 8h-3a2 2 0 0 1-2-2V3"/>
+          <path d="M3 16h3a2 2 0 0 1 2 2v3"/>
+          <path d="M16 21v-3a2 2 0 0 1 2-2h3"/>
+        </svg>`;
+    } else {
+      btn.innerHTML = `
+        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M8 3H5a2 2 0 0 0-2 2v3"/>
+          <path d="M21 8V5a2 2 0 0 0-2-2h-3"/>
+          <path d="M3 16v3a2 2 0 0 0 2 2h3"/>
+          <path d="M16 21h3a2 2 0 0 0 2-2v-3"/>
+        </svg>`;
+    }
+  };
+  document.addEventListener('fullscreenchange', onChange);
+  document.addEventListener('webkitfullscreenchange', onChange);
+})();
+
+// ══════════════════════════════════════════════════════════
+// v113 PWA INSTALL — Hướng dẫn thủ công theo platform (không phụ thuộc beforeinstallprompt)
+// v116: SKIP desktop hoàn toàn — chỉ hiện trên mobile
+// ══════════════════════════════════════════════════════════
+(function(){
+  // Check already installed (standalone mode)
   const isStandalone = window.matchMedia('(display-mode: standalone)').matches
     || window.navigator.standalone === true
     || document.referrer.startsWith('android-app://');
   if(isStandalone){
-    console.log('[PWA] Đang chạy ở chế độ standalone — không hiện install prompt');
+    console.log('[PWA] Đang chạy standalone — không hiện install prompt');
+    return;
+  }
+
+  // Detect platform
+  const ua = navigator.userAgent;
+  const isAndroid = /Android/i.test(ua);
+  const isIOS = /iPad|iPhone|iPod/.test(ua) && !window.MSStream;
+  const isMobile = isAndroid || isIOS || /Mobile/i.test(ua);
+  const isChrome = /Chrome|CriOS/i.test(ua) && !/Edg|OPR/i.test(ua);
+  const isEdge = /Edg/i.test(ua);
+  const isSafari = /Safari/i.test(ua) && !/Chrome|CriOS|Edg/i.test(ua);
+
+  // v116: desktop → không làm gì cả
+  if(!isMobile){
+    console.log('[PWA] Desktop — bỏ qua install card');
     return;
   }
 
   let deferredPrompt = null;
 
+  // Bắt beforeinstallprompt nếu Chrome fire (một số trường hợp vẫn fire)
   window.addEventListener('beforeinstallprompt', (e)=>{
     e.preventDefault();
     deferredPrompt = e;
-    console.log('[PWA] beforeinstallprompt bắt được, hiện nút install');
-    showInstallButton();
+    console.log('[PWA] ✅ beforeinstallprompt bắt được → dùng native prompt');
   });
 
   window.addEventListener('appinstalled', ()=>{
     console.log('[PWA] ✅ App đã được cài');
-    hideInstallButton();
+    hideInstallCard();
     try { localStorage.setItem('_pwaInstalled', '1'); } catch(_){}
   });
 
-  function showInstallButton(){
-    if(document.getElementById('pwaInstallBtn')) return;
-    // Nếu user đã dismiss trong 7 ngày qua → không hiện
+  // Luôn hiện card install sau 2 giây (nếu chưa dismissed)
+  setTimeout(() => {
     try {
       const dismissed = parseInt(localStorage.getItem('_pwaDismissedAt')||'0');
-      if(dismissed && (Date.now() - dismissed) < 7*24*60*60*1000) return;
+      if(dismissed && (Date.now() - dismissed) < 3*24*60*60*1000) return; // 3 ngày
     } catch(_){}
+    if(document.getElementById('pwaInstallBtn')) return;
+    showInstallCard();
+  }, 2000);
 
+  function showInstallCard(){
     const btn = document.createElement('div');
     btn.id = 'pwaInstallBtn';
+
+    // Text hướng dẫn theo platform
+    let hint = 'Cài đặt để mở nhanh như ứng dụng';
+    let actionText = 'Hướng dẫn';
+    if(isIOS){
+      hint = 'Tap nút Chia sẻ ↓ rồi "Thêm vào Màn hình chính"';
+      actionText = 'Hướng dẫn';
+    } else if(isAndroid){
+      hint = 'Menu ⋮ → "Cài ứng dụng" / "Thêm vào MH chính"';
+      actionText = deferredPrompt ? 'Cài ngay' : 'Hướng dẫn';
+    } else {
+      hint = 'Menu ⋮ → "Cài Legacy HR"';
+      actionText = deferredPrompt ? 'Cài ngay' : 'Hướng dẫn';
+    }
+
     btn.innerHTML = `
       <div style="display:flex;align-items:center;gap:10px">
-        <div style="width:32px;height:32px;background:var(--gradient-amber,linear-gradient(135deg,#d4a574,#8b6a4a));border-radius:7px;display:grid;place-items:center;color:#1a1410;font-weight:700;font-size:17px;font-family:Georgia,serif">L</div>
+        <div style="width:36px;height:36px;background:linear-gradient(135deg,#d4a574,#8b6a4a);border-radius:8px;display:grid;place-items:center;color:#1a1410;font-weight:700;font-size:18px;font-family:Georgia,serif;flex-shrink:0">L</div>
         <div style="flex:1;min-width:0">
-          <div style="font-size:13px;font-weight:600;color:var(--ink,#e6edf3);line-height:1.2">Cài đặt Legacy HR</div>
-          <div style="font-size:11px;color:var(--ink-muted,#8b949e);margin-top:2px">Mở nhanh, giống ứng dụng</div>
+          <div style="font-size:13px;font-weight:600;color:#e6edf3;line-height:1.2">Cài đặt Legacy HR</div>
+          <div style="font-size:11px;color:#8b949e;margin-top:3px;line-height:1.3">${hint}</div>
         </div>
-        <button id="pwaInstallYes" style="background:var(--accent,#d4a574);color:#1a1410;border:0;padding:7px 14px;border-radius:6px;font-size:12.5px;font-weight:600;cursor:pointer;font-family:inherit">Cài</button>
-        <button id="pwaInstallNo" style="background:transparent;color:var(--ink-muted,#8b949e);border:0;padding:6px 8px;cursor:pointer;font-size:18px;line-height:1" title="Để sau">×</button>
+        <button id="pwaInstallYes" style="background:#d4a574;color:#1a1410;border:0;padding:8px 14px;border-radius:6px;font-size:12.5px;font-weight:600;cursor:pointer;font-family:inherit;white-space:nowrap;flex-shrink:0">${actionText}</button>
+        <button id="pwaInstallNo" style="background:transparent;color:#8b949e;border:0;padding:6px 8px;cursor:pointer;font-size:20px;line-height:1;flex-shrink:0" title="Để sau">×</button>
       </div>`;
-    btn.style.cssText = 'position:fixed;left:50%;bottom:16px;transform:translateX(-50%);background:var(--bg-card,#1a2028);border:1px solid var(--border,#252d38);border-radius:12px;padding:12px 14px;box-shadow:0 10px 40px rgba(0,0,0,.5);z-index:99998;max-width:420px;width:calc(100vw - 32px);font-family:inherit;animation:pwaSlideUp .35s cubic-bezier(.2,.9,.3,1)';
+    btn.style.cssText = 'position:fixed;left:50%;bottom:16px;transform:translateX(-50%);background:#1a2028;border:1px solid #252d38;border-radius:12px;padding:12px 14px;box-shadow:0 10px 40px rgba(0,0,0,.6);z-index:99998;max-width:460px;width:calc(100vw - 24px);font-family:system-ui,-apple-system,sans-serif;animation:pwaSlideUp .35s cubic-bezier(.2,.9,.3,1)';
 
-    // Animation keyframes (chỉ inject 1 lần)
     if(!document.getElementById('pwaInstallStyle')){
       const st = document.createElement('style');
       st.id = 'pwaInstallStyle';
@@ -36404,51 +36542,74 @@ render();
     document.body.appendChild(btn);
 
     document.getElementById('pwaInstallYes').onclick = async ()=>{
-      if(!deferredPrompt) return;
-      deferredPrompt.prompt();
-      const choice = await deferredPrompt.userChoice;
-      console.log('[PWA] User choice:', choice.outcome);
-      deferredPrompt = null;
-      hideInstallButton();
+      // Nếu có native prompt → dùng
+      if(deferredPrompt){
+        try {
+          deferredPrompt.prompt();
+          const choice = await deferredPrompt.userChoice;
+          console.log('[PWA] Native choice:', choice.outcome);
+          deferredPrompt = null;
+          hideInstallCard();
+          return;
+        } catch(e){ console.warn('[PWA] Native prompt failed:', e); }
+      }
+      // Không có → hiện hướng dẫn chi tiết
+      showManualInstructions();
     };
     document.getElementById('pwaInstallNo').onclick = ()=>{
       try { localStorage.setItem('_pwaDismissedAt', String(Date.now())); } catch(_){}
-      hideInstallButton();
+      hideInstallCard();
     };
   }
 
-  function hideInstallButton(){
+  function hideInstallCard(){
     const el = document.getElementById('pwaInstallBtn');
     if(el) el.remove();
   }
 
-  // iOS: beforeinstallprompt KHÔNG hỗ trợ → hiện hướng dẫn thủ công
-  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
-  if(isIOS && !isStandalone){
-    setTimeout(()=>{
-      if(document.getElementById('pwaInstallBtn')) return;
-      try {
-        const dismissed = parseInt(localStorage.getItem('_pwaDismissedAt')||'0');
-        if(dismissed && (Date.now() - dismissed) < 7*24*60*60*1000) return;
-      } catch(_){}
-      const btn = document.createElement('div');
-      btn.id = 'pwaInstallBtn';
-      btn.innerHTML = `
-        <div style="display:flex;align-items:center;gap:10px">
-          <div style="width:32px;height:32px;background:var(--gradient-amber,linear-gradient(135deg,#d4a574,#8b6a4a));border-radius:7px;display:grid;place-items:center;color:#1a1410;font-weight:700;font-size:17px;font-family:Georgia,serif">L</div>
-          <div style="flex:1;min-width:0">
-            <div style="font-size:13px;font-weight:600;color:var(--ink,#e6edf3);line-height:1.2">Thêm vào Màn hình chính</div>
-            <div style="font-size:11px;color:var(--ink-muted,#8b949e);margin-top:2px">Tap <span style="font-size:14px">⬆</span> → "Thêm vào MH chính"</div>
-          </div>
-          <button id="pwaInstallNo" style="background:transparent;color:var(--ink-muted,#8b949e);border:0;padding:6px 8px;cursor:pointer;font-size:18px;line-height:1">×</button>
-        </div>`;
-      btn.style.cssText = 'position:fixed;left:50%;bottom:16px;transform:translateX(-50%);background:var(--bg-card,#1a2028);border:1px solid var(--border,#252d38);border-radius:12px;padding:12px 14px;box-shadow:0 10px 40px rgba(0,0,0,.5);z-index:99998;max-width:420px;width:calc(100vw - 32px);font-family:inherit';
-      document.body.appendChild(btn);
-      document.getElementById('pwaInstallNo').onclick = ()=>{
-        try { localStorage.setItem('_pwaDismissedAt', String(Date.now())); } catch(_){}
-        btn.remove();
-      };
-    }, 3000);
+  function showManualInstructions(){
+    hideInstallCard();
+    let title = 'Cài đặt Legacy HR';
+    let steps = '';
+    if(isIOS){
+      steps = `
+        <ol style="margin:0;padding-left:20px;line-height:1.7;color:#e6edf3;font-size:14px">
+          <li>Tap nút <b style="color:#d4a574">Chia sẻ</b> <span style="display:inline-block;width:22px;height:22px;vertical-align:middle;background:#d4a574;color:#1a1410;border-radius:4px;text-align:center;font-weight:700">⬆</span> ở thanh dưới Safari</li>
+          <li>Kéo xuống, chọn <b style="color:#d4a574">"Thêm vào Màn hình chính"</b></li>
+          <li>Tap <b style="color:#d4a574">"Thêm"</b> ở góc trên bên phải</li>
+          <li>Mở từ icon mới trên MH chính — không còn thanh địa chỉ</li>
+        </ol>`;
+    } else if(isAndroid){
+      steps = `
+        <ol style="margin:0;padding-left:20px;line-height:1.7;color:#e6edf3;font-size:14px">
+          <li>Tap menu <b style="color:#d4a574">⋮</b> (3 chấm góc phải trên Chrome)</li>
+          <li>Chọn <b style="color:#d4a574">"Cài ứng dụng"</b> hoặc <b style="color:#d4a574">"Thêm vào MH chính"</b></li>
+          <li>Tap <b style="color:#d4a574">"Cài"</b> / <b style="color:#d4a574">"Thêm"</b></li>
+          <li>Mở từ icon mới — fullscreen như app native</li>
+        </ol>`;
+    } else {
+      steps = `
+        <ol style="margin:0;padding-left:20px;line-height:1.7;color:#e6edf3;font-size:14px">
+          <li>Tìm icon <b style="color:#d4a574">⊕ Install</b> ở phải thanh địa chỉ</li>
+          <li>Hoặc Menu <b style="color:#d4a574">⋮</b> → <b style="color:#d4a574">"Cài Legacy HR"</b></li>
+          <li>Chọn <b style="color:#d4a574">"Cài"</b></li>
+          <li>App mở trong cửa sổ riêng, không có browser</li>
+        </ol>`;
+    }
+
+    const modal = document.createElement('div');
+    modal.id = 'pwaInstallModal';
+    modal.innerHTML = `
+      <div style="position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:99998" onclick="document.getElementById('pwaInstallModal').remove()"></div>
+      <div style="position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);background:#1a2028;border:1px solid #252d38;border-radius:14px;padding:24px;max-width:420px;width:calc(100vw - 32px);z-index:99999;box-shadow:0 20px 60px rgba(0,0,0,.7)">
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
+          <div style="width:44px;height:44px;background:linear-gradient(135deg,#d4a574,#8b6a4a);border-radius:9px;display:grid;place-items:center;color:#1a1410;font-weight:700;font-size:22px;font-family:Georgia,serif">L</div>
+          <div style="font-size:17px;font-weight:600;color:#e6edf3">${title}</div>
+        </div>
+        ${steps}
+        <button onclick="document.getElementById('pwaInstallModal').remove()" style="margin-top:20px;width:100%;background:#d4a574;color:#1a1410;border:0;padding:12px;border-radius:7px;font-size:14px;font-weight:600;cursor:pointer;font-family:inherit">Đã hiểu</button>
+      </div>`;
+    document.body.appendChild(modal);
   }
 })();
 
