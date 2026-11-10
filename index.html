@@ -1923,18 +1923,16 @@ function _pushDynamicKey(key, meta){
 // 🚨 v57: ALSO filter out tombstoned items (by ID AND by code)
 window._dedupeShiftCodes = function(arr){
   if(!Array.isArray(arr) || arr.length === 0) return arr || [];
-  // v57: get tombstone set for shiftCodes (contains both IDs and "code:XXX" markers)
-  const tomb = (typeof _gTombGetSetFor === 'function') ? _gTombGetSetFor('shiftCodes') : new Set();
+  // 🚨 v111: TRIỆT ĐỂ — KHÔNG kiểm tra tombstone nữa, chỉ dedup theo code (chống trùng).
+  // Bug cross-machine: cloud _tombstones accumulate shiftCodes:code:XXX keys từ "Xóa tất cả" lịch sử,
+  // → pull về machine khác → filter sạch imported codes → mất sync.
+  // Giải pháp: Import Excel = reset hoàn toàn (user tự quản lý), không cần tombstone filter.
+  // "Xóa tất cả" vẫn hoạt động vì nó set DB.shiftCodes = [] rồi save (với flag bypass v108).
   const byCode = new Map();
-  let tombSkipped = 0;
   arr.forEach(item => {
     if(!item || typeof item !== 'object') return;
     const code = (item.code || '').toString().trim().toUpperCase();
-    if(!code) return; // skip invalid empty codes
-    // v57: skip tombstoned items — BY ID (specific items) OR BY CODE (all variants of that code)
-    // Chống bug double cũ: nếu user đã xóa code "TR" → mọi bản TR (dù ID khác) đều bị skip
-    if(item.id && tomb.has(item.id)){ tombSkipped++; return; }
-    if(tomb.has('code:' + code)){ tombSkipped++; return; }
+    if(!code) return;
     const existing = byCode.get(code);
     if(!existing){
       byCode.set(code, item);
@@ -1947,8 +1945,7 @@ window._dedupeShiftCodes = function(arr){
   });
   const result = [...byCode.values()];
   if(result.length < arr.length){
-    const dupRemoved = arr.length - result.length - tombSkipped;
-    console.warn('[dedupeShiftCodes] 🧹 Cleaned: ' + arr.length + ' → ' + result.length + ' (dup:' + dupRemoved + ', tombstone:' + tombSkipped + ')');
+    console.warn('[dedupeShiftCodes] 🧹 Cleaned dup: ' + arr.length + ' → ' + result.length);
   }
   return result;
 };
@@ -38250,12 +38247,39 @@ fbAuth.onAuthStateChanged(async user => {
                     // 🚨 v56 SAFETY NET: dedupe cloud trước khi áp vào DB (chống doubling)
                     const _cloudSC = Array.isArray(cloudData[key]) ? cloudData[key] : [];
                     const _deduped = window._dedupeShiftCodes(_cloudSC);
-                    DB[key] = _deduped;
-                    if(_deduped.length < _cloudSC.length){
-                      console.warn('[Listener] shiftCodes CLOUD DIRTY (' + _cloudSC.length + ' → ' + _deduped.length + '), auto-fix: re-saving sạch');
-                      // Nếu admin → auto re-save để fix cloud
-                      if(window.currentUser?.email === window.ADMIN_EMAIL){
-                        setTimeout(() => { try { saveData(['shiftCodes']); } catch(_){} }, 2000);
+                    // 🚨 v110 CRITICAL: chống listener wipe DB khi dedupe filter sạch do tombs stale
+                    // Bug: listener fire → cloud có 185 → dedupe với local tombs polluted → 0 → DB=0 → UI mất
+                    // Fix: nếu dedupe làm shrink LỚN (>30%) → chắc chắn tombs stale, KHÔNG dùng _deduped
+                    //      → clear local tombs + push FieldValue.delete lên cloud + dùng cloud nguyên
+                    const _lostRatio2 = _cloudSC.length > 0 ? (1 - _deduped.length/_cloudSC.length) : 0;
+                    if(_cloudSC.length > 0 && _lostRatio2 > 0.3){
+                      console.warn('[Listener] shiftCodes: ⚠️ dedupe filter '+(_cloudSC.length-_deduped.length)+'/'+_cloudSC.length+' ('+Math.round(_lostRatio2*100)+'%) → local tombs STALE, NOT using dedupe. Clear + dùng cloud nguyên');
+                      try {
+                        const t = _gTombRead();
+                        const _cleanedKeys = [];
+                        Object.keys(t).forEach(k => { if(k.startsWith('shiftCodes:')){ _cleanedKeys.push(k); delete t[k]; } });
+                        localStorage.setItem(_GTOMB_KEY, JSON.stringify(t));
+                        console.warn('[Listener] đã clear '+_cleanedKeys.length+' local tombs stale');
+                        // Push FieldValue.delete lên cloud để các máy khác cũng clean
+                        if(_cleanedKeys.length && window.fbDb && window.firebase && window.firebase.firestore){
+                          const batch = { _updatedAt: Date.now() };
+                          _cleanedKeys.forEach(k => { batch['tombs.' + k] = window.firebase.firestore.FieldValue.delete(); });
+                          setTimeout(() => {
+                            window.fbDb.collection('hrdata').doc('_tombstones')
+                              .set(batch, { merge: true })
+                              .catch(() => {});
+                          }, 1500);
+                        }
+                      } catch(_){}
+                      DB[key] = _cloudSC.slice(); // dùng cloud nguyên (không dedupe)
+                    } else {
+                      DB[key] = _deduped;
+                      if(_deduped.length < _cloudSC.length && _deduped.length > 0){
+                        console.warn('[Listener] shiftCodes CLOUD DIRTY (' + _cloudSC.length + ' → ' + _deduped.length + '), auto-fix: re-saving sạch');
+                        // Nếu admin → auto re-save để fix cloud
+                        if(window.currentUser?.email === window.ADMIN_EMAIL){
+                          setTimeout(() => { try { saveData(['shiftCodes']); } catch(_){} }, 2000);
+                        }
                       }
                     }
                   } else if(Array.isArray(cloudData[key]) && Array.isArray(DB[key])
