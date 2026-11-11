@@ -32066,9 +32066,18 @@ function renderPayrollTab(){
           <tr style="border-top:2px solid var(--border-strong);background:rgba(212,165,116,.08)">
             <td style="padding:10px 12px;font-size:12px;font-weight:800;color:var(--accent)" title="Chi phí lương thực tế trên doanh thu thực tế — chỉ số hiệu quả">✅ % Lương TT / Doanh thu TT T${pM}/${pY}</td>
             <td colspan="4" style="${ct};font-size:11px;color:var(--ink-muted);text-align:right">
-              ${revActual>0
-                ? `Lương TT <b style="color:var(--warning)">${fmtV(totGrand)}</b> / Doanh thu TT <b style="color:var(--success)">${fmtV(revActual)}</b>`
-                : `<span style="color:var(--warning)">⚠ Chưa có Doanh thu thực tế — vào <a href="javascript:void(0)" onclick="if(typeof navigate==='function'){navigate('plreview');}else{currentPage='plreview';render();}" style="color:var(--info);text-decoration:underline;cursor:pointer">HR P&L Review</a> nhập Actual Revenue</span>`}
+              <!-- v121: input nhập doanh thu TT trực tiếp tại đây, không cần sang HR P&L Review -->
+              <div style="display:inline-flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end">
+                <span>Lương TT <b style="color:var(--warning)">${fmtV(totGrand)}</b> / Doanh thu TT</span>
+                <input type="text" inputmode="numeric"
+                  value="${revActual > 0 ? revActual.toLocaleString('vi-VN') : ''}"
+                  placeholder="Nhập doanh thu thực tế..."
+                  oninput="if(typeof window._plOnInputNum==='function')window._plOnInputNum(this);"
+                  onchange="const n=(typeof window._plParseInput==='function')?window._plParseInput(this.value):(parseFloat(this.value.replace(/[^0-9.-]/g,''))||0); if(!DB.plRevenue)DB.plRevenue={}; if(!DB.plRevenue[${pY}])DB.plRevenue[${pY}]={}; if(!DB.plRevenue[${pY}][${pM-1}])DB.plRevenue[${pY}][${pM-1}]={}; DB.plRevenue[${pY}][${pM-1}].actual=n; DB.plRevenue[${pY}][${pM-1}]._ts=Date.now(); saveData(['plRevenue']); render();"
+                  onkeydown="if(event.key==='Enter')this.blur()"
+                  onblur="this.dispatchEvent(new Event('change'))"
+                  style="width:160px;background:var(--bg-card);border:1px solid ${revActual>0?'var(--success)':'rgba(232,185,116,.5)'};color:${revActual>0?'var(--success)':'var(--ink)'};padding:5px 8px;border-radius:5px;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;text-align:right">
+              </div>
             </td>
             <td style="${ct};font-size:14px;font-weight:800;color:${revActual>0?pctColor(pctStr(totGrand, revActual)):'var(--ink-muted)'}">${revActual>0 ? pctStr(totGrand, revActual) : '—'}</td>
           </tr>
