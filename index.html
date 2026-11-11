@@ -36368,9 +36368,12 @@ render();
 // ══════════════════════════════════════════════════════════
 (function(){
   const isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
-  const isStandalone = window.matchMedia('(display-mode: standalone)').matches
+  // v119: check cả fullscreen + standalone (app đã cài không cần nút FS nữa)
+  const isInstalled = window.matchMedia('(display-mode: fullscreen)').matches
+    || window.matchMedia('(display-mode: standalone)').matches
+    || window.matchMedia('(display-mode: minimal-ui)').matches
     || window.navigator.standalone === true;
-  if(!isMobile || isStandalone) return;
+  if(!isMobile || isInstalled) return;
 
   // Nút fullscreen nhỏ, vị trí cố định góc dưới-phải, ẩn/hiện qua long-press
   const btn = document.createElement('button');
@@ -36453,12 +36456,15 @@ render();
 // v116: SKIP desktop hoàn toàn — chỉ hiện trên mobile
 // ══════════════════════════════════════════════════════════
 (function(){
-  // Check already installed (standalone mode)
-  const isStandalone = window.matchMedia('(display-mode: standalone)').matches
+  // v119: check ĐẦY ĐỦ các display-mode (fullscreen + standalone + minimal-ui)
+  // Trước chỉ check standalone → sau khi đổi manifest sang fullscreen, app đã cài vẫn bị coi là chưa cài → card hiện
+  const isInstalled = window.matchMedia('(display-mode: fullscreen)').matches
+    || window.matchMedia('(display-mode: standalone)').matches
+    || window.matchMedia('(display-mode: minimal-ui)').matches
     || window.navigator.standalone === true
     || document.referrer.startsWith('android-app://');
-  if(isStandalone){
-    console.log('[PWA] Đang chạy standalone — không hiện install prompt');
+  if(isInstalled){
+    console.log('[PWA] App đã cài (chạy standalone/fullscreen) — ẩn install card');
     return;
   }
 
