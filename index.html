@@ -9321,12 +9321,34 @@ function renderEmployeeProfile(main){
 
     <!-- Hồ sơ cứng -->
     ${(()=>{
+      // v125: trigger reload khi items < 5 (chống trường hợp cloud bị mất data còn 1-2 item lẻ)
+      // v122 chỉ check length === 0, không bắt được case data loss để lại vài item rác
+      if(!DB.docChecklistItems || DB.docChecklistItems.length < 5){
+        try { if(typeof _loadDocItems === 'function') _loadDocItems(); } catch(_){}
+      }
       const docItems = DB.docChecklistItems||[];
-      if(!docItems.length) return '';
       const docChecked = (cd.docChecklist||{});
       const checkedCount = docItems.filter(doc=>docChecked[doc]).length;
       const pct = docItems.length ? Math.round(checkedCount/docItems.length*100) : 0;
       const barColor = pct===100?'var(--success)':pct>=60?'var(--accent)':'var(--danger)';
+      const isAdm = (typeof window.isAdmin === 'function') ? window.isAdmin() : false;
+      // v122: LUÔN hiện section — nếu rỗng thì gợi ý admin vào Settings cấu hình
+      if(!docItems.length){
+        return `<div class="card" style="margin-top:16px">
+          <div class="card-head">
+            <div>
+              <div class="card-title">📋 Hồ sơ <em>cứng</em></div>
+              <div class="card-sub">Chưa có danh mục giấy tờ</div>
+            </div>
+            ${isAdm?`<button class="btn btn-primary" onclick="openDocChecklistManager()">⚙️ Thiết lập</button>`:''}
+          </div>
+          <div style="padding:30px 18px;text-align:center;color:var(--ink-muted);font-size:13px">
+            ${isAdm
+              ? '⚠️ Chưa có danh mục giấy tờ — ấn <b>Thiết lập</b> để thêm (có thể dùng danh sách mặc định 16 giấy tờ).'
+              : '⚠️ Chưa có danh mục giấy tờ — Liên hệ Admin để thiết lập.'}
+          </div>
+        </div>`;
+      }
       return `<div class="card" style="margin-top:16px">
         <div class="card-head">
           <div>
@@ -11297,15 +11319,25 @@ function _loadDocItems(){
   }catch(e){}
   const cloudItems = DB.docChecklistItems||[];
   // Ưu tiên: localStorage > cloud > default (dùng bản nào nhiều items hơn, hoặc bản mới hơn)
+  let _fellBackToDefault = false;
   if(lsItems.length >= 5 && lsItems.length >= cloudItems.length){
     DB.docChecklistItems = lsItems;
   } else if(cloudItems.length >= 5){
     DB.docChecklistItems = cloudItems;
   } else {
     DB.docChecklistItems = [...DEFAULT_DOCS];
+    _fellBackToDefault = true;
   }
   // Sync lại localStorage
   _persistDocItems();
+  // 🚨 v125: nếu rơi vào default (cloud/local đều thiếu) VÀ admin → push lên cloud để các máy khác đồng bộ
+  // Chống bug data loss: cloud chỉ còn 1 item lẻ → _loadDocItems set default 16 items local → save cloud → mọi nơi khôi phục
+  if(_fellBackToDefault && cloudItems.length < 5 && typeof window.isAdmin === 'function' && window.isAdmin()){
+    try {
+      console.warn('[docChecklist] ⚠️ Cloud chỉ có '+cloudItems.length+' item → đã restore 16 default, auto-save lên cloud...');
+      setTimeout(() => { try { saveData(['config']); } catch(_){} }, 2000);
+    } catch(_){}
+  }
 }
 
 function removePhoto(){
@@ -29638,7 +29670,9 @@ window._rosterExportPDF = function(type){
   }
 
   // v95: fixed cols = 3 (# | Mã NV | Họ tên) — đã bỏ C.TC
-  const pdfTotalCols = 3 + daysInMonth + (type==='timesheet' ? pdfWcArr.length : (type==='roster' ? pdfScArr.length : 0)) + 1;
+  // v124: non-admin → thêm cột "Chữ ký" cuối cùng để NV xác nhận khi in ra
+  const _needSignCol = !isAdm;
+  const pdfTotalCols = 3 + daysInMonth + (type==='timesheet' ? pdfWcArr.length : (type==='roster' ? pdfScArr.length : 0)) + 1 + (_needSignCol ? 1 : 0);
 
   // Build rows per department
   let curDept = '';
@@ -29662,6 +29696,7 @@ window._rosterExportPDF = function(type){
       ${dayBlank}
       ${sumCells}
       <td style="font-size:8.5pt;text-align:center;font-weight:700;color:#1a237e;padding:3px;background:#c5cae9">${pdfDeptTotal.toFixed(1)}</td>
+      ${_needSignCol ? '<td style="background:#f0f1fa"></td>' : ''}
     </tr>`;
   };
   emps.forEach(e=>{
@@ -29718,6 +29753,7 @@ window._rosterExportPDF = function(type){
         ${cells}
         ${scCountCells}
         <td style="font-size:8pt;text-align:center;font-weight:700;padding:2px 3px">${total%1?total.toFixed(1):total}</td>
+        ${_needSignCol ? '<td style="min-width:85px;border-left:1px dashed #999"></td>' : ''}
       </tr>`;
       // 🚨 v93: accumulate roster dept + grand totals
       pdfDeptCount++; pdfGrandCount++;
@@ -29782,6 +29818,7 @@ window._rosterExportPDF = function(type){
         ${cells}
         ${wcCountCells}
         <td style="font-size:8pt;text-align:center;font-weight:700;padding:2px 3px">${totalVal.toFixed(1)}</td>
+        ${_needSignCol ? '<td style="min-width:85px;border-left:1px dashed #999"></td>' : ''}
       </tr>`;
       // 🚨 v92: accumulate dept + grand totals (timesheet)
       pdfDeptCount++; pdfGrandCount++;
@@ -29807,6 +29844,7 @@ window._rosterExportPDF = function(type){
       ${grandDayBlank}
       ${grandSumCells}
       <td style="font-size:9pt;text-align:center;font-weight:800;padding:5px">${pdfGrandTotal.toFixed(1)}</td>
+      ${_needSignCol ? '<td></td>' : ''}
     </tr>`;
   }
 
@@ -29848,6 +29886,7 @@ window._rosterExportPDF = function(type){
       ${wcHeaders}
       ${scHeaders}
       <th style="width:35px;padding:3px;background:#c5cae9;color:#1a237e;font-weight:700">TOTAL</th>
+      ${_needSignCol ? '<th style="min-width:85px;padding:3px;background:#fff9c4;color:#8d6e00;font-weight:700;border-left:1px dashed #999">Chữ ký</th>' : ''}
     </tr></thead><tbody>${rows}</tbody></table>${signatureFooter}`,
     subtitle, undefined, {landscape:true}
   );
@@ -36497,173 +36536,8 @@ render();
   document.addEventListener('webkitfullscreenchange', onChange);
 })();
 
-// ══════════════════════════════════════════════════════════
-// v113 PWA INSTALL — Hướng dẫn thủ công theo platform (không phụ thuộc beforeinstallprompt)
-// v116: SKIP desktop hoàn toàn — chỉ hiện trên mobile
-// ══════════════════════════════════════════════════════════
-(function(){
-  // v119: check ĐẦY ĐỦ các display-mode (fullscreen + standalone + minimal-ui)
-  // Trước chỉ check standalone → sau khi đổi manifest sang fullscreen, app đã cài vẫn bị coi là chưa cài → card hiện
-  const isInstalled = window.matchMedia('(display-mode: fullscreen)').matches
-    || window.matchMedia('(display-mode: standalone)').matches
-    || window.matchMedia('(display-mode: minimal-ui)').matches
-    || window.navigator.standalone === true
-    || document.referrer.startsWith('android-app://');
-  if(isInstalled){
-    console.log('[PWA] App đã cài (chạy standalone/fullscreen) — ẩn install card');
-    return;
-  }
-
-  // Detect platform
-  const ua = navigator.userAgent;
-  const isAndroid = /Android/i.test(ua);
-  const isIOS = /iPad|iPhone|iPod/.test(ua) && !window.MSStream;
-  const isMobile = isAndroid || isIOS || /Mobile/i.test(ua);
-  const isChrome = /Chrome|CriOS/i.test(ua) && !/Edg|OPR/i.test(ua);
-  const isEdge = /Edg/i.test(ua);
-  const isSafari = /Safari/i.test(ua) && !/Chrome|CriOS|Edg/i.test(ua);
-
-  // v116: desktop → không làm gì cả
-  if(!isMobile){
-    console.log('[PWA] Desktop — bỏ qua install card');
-    return;
-  }
-
-  let deferredPrompt = null;
-
-  // Bắt beforeinstallprompt nếu Chrome fire (một số trường hợp vẫn fire)
-  window.addEventListener('beforeinstallprompt', (e)=>{
-    e.preventDefault();
-    deferredPrompt = e;
-    console.log('[PWA] ✅ beforeinstallprompt bắt được → dùng native prompt');
-  });
-
-  window.addEventListener('appinstalled', ()=>{
-    console.log('[PWA] ✅ App đã được cài');
-    hideInstallCard();
-    try { localStorage.setItem('_pwaInstalled', '1'); } catch(_){}
-  });
-
-  // Luôn hiện card install sau 2 giây (nếu chưa dismissed)
-  setTimeout(() => {
-    try {
-      const dismissed = parseInt(localStorage.getItem('_pwaDismissedAt')||'0');
-      if(dismissed && (Date.now() - dismissed) < 3*24*60*60*1000) return; // 3 ngày
-    } catch(_){}
-    if(document.getElementById('pwaInstallBtn')) return;
-    showInstallCard();
-  }, 2000);
-
-  function showInstallCard(){
-    const btn = document.createElement('div');
-    btn.id = 'pwaInstallBtn';
-
-    // Text hướng dẫn theo platform
-    let hint = 'Cài đặt để mở nhanh như ứng dụng';
-    let actionText = 'Hướng dẫn';
-    if(isIOS){
-      hint = 'Tap nút Chia sẻ ↓ rồi "Thêm vào Màn hình chính"';
-      actionText = 'Hướng dẫn';
-    } else if(isAndroid){
-      hint = 'Menu ⋮ → "Cài ứng dụng" / "Thêm vào MH chính"';
-      actionText = deferredPrompt ? 'Cài ngay' : 'Hướng dẫn';
-    } else {
-      hint = 'Menu ⋮ → "Cài Legacy HR"';
-      actionText = deferredPrompt ? 'Cài ngay' : 'Hướng dẫn';
-    }
-
-    btn.innerHTML = `
-      <div style="display:flex;align-items:center;gap:10px">
-        <div style="width:36px;height:36px;background:linear-gradient(135deg,#d4a574,#8b6a4a);border-radius:8px;display:grid;place-items:center;color:#1a1410;font-weight:700;font-size:18px;font-family:Georgia,serif;flex-shrink:0">L</div>
-        <div style="flex:1;min-width:0">
-          <div style="font-size:13px;font-weight:600;color:#e6edf3;line-height:1.2">Cài đặt Legacy HR</div>
-          <div style="font-size:11px;color:#8b949e;margin-top:3px;line-height:1.3">${hint}</div>
-        </div>
-        <button id="pwaInstallYes" style="background:#d4a574;color:#1a1410;border:0;padding:8px 14px;border-radius:6px;font-size:12.5px;font-weight:600;cursor:pointer;font-family:inherit;white-space:nowrap;flex-shrink:0">${actionText}</button>
-        <button id="pwaInstallNo" style="background:transparent;color:#8b949e;border:0;padding:6px 8px;cursor:pointer;font-size:20px;line-height:1;flex-shrink:0" title="Để sau">×</button>
-      </div>`;
-    btn.style.cssText = 'position:fixed;left:50%;bottom:16px;transform:translateX(-50%);background:#1a2028;border:1px solid #252d38;border-radius:12px;padding:12px 14px;box-shadow:0 10px 40px rgba(0,0,0,.6);z-index:99998;max-width:460px;width:calc(100vw - 24px);font-family:system-ui,-apple-system,sans-serif;animation:pwaSlideUp .35s cubic-bezier(.2,.9,.3,1)';
-
-    if(!document.getElementById('pwaInstallStyle')){
-      const st = document.createElement('style');
-      st.id = 'pwaInstallStyle';
-      st.textContent = '@keyframes pwaSlideUp{from{transform:translate(-50%,120%);opacity:0}to{transform:translate(-50%,0);opacity:1}}';
-      document.head.appendChild(st);
-    }
-
-    document.body.appendChild(btn);
-
-    document.getElementById('pwaInstallYes').onclick = async ()=>{
-      // Nếu có native prompt → dùng
-      if(deferredPrompt){
-        try {
-          deferredPrompt.prompt();
-          const choice = await deferredPrompt.userChoice;
-          console.log('[PWA] Native choice:', choice.outcome);
-          deferredPrompt = null;
-          hideInstallCard();
-          return;
-        } catch(e){ console.warn('[PWA] Native prompt failed:', e); }
-      }
-      // Không có → hiện hướng dẫn chi tiết
-      showManualInstructions();
-    };
-    document.getElementById('pwaInstallNo').onclick = ()=>{
-      try { localStorage.setItem('_pwaDismissedAt', String(Date.now())); } catch(_){}
-      hideInstallCard();
-    };
-  }
-
-  function hideInstallCard(){
-    const el = document.getElementById('pwaInstallBtn');
-    if(el) el.remove();
-  }
-
-  function showManualInstructions(){
-    hideInstallCard();
-    let title = 'Cài đặt Legacy HR';
-    let steps = '';
-    if(isIOS){
-      steps = `
-        <ol style="margin:0;padding-left:20px;line-height:1.7;color:#e6edf3;font-size:14px">
-          <li>Tap nút <b style="color:#d4a574">Chia sẻ</b> <span style="display:inline-block;width:22px;height:22px;vertical-align:middle;background:#d4a574;color:#1a1410;border-radius:4px;text-align:center;font-weight:700">⬆</span> ở thanh dưới Safari</li>
-          <li>Kéo xuống, chọn <b style="color:#d4a574">"Thêm vào Màn hình chính"</b></li>
-          <li>Tap <b style="color:#d4a574">"Thêm"</b> ở góc trên bên phải</li>
-          <li>Mở từ icon mới trên MH chính — không còn thanh địa chỉ</li>
-        </ol>`;
-    } else if(isAndroid){
-      steps = `
-        <ol style="margin:0;padding-left:20px;line-height:1.7;color:#e6edf3;font-size:14px">
-          <li>Tap menu <b style="color:#d4a574">⋮</b> (3 chấm góc phải trên Chrome)</li>
-          <li>Chọn <b style="color:#d4a574">"Cài ứng dụng"</b> hoặc <b style="color:#d4a574">"Thêm vào MH chính"</b></li>
-          <li>Tap <b style="color:#d4a574">"Cài"</b> / <b style="color:#d4a574">"Thêm"</b></li>
-          <li>Mở từ icon mới — fullscreen như app native</li>
-        </ol>`;
-    } else {
-      steps = `
-        <ol style="margin:0;padding-left:20px;line-height:1.7;color:#e6edf3;font-size:14px">
-          <li>Tìm icon <b style="color:#d4a574">⊕ Install</b> ở phải thanh địa chỉ</li>
-          <li>Hoặc Menu <b style="color:#d4a574">⋮</b> → <b style="color:#d4a574">"Cài Legacy HR"</b></li>
-          <li>Chọn <b style="color:#d4a574">"Cài"</b></li>
-          <li>App mở trong cửa sổ riêng, không có browser</li>
-        </ol>`;
-    }
-
-    const modal = document.createElement('div');
-    modal.id = 'pwaInstallModal';
-    modal.innerHTML = `
-      <div style="position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:99998" onclick="document.getElementById('pwaInstallModal').remove()"></div>
-      <div style="position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);background:#1a2028;border:1px solid #252d38;border-radius:14px;padding:24px;max-width:420px;width:calc(100vw - 32px);z-index:99999;box-shadow:0 20px 60px rgba(0,0,0,.7)">
-        <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
-          <div style="width:44px;height:44px;background:linear-gradient(135deg,#d4a574,#8b6a4a);border-radius:9px;display:grid;place-items:center;color:#1a1410;font-weight:700;font-size:22px;font-family:Georgia,serif">L</div>
-          <div style="font-size:17px;font-weight:600;color:#e6edf3">${title}</div>
-        </div>
-        ${steps}
-        <button onclick="document.getElementById('pwaInstallModal').remove()" style="margin-top:20px;width:100%;background:#d4a574;color:#1a1410;border:0;padding:12px;border-radius:7px;font-size:14px;font-weight:600;cursor:pointer;font-family:inherit">Đã hiểu</button>
-      </div>`;
-    document.body.appendChild(modal);
-  }
-})();
+// v123: Đã BỎ hoàn toàn card "Cài đặt Legacy HR" — không hiện trên bất kỳ platform nào.
+// (Chỉ giữ service worker đã đăng ký ở đầu file để Android Chrome vẫn cho Install từ menu ⋮)
 
 </script>
 <!-- Auth Screen — v106 mobile responsive -->
@@ -37515,7 +37389,14 @@ fbAuth.onAuthStateChanged(async user => {
                   const _k = (it) => it ? it[_kf] : undefined;
                   let _cloudArr = _tomb.size ? data[key].filter(it => !_k(it) || !_tomb.has(_k(it))) : data[key];
                   const _localArr = _localBeforeCloud[key];
-                  if(Array.isArray(_localArr) && _localArr.length){
+                  // 🚨 v126 CRITICAL FIX: chỉ áp merge-by-id khi mảng chứa OBJECT có key field.
+                  // Bug cũ: docChecklistItems (mảng string) → _k(it) = undefined cho mọi item →
+                  // new Map(arr.map(s=>[undefined,s])) → Map{undefined=>lastString} → _cloudArr = [1 item]
+                  // → DB.docChecklistItems bị thu từ 16 → 1! Đây là root cause user thấy hồ sơ cứng mất.
+                  const _canMergeById = _cloudArr.length > 0
+                    && _cloudArr[0] && typeof _cloudArr[0] === 'object'
+                    && _k(_cloudArr[0]) !== undefined;
+                  if(_canMergeById && Array.isArray(_localArr) && _localArr.length){
                     const _cloudMap = new Map(_cloudArr.map(it=>[_k(it), it]));
                     _localArr.forEach(li=>{
                       if(!li || !_k(li)) return;
