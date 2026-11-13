@@ -29462,7 +29462,8 @@ window._tsExportExcel = function(){
         } else {
           const sc2 = scMap[code];
           if(!_isOffCode(code, sc2)){
-            const wc = (_isHol && sc2?.holidayWorkCode) ? sc2.holidayWorkCode : (sc2?(sc2.workCode||''):(code==='AL'?'P':code==='CL'?'Bù':''));
+            // v127 FIX: fallback về chính mã code khi workCode trống (giống compound), tránh mã lẻ (vd HW) bị mất khỏi cột tổng
+            const wc = (_isHol && sc2?.holidayWorkCode) ? sc2.holidayWorkCode : (sc2?(sc2.workCode||code):(code==='AL'?'P':code==='CL'?'Bù':code));
             displayCode = wc;
             if(wc){
               wcCounts[wc] = (wcCounts[wc]||0) + resolved.workValue;
@@ -29790,7 +29791,8 @@ window._rosterExportPDF = function(type){
           } else {
             const sc2 = scMap[code];
             if(!_isOffCodePDF(code, sc2)){
-              const wc = (_isHolPdf2 && sc2?.holidayWorkCode) ? sc2.holidayWorkCode : (sc2?(sc2.workCode||''):(code==='AL'?'P':code==='CL'?'Bù':''));
+              // v127 FIX: fallback về chính mã code khi workCode trống (giống compound), tránh mã lẻ (vd HW) bị mất khỏi cột tổng
+              const wc = (_isHolPdf2 && sc2?.holidayWorkCode) ? sc2.holidayWorkCode : (sc2?(sc2.workCode||code):(code==='AL'?'P':code==='CL'?'Bù':code));
               displayCode = wc;
               if(wc){
                 wcCounts[wc] = (wcCounts[wc]||0) + resolved.workValue;
@@ -30101,7 +30103,9 @@ function _renderTimesheetGridCore(container, isAdm){
       } else {
         const sc = scMap[v];
         if(_isOffCode(v, sc)) continue; // OFF-like: không tạo cột
-        const wc = sc?(sc.workCode||''):(v==='AL'?'P':v==='CL'?'Bù':'');
+        // v127 FIX: fallback về chính mã (giống compound line 30097), không phải '' —
+        // bug cũ: mã có workValue>0 nhưng workCode trống (vd HW) → wc='' → không tạo cột, không count
+        const wc = sc?(sc.workCode||v):(v==='AL'?'P':v==='CL'?'Bù':v);
         const wv = sc?(sc.workValue||0):0;
         if(wc && wv > 0) usedWcSet.add(wc);
       }
@@ -30192,7 +30196,8 @@ function _renderTimesheetGridCore(container, isAdm){
           });
         } else {
           const sc = scMap[shiftCode];
-          workCode = (_isHolDay && sc?.holidayWorkCode) ? sc.holidayWorkCode : (sc?sc.workCode||'':shiftCode==='AL'?'P':shiftCode==='CL'?'Bù':'');
+          // v127 FIX: fallback về chính shiftCode khi workCode trống (giống compound), tránh HW với workCode='' bị mất khỏi summary
+          workCode = (_isHolDay && sc?.holidayWorkCode) ? sc.holidayWorkCode : (sc?(sc.workCode||shiftCode):(shiftCode==='AL'?'P':shiftCode==='CL'?'Bù':shiftCode));
           // OFF-like → không count, nhưng vẫn hiển thị trong cell (chỉ bỏ qua wcCounts + totalWork)
           if(_isOffCode(shiftCode, sc)){
             workVal = 0; // ép totalWork cũng không cộng
