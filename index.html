@@ -1231,6 +1231,17 @@ function saveEmpProfile(empId){
   const fvDel = firebase.firestore.FieldValue.delete();
   if(!cd.exitDate)   doc.exitDate   = fvDel;
   if(!cd.exitReason) doc.exitReason = fvDel;
+  // 🚨 v130 CRITICAL FIX: merge:true không xoá key bị clear → F5 là quay lại giá trị cũ
+  // (bug KÝ TÚC XÁ: đổi "Nhà Công An" → "Chọn", refresh lại thành "Nhà Công An")
+  // Duyệt TẤT CẢ customField đã định nghĩa, key nào trống trong cd → gửi FieldValue.delete()
+  (DB.customFields||[]).forEach(cf => {
+    const k = cf.key;
+    if(!k || k === 'exitDate' || k === 'exitReason') return; // đã xử lý riêng
+    const v = cd[k];
+    if(v === undefined || v === null || v === ''){
+      doc[k] = fvDel;
+    }
+  });
   if(photo && photo.startsWith('http')){
     // Có Cloudinary URL → lưu photoUrl
     doc.photoUrl = photo;
@@ -28518,9 +28529,9 @@ function _renderRosterGridCore(container, isAdm){
       allRows += `<tr data-roster-row="${e.id}" data-roster-dept="${e.deptId}" draggable="true" ondragstart="_rDragStart(event,'${e.id}','${e.deptId}')" ondragover="_rDragOver(event,'${e.deptId}')" ondrop="_rDrop(event,'${e.id}','${e.deptId}')" ondragend="_rDragEnd(event)" style="border-bottom:1px solid var(--border);cursor:grab${e._isExtra?' ;background:rgba(220,53,69,.04)':''}">
         <td class="_rStt" style="padding:5px 6px;font-size:11px;text-align:center;position:sticky;left:0;background:${stickyBg};z-index:2;border-right:2px solid var(--border-strong)"><span class="_rNum">${globalIdx}</span></td>
         <td style="padding:5px 6px;font-size:11px;font-family:'JetBrains Mono',monospace;position:sticky;left:30px;background:${stickyBg};z-index:2">${escapeHtml(e.code||'')}</td>
-        <td style="padding:5px 6px;font-size:12px;${nameStyle};white-space:nowrap;position:sticky;left:90px;background:${stickyBg};z-index:2">${escapeHtml(e.name||'')}${traineeBadge}${extraBadge}</td>
-        ${window._rosterHideCols.dept?`<td style="padding:0;width:8px;background:${stickyBg};position:sticky;left:200px;z-index:2"></td>`:`<td style="padding:5px 6px;font-size:10px;color:var(--ink-dim);white-space:nowrap;position:sticky;left:200px;background:${stickyBg};z-index:2">${escapeHtml(deptName(e.deptId))}</td>`}
-        ${window._rosterHideCols.role?`<td style="padding:0;width:8px;background:${stickyBg};position:sticky;left:${window._rosterHideCols.dept?208:300}px;z-index:2"></td>`:`<td style="padding:5px 6px;font-size:10px;color:var(--ink-dim);white-space:nowrap;position:sticky;left:${window._rosterHideCols.dept?208:300}px;background:${stickyBg};z-index:2">${escapeHtml(e.role||cd.position||'')}</td>`}
+        <td style="padding:5px 6px;font-size:12px;${nameStyle};white-space:nowrap;position:sticky;left:90px;background:${stickyBg};z-index:2;max-width:110px;overflow:hidden;text-overflow:ellipsis" title="${escapeHtml(e.name||'')}">${escapeHtml(e.name||'')}${traineeBadge}${extraBadge}</td>
+        ${window._rosterHideCols.dept?`<td style="padding:0;width:8px;background:${stickyBg};position:sticky;left:200px;z-index:2"></td>`:`<td style="padding:5px 6px;font-size:10px;color:var(--ink-dim);white-space:nowrap;position:sticky;left:200px;background:${stickyBg};z-index:2;max-width:100px;overflow:hidden;text-overflow:ellipsis" title="${escapeHtml(deptName(e.deptId))}">${escapeHtml(deptName(e.deptId))}</td>`}
+        ${window._rosterHideCols.role?`<td style="padding:0;width:8px;background:${stickyBg};position:sticky;left:${window._rosterHideCols.dept?208:300}px;z-index:2"></td>`:`<td style="padding:5px 6px;font-size:10px;color:var(--ink-dim);white-space:nowrap;position:sticky;left:${window._rosterHideCols.dept?208:300}px;background:${stickyBg};z-index:2;max-width:100px;overflow:hidden;text-overflow:ellipsis" title="${escapeHtml(e.role||cd.position||'')}">${escapeHtml(e.role||cd.position||'')}</td>`}
         ${window._rosterHideCols.stdwd?`<td style="padding:0;width:8px;border:1px solid var(--border)"></td>`:stdWDCell}
         ${window._rosterHideCols.al?`<td style="padding:0;width:8px;border:1px solid var(--border)"></td>`:`<td style="padding:4px 4px;text-align:center;font-size:10px;font-weight:700;font-family:'JetBrains Mono',monospace;color:${alBal>0?'#2d6a4f':'var(--ink-muted)'};background:${alBal>0?'rgba(45,106,79,.08)':'transparent'};border:1px solid var(--border)">${alBal||'—'}</td>`}
         ${window._rosterHideCols.cl?`<td style="padding:0;width:8px;border:1px solid var(--border);border-right:2px solid var(--accent)"></td>`:`<td style="padding:4px 4px;text-align:center;font-size:10px;font-weight:700;font-family:'JetBrains Mono',monospace;color:${clBal>0?'#1d3557':'var(--ink-muted)'};background:${clBal>0?'rgba(29,53,87,.08)':'transparent'};border:1px solid var(--border);border-right:2px solid var(--accent)">${clBal||'—'}</td>`}
@@ -29111,9 +29122,30 @@ function _rosterDoZoom(delta){
 }
 
 // ── Collapsible columns toggle ──
-if(!window._rosterHideCols) window._rosterHideCols = {};
+// v129: per-account localStorage, không share giữa các tài khoản
+function _rosterHideColsKey(){
+  const email = (window.currentUser && window.currentUser.email) || 'anon';
+  return '_rosterHideCols_' + email;
+}
+function _rosterLoadHideCols(){
+  try {
+    const raw = localStorage.getItem(_rosterHideColsKey());
+    return raw ? JSON.parse(raw) : {};
+  } catch(_) { return {}; }
+}
+function _rosterSaveHideCols(){
+  try { localStorage.setItem(_rosterHideColsKey(), JSON.stringify(window._rosterHideCols||{})); } catch(_){}
+}
+if(!window._rosterHideCols) window._rosterHideCols = _rosterLoadHideCols();
 function _rosterToggleCol(colName){
+  // Lazy-load từ localStorage nếu user vừa login (currentUser xuất hiện sau khi init)
+  const curKey = _rosterHideColsKey();
+  if(window._rosterHideColsKey !== curKey){
+    window._rosterHideCols = _rosterLoadHideCols();
+    window._rosterHideColsKey = curKey;
+  }
   window._rosterHideCols[colName] = !window._rosterHideCols[colName];
+  _rosterSaveHideCols();
   render();
 }
 
@@ -30231,9 +30263,9 @@ function _renderTimesheetGridCore(container, isAdm){
       allRows += `<tr data-roster-row="${e.id}" data-roster-dept="${e.deptId}" draggable="true" ondragstart="_rDragStart(event,'${e.id}','${e.deptId}')" ondragover="_rDragOver(event,'${e.deptId}')" ondrop="_rDrop(event,'${e.id}','${e.deptId}')" ondragend="_rDragEnd(event)" style="border-bottom:1px solid var(--border);cursor:grab">
         <td class="_rStt" style="padding:5px 6px;font-size:11px;text-align:center;position:sticky;left:0;background:${rowBg};z-index:2;border-right:2px solid var(--border-strong)"><span class="_rNum">${globalIdx}</span></td>
         <td style="padding:5px 6px;font-size:11px;font-family:'JetBrains Mono',monospace;position:sticky;left:30px;background:${rowBg};z-index:2">${escapeHtml(e.code||'')}</td>
-        <td style="padding:5px 6px;font-size:12px;${nameStyle};white-space:nowrap;position:sticky;left:90px;background:${rowBg};z-index:2">${escapeHtml(e.name||'')}${traineeBadge}${extraBadge}</td>
-        ${window._rosterHideCols.dept?`<td style="padding:0;width:8px;background:${rowBg};position:sticky;left:200px;z-index:2"></td>`:`<td style="padding:5px 6px;font-size:10px;color:var(--ink-dim);white-space:nowrap;position:sticky;left:200px;background:${rowBg};z-index:2">${escapeHtml(deptName(e.deptId))}</td>`}
-        ${window._rosterHideCols.role?`<td style="padding:0;width:8px;background:${rowBg};position:sticky;left:${window._rosterHideCols.dept?208:300}px;z-index:2"></td>`:`<td style="padding:5px 6px;font-size:10px;color:var(--ink-dim);white-space:nowrap;position:sticky;left:${window._rosterHideCols.dept?208:300}px;background:${rowBg};z-index:2">${escapeHtml(e.role||cd.position||'')}</td>`}
+        <td style="padding:5px 6px;font-size:12px;${nameStyle};white-space:nowrap;position:sticky;left:90px;background:${rowBg};z-index:2;max-width:110px;overflow:hidden;text-overflow:ellipsis" title="${escapeHtml(e.name||'')}">${escapeHtml(e.name||'')}${traineeBadge}${extraBadge}</td>
+        ${window._rosterHideCols.dept?`<td style="padding:0;width:8px;background:${rowBg};position:sticky;left:200px;z-index:2"></td>`:`<td style="padding:5px 6px;font-size:10px;color:var(--ink-dim);white-space:nowrap;position:sticky;left:200px;background:${rowBg};z-index:2;max-width:100px;overflow:hidden;text-overflow:ellipsis" title="${escapeHtml(deptName(e.deptId))}">${escapeHtml(deptName(e.deptId))}</td>`}
+        ${window._rosterHideCols.role?`<td style="padding:0;width:8px;background:${rowBg};position:sticky;left:${window._rosterHideCols.dept?208:300}px;z-index:2"></td>`:`<td style="padding:5px 6px;font-size:10px;color:var(--ink-dim);white-space:nowrap;position:sticky;left:${window._rosterHideCols.dept?208:300}px;background:${rowBg};z-index:2;max-width:100px;overflow:hidden;text-overflow:ellipsis" title="${escapeHtml(e.role||cd.position||'')}">${escapeHtml(e.role||cd.position||'')}</td>`}
         ${window._rosterHideCols.stdwd?`<td style="padding:0;width:8px;border:1px solid var(--border)"></td>`:`<td data-stdwd="1" style="padding:4px 4px;text-align:center;font-size:10px;font-weight:700;font-family:'JetBrains Mono',monospace;color:var(--ink);background:rgba(212,165,116,.06);border:1px solid var(--border);cursor:pointer" onclick="_rosterEditStdWD('${e.id}')" title="Click để sửa Công TC">${stdWD||'<span style="color:var(--ink-muted);font-size:9px">—</span>'}</td>`}
         ${window._rosterHideCols.al?`<td style="padding:0;width:8px;border:1px solid var(--border)"></td>`:`<td style="padding:4px 4px;text-align:center;font-size:10px;font-weight:700;font-family:'JetBrains Mono',monospace;color:${alBal>0?'#2d6a4f':'var(--ink-muted)'};background:${alBal>0?'rgba(45,106,79,.08)':'transparent'};border:1px solid var(--border)">${alBal||'—'}</td>`}
         ${window._rosterHideCols.cl?`<td style="padding:0;width:8px;border:1px solid var(--border);border-right:2px solid var(--accent)"></td>`:`<td style="padding:4px 4px;text-align:center;font-size:10px;font-weight:700;font-family:'JetBrains Mono',monospace;color:${clBal>0?'#1d3557':'var(--ink-muted)'};background:${clBal>0?'rgba(29,53,87,.08)':'transparent'};border:1px solid var(--border);border-right:2px solid var(--accent)">${clBal||'—'}</td>`}
@@ -37181,6 +37213,13 @@ fbAuth.onAuthStateChanged(async user => {
       if(doc.exists && doc.data().active !== false){
         window.currentUser = user;
         window.currentUserData = doc.data();
+        // v129: load per-account UI prefs (hide cols) ngay khi login xong, trước lần render đầu
+        try {
+          if(typeof _rosterLoadHideCols === 'function'){
+            window._rosterHideCols = _rosterLoadHideCols();
+            window._rosterHideColsKey = _rosterHideColsKey();
+          }
+        } catch(_){}
         if(window._userPermListener) window._userPermListener(); // unsubscribe cũ
         window._userPermListener = fbDb.collection('users').doc(user.uid).onSnapshot(snap=>{
           if(!snap.exists){ fbAuth.signOut(); return; }
