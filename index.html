@@ -1364,16 +1364,25 @@ async function pushMissingEmpProfiles(){
 // Logic: đọc cloud trước, merge với local, item có _savedAt mới hơn thắng, bỏ tombstone.
 window._mergeArrayById = function(cloudArr, localArr, collKey){
   const tomb = (typeof _gTombGetSetFor === 'function' && collKey) ? _gTombGetSetFor(collKey) : new Set();
+  // 🚨 v131 CRITICAL FIX: các collection dùng key khác 'id' → phải map đúng, nếu không
+  // mọi item rơi vào 'noId' → KHÔNG dedupe → save nhân đôi mỗi lần (bug voucher nhân 3-4 lần)
+  const KEY_FIELD_MAP = {
+    cbVouchers: 'vid',
+    manualBlacklist: 'empId',
+    requiredFieldsConfig: 'key'
+  };
+  const kf = (collKey && KEY_FIELD_MAP[collKey]) || 'id';
   const byId = new Map();
   const noId = [];
   const _add = (r) => {
     if(!r || typeof r !== 'object') return;
-    if(!r.id){ noId.push(r); return; }
-    if(tomb.has(r.id)) return;
-    const prev = byId.get(r.id);
-    if(!prev){ byId.set(r.id, r); return; }
+    const k = r[kf];
+    if(!k){ noId.push(r); return; }
+    if(tomb.has(k)) return;
+    const prev = byId.get(k);
+    if(!prev){ byId.set(k, r); return; }
     const pTs = prev._savedAt || 0, nTs = r._savedAt || 0;
-    if(nTs >= pTs) byId.set(r.id, r);
+    if(nTs >= pTs) byId.set(k, r);
   };
   (cloudArr||[]).forEach(_add);
   (localArr||[]).forEach(_add);
@@ -38148,6 +38157,28 @@ fbAuth.onAuthStateChanged(async user => {
               DB.cbVouchers = lsV;
               console.log('[CB-V] ⚠ Restored', lsV.length, 'vouchers from localStorage (cloud ts:', cloudTs, 'ls ts:', lsTs, ')');
               _saveCBVouchers();
+            }
+            // 🚨 v131: DEDUP cloud data — đã bị nhân 3-4 lần do bug _mergeArrayById cũ dùng sai key
+            const _preLen = (DB.cbVouchers||[]).length;
+            const _seen = new Map();
+            const _noVid = [];
+            (DB.cbVouchers||[]).forEach(v => {
+              if(!v) return;
+              if(!v.vid){ _noVid.push(v); return; }
+              const prev = _seen.get(v.vid);
+              if(!prev){ _seen.set(v.vid, v); return; }
+              // Giữ bản có _savedAt / updatedAt mới hơn
+              const pTs = prev._savedAt || prev.updatedAt || 0;
+              const nTs = v._savedAt || v.updatedAt || 0;
+              if(nTs >= pTs) _seen.set(v.vid, v);
+            });
+            DB.cbVouchers = [..._seen.values(), ..._noVid];
+            if(DB.cbVouchers.length < _preLen){
+              console.warn('[CB-V] 🧹 Dedup voucher: '+_preLen+' → '+DB.cbVouchers.length+' (xóa '+(_preLen-DB.cbVouchers.length)+' bản trùng)');
+              // Auto-save phiên bản sạch lên cloud nếu là admin (tránh wipe nếu nhiều user cùng load)
+              if(typeof window.isAdmin === 'function' && window.isAdmin()){
+                setTimeout(() => { try{ _saveCBVouchers(); }catch(_){} }, 3000);
+              }
             }
             console.log('[CB-V] ✅ Loaded', DB.cbVouchers.length, 'vouchers');
             if(currentPage==='cbPackage') render();
