@@ -30259,9 +30259,10 @@ function _renderTimesheetGridCore(container, isAdm){
 
   let allRows = '';
   let globalIdx = 0;
-  // STT + MÃ NV + HỌ TÊN + BỘ PHẬN + CHỨC DANH + CÔNG TC + TỒN AL + TỒN CL + days + wcCodes + TOTAL + (admin: Total* + AL* + CL*)
+  // STT + MÃ NV + HỌ TÊN + BỘ PHẬN + CHỨC DANH + CÔNG TC + TỒN AL + TỒN CL + days + wcCodes + TOTAL + Total* + AL* + CL*
+  // v138: 3 cột Total*/AL*/CL* hiện cho MỌI account (mỗi NV tự xem), vẫn ẩn khi in (@media print)
   const fixedCols = 8;
-  const totalCols = fixedCols + daysInMonth + wcCodesArr.length + 1 + (isAdm ? 3 : 0);
+  const totalCols = fixedCols + daysInMonth + wcCodesArr.length + 1 + 3;
 
   // 🚨 v85: track grand totals across all depts for the FINAL "∑ TỔNG CỘNG" row
   let grandTotalWork = 0;
@@ -30372,19 +30373,23 @@ function _renderTimesheetGridCore(container, isAdm){
         ${dayCells}
         ${wcCountCells}
         <td style="padding:5px 4px;text-align:center;font-size:12px;font-weight:800;color:var(--accent);font-family:'JetBrains Mono',monospace;background:rgba(212,165,116,.08);border-left:3px solid var(--accent);border-right:3px solid var(--accent);border-top:1px solid var(--border);border-bottom:1px solid var(--border)">${totalWork ? (totalWork%1 ? totalWork.toFixed(1) : totalWork) : ''}</td>
-        ${isAdm ? (()=>{
+        ${(()=>{
           const _stdN = parseFloat(stdWD);
           const _tStar = (!isNaN(_stdN) && _stdN > 0) ? (_stdN - totalWork) : '';
-          const _alUsed = wcCounts['P']||0;
+          // v137 BUG FIX: trước đây hardcode 'P' và 'Bù' nhưng sau fix v127, mã AL/CL fallback
+          // workCode về chính nó ('AL'/'CL') nếu không có sc.workCode riêng. Nên wcCounts['P']/['Bù']
+          // luôn = 0 → AL*/CL* hiển thị nguyên TỒN, không trừ số đã dùng. Fix: cộng cả 2 key để
+          // tương thích cả trường hợp admin cấu hình sc.workCode='P'/'Bù' lẫn để trống.
+          const _alUsed = (wcCounts['AL']||0) + (wcCounts['P']||0);
           const _alStar = alBal ? (alBal - _alUsed) : '';
-          const _clUsed = wcCounts['Bù']||0;
+          const _clUsed = (wcCounts['CL']||0) + (wcCounts['Bù']||0);
           const _clStar = clBal ? (clBal - _clUsed) : '';
           const _fmt = v => v===''?'':((typeof v==='number')?(v%1?v.toFixed(1):v):'');
           const _clr = v => v===''?'var(--ink-muted)':v>0?'#2d6a4f':v<0?'#c62828':'var(--ink)';
           return `<td class="_admCol" style="padding:4px 3px;text-align:center;font-size:10px;font-weight:700;font-family:'JetBrains Mono',monospace;color:${_clr(_tStar)};background:rgba(156,39,176,.06);border:1px solid var(--border);border-left:2px solid #9c27b0">${_fmt(_tStar)}</td>
           <td class="_admCol" style="padding:4px 3px;text-align:center;font-size:10px;font-weight:700;font-family:'JetBrains Mono',monospace;color:${_clr(_alStar)};background:rgba(45,106,79,.06);border:1px solid var(--border)">${_fmt(_alStar)}</td>
           <td class="_admCol" style="padding:4px 3px;text-align:center;font-size:10px;font-weight:700;font-family:'JetBrains Mono',monospace;color:${_clr(_clStar)};background:rgba(29,53,87,.06);border:1px solid var(--border)">${_fmt(_clStar)}</td>`;
-        })() : ''}
+        })()}
       </tr>`;
     });
 
@@ -30403,9 +30408,9 @@ function _renderTimesheetGridCore(container, isAdm){
       ${subDayCells}
       ${wcSubCells}
       <td style="padding:4px 4px;text-align:center;font-size:12px;font-weight:800;color:var(--accent);font-family:'JetBrains Mono',monospace;background:rgba(212,165,116,.15);border-left:3px solid var(--accent);border-right:3px solid var(--accent);border-top:1px solid var(--border);border-bottom:1px solid var(--border)">${deptTotalDisp}</td>
-      ${isAdm?`<td class="_admCol" style="padding:4px 3px;text-align:center;font-size:10px;font-weight:700;font-family:'JetBrains Mono',monospace;color:var(--ink-muted);background:rgba(156,39,176,.06);border:1px solid var(--border);border-left:2px solid #9c27b0"></td>
+      <td class="_admCol" style="padding:4px 3px;text-align:center;font-size:10px;font-weight:700;font-family:'JetBrains Mono',monospace;color:var(--ink-muted);background:rgba(156,39,176,.06);border:1px solid var(--border);border-left:2px solid #9c27b0"></td>
       <td class="_admCol" style="padding:4px 3px;text-align:center;font-size:10px;font-weight:700;font-family:'JetBrains Mono',monospace;color:var(--ink-muted);background:rgba(45,106,79,.06);border:1px solid var(--border)"></td>
-      <td class="_admCol" style="padding:4px 3px;text-align:center;font-size:10px;font-weight:700;font-family:'JetBrains Mono',monospace;color:var(--ink-muted);background:rgba(29,53,87,.06);border:1px solid var(--border)"></td>`:''}
+      <td class="_admCol" style="padding:4px 3px;text-align:center;font-size:10px;font-weight:700;font-family:'JetBrains Mono',monospace;color:var(--ink-muted);background:rgba(29,53,87,.06);border:1px solid var(--border)"></td>
     </tr>`;
 
     // ＋ Thêm NV button (always show, sticky left)
@@ -30439,9 +30444,9 @@ function _renderTimesheetGridCore(container, isAdm){
       ${gtDayCells}
       ${gtWcCells}
       <td style="padding:5px 4px;text-align:center;font-size:13px;font-weight:800;color:var(--accent);font-family:'JetBrains Mono',monospace;background:var(--bg-elev);border-left:2px solid var(--accent);border-right:2px solid var(--accent)">${gtTotalDisp}</td>
-      ${isAdm?`<td class="_admCol" style="background:var(--bg-elev);border:1px solid var(--border)"></td>
       <td class="_admCol" style="background:var(--bg-elev);border:1px solid var(--border)"></td>
-      <td class="_admCol" style="background:var(--bg-elev);border:1px solid var(--border)"></td>`:''}
+      <td class="_admCol" style="background:var(--bg-elev);border:1px solid var(--border)"></td>
+      <td class="_admCol" style="background:var(--bg-elev);border:1px solid var(--border)"></td>
     </tr>`;
   }
 
@@ -30482,9 +30487,9 @@ function _renderTimesheetGridCore(container, isAdm){
               ${dayHeaders}
               ${wcSummaryHeaders}
               <th style="padding:4px 4px;font-size:9px;font-weight:800;color:var(--accent);text-align:center;background:rgba(212,165,116,.15);min-width:44px;border-left:3px solid var(--accent);border-right:3px solid var(--accent);border-top:1px solid var(--border);border-bottom:1px solid var(--border)">TOTAL</th>
-              ${isAdm?`<th class="_admCol" style="padding:4px 3px;font-size:8px;font-weight:700;color:#9c27b0;text-align:center;min-width:36px;background:rgba(156,39,176,.08);border:1px solid var(--border);border-left:2px solid #9c27b0">Total*</th>
-              <th class="_admCol" style="padding:4px 3px;font-size:8px;font-weight:700;color:#2d6a4f;text-align:center;min-width:36px;background:rgba(45,106,79,.08);border:1px solid var(--border)">AL*</th>
-              <th class="_admCol" style="padding:4px 3px;font-size:8px;font-weight:700;color:#1d3557;text-align:center;min-width:36px;background:rgba(29,53,87,.08);border:1px solid var(--border)">CL*</th>`:''}
+              <th class="_admCol" style="padding:4px 3px;font-size:8px;font-weight:700;color:#9c27b0;text-align:center;min-width:36px;background:rgba(156,39,176,.08);border:1px solid var(--border);border-left:2px solid #9c27b0" title="Công còn thiếu/thừa so với Công TC">Total*</th>
+              <th class="_admCol" style="padding:4px 3px;font-size:8px;font-weight:700;color:#2d6a4f;text-align:center;min-width:36px;background:rgba(45,106,79,.08);border:1px solid var(--border)" title="Phép năm còn lại sau khi trừ số đã dùng tháng này">AL*</th>
+              <th class="_admCol" style="padding:4px 3px;font-size:8px;font-weight:700;color:#1d3557;text-align:center;min-width:36px;background:rgba(29,53,87,.08);border:1px solid var(--border)" title="Công bù còn lại sau khi trừ số đã dùng tháng này">CL*</th>
             </tr>
           </thead>
           <tbody>${allRows || '<tr><td colspan="99" style="padding:30px;text-align:center;color:var(--ink-muted)">Chưa có dữ liệu</td></tr>'}</tbody>
