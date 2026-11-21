@@ -29162,14 +29162,18 @@ function _rosterSaveHideCols(){
 if(!window._rosterHideCols) window._rosterHideCols = _rosterLoadHideCols();
 function _rosterToggleCol(colName){
   // Lazy-load từ localStorage nếu user vừa login (currentUser xuất hiện sau khi init)
+  // v136 BUG FIX: trước đây dùng window._rosterHideColsKey (trùng tên function) → gán string
+  // sẽ đè lên function → lần click sau "is not a function". Đổi tên biến cache sang _lastHideColsKey.
   const curKey = _rosterHideColsKey();
-  if(window._rosterHideColsKey !== curKey){
+  if(window._lastHideColsKey !== curKey){
     window._rosterHideCols = _rosterLoadHideCols();
-    window._rosterHideColsKey = curKey;
+    window._lastHideColsKey = curKey;
   }
   window._rosterHideCols[colName] = !window._rosterHideCols[colName];
   _rosterSaveHideCols();
-  render();
+  // v135: render NGAY — bỏ debounce 150ms + throttle 500ms cho UI toggle (fix lag)
+  if(typeof _doRender === 'function') _doRender();
+  else render(true);
 }
 
 // ── v134: Per-account hide-days (Bảng Ca only — KHÔNG ảnh hưởng Bảng Công tổng)
@@ -29196,10 +29200,11 @@ function _rosterSaveHideDays(){
 }
 function _rosterGetHideDays(){
   // Tự lazy-reload khi key đổi (user login khác, hoặc đổi tháng)
+  // v136 BUG FIX: đổi tên cache từ window._rosterHideDaysKey (trùng function) sang _lastHideDaysKey
   const curKey = _rosterHideDaysKey();
-  if(window._rosterHideDaysKey !== curKey){
+  if(window._lastHideDaysKey !== curKey){
     window._rosterHideDays = _rosterLoadHideDays();
-    window._rosterHideDaysKey = curKey;
+    window._lastHideDaysKey = curKey;
   }
   if(!window._rosterHideDays) window._rosterHideDays = new Set();
   return window._rosterHideDays;
@@ -29216,8 +29221,9 @@ window._rosterShowAllDays = function(){
   s.clear();
   _rosterSaveHideDays();
   _rosterApplyHideDaysCSS();
-  // Re-render để cập nhật badge đếm
-  render();
+  // v135: KHÔNG render — chỉ cập nhật badge trực tiếp để tránh lag re-render toàn bảng
+  const lbl = document.getElementById('_rosterHideDaysCount');
+  if(lbl) lbl.style.display = 'none';
 };
 function _rosterApplyHideDaysCSS(){
   // Inject/update <style id="_rosterHideDaysCSS"> trong head
@@ -29234,8 +29240,9 @@ function _rosterApplyHideDaysCSS(){
   const lbl = document.getElementById('_rosterHideDaysCount');
   if(lbl){
     if(s.size > 0){
-      lbl.style.display = '';
-      lbl.querySelector('span').textContent = s.size;
+      lbl.style.display = 'inline-flex';
+      const cnt = lbl.querySelector('span');
+      if(cnt) cnt.textContent = s.size;
     } else {
       lbl.style.display = 'none';
     }
@@ -37307,10 +37314,11 @@ fbAuth.onAuthStateChanged(async user => {
         window.currentUser = user;
         window.currentUserData = doc.data();
         // v129: load per-account UI prefs (hide cols) ngay khi login xong, trước lần render đầu
+        // v136 BUG FIX: cache key tên window._lastHideColsKey (không trùng với function _rosterHideColsKey)
         try {
           if(typeof _rosterLoadHideCols === 'function'){
             window._rosterHideCols = _rosterLoadHideCols();
-            window._rosterHideColsKey = _rosterHideColsKey();
+            window._lastHideColsKey = _rosterHideColsKey();
           }
         } catch(_){}
         if(window._userPermListener) window._userPermListener(); // unsubscribe cũ
