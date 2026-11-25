@@ -27718,6 +27718,7 @@ function _renderShiftCodes(container, isAdm){
     <div class="card">
       <div class="card-head"><div><div class="card-title">⚙️ Bảng Mã Ca / Công</div><div class="card-sub">${codes.length} mã ca${isAdm&&allCodes.filter(s=>s.hidden).length?' · <span style="color:var(--danger)">'+allCodes.filter(s=>s.hidden).length+' ẩn</span>':''} · Quy đổi ca → công</div></div>
         ${isAdm?`<div style="display:flex;gap:8px;flex-wrap:wrap">
+          ${codes.length?`<button class="btn" onclick="_scAutoColorAll()" style="font-size:12px;border-color:rgba(156,39,176,.4);color:#7b1fa2" title="Tự động gán màu phân biệt cho các mã ca">🎨 Tô màu tự động</button>`:''}
           <button class="btn" onclick="_scExportExcel()" style="font-size:12px">📥 Xuất Excel</button>
           <button class="btn" onclick="document.getElementById('_scImportFile').click()" style="font-size:12px">📤 Nhập Excel</button>
           <input type="file" id="_scImportFile" accept=".xlsx,.xls" style="display:none" onchange="_scImportExcel(this.files[0]);this.value=''">
@@ -27755,6 +27756,49 @@ function _renderShiftCodes(container, isAdm){
 // v90: Đã bỏ hoàn toàn function _shiftCodeDefaults() — user tự quản lý 100% mã ca.
 
 // ── Xóa TẤT CẢ mã ca (chỉ admin) — tombstone từng code để cloud ko resurrect ──
+// v141: Palette tự động tô màu cho mã ca — các mã root khác nhau nhận màu khác nhau,
+// các biến thể (AD2/AL, AD2/CL, AD2/OFF) share màu của root (AD2) để dễ nhận ra cùng gốc
+window._scAutoColorPalette = function(code){
+  const root = (code||'').toString().split('/')[0].trim().toUpperCase();
+  if(!root) return {bg:'#eceff1', fg:'#455a64'};
+  let h = 0;
+  for(let i=0;i<root.length;i++) h = ((h*31) + root.charCodeAt(i)) & 0x7fffffff;
+  // 14 cặp pastel-bg + dark-fg có độ tương phản tốt cho mắt
+  const palette = [
+    {bg:'#e3f2fd', fg:'#0d47a1'}, // blue
+    {bg:'#fff3e0', fg:'#bf360c'}, // orange
+    {bg:'#f3e5f5', fg:'#4a148c'}, // purple
+    {bg:'#e8f5e9', fg:'#1b5e20'}, // green
+    {bg:'#fff9c4', fg:'#f57f17'}, // amber
+    {bg:'#fce4ec', fg:'#880e4f'}, // pink
+    {bg:'#e0f2f1', fg:'#004d40'}, // teal
+    {bg:'#e1f5fe', fg:'#01579b'}, // light-blue
+    {bg:'#f1f8e9', fg:'#33691e'}, // lime
+    {bg:'#ede7f6', fg:'#311b92'}, // deep-purple
+    {bg:'#fff8e1', fg:'#e65100'}, // amber-light
+    {bg:'#efebe9', fg:'#3e2723'}, // brown
+    {bg:'#e8eaf6', fg:'#1a237e'}, // indigo
+    {bg:'#f9fbe7', fg:'#827717'}, // light-lime
+  ];
+  return palette[h % palette.length];
+};
+window._scAutoColorAll = function(){
+  if(!window.isAdmin || !window.isAdmin()){ toast('Chỉ admin được dùng','warning'); return; }
+  const codes = DB.shiftCodes || [];
+  if(!codes.length){ toast('Chưa có mã ca','info'); return; }
+  if(!confirm(`🎨 Tự tô màu khác nhau cho ${codes.length} mã ca?\n\n• Các mã root (vd AD2, AD3, M, M1...) nhận màu PHÂN BIỆT\n• Các biến thể (AD2/AL, AD2/CL, AD2/OFF) share màu với mã gốc AD2\n• Ghi đè màu hiện tại — bạn có thể sửa riêng từng mã sau`)) return;
+  const now = Date.now();
+  codes.forEach(sc => {
+    const p = window._scAutoColorPalette(sc.code);
+    sc.color = p.bg;
+    sc.textColor = p.fg;
+    sc._savedAt = now;
+  });
+  try { saveData(['shiftCodes']); } catch(e){ console.warn('[auto-color] save fail', e); }
+  toast(`✅ Đã tô màu ${codes.length} mã ca`, 'success');
+  if(typeof render === 'function') render(true);
+};
+
 window._scClearAll = function(){
   const cur = DB.shiftCodes || [];
   if(!cur.length){ if(typeof toast==='function') toast('Không còn mã ca nào','info'); return; }
