@@ -29896,8 +29896,12 @@ window._rosterExportPDF = function(type){
         const code = rd[d]||'';
         const resolved = _scResolve(code, scMap);
         const _isHolRos = holidayDaysTS.has(d);
-        const bg = _isHolRos ? 'rgba(198,40,40,.08)' : (resolved.bg!=='transparent' ? resolved.bg+'22' : '');
-        cells += `<td style="text-align:center;font-size:${code.length>4?'6pt':'7.5pt'};padding:2px 1px;${bg?'background:'+bg:''}${!code?'color:#ccc':''}">${code||'·'}</td>`;
+        // v143: highlight OFF nhạt vàng cho dễ phân biệt (gồm cả compound có /OFF như X/OFF)
+        const _cUp = (code||'').toString().toUpperCase();
+        const _isOffRos = _cUp === 'OFF' || _cUp.includes('/OFF') || _cUp.startsWith('OFF/');
+        const bg = _isHolRos ? 'rgba(198,40,40,.08)' : (_isOffRos ? '#fff3cd' : (resolved.bg!=='transparent' ? resolved.bg+'22' : ''));
+        const _offStyle = (_isOffRos && !_isHolRos) ? ';color:#8d6e00;font-weight:700' : '';
+        cells += `<td style="text-align:center;font-size:${code.length>4?'6pt':'7.5pt'};padding:2px 1px;${bg?'background:'+bg:''}${!code?'color:#ccc':''}${_offStyle}">${code||'·'}</td>`;
       }
       // Summary counts — by workValue
       // 🚨 v70: OFF/NGH KHÔNG count
@@ -29981,8 +29985,13 @@ window._rosterExportPDF = function(type){
         }
         const bg = resolved.bg!=='transparent' ? resolved.bg+'22' : '';
         const _holBgPdf = _isHolPdf2 ? 'rgba(198,40,40,.08)' : '';
+        // v143: highlight OFF nhạt vàng cho dễ phân biệt trên bản in (gồm cả compound có /OFF)
+        const _dcUp = (displayCode||'').toString().toUpperCase();
+        const _isOffDisp = _dcUp === 'OFF' || _dcUp.includes('/OFF') || _dcUp.startsWith('OFF/');
+        const _offBgPdf = (_isOffDisp && !_isHolPdf2) ? '#fff3cd' : '';
         const fs = displayCode.length>4?'6pt':'7.5pt';
-        cells += `<td style="text-align:center;font-size:${fs};padding:2px 1px;${_holBgPdf?'background:'+_holBgPdf:(bg?'background:'+bg:'')}${!code?'color:#ccc':''}${_isHolPdf2&&code?';color:#c62828':''}">${code?displayCode:'·'}</td>`;
+        const _finalBg = _holBgPdf || _offBgPdf || bg;
+        cells += `<td style="text-align:center;font-size:${fs};padding:2px 1px;${_finalBg?'background:'+_finalBg:''}${!code?'color:#ccc':''}${_isHolPdf2&&code?';color:#c62828':(_isOffDisp?';color:#8d6e00;font-weight:700':'')}">${code?displayCode:'·'}</td>`;
       }
       const wcCountCells = pdfWcArr.map(wc=>{
         const cnt = wcCounts[wc]||0;
