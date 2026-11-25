@@ -30399,7 +30399,11 @@ function _renderTimesheetGridCore(container, isAdm){
         } else {
           _wcDisp = escapeHtml(workCode);
         }
-        dayCells += `<td data-roster-day="${d}" style="padding:2px 1px;text-align:center;font-size:11px;line-height:1.15;font-family:'JetBrains Mono',monospace;font-weight:600;color:${_isHolDay?'#c62828':resolved.fg};background:${_holBg||resolved.bg};border:1px solid var(--border);overflow:hidden;word-break:break-all" title="${escapeHtml(workCode)}">${_wcDisp}</td>`;
+        // v142: mã công "X" (đi làm công thường) → nền trắng cho dễ nhìn, không tô màu
+        const _wcUp = (workCode||'').toString().trim().toUpperCase();
+        const _cellBg = (_wcUp === 'X') ? 'transparent' : (_holBg || resolved.bg);
+        const _cellFg = (_wcUp === 'X') ? 'var(--ink-dim)' : (_isHolDay ? '#c62828' : resolved.fg);
+        dayCells += `<td data-roster-day="${d}" style="padding:2px 1px;text-align:center;font-size:11px;line-height:1.15;font-family:'JetBrains Mono',monospace;font-weight:600;color:${_cellFg};background:${_cellBg};border:1px solid var(--border);overflow:hidden;word-break:break-all" title="${escapeHtml(workCode)}">${_wcDisp}</td>`;
       }
       deptTotalWork += totalWork;
 
