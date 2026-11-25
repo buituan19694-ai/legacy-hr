@@ -30056,6 +30056,8 @@ function _renderTimesheetGridCore(container, isAdm){
   const yr = rf.year;
   const mo = rf.month;
   const daysInMonth = new Date(yr, mo, 0).getDate();
+  // v140: force reload hide-days theo tháng hiện tại (key gồm year+month) để badge đếm đúng
+  try { if(typeof _rosterGetHideDays === 'function') _rosterGetHideDays(); } catch(_){}
 
   if(!(DB.shiftCodes||[]).length){
     container.innerHTML = `<div class="card"><div style="padding:40px;text-align:center;color:var(--ink-muted)">⚠️ Chưa có Mã Ca/Công. Vào tab <b>"Mã Ca / Công"</b> để tạo trước.</div></div>`;
@@ -30191,8 +30193,10 @@ function _renderTimesheetGridCore(container, isAdm){
   let dayHeaders = '';
   for(let d=1;d<=daysInMonth;d++){
     const dow = new Date(yr,mo-1,d).getDay();
-    dayHeaders += `<th style="padding:4px 2px;font-size:10px;font-weight:700;color:${dow===0?'var(--danger)':dow===6?'var(--accent)':'var(--ink-muted)'};text-align:center;min-width:48px;width:48px">
+    // v140: thêm data-roster-day + nút × để hỗ trợ ẩn cột ngày (share state với Bảng Ca qua localStorage per-account)
+    dayHeaders += `<th data-roster-day="${d}" class="_rDayHdr" style="padding:4px 2px;font-size:10px;font-weight:700;color:${dow===0?'var(--danger)':dow===6?'var(--accent)':'var(--ink-muted)'};text-align:center;min-width:48px;width:48px;position:relative">
       <div>${d}</div><div style="font-size:9px;font-weight:400">${dayNames[dow]}</div>
+      <button onclick="event.stopPropagation();window._rosterToggleHideDay(${d})" title="Ẩn cột này" class="_rHideBtn" style="position:absolute;top:1px;right:1px;width:12px;height:12px;padding:0;line-height:10px;font-size:9px;background:rgba(0,0,0,.08);color:#999;border:none;border-radius:3px;cursor:pointer;display:none;align-items:center;justify-content:center;font-weight:700">×</button>
     </th>`;
   }
 
@@ -30351,7 +30355,7 @@ function _renderTimesheetGridCore(container, isAdm){
         } else {
           _wcDisp = escapeHtml(workCode);
         }
-        dayCells += `<td style="padding:2px 1px;text-align:center;font-size:11px;line-height:1.15;font-family:'JetBrains Mono',monospace;font-weight:600;color:${_isHolDay?'#c62828':resolved.fg};background:${_holBg||resolved.bg};border:1px solid var(--border);overflow:hidden;word-break:break-all" title="${escapeHtml(workCode)}">${_wcDisp}</td>`;
+        dayCells += `<td data-roster-day="${d}" style="padding:2px 1px;text-align:center;font-size:11px;line-height:1.15;font-family:'JetBrains Mono',monospace;font-weight:600;color:${_isHolDay?'#c62828':resolved.fg};background:${_holBg||resolved.bg};border:1px solid var(--border);overflow:hidden;word-break:break-all" title="${escapeHtml(workCode)}">${_wcDisp}</td>`;
       }
       deptTotalWork += totalWork;
 
@@ -30395,7 +30399,7 @@ function _renderTimesheetGridCore(container, isAdm){
 
     // Subtotal row
     let subDayCells = '';
-    for(let d=1;d<=daysInMonth;d++) subDayCells += `<td style="border:1px solid var(--border);background:var(--bg-elev)"></td>`;
+    for(let d=1;d<=daysInMonth;d++) subDayCells += `<td data-roster-day="${d}" style="border:1px solid var(--border);background:var(--bg-elev)"></td>`;
     // Generate work code subtotal cells for department
     const wcSubCells = wcCodesArr.map((wc,i)=>{
       const cnt = deptWcCounts[wc]||0;
@@ -30432,7 +30436,7 @@ function _renderTimesheetGridCore(container, isAdm){
   // 🚨 v85/v86: GRAND TOTAL row — nhẹ nhàng, chỉ chữ accent sáng, không background chói
   if(deptOrder.length > 1){
     let gtDayCells = '';
-    for(let d=1;d<=daysInMonth;d++) gtDayCells += `<td style="border:1px solid var(--border);background:var(--bg-elev)"></td>`;
+    for(let d=1;d<=daysInMonth;d++) gtDayCells += `<td data-roster-day="${d}" style="border:1px solid var(--border);background:var(--bg-elev)"></td>`;
     const gtWcCells = wcCodesArr.map((wc,i)=>{
       const cnt = grandWcCounts[wc]||0;
       const cntDisp = cnt ? (cnt%1 ? cnt.toFixed(1) : cnt) : '';
@@ -30465,12 +30469,20 @@ function _renderTimesheetGridCore(container, isAdm){
           ${isAdm?`<button class="btn" onclick="_tsExportExcel()" style="font-size:11px;border-color:rgba(76,175,80,.4);color:#2e7d32" title="Xuất Excel Bảng Công (chỉ admin)">📊 Excel</button>`:''}
         </div>
       </div>
-      <div style="display:flex;align-items:center;gap:6px;padding:4px 12px;border-bottom:1px solid var(--border);background:var(--bg-elev)">
+      <style>._rDayHdr:hover ._rHideBtn{display:flex!important}._rHideBtn:hover{background:var(--danger)!important;color:#fff!important}</style>
+      <div style="display:flex;align-items:center;gap:6px;padding:4px 12px;border-bottom:1px solid var(--border);background:var(--bg-elev);flex-wrap:wrap">
         <span style="font-size:10px;color:var(--ink-muted)">Zoom:</span>
         <button onclick="_rosterDoZoom(-10)" style="width:24px;height:24px;border:1px solid var(--border);border-radius:4px;background:var(--bg-card);color:var(--ink);cursor:pointer;font-size:14px;display:flex;align-items:center;justify-content:center;padding:0" title="Thu nhỏ">−</button>
         <span id="_rosterZoomLbl" style="font-size:10px;color:var(--ink);min-width:32px;text-align:center;font-family:'JetBrains Mono',monospace">${window._rosterZoomLvl||100}%</span>
         <button onclick="_rosterDoZoom(10)" style="width:24px;height:24px;border:1px solid var(--border);border-radius:4px;background:var(--bg-card);color:var(--ink);cursor:pointer;font-size:14px;display:flex;align-items:center;justify-content:center;padding:0" title="Phóng to">+</button>
         <button onclick="_rosterDoZoom(0)" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg-card);color:var(--ink-muted);cursor:pointer" title="Reset 100%">Reset</button>
+        <span style="width:1px;height:16px;background:var(--border);margin:0 4px"></span>
+        <span style="font-size:10px;color:var(--ink-muted)" title="Hover vào số ngày trên header, bấm × để ẩn cột ngày đó">👁 Ẩn cột:</span>
+        <span id="_rosterHideDaysCount" style="display:${(window._rosterHideDays&&window._rosterHideDays.size>0)?'inline-flex':'none'};align-items:center;gap:6px;font-size:10px;color:var(--danger);background:rgba(229,115,115,.08);padding:2px 8px;border-radius:10px;font-weight:600">
+          <span>${(window._rosterHideDays&&window._rosterHideDays.size)||0}</span> ngày ẩn
+          <button onclick="window._rosterShowAllDays()" style="font-size:10px;padding:1px 6px;border:1px solid var(--danger);border-radius:3px;background:transparent;color:var(--danger);cursor:pointer;font-weight:600" title="Hiện lại tất cả cột ngày">Hiện tất cả</button>
+        </span>
+        <span style="font-size:10px;color:var(--ink-dim);font-style:italic">(hover lên số ngày → bấm × — chỉ ẩn trên bảng của bạn)</span>
       </div>
       <div id="_rosterTableWrap" style="overflow-x:auto;max-height:80vh;overflow-y:auto">
         <table style="border-collapse:collapse;font-size:12px;min-width:100%">
@@ -30502,6 +30514,8 @@ function _renderTimesheetGridCore(container, isAdm){
     const wrap = document.getElementById('_rosterTableWrap');
     if(wrap){ wrap.style.transform=`scale(${window._rosterZoomLvl/100})`;wrap.style.transformOrigin='top left';wrap.style.width=(10000/window._rosterZoomLvl)+'%'; }
   }
+  // v140: áp CSS ẩn cột ngày per-account (chia sẻ state với Bảng Ca)
+  try { _rosterGetHideDays(); _rosterApplyHideDaysCSS(); } catch(_){}
 }
 
 const PERM_LEVELS = ['none','view','edit','full'];
