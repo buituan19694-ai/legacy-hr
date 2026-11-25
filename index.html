@@ -42519,8 +42519,8 @@ function exportManningXLSX(){
   const wb = XLSX.utils.book_new();
 
 
-  // Sheet 1: BUDGET — cột khớp hệt web
-  const budRows = [['Bộ phận','Vị trí','HC Planned','Lương CB (VNĐ)','Phụ cấp (VNĐ)','Tổng lương (VNĐ)','BHXH+CĐ (23.5%)','Meal/ngày (VNĐ)','Chi phí khác (VNĐ)','Tổng × HC (VNĐ)']];
+  // Sheet 1: BUDGET — cột khớp hệt web (v144: thêm Cluster % + Ghi chú)
+  const budRows = [['Bộ phận','Vị trí','HC Planned','Lương CB (VNĐ)','Phụ cấp (VNĐ)','Tổng lương (VNĐ)','BHXH+CĐ (23.5%)','Meal/ngày (VNĐ)','Chi phí khác (VNĐ)','Cluster (%)','Tổng × HC (VNĐ)','Ghi chú']];
   depts.forEach(dept=>{
     const dp = (DB.manningPlan[year]||{}).depts?.[dept.id]||{positions:[]};
     // Thứ tự theo dp.positions (giống web), active roles không trong plan thêm cuối
@@ -42537,12 +42537,15 @@ function exportManningXLSX(){
       const bh     = salCB ? (parseFloat(p.budgetBH)||Math.round(salCB*BH_RATE)) : 0;
       const meal   = parseFloat(p.mealRate)||0;
       const oth    = parseFloat(p.budgetOther)||0;
-      const total  = salCB ? (salTot+bh+meal+oth)*hc : 0;
-      budRows.push([dept.name, title, hc||'', salCB||'', salBon||'', salTot||'', bh||'', meal||'', oth||'', total||'']);
+      // v144: dùng cluster đúng như web — total = (sal+bh+meal+oth) * hc * cluster%
+      const cluster= parseFloat(p.budgetCluster)||100;
+      const total  = (salCB||bh) ? Math.round((salTot+bh+meal+oth)*hc*cluster/100) : 0;
+      const notes  = p.notes||'';
+      budRows.push([dept.name, title, hc||'', salCB||'', salBon||'', salTot||'', bh||'', meal||'', oth||'', cluster, total||'', notes]);
     });
   });
   const wsBud = XLSX.utils.aoa_to_sheet(budRows);
-  wsBud['!cols'] = [20,28,12,16,14,16,14,14,14,18].map(w=>({wch:w}));
+  wsBud['!cols'] = [20,28,12,16,14,16,14,14,14,10,18,30].map(w=>({wch:w}));
   XLSX.utils.book_append_sheet(wb, wsBud, 'Budget_'+year);
 
   // Sheet 2: ACTUAL tháng đang xem
@@ -42566,12 +42569,12 @@ function exportManningXLSX(){
   wsAct['!cols'] = [20,28,10,24,16,14,16,14,10,12,14,16].map(w=>({wch:w}));
   XLSX.utils.book_append_sheet(wb, wsAct, 'Actual_'+MN[mi]+'_'+year);
 
-  // Sheet 3: Template nhập Budget (dùng để nhập lại)
+  // Sheet 3: Template nhập Budget (dùng để nhập lại) — v144: thêm Cluster + Ghi chú
   const tplRows = [
     ['=== TEMPLATE NHẬP BUDGET — NĂM '+year+' ==='],
     ['Điền vào các cột từ cột C trở đi. Giữ nguyên tên Bộ phận và Vị trí. Xóa 3 dòng đầu trước khi nhập lại.'],
     [],
-    ['Bộ phận','Vị trí','HC Planned','Lương/người (VNĐ)','BHXH+CĐ (VNĐ)','Meal rate/ngày (VNĐ)','Chi phí khác (VNĐ)']
+    ['Bộ phận','Vị trí','HC Planned','Lương/người (VNĐ)','BHXH+CĐ (VNĐ)','Meal rate/ngày (VNĐ)','Chi phí khác (VNĐ)','Cluster (%)','Ghi chú']
   ];
   depts.forEach(dept=>{
     const dp = (DB.manningPlan[year]||{}).depts?.[dept.id]||{positions:[]};
@@ -42580,11 +42583,11 @@ function exportManningXLSX(){
     const extra2 = dbRoles2.filter(r=>!planRoles2.includes(r));
     [...new Set([...planRoles2, ...extra2])].forEach(title=>{
       const p=(dp.positions||[]).find(x=>x.title===title)||{};
-      tplRows.push([dept.name, title, parseInt(p.planned)||0, parseFloat(p.budgetSalary)||0, parseFloat(p.budgetBH)||0, parseFloat(p.mealRate)||0, parseFloat(p.budgetOther)||0]);
+      tplRows.push([dept.name, title, parseInt(p.planned)||0, parseFloat(p.budgetSalary)||0, parseFloat(p.budgetBH)||0, parseFloat(p.mealRate)||0, parseFloat(p.budgetOther)||0, parseFloat(p.budgetCluster)||100, p.notes||'']);
     });
   });
   const wsTpl = XLSX.utils.aoa_to_sheet(tplRows);
-  wsTpl['!cols'] = [20,28,12,18,16,16,16].map(w=>({wch:w}));
+  wsTpl['!cols'] = [20,28,12,18,16,16,16,10,30].map(w=>({wch:w}));
   XLSX.utils.book_append_sheet(wb, wsTpl, 'Template_Budget_'+year);
 
   XLSX.writeFile(wb, 'Manning_Budget_'+year+'.xlsx');
@@ -42617,6 +42620,9 @@ function importManningXLSX(input){
       const iBH     = ci('BHXH');
       const iMeal   = ci('Meal');
       const iOth    = ci('Chi phí khác');
+      // v144: thêm Cluster + Ghi chú
+      const iCls    = ci('Cluster');
+      const iNotes  = ci('Ghi chú');
 
       const dataRows=rows.slice(headerIdx+1).filter(r=>r[0]&&r[1]);
       if(!dataRows.length){toast('Không có dữ liệu','warning');return;}
@@ -42652,7 +42658,9 @@ function importManningXLSX(input){
           budgetBH:     iBH>=0 ? parseNum(r[iBH]) : undefined,
           mealRate:     iMeal>=0 ? parseNum(r[iMeal]) : 0,
           budgetOther:  iOth>=0 ? parseNum(r[iOth]) : 0,
-          notes:''
+          // v144: nhập cluster + ghi chú từ Excel (nếu có)
+          budgetCluster: iCls>=0 ? (parseNum(r[iCls])||100) : 100,
+          notes: iNotes>=0 ? String(r[iNotes]||'').trim() : ''
         });
         updated++;
       });
