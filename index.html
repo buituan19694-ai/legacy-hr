@@ -41501,6 +41501,8 @@ function renderManning(main){
     main.innerHTML='<div class="topbar"><div class="topbar-left"><h1 class="page-title">🔒 Không có quyền</h1><div class="page-sub">Bạn không được cấp quyền truy cập module Manning & Budget</div></div></div>';
     return;
   }
+  // v146: reset cache scMap mỗi lần render để shiftCodes thay đổi cũng được cập nhật
+  window._mbScMap = null;
   const today   = new Date();
   const curYear = window._manningYear || parseInt(sessionStorage.getItem('_manningYear')) || today.getFullYear();
   window._manningYear = curYear;
@@ -41823,7 +41825,41 @@ function renderManning(main){
             const bonus = _pn(eact.bonOverride) || _pn(cd.bonusSalary);
             const sal   = base+bonus;
             const bh    = _pn(eact.bhOverride) || Math.round(base*BH_RATE_LOCAL);
-            const wdays = parseInt(eact.workDays)||0;
+            // v146: nếu workDays chưa nhập tay → lấy số ngày đi làm thực tế từ Bảng Ca (dutyRoster)
+            // → tránh cột Meal luôn hiển thị '—' khi admin chưa điền workDays
+            let wdays = parseInt(eact.workDays)||0;
+            if(!wdays && mealRate > 0){
+              try {
+                if(!window._mbScMap){
+                  window._mbScMap = {};
+                  (DB.shiftCodes||[]).forEach(sc=>{ window._mbScMap[sc.code]=sc; });
+                }
+                const scM = window._mbScMap;
+                let cnt = 0;
+                (DB.dutyRoster||[]).forEach(r=>{
+                  if(r.empId!==e.id || r.year!==curYear || r.month!==mi+1) return;
+                  const code = (r.shiftCode||'').toString().trim().toUpperCase();
+                  if(!code) return;
+                  // Compound (X/OFF, X/AL...): mỗi part có workValue>0 cộng fraction
+                  if(code.includes('/')){
+                    const parts = code.split('/').map(p=>p.trim()).filter(Boolean);
+                    const frac = 1/parts.length;
+                    parts.forEach(p=>{
+                      const sc=scM[p];
+                      if(p==='OFF'||p==='NGH'||p==='NGHI') return;
+                      if(sc && (sc.workValue===0||sc.workValue==='0')) return;
+                      cnt += frac;
+                    });
+                  } else {
+                    const sc=scM[code];
+                    if(code==='OFF'||code==='NGH'||code==='NGHI') return;
+                    if(sc && (sc.workValue===0||sc.workValue==='0')) return;
+                    cnt += 1;
+                  }
+                });
+                wdays = Math.round(cnt);
+              } catch(_){ wdays = 0; }
+            }
             const meal  = Math.round(wdays*mealRate);
             const oth   = parseFloat(eact.other)||0;
             const tot   = sal+bh+meal+oth;
