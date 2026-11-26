@@ -39957,7 +39957,17 @@ function _saveBudgetPos(el, dIdEnc, titEnc, field, yr, bhRate){
   let p = dp.positions.find(x=>x.title===title);
   if(!p){ p={title,planned:0,budgetSalary:0,budgetBonus:0,budgetBH:0,mealRate:0,budgetOther:0,notes:''}; dp.positions.push(p); }
   p[field] = val;
-  if(field==='budgetSalary' && !p.budgetBH) p.budgetBH = Math.round(val*bhRate);
+  // v153: auto-fill BHXH khi đổi lương CB — nếu BH rỗng HOẶC nhỏ bất thường (<5% lương)
+  // Bug cũ: BH từng bị lưu nhầm = 1 (do lương CB cũ rất nhỏ hoặc gõ nhầm), đổi lương không update BH
+  // → hiện "1" đứng chơ vơ trên cột BHXH. Giờ: nếu BH <5% lương → auto-fill lại theo rate.
+  if(field==='budgetSalary'){
+    const rate  = bhRate || 0.235;
+    const curBH = parseFloat(p.budgetBH) || 0;
+    const nVal  = parseFloat(val) || 0;
+    if(!curBH || (nVal > 0 && curBH < nVal * 0.05)){
+      p.budgetBH = Math.round(nVal*rate);
+    }
+  }
   window._selfSaveAt = Date.now(); // 🚨 v38: chặn echo/stale revert budget position
   saveData(['manningPlan']);
   // Re-render để tổng được tính lại
@@ -41594,7 +41604,15 @@ function renderManning(main){
         }
       });
       // Clean stale data: nếu budgetSalary=0 thì reset budgetBH=0 (tránh số rác từ data cũ)
-      dp.positions.forEach(p=>{ if(!(parseFloat(p.budgetSalary)||0)) p.budgetBH=0; });
+      // v153: nếu budgetBH nhỏ bất thường (<5% lương) → auto-recompute theo rate để sửa data cũ bị lỗi
+      dp.positions.forEach(p=>{
+        const sal = parseFloat(p.budgetSalary)||0;
+        if(!sal){ p.budgetBH=0; return; }
+        const bh = parseFloat(p.budgetBH)||0;
+        if(bh > 0 && bh < sal * 0.05){
+          p.budgetBH = Math.round(sal * BH_RATE);
+        }
+      });
       // Tự xóa plan roles: chỉ xóa nếu ko có NV, ko có data, VÀ ko phải position user vừa thêm thủ công
       // (giữ lại mọi position đã tồn tại trong plan — user có thể vừa thêm)
       dp.positions = dp.positions.filter(p=>{
