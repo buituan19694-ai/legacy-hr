@@ -41913,7 +41913,7 @@ function renderManning(main){
               const actualHC = roleEmps.length;
               // v150: CHỈ đỏ khi không có trong Manning hoặc vượt Manning
               if(!pos2){
-                return `<span style="font-size:9px;padding:2px 7px;border-radius:4px;margin-left:6px;background:rgba(229,115,115,.12);color:var(--danger);border:1px solid rgba(229,115,115,.3);font-weight:700">⚠ Không có trong Manning</span>`;
+                return `<span style="font-size:9px;padding:2px 7px;border-radius:4px;margin-left:6px;background:rgba(229,115,115,.12);color:var(--danger);border:1px solid rgba(229,115,115,.3);font-weight:700">No Manning</span>`;
               }
               if(!budgetHC) return '';
               const diff = actualHC - budgetHC;
