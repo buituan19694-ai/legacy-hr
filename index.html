@@ -41911,14 +41911,21 @@ function renderManning(main){
               const pos2 = ((DB.manningPlan[curYear]||{}).depts||{})[dept.id]?.positions?.find(p=>p.title===role);
               const budgetHC = pos2 ? (pos2.planned||0) : 0;
               const actualHC = roleEmps.length;
+              // v150: CHỈ đỏ khi không có trong Manning hoặc vượt Manning
+              if(!pos2){
+                return `<span style="font-size:9px;padding:2px 7px;border-radius:4px;margin-left:6px;background:rgba(229,115,115,.12);color:var(--danger);border:1px solid rgba(229,115,115,.3);font-weight:700">⚠ Không có trong Manning</span>`;
+              }
               if(!budgetHC) return '';
               const diff = actualHC - budgetHC;
-              const color = diff > 0 ? 'var(--danger)' : diff < 0 ? 'var(--warning)' : 'var(--success)';
-              const icon  = diff > 0 ? '↑' : diff < 0 ? '↓' : '✓';
-              const label = diff > 0 ? `+${diff} thừa` : diff < 0 ? `${diff} thiếu` : 'đủ';
+              if(diff > 0){
+                return `<span style="font-size:9px;padding:2px 7px;border-radius:4px;margin-left:6px;background:rgba(229,115,115,.12);color:var(--danger);border:1px solid rgba(229,115,115,.3);font-weight:700">↑ ${actualHC}/${budgetHC} HC · +${diff} vượt Manning</span>`;
+              }
+              // Đủ hoặc thiếu → giữ badge thông tin bình thường (không đỏ)
+              const color = diff < 0 ? 'var(--warning)' : 'var(--success)';
+              const icon  = diff < 0 ? '↓' : '✓';
+              const label = diff < 0 ? `${diff} thiếu` : 'đủ';
               return `<span style="font-size:9px;padding:2px 7px;border-radius:4px;margin-left:6px;background:${color}18;color:${color};border:1px solid ${color}44;font-weight:700">${icon} ${actualHC}/${budgetHC} HC · ${label}</span>`;
             })()}
-${/* v148: bỏ badge "Meal x/ngày" ở tên position — cột Meal đã hiện số rồi, không cần lặp */''}
           </td>
           <td colspan="${multiMode?sortedMonths.length*5:10}" style="padding:5px 8px;text-align:right;font-size:10px;color:var(--ink-muted)">${roleEmps.length} NV</td>
         </tr>${empRows.replace(/<tr style="border-bottom/g, `<tr data-dept-actual="${dept.id}" ${isCollapsed?'style="display:none"':''} class="actual-emp-row" style="border-bottom`)}`;
