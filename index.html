@@ -41918,7 +41918,7 @@ function renderManning(main){
               const label = diff > 0 ? `+${diff} thừa` : diff < 0 ? `${diff} thiếu` : 'đủ';
               return `<span style="font-size:9px;padding:2px 7px;border-radius:4px;margin-left:6px;background:${color}18;color:${color};border:1px solid ${color}44;font-weight:700">${icon} ${actualHC}/${budgetHC} HC · ${label}</span>`;
             })()}
-            ${mealRate?`<span style="font-size:9px;padding:1px 5px;border-radius:3px;margin-left:5px;background:rgba(125,211,192,.12);color:var(--teal)">Meal ${(mealRate).toLocaleString('vi')}/ngày</span>`:''}
+${/* v148: bỏ badge "Meal x/ngày" ở tên position — cột Meal đã hiện số rồi, không cần lặp */''}
           </td>
           <td colspan="${multiMode?sortedMonths.length*5:10}" style="padding:5px 8px;text-align:right;font-size:10px;color:var(--ink-muted)">${roleEmps.length} NV</td>
         </tr>${empRows.replace(/<tr style="border-bottom/g, `<tr data-dept-actual="${dept.id}" ${isCollapsed?'style="display:none"':''} class="actual-emp-row" style="border-bottom`)}`;
