@@ -39853,6 +39853,65 @@ function _moveBudgetPos(dIdEnc, titEnc, yr, dir){
   render();
 }
 
+// v145: drag-drop sắp xếp vị trí trong Manning & Budget (giống Duty Roster)
+// Inject CSS 1 lần cho drag-hover + cursor
+(function _injectMBDragStyle(){
+  if(document.getElementById('_mbDragStyle')) return;
+  const st = document.createElement('style');
+  st.id = '_mbDragStyle';
+  st.textContent = `
+    tr[data-dept-pos]{cursor:grab}
+    tr[data-dept-pos]:active{cursor:grabbing}
+    tr._mbDragOver{outline:2px solid var(--accent);outline-offset:-2px;background:rgba(212,165,116,.12)!important}
+    ._mbDragHandle:hover{background:rgba(212,165,116,.15);color:var(--accent)!important}
+  `;
+  document.head.appendChild(st);
+})();
+window._mbDragStart = function(ev, deptIdEnc, titleEnc){
+  const deptId = decodeURIComponent(deptIdEnc);
+  // Payload giữ dạng đã encode để tránh ký tự || trong title gây tách sai
+  ev.dataTransfer.setData('text/plain', deptIdEnc+'||'+titleEnc);
+  ev.dataTransfer.effectAllowed = 'move';
+  ev.currentTarget.style.opacity = '0.4';
+  window._mbDragDept = deptId;
+};
+window._mbDragOver = function(ev, deptIdEnc){
+  const deptId = decodeURIComponent(deptIdEnc);
+  if(window._mbDragDept !== deptId) return; // chỉ cho drop cùng bộ phận
+  ev.preventDefault();
+  ev.dataTransfer.dropEffect = 'move';
+  document.querySelectorAll('tr._mbDragOver').forEach(r=>r.classList.remove('_mbDragOver'));
+  ev.currentTarget.classList.add('_mbDragOver');
+};
+window._mbDrop = function(ev, tgtDeptIdEnc, tgtTitleEnc){
+  ev.preventDefault();
+  document.querySelectorAll('tr._mbDragOver').forEach(r=>r.classList.remove('_mbDragOver'));
+  const data = (ev.dataTransfer.getData('text/plain')||'').split('||');
+  if(data.length < 2) return;
+  const srcDeptId = decodeURIComponent(data[0]), srcTitle = decodeURIComponent(data[1]);
+  const tgtDeptId = decodeURIComponent(tgtDeptIdEnc), tgtTitle = decodeURIComponent(tgtTitleEnc);
+  if(!srcDeptId || !srcTitle) return;
+  if(srcDeptId !== tgtDeptId) return;
+  if(srcTitle === tgtTitle) return;
+  const yr = window._manningYear || new Date().getFullYear();
+  const dp = DB.manningPlan?.[yr]?.depts?.[srcDeptId];
+  if(!dp?.positions) return;
+  const srcIdx = dp.positions.findIndex(p=>p.title===srcTitle);
+  const tgtIdx = dp.positions.findIndex(p=>p.title===tgtTitle);
+  if(srcIdx < 0 || tgtIdx < 0) return;
+  const [moved] = dp.positions.splice(srcIdx, 1);
+  // Insert BEFORE target (sau khi đã xoá src, index target có thể lệch 1)
+  const newTgtIdx = dp.positions.findIndex(p=>p.title===tgtTitle);
+  dp.positions.splice(newTgtIdx, 0, moved);
+  saveData(['manningPlan']);
+  render();
+};
+window._mbDragEnd = function(ev){
+  if(ev.currentTarget && ev.currentTarget.style) ev.currentTarget.style.opacity = '1';
+  document.querySelectorAll('tr._mbDragOver').forEach(r=>r.classList.remove('_mbDragOver'));
+  window._mbDragDept = null;
+};
+
 function _deleteBudgetPos(dIdEnc, titEnc, yr){
   const deptId = decodeURIComponent(dIdEnc);
   const title  = decodeURIComponent(titEnc);
@@ -41570,19 +41629,15 @@ function renderManning(main){
 
         const posIdx = roles.indexOf(title); // index trong sorted roles
         const planIdx = dp.positions.findIndex(p=>p.title===title); // index trong positions array
-        const canUp   = planIdx > 0;
-        const canDown = planIdx < dp.positions.length - 1;
 
-        return `<tr data-dept-pos="${dept.id}" style="border-bottom:1px solid var(--border)">
+        return `<tr data-dept-pos="${dept.id}" data-pos-title="${escapeHtml(title)}" draggable="true"
+          ondragstart="_mbDragStart(event,'${encodeURIComponent(dept.id)}','${encodeURIComponent(title)}')"
+          ondragover="_mbDragOver(event,'${encodeURIComponent(dept.id)}')"
+          ondrop="_mbDrop(event,'${encodeURIComponent(dept.id)}','${encodeURIComponent(title)}')"
+          ondragend="_mbDragEnd(event)"
+          style="border-bottom:1px solid var(--border);cursor:grab">
           <td style="padding:5px 8px 5px 10px;font-size:12px;font-weight:500">
-            <span style="display:inline-flex;flex-direction:column;gap:1px;margin-right:6px;vertical-align:middle">
-              <button onclick="_moveBudgetPos('${encodeURIComponent(dept.id)}','${encodeURIComponent(title)}',${curYear},-1)"
-                ${canUp?'':'disabled'}
-                style="padding:0 4px;line-height:13px;font-size:10px;background:transparent;border:1px solid ${canUp?'var(--border)':'transparent'};border-radius:2px;color:${canUp?'var(--ink-muted)':'transparent'};cursor:${canUp?'pointer':'default'}">▲</button>
-              <button onclick="_moveBudgetPos('${encodeURIComponent(dept.id)}','${encodeURIComponent(title)}',${curYear},1)"
-                ${canDown?'':'disabled'}
-                style="padding:0 4px;line-height:13px;font-size:10px;background:transparent;border:1px solid ${canDown?'var(--border)':'transparent'};border-radius:2px;color:${canDown?'var(--ink-muted)':'transparent'};cursor:${canDown?'pointer':'default'}">▼</button>
-            </span>${escapeHtml(title)}${noM}
+            <span class="_mbDragHandle" title="Kéo để sắp xếp" style="display:inline-block;margin-right:6px;vertical-align:middle;color:var(--ink-muted);cursor:grab;font-size:14px;line-height:1;user-select:none;padding:2px 4px;border-radius:3px">⋮⋮</span>${escapeHtml(title)}${noM}
             <div style="font-size:10px;color:var(--ink-muted);display:flex;align-items:center;gap:6px;margin-top:2px">
               <span>Actual: ${actHC} NV</span>
               <button onclick="_deleteBudgetPos('${encodeURIComponent(dept.id)}','${encodeURIComponent(title)}',${curYear})"
