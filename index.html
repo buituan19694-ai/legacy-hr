@@ -29551,16 +29551,17 @@ window._tsExportExcel = function(){
           const sc2 = scMap[p];
           if(_isOffCode(p, sc2)) return;
           const wc = (_isHol && sc2?.holidayWorkCode) ? sc2.holidayWorkCode : (sc2?(sc2.workCode||p):(p==='AL'?'P':p==='CL'?'Bù':p));
-          const wv = sc2?(sc2.workValue||0):0;
+          // v155: sc undefined → default wv=1 (treat as normal workday)
+          const wv = sc2 ? (parseFloat(sc2.workValue)||1) : 1;
           if(wc && wv > 0) wcSet.add(wc);
         });
       } else {
         const sc2 = scMap[v];
         if(_isOffCode(v, sc2)) return;
-        // v154: fallback về chính mã code khi workCode trống (giống fix v127 trên web) —
-        // trước đây fallback '' → mã PH/PL/HW... có workCode trống bị skip → Excel thiếu cột
+        // v155: mã có trong roster nhưng sc không tồn tại (hoặc workValue chưa cấu hình) → default wv=1
+        // Trước đây sc undefined → wv=0 → không add → cột bị thiếu dù UI vẫn hiển thị ô
         const wc = (_isHol && sc2?.holidayWorkCode) ? sc2.holidayWorkCode : (sc2?(sc2.workCode||v):(v==='AL'?'P':v==='CL'?'Bù':v));
-        const wv = sc2?(sc2.workValue||0):0;
+        const wv = sc2 ? (parseFloat(sc2.workValue)||1) : 1;
         if(wc && wv > 0) wcSet.add(wc);
       }
     }
@@ -30288,7 +30289,8 @@ function _renderTimesheetGridCore(container, isAdm){
           const sc = scMap[p];
           if(_isOffCode(p, sc)) return; // OFF-like: không tạo cột
           const wc = sc?(sc.workCode||p):(p==='AL'?'P':p==='CL'?'Bù':p);
-          const wv = sc?(sc.workValue||0):0;
+          // v155: sc undefined (shift code chưa/đã xóa) → default wv=1 → vẫn tạo cột
+          const wv = sc ? (parseFloat(sc.workValue)||1) : 1;
           if(wc && wv > 0) usedWcSet.add(wc);
         });
       } else {
@@ -30297,7 +30299,8 @@ function _renderTimesheetGridCore(container, isAdm){
         // v127 FIX: fallback về chính mã (giống compound line 30097), không phải '' —
         // bug cũ: mã có workValue>0 nhưng workCode trống (vd HW) → wc='' → không tạo cột, không count
         const wc = sc?(sc.workCode||v):(v==='AL'?'P':v==='CL'?'Bù':v);
-        const wv = sc?(sc.workValue||0):0;
+        // v155: sc undefined → default wv=1 (vd HW bị xóa khỏi Mã Ca vẫn hiện cột)
+        const wv = sc ? (parseFloat(sc.workValue)||1) : 1;
         if(wc && wv > 0) usedWcSet.add(wc);
       }
     }
