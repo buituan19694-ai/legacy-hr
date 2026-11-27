@@ -29557,7 +29557,9 @@ window._tsExportExcel = function(){
       } else {
         const sc2 = scMap[v];
         if(_isOffCode(v, sc2)) return;
-        const wc = (_isHol && sc2?.holidayWorkCode) ? sc2.holidayWorkCode : (sc2?(sc2.workCode||''):(v==='AL'?'P':v==='CL'?'Bù':''));
+        // v154: fallback về chính mã code khi workCode trống (giống fix v127 trên web) —
+        // trước đây fallback '' → mã PH/PL/HW... có workCode trống bị skip → Excel thiếu cột
+        const wc = (_isHol && sc2?.holidayWorkCode) ? sc2.holidayWorkCode : (sc2?(sc2.workCode||v):(v==='AL'?'P':v==='CL'?'Bù':v));
         const wv = sc2?(sc2.workValue||0):0;
         if(wc && wv > 0) wcSet.add(wc);
       }
